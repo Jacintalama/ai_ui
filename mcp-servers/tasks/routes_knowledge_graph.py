@@ -121,7 +121,8 @@ def rank_nodes_for_query(nodes: list, query: str, limit: int = 6) -> list:
     return [n for _, _, n in scored[:limit]]
 
 
-COUNT_LABELS = (("apps", "App Builder apps"),
+COUNT_LABELS = (("agents", "AI agents"),
+                ("apps", "App Builder apps"),
                 ("crons", "scheduled automations (cron jobs)"),
                 ("videos", "generated videos"),
                 ("files", "uploaded files"),
@@ -286,9 +287,37 @@ def prettify_slug(slug: str) -> str:
 
 # Hub labels the assembler generates live. Old builds may have stored these as
 # topic nodes; we drop stale copies so they don't render twice.
+#: The agents hub. Named once so the reader, the branch and the reserved set
+#: cannot drift apart: a hub label that stops matching RESERVED_HUBS renders
+#: twice, once from the live read and once from an older stored copy.
+AGENTS_HUB = "AI Agents"
+AGENTS_HUB_URL = "/ai-agents"
+
 RESERVED_HUBS = {"Uploaded Files", "Knowledge Collections", "App Builder Apps",
                  "Automations & Cron Jobs", "Saved Memories", "Generated Videos",
-                 "Team Meetings"}
+                 "Team Meetings", AGENTS_HUB}
+
+
+def agent_item(name: str, role, skills, model) -> dict:
+    """One agent as a graph node.
+
+    The summary is what somebody reads on the panel, so it says what the
+    agent is for rather than what it is made of. Anything unset is left out
+    entirely: an agent that predates roles and skills would otherwise read as
+    "None, 0 skills", which describes the feature's history rather than the
+    agent.
+    """
+    bits = []
+    if isinstance(role, str) and role.strip():
+        bits.append(role.strip())
+    n = len(skills or [])
+    if n:
+        bits.append("%d skill%s" % (n, "" if n == 1 else "s"))
+    if isinstance(model, str) and model.strip():
+        bits.append(model.strip())
+    return {"label": (name or "").strip()[:200],
+            "summary": " · ".join(bits) or "No role or skills set yet",
+            "url": AGENTS_HUB_URL}
 
 
 def meeting_item(title, date, summary, fathom_link) -> dict:
@@ -609,6 +638,38 @@ async def _read_apps(conn, user_email: str, limit: int = 200) -> list:
     return out
 
 
+async def _read_agents(conn, user_email: str, limit: int = 200) -> list:
+    """This person's own agents, read live like every other source.
+
+    Agents are Open WebUI model rows whose id carries the agent- prefix, the
+    same rule routes_agent_turn uses to tell an agent from a plain model.
+
+    This is the one source a brand new user has before they have any chats.
+    Measured on 2026-09-09: of nine users, four had an empty graph because
+    the topic clustering needs three chats, and one of those four had two
+    agents and no chats at all.
+    """
+    rows = await conn.fetch(
+        "SELECT m.name, m.base_model_id, m.meta FROM public.model m "
+        "JOIN public.user u ON u.id = m.user_id "
+        "WHERE u.email = $1 AND m.id LIKE 'agent-%' AND m.is_active "
+        "ORDER BY m.name LIMIT $2", user_email, limit)
+    out = []
+    for r in rows:
+        meta = r["meta"]
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except ValueError:
+                meta = {}
+        meta = meta if isinstance(meta, dict) else {}
+        skills = meta.get("skillIds")
+        out.append(agent_item(r["name"], meta.get("role"),
+                              skills if isinstance(skills, list) else [],
+                              r["base_model_id"]))
+    return out
+
+
 async def _read_crons(conn, user_email: str, limit: int = 200) -> list:
     """Scheduled automations (cron jobs) the user created -> nodes."""
     rows = await conn.fetch(
@@ -694,11 +755,14 @@ async def _assemble_live(conn, user_email: str, include_team: bool = False):
     kbs = await _read_knowledge(conn, uid)
     mems = await _read_memories(conn, uid)
     apps = await _read_apps(conn, user_email)
+    agents = await _read_agents(conn, user_email)
     crons = await _read_crons(conn, user_email)
     videos = await _read_videos(conn, user_email)
 
     nodes = list(skeleton)
     nodes += attach_chats(user_email, root_id, skeleton, chats)
+    nodes += source_branch(user_email, root_id, AGENTS_HUB, agents, "agent",
+                           hub_url=AGENTS_HUB_URL)
     nodes += source_branch(user_email, root_id, "App Builder Apps", apps, "app",
                            hub_url="/Aiuibuilder")
     nodes += source_branch(user_email, root_id, "Automations & Cron Jobs", crons,
@@ -709,7 +773,8 @@ async def _assemble_live(conn, user_email: str, include_team: bool = False):
     nodes += source_branch(user_email, root_id, "Knowledge Collections", kbs,
                            "document", hub_url="/workspace/knowledge")
     nodes += source_branch(user_email, root_id, "Saved Memories", mems, "memory")
-    counts = {"chats": len(chats), "apps": len(apps), "crons": len(crons),
+    counts = {"chats": len(chats), "agents": len(agents),
+              "apps": len(apps), "crons": len(crons),
               "videos": len(videos), "files": len(files),
               "collections": len(kbs), "memories": len(mems)}
     if include_team:

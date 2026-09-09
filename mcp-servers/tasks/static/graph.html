@@ -11,7 +11,7 @@
     --text: #ececec; --muted: #9b9b9b; --accent: #4a9eff; --accent-ink: #fff;
     --root: #f2a340; --topic: #4a9eff; --subtopic: #35d29a; --leaf: #9aa7b8;
     --chat: #7aa2ff; --document: #8a97a6; --memory: #b98bff; --meeting: #d9a441;
-    --app: #f2795b; --cron: #35c3d2; --video: #e879b9;
+    --app: #f2795b; --cron: #35c3d2; --video: #e879b9; --agent: #8b9dff;
     --link: rgba(255,255,255,0.10); --link-hi: rgba(122,170,255,0.55);
     --shadow: 0 10px 30px rgba(0,0,0,.35);
   }
@@ -21,7 +21,7 @@
       --text: #16202b; --muted: #5c6775; --accent: #2b7fff;
       --root: #e08a1e; --topic: #2b7fff; --subtopic: #12b981; --leaf: #6b7787;
       --chat: #3b74ff; --document: #6b7787; --memory: #9a5cff; --meeting: #b8860b;
-      --app: #e2603f; --cron: #1aa6b5; --video: #d1509b;
+      --app: #e2603f; --cron: #1aa6b5; --video: #d1509b; --agent: #5468d8;
       --dot: rgba(20,30,45,.07);
       --link: rgba(20,30,45,0.12); --link-hi: rgba(43,127,255,0.55);
       --shadow: 0 18px 50px rgba(30,45,70,.14);
@@ -149,6 +149,7 @@
       <span><i class="dot" style="background:var(--root)"></i> Root</span>
       <span><i class="dot" style="background:var(--topic)"></i> Topic</span>
       <span><i class="dot" style="background:var(--subtopic)"></i> Sub-topic</span>
+      <span><i class="dot" style="background:var(--agent)"></i> Agent</span>
       <span><i class="dot" style="background:var(--chat)"></i> Chat</span>
       <span><i class="dot" style="background:var(--app)"></i> App</span>
       <span><i class="dot" style="background:var(--cron)"></i> Automation</span>
@@ -188,10 +189,11 @@
     return { root: g("--root"), topic: g("--topic"), subtopic: g("--subtopic"), leaf: g("--leaf"),
       chat: g("--chat"), document: g("--document"), memory: g("--memory"),
       app: g("--app"), cron: g("--cron"), video: g("--video"), meeting: g("--meeting"),
+      agent: g("--agent"),
       link: g("--link"), linkHi: g("--link-hi"), text: g("--text"), muted: g("--muted") };
   }
   var COL = colors();
-  function radius(k) { return k === "root" ? 13 : k === "topic" ? 9 : k === "subtopic" ? 6.5 : (k === "chat" || k === "memory" || k === "app" || k === "cron" || k === "video") ? 5 : 4.5; }
+  function radius(k) { return k === "root" ? 13 : k === "topic" ? 9 : k === "subtopic" ? 6.5 : (k === "chat" || k === "memory" || k === "app" || k === "cron" || k === "video" || k === "agent") ? 5 : 4.5; }
 
   function setStats(t) { document.getElementById("stats").textContent = t; }
   // Reloading put the word "loading" back where the shimmer had been, so the
@@ -256,12 +258,52 @@
       .finally(function () { building = false; document.getElementById("build").disabled = false; });
   }
 
+  // How the board sits in the window: a pan and a scale. The physics keeps
+  // working in its own coordinates and knows nothing about this, so nothing
+  // about the layout changes when somebody zooms.
+  var view = { x: 0, y: 0, k: 1 };
+  var MIN_K = 0.25, MAX_K = 4;
+
+  function applyView() {
+    ctx.setTransform(DPR * view.k, 0, 0, DPR * view.k,
+                     DPR * view.x, DPR * view.y);
+  }
+
   function resize() {
     var rect = canvas.getBoundingClientRect();
     W = rect.width; H = rect.height;
     canvas.width = W * DPR; canvas.height = H * DPR;
-    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    applyView();
   }
+
+  // Screen pixels to board coordinates. Every hit test and every drag has to
+  // go through this or they are wrong the moment somebody zooms.
+  function toWorld(p) {
+    return { x: (p.x - view.x) / view.k, y: (p.y - view.y) / view.k };
+  }
+
+  // Put everything back on screen. The escape hatch for having zoomed or
+  // panned into empty space, which is easy to do and impossible to undo
+  // without it.
+  function fitView() {
+    if (!nodes.length) { view = { x: 0, y: 0, k: 1 }; applyView(); return; }
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    nodes.forEach(function (n) {
+      if (n.x < minX) minX = n.x;
+      if (n.x > maxX) maxX = n.x;
+      if (n.y < minY) minY = n.y;
+      if (n.y > maxY) maxY = n.y;
+    });
+    var pad = 60;
+    var w = Math.max(maxX - minX, 1), h = Math.max(maxY - minY, 1);
+    var k = Math.min((W - pad * 2) / w, (H - pad * 2) / h, MAX_K);
+    view.k = Math.max(MIN_K, Math.min(MAX_K, k));
+    view.x = W / 2 - ((minX + maxX) / 2) * view.k;
+    view.y = H / 2 - ((minY + maxY) / 2) * view.k;
+    applyView();
+  }
+  window.__aiuiGraphView = function () { return view; };
+  window.__aiuiGraphFit = fitView;
 
   function tick() {
     var cx = W / 2, cy = H / 2, i, j;
@@ -290,7 +332,12 @@
   function neighborsOf(n) { var s = new Set(); links.forEach(function (l) { if (l.a === n) s.add(l.b); if (l.b === n) s.add(l.a); }); return s; }
 
   function draw() {
+    // Cleared in screen space, because the transform moves the origin and a
+    // clear in board coordinates leaves the corners of a panned view dirty.
+    ctx.save();
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.clearRect(0, 0, W, H);
+    ctx.restore();
     var focus = hover || selected, near = focus ? neighborsOf(focus) : null;
     links.forEach(function (l) {
       var on = focus && (l.a === focus || l.b === focus);
@@ -328,23 +375,65 @@
   }
   function pos(e) { var r = canvas.getBoundingClientRect(), t = e.touches ? e.touches[0] : e; return { x: t.clientX - r.left, y: t.clientY - r.top }; }
 
+  var panning = null;   // {sx, sy, vx, vy} when the background is being dragged
+  var moved = 0;        // pixels travelled, so a pan is not read as a click
+
   canvas.addEventListener("mousemove", function (e) {
-    var p = pos(e);
-    if (dragging) { dragging.x = p.x; dragging.y = p.y; return; }
-    hover = nodeAt(p.x, p.y); canvas.style.cursor = hover ? "pointer" : "default";
+    var p = pos(e), w = toWorld(p);
+    if (dragging) { dragging.x = w.x; dragging.y = w.y; return; }
+    if (panning) {
+      moved += Math.abs(p.x - panning.sx) + Math.abs(p.y - panning.sy);
+      view.x = panning.vx + (p.x - panning.sx);
+      view.y = panning.vy + (p.y - panning.sy);
+      applyView();
+      return;
+    }
+    hover = nodeAt(w.x, w.y); canvas.style.cursor = hover ? "pointer" : "grab";
   });
-  canvas.addEventListener("mousedown", function (e) { var n = nodeAt(pos(e).x, pos(e).y); if (n) { dragging = n; frames = 0; } });
-  window.addEventListener("mouseup", function () { dragging = null; });
+
+  canvas.addEventListener("mousedown", function (e) {
+    var p = pos(e), w = toWorld(p), n = nodeAt(w.x, w.y);
+    moved = 0;
+    if (n) { dragging = n; frames = 0; return; }
+    // Empty space moves the board. Which one it is depends on where the drag
+    // STARTED, not on where the pointer is now, or a fast drag off a node
+    // would hand over to panning halfway through.
+    panning = { sx: p.x, sy: p.y, vx: view.x, vy: view.y };
+    canvas.style.cursor = "grabbing";
+  });
+
+  window.addEventListener("mouseup", function () {
+    dragging = null; panning = null;
+    canvas.style.cursor = hover ? "pointer" : "grab";
+  });
+
   canvas.addEventListener("click", function (e) {
-    var n = nodeAt(pos(e).x, pos(e).y);
+    // A pan ends in a click event. Without this, dragging the background
+    // closes the panel somebody was reading.
+    if (moved > 4) return;
+    var w = toWorld(pos(e));
+    var n = nodeAt(w.x, w.y);
     if (n) openPanel(n); else { selected = null; document.getElementById("panel").classList.remove("open"); }
   });
+
+  // Zoom about the pointer, so the thing under the cursor stays under it.
+  // Zooming about the centre makes reaching a corner a fight.
+  canvas.addEventListener("wheel", function (e) {
+    e.preventDefault();
+    var p = pos(e), before = toWorld(p);
+    var k = view.k * Math.pow(0.999, e.deltaY);
+    view.k = Math.max(MIN_K, Math.min(MAX_K, k));
+    view.x = p.x - before.x * view.k;
+    view.y = p.y - before.y * view.k;
+    applyView();
+  }, { passive: false });
 
   function openPanel(n) {
     selected = n;
     var kinds = { root: "Root", topic: "Topic", subtopic: "Sub-topic", leaf: "Leaf",
                   chat: "Chat", document: "Document", memory: "Memory",
-                  app: "App", cron: "Automation", video: "Video", meeting: "Meeting" };
+                  app: "App", cron: "Automation", video: "Video", meeting: "Meeting",
+                  agent: "AI Agent" };
     document.getElementById("pkind").textContent = kinds[n.kind] || n.kind;
     document.getElementById("pkind").style.color = COL[n.kind] || COL.leaf;
     document.getElementById("plabel").textContent = n.label;
@@ -388,6 +477,10 @@
       if (n.kind !== "root") { n.x = W / 2 + Math.cos(ang) * r; n.y = H / 2 + Math.sin(ang) * r; n.vx = n.vy = 0; }
     });
     frames = 0;
+    // The pan and zoom go back too. "Reset view" that re-runs the layout but
+    // leaves somebody zoomed into an empty corner has not reset the view.
+    view.x = 0; view.y = 0; view.k = 1;
+    applyView();
   });
   document.getElementById("build").addEventListener("click", build);
   document.getElementById("refresh").addEventListener("click", load);

@@ -284,3 +284,65 @@ def test_meeting_item_composition():
     assert meeting_item("Standup", "", None, None) == \
         {"label": "Standup", "summary": None, "url": None}
     assert meeting_item("", "2026-01-01", "s", None)["label"] == "meeting"
+
+
+# --- agents in the graph ----------------------------------------------------
+
+# Ralph: "add in the graph the agents... make sure every user have the graph".
+# Measured before building: nine users, four with an empty graph because they
+# have fewer than the three chats the topic clustering needs. One of those
+# four has two agents and no chats at all, so agents are the one thing a new
+# user has before they have any history worth clustering.
+
+def test_an_agent_becomes_a_node_with_its_role_and_skills():
+    from routes_knowledge_graph import agent_item
+    out = agent_item("Ada", "Project manager", ["daily-standup", "weekly-review"],
+                     "gpt-4o-mini")
+    assert out["label"] == "Ada"
+    assert "Project manager" in out["summary"]
+    assert "2 skills" in out["summary"]
+    assert out["url"] == "/ai-agents"
+
+
+def test_an_agent_with_nothing_set_still_reads_sensibly():
+    """Every agent that predates roles and skills has neither, and they are
+    the ones most likely to be sitting in somebody's account unused."""
+    from routes_knowledge_graph import agent_item
+    out = agent_item("Scout", None, [], None)
+    assert out["label"] == "Scout"
+    assert out["summary"]
+    assert "None" not in out["summary"]
+    assert "0 skills" not in out["summary"], "say nothing rather than zero"
+
+
+def test_one_skill_is_not_reported_as_skills():
+    from routes_knowledge_graph import agent_item
+    assert "1 skill " in agent_item("Ada", None, ["inbox-triage"], None)["summary"] \
+        or agent_item("Ada", None, ["inbox-triage"], None)["summary"].endswith("1 skill")
+
+
+def test_the_agents_hub_is_reserved_like_every_other_live_source():
+    """Hubs are generated fresh on every read. Without this entry an older
+    stored copy would render alongside the live one and the page would show
+    two AI Agents branches."""
+    from routes_knowledge_graph import RESERVED_HUBS
+    assert "AI Agents" in RESERVED_HUBS
+
+
+def test_the_agents_hub_links_to_the_agents_page():
+    from routes_knowledge_graph import AGENTS_HUB, AGENTS_HUB_URL, source_branch
+    out = source_branch("u@x.com", "rid", AGENTS_HUB,
+                        [{"label": "Ada", "summary": "Project manager",
+                          "url": AGENTS_HUB_URL}], "agent",
+                        hub_url=AGENTS_HUB_URL)
+    hub = out[0]
+    assert hub["label"] == "AI Agents"
+    assert hub["url"] == "/ai-agents"
+    assert out[1]["kind"] == "agent"
+
+
+def test_no_agents_means_no_empty_hub():
+    """A hub with nothing under it is worse than no hub: it tells a new user
+    the feature is broken rather than unused."""
+    from routes_knowledge_graph import AGENTS_HUB, source_branch
+    assert source_branch("u@x.com", "rid", AGENTS_HUB, [], "agent") == []
