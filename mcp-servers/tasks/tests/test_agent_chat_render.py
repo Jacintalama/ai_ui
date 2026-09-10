@@ -234,3 +234,72 @@ def test_an_approval_bubble_carries_the_same_mark():
     assert "linear-gradient" in html
     assert ">MI<" in html
     assert "\n" not in html
+
+
+# --- a failure is drawn as a failure, not a bubble --------------------------
+#
+# These used to arrive as prose in the thread, in the same shape as an
+# answer, and a failure that looks like an answer is one people re-read as an
+# answer.
+
+def test_a_failure_is_not_a_bubble():
+    from agent_chat_render import failure
+    html = failure("Ada", "The free models are all busy.")
+    assert "afail" in html
+    assert 'class="am agent"' not in html, "it renders as an answer"
+    assert "Ada" in html
+    assert "The free models are all busy." in html
+
+
+def test_a_failure_can_carry_the_fix():
+    from agent_chat_render import failure
+    html = failure("Ada", "The free models are all busy.",
+                   "Ada is set to Auto (Free). Pick a specific model.")
+    assert "Pick a specific model." in html
+
+
+def test_a_failure_without_a_fix_shows_no_fix_line():
+    """The fix line is real markup (afail-fix), not just an empty string
+    inside afail-what. Something has to fail if the fragment always emitted
+    the wrapper, fix text or not."""
+    from agent_chat_render import failure
+    html = failure("Ada", "The free models are all busy.")
+    assert "afail-fix" not in html
+
+
+def test_a_failure_escapes_everything():
+    from agent_chat_render import failure
+    html = failure("<b>x</b>", "<i>y</i>", "<u>z</u>")
+    for tag in ("<b>", "<i>", "<u>"):
+        assert tag not in html
+
+
+def test_a_stored_failure_replays_with_its_own_reason_and_fix():
+    """Step 8's replay must show what was actually on screen live, not
+    rewrite a specific failure into the generic one. See routes_agent_chat's
+    ROUTER_EXHAUSTED branch, which is what stores a reason and a fix."""
+    from agent_chat_render import thread
+    html = thread([
+        {"role": "user", "content": "hi"},
+        {"role": "failure", "agent_name": "Ada",
+         "content": "the router gave up",
+         "reason": "The free models are all busy right now.",
+         "fix": "This agent is set to Auto (Free). Choosing a specific "
+                "model on its card fixes this."},
+    ])
+    assert "afail" in html
+    assert 'class="am agent"' not in html, "it replayed as an answer"
+    assert "The free models are all busy right now." in html
+    assert "Choosing a specific model on its card fixes this." in html
+
+
+def test_a_stored_failure_without_a_reason_falls_back_to_the_generic_one():
+    """Older conversations were saved before reason/fix existed. A missing
+    key here must not blank the failure out or raise on reload."""
+    from agent_chat_render import GENERIC_FAILURE_REASON, thread
+    html = thread([
+        {"role": "user", "content": "hi"},
+        {"role": "failure", "agent_name": "Ada", "content": "whatever"},
+    ])
+    assert "afail" in html
+    assert GENERIC_FAILURE_REASON in html

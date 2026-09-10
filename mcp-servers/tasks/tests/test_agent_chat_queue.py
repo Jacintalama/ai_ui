@@ -283,6 +283,77 @@ async def _agents_stub():
     return [{"id": "agent-a", "name": "Ada"}]
 
 
+# --- a failed turn renders as a failure, not a bubble ------------------------
+#
+# _turn_for never raises: one agent blowing up must not cost the others their
+# answer. So a failure comes back as an ordinary answer string, and the round
+# is the only place that can tell one from a real answer.
+
+async def test_a_failed_agent_renders_as_a_failure(monkeypatch):
+    """_turn_for never raises; it returns the failure sentence as an answer,
+    which is exactly how a failure became a bubble."""
+    import routes_agent_turn as rt
+    s = store.get_session(_User.email)
+    await _send("hi")
+
+    async def failing(email, agent, history, names=()):
+        return {"answer": rt._turn_failed_sentence("Ada"), "notes": [],
+                "agent": {"id": "agent-a", "name": "Ada"}}
+
+    monkeypatch.setattr(chat, "_turn_for", failing)
+    monkeypatch.setattr(chat, "_agents_for",
+                        lambda e: _agents_stub())
+    monkeypatch.setattr(chat, "_keep_within_budget",
+                        lambda e, sess, a: _nothing())
+    monkeypatch.setattr(store, "save_chat", lambda e, sess: _nothing())
+    events = []
+    resp = await chat.agent_chat_stream(request=_Req(), user=_User())
+    async for event in resp.body_iterator:
+        events.append(str(event))
+    assert any("afail" in e for e in events), events
+    # Not just "afail somewhere in the stream": the same answer must not ALSO
+    # have gone out as a bubble, which is exactly the bug being fixed here.
+    assert not any('class=\\"am agent\\"' in e or 'class="am agent"' in e
+                  for e in events), events
+    assert any(m.get("role") == "failure" for m in s.messages), s.messages
+    assert not any(m.get("role") == "assistant" for m in s.messages), \
+        "the failure was also stored as an answer"
+
+
+async def test_the_free_router_giving_up_also_renders_as_a_failure(
+        monkeypatch):
+    """agent_runner.ROUTER_EXHAUSTED comes back as an ordinary answer string
+    the same way _turn_failed_sentence does, and it is the case Ralph
+    actually hits: an agent left on Auto (Free) when the shared pool runs
+    out. Left unmatched it would still read as a real reply."""
+    from agent_runner import ROUTER_EXHAUSTED
+    s = store.get_session(_User.email)
+    await _send("hi")
+
+    async def exhausted(email, agent, history, names=()):
+        return {"answer": ROUTER_EXHAUSTED, "notes": [],
+                "agent": {"id": "agent-a", "name": "Ada"}}
+
+    monkeypatch.setattr(chat, "_turn_for", exhausted)
+    monkeypatch.setattr(chat, "_agents_for",
+                        lambda e: _agents_stub())
+    monkeypatch.setattr(chat, "_keep_within_budget",
+                        lambda e, sess, a: _nothing())
+    monkeypatch.setattr(store, "save_chat", lambda e, sess: _nothing())
+    events = []
+    resp = await chat.agent_chat_stream(request=_Req(), user=_User())
+    async for event in resp.body_iterator:
+        events.append(str(event))
+    assert any("afail" in e for e in events), events
+    assert any("Auto (Free)" in e for e in events), events
+    assert not any('class=\\"am agent\\"' in e or 'class="am agent"' in e
+                  for e in events), events
+    failures = [m for m in s.messages if m.get("role") == "failure"]
+    assert failures, s.messages
+    assert failures[0]["reason"] == "The free models are all busy right now."
+    assert "Auto (Free)" in failures[0]["fix"]
+
+
 # --- where a queued message actually lands ----------------------------------
 
 # Found by reading the DOM wiring rather than by a failing test, which is the

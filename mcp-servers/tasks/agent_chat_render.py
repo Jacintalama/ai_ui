@@ -224,6 +224,25 @@ def note(text: str) -> str:
     return f'<div class="am note">{esc(text)}</div>'
 
 
+#: What a failure says when the round did not have a more specific reason to
+#: give, and what a stored failure falls back to when it predates recording
+#: one at all (an older conversation, saved before this field existed).
+GENERIC_FAILURE_REASON = "Something went wrong on our side. Nothing was changed."
+
+
+def failure(name: str, reason: str, fix: str = "") -> str:
+    """An agent that could not answer, drawn as a failure.
+
+    Deliberately not a bubble. These used to arrive as prose in the thread,
+    in the same shape as an answer, and a failure that looks like an answer
+    is one people re-read as an answer.
+    """
+    tail = f'<div class="afail-fix">{esc(fix)}</div>' if fix else ""
+    return ('<div class="afail">'
+            f'<div class="afail-what">{esc(name)} could not answer. '
+            f'{esc(reason)}</div>{tail}</div>')
+
+
 def stream_block() -> str:
     """The element that opens the SSE connection for one round.
 
@@ -252,9 +271,10 @@ def empty_thread() -> str:
 def thread(messages: list[dict]) -> str:
     """A saved conversation replayed, grouped into turns.
 
-    Roles other than user, assistant and note are the round bookkeeping (see
-    routes_agent_chat) and render as nothing. Notes ARE drawn, because a round
-    stores them on purpose: a skipped agent said out loud while the round ran
+    Roles other than user, assistant, note and failure are the round
+    bookkeeping (see routes_agent_chat) and render as nothing. Notes and
+    failures ARE drawn, because a round stores them on purpose: a skipped
+    agent, or one that could not answer, said out loud while the round ran
     and then gone on reload leaves a conversation that no longer makes sense.
 
     Every user message opens a new turn, closing whichever one was open, so
@@ -283,6 +303,14 @@ def thread(messages: list[dict]) -> str:
         if role == "note":
             if content:
                 out.append(note(content))
+        elif role == "failure":
+            # reason/fix are the ones stored when the round hit this, kept so
+            # a reload shows the same words that were on screen live. Falls
+            # back to the generic reason only for a message saved before
+            # these fields existed.
+            out.append(failure(str(m.get("agent_name") or "That agent"),
+                               str(m.get("reason") or GENERIC_FAILURE_REASON),
+                               str(m.get("fix") or "")))
         elif role == "assistant":
             name = str(m.get("agent_name") or "Agent")
             if content:

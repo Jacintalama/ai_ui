@@ -22,9 +22,9 @@ import agent_chat_store as store
 from auth import CurrentUser, current_user
 import agent_access
 import agent_routing
-from agent_runner import CHANNEL_HTTP_TIMEOUT_SECONDS, _chat
+from agent_runner import CHANNEL_HTTP_TIMEOUT_SECONDS, ROUTER_EXHAUSTED, _chat
 from routes_agent_turn import (_agents_for, _resolve_agent,
-                               _resume_turn, _turn_for)
+                               _resume_turn, _turn_failed_sentence, _turn_for)
 from routes_agents import _pending_for_page
 
 log = logging.getLogger(__name__)
@@ -320,6 +320,31 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
                                        "content": PASS_INSTRUCTION}]
         out = await _turn_for(email, agent, turn_history, names)
         answer = out.get("answer") or ""
+
+        # _turn_for never raises: one agent blowing up must not cost the
+        # others their answer. So a failure arrives here as an ordinary
+        # answer string, and this is the only place that can tell. Two
+        # sentences are recognised, because they are the two ways a failure
+        # comes back looking like a real answer; a stale model cache is not
+        # among them; it refreshes and retries inside _turn_for and never
+        # surfaces a sentence of its own to match on.
+        if answer == _turn_failed_sentence(name):
+            reason = render.GENERIC_FAILURE_REASON
+            messages.append({"role": "failure", "agent_name": name,
+                             "content": answer, "reason": reason})
+            yield {"event": "message",
+                   "data": render.into_turn(tid, render.failure(name, reason))}
+            continue
+        if answer == ROUTER_EXHAUSTED:
+            reason = "The free models are all busy right now."
+            fix = ("This agent is set to Auto (Free). Choosing a specific "
+                  "model on its card fixes this.")
+            messages.append({"role": "failure", "agent_name": name,
+                             "content": answer, "reason": reason, "fix": fix})
+            yield {"event": "message",
+                   "data": render.into_turn(tid, render.failure(
+                       name, reason, fix))}
+            continue
 
         if may_pass and _is_pass(answer) and not out.get("pending"):
             # It listened and had nothing to say. No bubble, nothing stored:
