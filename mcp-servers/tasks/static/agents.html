@@ -142,14 +142,25 @@
   }
   .tag .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 
-  .card { padding: 14px 16px 11px; border-radius: var(--radius-lg); }
+  /* The avatar already gives every agent a colour. The card borrows it for
+     its border so a wall of cards is scannable by colour before you read a
+     single name. Kept low: this is identification, not decoration, and the
+     hover state is what should draw the eye. */
+  .card { padding: 15px 16px 12px; border-radius: var(--radius-lg);
+          border-color: hsl(var(--agent-hue, 240) 30% 24%); }
+  .card:hover { border-color: hsl(var(--agent-hue, 240) 45% 40%); }
   .card-head { align-items: center; gap: 12px; }
   .avatar {
     width: 38px; height: 38px; border-radius: 10px; flex: 0 0 38px;
     font-size: 12.5px; font-weight: 700; letter-spacing: 0.3px;
   }
-  .card-heading { gap: 8px; flex: 1; flex-direction: row;
-                  align-items: baseline; min-width: 0; }
+  /* Two lines, not one. The name carries the state beside it, the way you
+     read a person's name and then whether they are in. The role drops to its
+     own line underneath rather than competing with both. */
+  .card-heading { gap: 3px; flex: 1; flex-direction: column;
+                  align-items: stretch; min-width: 0; }
+  .card-name-row { display: flex; align-items: center; gap: 9px;
+                   min-width: 0; }
   .card-title { font-size: 15px; font-weight: 650; letter-spacing: -0.1px; }
   /* The model an agent thinks with is the second thing you want to know and
      the card never showed it. Quiet, because it is reference, not identity. */
@@ -186,8 +197,14 @@
   /* Ready or busy, and how long the last one took. An agent is not a
      service that is up or down: it sleeps until something asks it to work,
      so "working" means a run is actually in flight right now. */
-  .card-activity { display: flex; align-items: center; gap: 7px; margin-top: 7px;
-                   font-size: 11.5px; color: var(--muted); min-height: 15px; }
+  /* Inline beside the name now, so it has no margin of its own and does not
+     shrink when the name is long. The last-run detail is on the title rather
+     than in the line: the spec calls it detail rather than state, and reading
+     "used 8 hours ago" every time you glance at a card is what made the old
+     line feel like noise. */
+  .card-activity { display: inline-flex; align-items: center; gap: 6px;
+                   font-size: 11.5px; color: var(--muted); flex: 0 0 auto;
+                   white-space: nowrap; }
   /* The dot carries the state on its own, so a row of cards can be read
      without reading any of the words: green while a run is actually in
      flight or once it has finished cleanly, amber when the run stopped to
@@ -560,6 +577,10 @@
   .conn-err { color: #f87171; font-size: 12px; min-height: 0; margin-bottom: 8px; }
   .form-error { color: #f87171; font-size: 12.5px; min-height: 0; margin-top: 16px; }
   .form-error:empty { margin-top: 0; }
+  .ap-title { min-width: 0; }
+  .ap-title h2 { margin-bottom: 2px; }
+  .ap-sub { margin: 0; font-size: 11.5px; color: var(--muted);
+            line-height: 1.45; }
   .form-actions { display: flex; gap: 9px; justify-content: flex-end; margin-top: 6px; }
   /* Saving used to say nothing at all, so there was no way to tell a save
      that worked from one that quietly did not. Ralph asked for this. */
@@ -717,7 +738,13 @@
           aria-orientation="vertical" aria-label="Resize the agents column"
           title="Drag to resize"></button>
   <div class="ap-head">
-    <h2>Chat with your agents</h2>
+    <div class="ap-title">
+      <h2>Chat with your agents</h2>
+      <!-- The panel never said what it was. Everyone who has opened it has
+           had to work out from the placeholder that naming an agent picks
+           one and saying nothing asks them all. -->
+      <p class="ap-sub">Everyone hears you. Name one to ask only them.</p>
+    </div>
     <!-- One permanent room. Nobody is seated and nothing is listed: every
          agent hears every message, and this is the same conversation you
          left. Clearing it is the only destructive thing here, so it is the
@@ -1050,6 +1077,9 @@
       var el = document.createElement("div");
       el.className = "card";
       el.setAttribute("data-agent-id", m.id);
+      // Same hue the avatar is built from, so the border and the badge always
+      // agree about which agent this is.
+      el.style.setProperty("--agent-hue", String(avatarHue(m.name)));
       // Same blanking as duplicate: a ready-made agent's params come back
       // empty because it is read-only to you, so fall back to the meta copy or
       // its card would be a blank rectangle.
@@ -1068,9 +1098,15 @@
             + "hsl(" + hue + " 58% 46%),hsl(" + ((hue + 26) % 360) + " 58% 34%))"
             + '">' + esc(initials(m.name)) + "</div>" +
           '<div class="card-heading">' +
+            '<div class="card-name-row">' +
             // Only the name goes in here. A test asserts this text equals the
             // agent's name exactly, and it is also the XSS surface.
             '<div class="card-title">' + esc(m.name) + "</div>" +
+            // Beside the name, where you look anyway, rather than on a line
+            // of its own underneath the whole heading.
+            '<span class="card-activity" data-activity-for="'
+              + esc(m.id) + '"></span>' +
+            "</div>" +
             (role
               ? '<div class="card-role">' + esc(role) + "</div>"
               : (model ? '<div class="card-model">' + esc(model) + "</div>" : "")) +
@@ -1079,8 +1115,6 @@
             ? '<span class="tag"><span class="dot"></span>Shared with everyone</span>'
             : "") +
         "</div>" +
-        '<div class="card-activity" data-activity-for="' + esc(m.id) + '">'
-          + "</div>" +
         '<div class="card-sys">' + esc(preview(sys, 96)) + "</div>" +
         // One row, not three. Skills first because what an agent knows how to
         // do says more about it than what it can reach, then the tools, then
@@ -1409,10 +1443,16 @@
           continue;
         }
         if (a.state === "working") {
+          // Elapsed stays ON the line here, unlike every other state. How
+          // long a run has been going is the whole question while it is
+          // going: it is the difference between working and stuck. The
+          // last-run time on a finished agent is not that, which is why only
+          // that one is demoted to the title.
           el.classList.add("working");
+          el.title = "";
           el.innerHTML = '<span class="dot"></span><span>Working'
             + (a.running_for_seconds !== undefined
-                 ? " \u00b7 " + esc(secs(a.running_for_seconds)) : "")
+                 ? " · " + esc(secs(a.running_for_seconds)) : "")
             + "</span>";
           continue;
         }
@@ -1429,8 +1469,14 @@
             && a.last_duration_seconds !== undefined) {
           bits.push("took " + secs(a.last_duration_seconds));
         }
-        el.innerHTML = '<span class="dot"></span><span>' + STATE_WORD[state]
-          + (bits.length ? " \u00b7 " + esc(bits.join(", ")) : "") + "</span>";
+        // The word is the state. The detail rides on the title, because the
+        // spec is explicit that the last-run time is detail rather than the
+        // state, and a card you glance at should answer "is it fine" without
+        // making you read a timestamp to find out.
+        el.title = bits.length
+          ? STATE_WORD[state] + ", " + bits.join(", ") : STATE_WORD[state];
+        el.innerHTML = '<span class="dot"></span><span>'
+          + STATE_WORD[state] + "</span>";
       }
     }
 

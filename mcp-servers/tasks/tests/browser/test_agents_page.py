@@ -267,6 +267,14 @@ DUPLICATE_ID_BODY = json.dumps({"detail": "Uh-oh! This model id is already "
 def _open_form(page):
     page.locator("#new-agent").click()
     page.wait_for_selector("#agent-form", state="visible")
+    # Skills are collapsed by default now, so every test that touches one has
+    # to open the panel the way a person does. That collapsed default is
+    # asserted in test_agents_tools_live.py, so opening it here hides nothing:
+    # this file is about what the skills list does once you are in it.
+    toggle = page.locator("#skills-toggle")
+    if toggle.count() and toggle.get_attribute("aria-expanded") != "true":
+        toggle.click()
+        page.wait_for_selector("#skills-panel", state="visible")
 
 
 def _fill(page, name="Researcher", instructions="Research carefully."):
@@ -602,10 +610,16 @@ def test_a_long_instruction_is_not_cut_mid_word(page):
 
 
 def test_the_card_says_what_the_agent_can_reach(page):
-    """Tools are the whole point of an agent, and the card showed none."""
+    """Tools are the whole point of an agent, and the card showed none.
+
+    The connected-apps chip is gone on purpose: it named a tool id where what
+    a person actually wants is the scope, so the card leads with that instead
+    and no longer repeats server:mcp-proxy as though it were a tool.
+    """
     chips = page.locator(
         '#my-agents [data-agent-id="agent-mine-a1b2"] .chip').all_inner_texts()
-    assert "Your connected apps" in chips, chips
+    assert "Every tool you have" in chips, chips
+    assert "Your connected apps" not in chips, chips
 
 
 def test_an_agent_with_no_tools_says_so(page):
@@ -613,7 +627,10 @@ def test_an_agent_with_no_tools_says_so(page):
     # agent, and nothing shared is listed any more.
     chips = page.locator(
         '[data-agent-id="agent-mine-second-c5d6"] .chip').all_inner_texts()
-    assert chips == ["No tools"], chips
+    # The scope comes first, then the emptiness. An agent set to everything
+    # with no tools of its own is a different thing from one narrowed to
+    # nothing, and the card has to be able to say which.
+    assert chips == ["Every tool you have", "No tools"], chips
 
 
 def test_search_narrows_the_list(page):
@@ -941,10 +958,15 @@ def test_a_finished_agent_reads_as_ready(page):
         "state": "ready", "last_status": "completed",
         "last_run_at": "2026-08-28T12:00:00+00:00",
         "last_duration_seconds": 2, "source": "channel"}})
-    text = page.locator('[data-activity-for="agent-mine-a1b2"]').inner_text()
+    line = page.locator('[data-activity-for="agent-mine-a1b2"]')
+    text = line.inner_text()
     assert "Ready" in text
     assert "Idle" not in text and "Awake" not in text
-    assert "took 2s" in text
+    # The state is the line; the last run is detail. Reading "used 8 hours
+    # ago" on every glance is what made the old line feel like a log entry
+    # rather than a status. It is kept, on the title.
+    assert "took 2s" not in text, text
+    assert "took 2s" in (line.get_attribute("title") or "")
 
 
 def test_ready_is_green_and_does_not_pulse(page):
@@ -1247,14 +1269,24 @@ def test_a_card_is_short_enough_to_scan_a_screenful(page):
     assert box["height"] < 240, box["height"]
 
 
-def test_the_name_and_role_share_a_line(page):
-    """The role is two or three words. Giving it a line of its own costs
-    twenty pixels a card for nothing."""
+def test_the_state_sits_beside_the_name_and_the_role_below(page):
+    """The name answers who, the state answers whether it is fine, and those
+    two belong together. The role is a description and reads underneath, which
+    also stops a long role squeezing the state off the line."""
     card = page.locator('#my-agents [data-agent-id="agent-mine-a1b2"]')
     name = card.locator(".card-title").bounding_box()
+    state = card.locator(".card-activity").bounding_box()
     role = card.locator(".card-role").bounding_box()
-    assert role["x"] > name["x"] + name["width"] - 1, "the role is not beside the name"
-    assert abs(role["y"] - name["y"]) < 8, "they are on different lines"
+    def mid(b):
+        # Centres, not tops. The name is 15px and the state is 11.5px, so two
+        # things sitting on the same line have boxes that start at different
+        # heights. Comparing tops measures the font size, not the layout.
+        return b["y"] + b["height"] / 2
+
+    assert state["x"] > name["x"] + name["width"] - 1, "the state is not beside the name"
+    assert abs(mid(state) - mid(name)) < 6, (
+        "the state is on another line", mid(state), mid(name))
+    assert mid(role) > mid(name) + 6, "the role is not below the name"
 
 
 def test_skills_and_tools_share_one_row(page):
@@ -1419,12 +1451,23 @@ def test_a_new_form_goes_back_to_everything(page):
     assert page.is_checked("#use-my-apps")
 
 
-def test_the_tool_list_scrolls_rather_than_growing(page):
+def test_the_tool_list_never_pushes_save_off_screen(page):
     """Ralph asked for this directly: the list gets longer as tools are added
-    and must not keep pushing the rest of the form down."""
+    and must not keep pushing the rest of the form down.
+
+    It used to be delivered by giving the list its own scroll box, which is
+    what made the wheel unpredictable inside an already scrolling modal. The
+    requirement was never "this list scrolls", it was "the form stays usable
+    as the list grows", so that is what is asserted now: Save is on screen
+    with the whole tool list open.
+    """
     _open_form(page)
     page.uncheck("#use-my-apps")
-    page.wait_for_timeout(120)
-    overflow = page.locator("#native-tools").evaluate(
-        "el => getComputedStyle(el).overflowY")
-    assert overflow in ("auto", "scroll"), overflow
+    page.wait_for_timeout(150)
+    assert page.locator("#native-tools").is_visible()
+    btn = page.locator("#agent-save")
+    assert btn.is_visible()
+    box = btn.bounding_box()
+    modal = page.locator("#agent-form").bounding_box()
+    assert box["y"] + box["height"] <= modal["y"] + modal["height"] + 1, (
+        box, modal)
