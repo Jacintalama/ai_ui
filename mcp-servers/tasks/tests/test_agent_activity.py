@@ -8,8 +8,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import agent_activity
-from agent_activity import (AWAKE_FOR, STALE_AFTER_CHANNEL,
-                            STALE_AFTER_SCHEDULE, _shape)
+from agent_activity import (STALE_AFTER_CHANNEL, STALE_AFTER_SCHEDULE,
+                            _shape)
 
 NOW = datetime(2026, 8, 28, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -25,67 +25,67 @@ def test_a_run_in_flight_reads_as_working_with_its_elapsed_time():
     assert out["running_for_seconds"] == 14
 
 
-def test_a_finished_run_reads_as_awake_with_how_long_it_took():
-    """Ralph asked for this looking at a card that said Idle one second after
-    Ada answered him. An agent he just spoke to is not idle; it is awake and
-    it stays awake for a while."""
+def test_a_finished_run_reads_as_ready():
+    """Ralph: "fix the idle and active, it seems not accurate". It was
+    accurate and it answered the wrong question. Ready is true whether it ran
+    a second ago or last week, which is why it will stop feeling wrong."""
     out = _shape(_row(NOW - timedelta(seconds=30),
                       finished=NOW - timedelta(seconds=22),
                       status="completed"), NOW)
-    assert out["state"] == "awake"
-    assert out["last_status"] == "completed"
+    assert out["state"] == "ready"
     assert out["last_duration_seconds"] == 8
 
 
-def test_an_agent_left_alone_long_enough_goes_idle():
-    out = _shape(_row(NOW - AWAKE_FOR - timedelta(minutes=2),
-                      finished=NOW - AWAKE_FOR - timedelta(minutes=1),
-                      status="completed"), NOW)
-    assert out["state"] == "idle"
+def test_ready_does_not_go_stale():
+    """The specific thing that felt wrong: an agent that worked perfectly an
+    hour ago was reported as Idle, which reads as switched off."""
+    old = _shape(_row(NOW - timedelta(days=3),
+                      finished=NOW - timedelta(days=3), status="completed"), NOW)
+    assert old["state"] == "ready"
 
 
-def test_the_clock_runs_from_the_END_of_the_run_not_the_start():
-    """A twenty minute scheduled run that finished a moment ago is awake. Off
-    started_at it would be called idle the instant it finished, which is the
-    bug being fixed, just harder to see."""
-    out = _shape(_row(NOW - timedelta(minutes=20),
-                      finished=NOW - timedelta(seconds=5),
-                      status="completed"), NOW)
-    assert out["state"] == "awake"
+def test_a_run_that_stopped_to_ask_needs_you():
+    out = _shape(_row(NOW - timedelta(seconds=30), finished=NOW,
+                      status="waiting"), NOW)
+    assert out["state"] == "waiting"
 
 
-def test_talking_again_puts_it_back_to_awake():
-    """The reset is not special code: each turn writes its own run row and the
-    card reads the newest one. This pins that the newest row is all it takes,
-    so nobody later adds a "first seen" field thinking one is needed."""
-    stale = _shape(_row(NOW - AWAKE_FOR - timedelta(minutes=5),
-                        finished=NOW - AWAKE_FOR - timedelta(minutes=4),
-                        status="completed"), NOW)
-    assert stale["state"] == "idle"
-    fresh = _shape(_row(NOW - timedelta(seconds=3), finished=NOW,
-                        status="completed"), NOW)
-    assert fresh["state"] == "awake"
+def test_a_failed_run_reads_as_failed():
+    out = _shape(_row(NOW - timedelta(seconds=30), finished=NOW,
+                      status="failed"), NOW)
+    assert out["state"] == "failed"
+
+
+def test_a_run_in_flight_still_reads_as_working():
+    assert _shape(_row(NOW - timedelta(seconds=5)), NOW)["state"] == "working"
+
+
+def test_awake_is_gone():
+    """Left behind, it would be two names for one thing and the page would
+    have to handle both."""
+    assert not hasattr(agent_activity, "AWAKE_FOR")
+    for status in ("completed", "failed", "waiting"):
+        out = _shape(_row(NOW - timedelta(seconds=9), finished=NOW,
+                          status=status), NOW)
+        assert out["state"] in ("ready", "failed", "waiting"), out
 
 
 @pytest.mark.parametrize("status", ["failed", "waiting"])
-def test_a_run_that_needs_a_person_never_reads_as_awake(status):
-    """Failed and Needs approval are red because they want you. Ten minutes of
-    green over the top of either would hide the one thing worth seeing."""
+def test_a_run_that_needs_a_person_reads_as_that_and_not_ready(status):
+    """Failed and Needs you are drawn differently from Ready because they
+    want a person, and hiding either behind a generic Ready would hide the
+    one thing worth seeing."""
     out = _shape(_row(NOW - timedelta(seconds=30), finished=NOW,
                       status=status), NOW)
-    assert out["state"] == "idle"
+    assert out["state"] == status
     assert out["last_status"] == status
 
 
-def test_a_run_still_in_flight_is_working_not_merely_awake():
-    """Working outranks awake: the pulse means it is thinking right now, and
+def test_a_run_still_in_flight_is_working_not_merely_ready():
+    """Working outranks ready: the pulse means it is thinking right now, and
     an in-flight run must not be flattened into "used recently"."""
     out = _shape(_row(NOW - timedelta(seconds=5)), NOW)
     assert out["state"] == "working"
-
-
-def test_awake_is_the_ten_minutes_ralph_asked_for():
-    assert AWAKE_FOR == timedelta(minutes=10)
 
 
 @pytest.mark.parametrize("source,cut_off", [
@@ -97,7 +97,7 @@ def test_an_abandoned_run_is_not_shown_as_working_forever(source, cut_off):
     for the rest of time is a lie the card can never recover from, and this
     codebase already wedged run-now once on exactly that."""
     out = _shape(_row(NOW - cut_off - timedelta(minutes=1), source=source), NOW)
-    assert out["state"] == "idle"
+    assert out["state"] == "failed"
     assert out["last_status"] == "failed"
 
 
@@ -118,7 +118,7 @@ def test_a_chat_run_gives_up_sooner_than_a_scheduled_one():
     working. Nobody watches a schedule in real time."""
     assert STALE_AFTER_CHANNEL < STALE_AFTER_SCHEDULE
     at_eleven = NOW - timedelta(minutes=11)
-    assert _shape(_row(at_eleven, source="channel"), NOW)["state"] == "idle"
+    assert _shape(_row(at_eleven, source="channel"), NOW)["state"] == "failed"
     assert _shape(_row(at_eleven, source="schedule"), NOW)["state"] == "working"
 
 
@@ -143,14 +143,14 @@ def test_an_unknown_source_is_treated_as_a_chat_run():
     """The shorter cut-off is the safer default for anything watched, and a
     source this module does not recognise is not a schedule."""
     out = _shape(_row(NOW - timedelta(minutes=11), source="something-new"), NOW)
-    assert out["state"] == "idle"
+    assert out["state"] == "failed"
 
 
 def test_a_failed_run_says_so_rather_than_hiding_it():
     out = _shape(_row(NOW - timedelta(seconds=9),
                       finished=NOW - timedelta(seconds=1),
                       status="failed"), NOW)
-    assert out["state"] == "idle"
+    assert out["state"] == "failed"
     assert out["last_status"] == "failed"
 
 

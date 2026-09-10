@@ -180,29 +180,30 @@
                             background: rgba(124,140,255,0.10); }
   .card-chips .chip.model, .card-chips .chip.more, .card-chips .chip.none {
     color: var(--muted); font-variant-numeric: tabular-nums; }
-  /* Awake or asleep, and how long the last one took. An agent is not a
+  /* Ready or busy, and how long the last one took. An agent is not a
      service that is up or down: it sleeps until something asks it to work,
      so "working" means a run is actually in flight right now. */
   .card-activity { display: flex; align-items: center; gap: 7px; margin-top: 7px;
                    font-size: 11.5px; color: var(--muted); min-height: 15px; }
   /* The dot carries the state on its own, so a row of cards can be read
      without reading any of the words: green while a run is actually in
-     flight, amber resting between runs, red when the run stopped on
-     something only a person can clear. Grey is the fourth case, an agent
-     that has never run, and that line draws no dot at all. */
+     flight or once it has finished cleanly, amber when the run stopped to
+     ask a person something, red when it failed. Grey is the fourth case, an
+     agent that has never run, and that line draws no dot at all. */
   .card-activity .dot { width: 7px; height: 7px; border-radius: 50%;
                         background: var(--border-2); flex: 0 0 7px; }
   .card-activity.working { color: #4ade80; }
   .card-activity.working .dot { background: #4ade80;
                                 animation: livePulse 1.6s ease-in-out infinite; }
-  /* Awake: used recently, not running anything this second. Green like
-     working, because both mean the agent is with you, and NOT pulsing,
-     because the pulse is the one signal that means it is thinking right
-     now. Pulsing for ten minutes after every answer would spend it. */
-  .card-activity.awake { color: #4ade80; }
-  .card-activity.awake .dot { background: #4ade80; }
-  .card-activity.idle .dot { background: #fbbf24; }
-  .card-activity.blocked .dot { background: #f87171; }
+  /* Green because the agent is fine, and NOT pulsing: the pulse is reserved
+     for a run in flight, and spending it on every resting agent would make
+     it mean nothing. */
+  .card-activity.ready { color: #4ade80; }
+  .card-activity.ready .dot { background: #4ade80; }
+  .card-activity.waiting { color: #fbbf24; }
+  .card-activity.waiting .dot { background: #fbbf24; }
+  .card-activity.failed { color: #f87171; }
+  .card-activity.failed .dot { background: #f87171; }
   @keyframes livePulse {
     0%, 100% { opacity: 1; transform: scale(1); }
     50%      { opacity: 0.45; transform: scale(0.82); }
@@ -1337,28 +1338,20 @@
             + "</span>";
           continue;
         }
-        // A run that ended asking for approval is not idle: it stopped and
-        // it is waiting on a person, which is the same kind of stuck as a
-        // failure, so it reads red rather than amber.
-        var blocked = a.last_status === "failed" || a.last_status === "waiting";
-        // Awake sits between working and idle: the last run finished, and it
-        // finished recently enough that the person still thinks of this agent
-        // as with them. The server decides how recent that is and never sends
-        // "awake" for a run that failed or is waiting on an answer, so the
-        // blocked check still wins here.
-        var resting = blocked ? "blocked"
-          : (a.state === "awake" ? "awake" : "idle");
-        el.classList.add(resting);
+        // One state, one word, one colour. The server decides; the page does
+        // not re-derive it from last_status, which is how the old code ended
+        // up with two sources of truth for the same fact.
+        var STATE_WORD = { ready: "Ready", waiting: "Needs you",
+                           failed: "Failed" };
+        var state = STATE_WORD[a.state] ? a.state : "ready";
+        el.classList.add(state);
         var bits = [];
         if (a.last_run_at) bits.push("used " + ago(a.last_run_at));
         if (a.last_duration_seconds !== null
             && a.last_duration_seconds !== undefined) {
           bits.push("took " + secs(a.last_duration_seconds));
         }
-        var word = a.last_status === "failed" ? "Failed"
-          : a.last_status === "waiting" ? "Needs approval"
-          : resting === "awake" ? "Awake" : "Idle";
-        el.innerHTML = '<span class="dot"></span><span>' + word
+        el.innerHTML = '<span class="dot"></span><span>' + STATE_WORD[state]
           + (bits.length ? " \u00b7 " + esc(bits.join(", ")) : "") + "</span>";
       }
     }

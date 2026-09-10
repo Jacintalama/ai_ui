@@ -767,7 +767,7 @@ def test_someone_elses_agent_is_never_rendered(page):
     assert all(i and i.startswith(("agent-mine", "agent-hostile")) for i in ids), ids
 
 
-# --- is the agent awake, and how long did it take -------------------------
+# --- is the agent working, and how long did it take -----------------------
 
 def _activity(page, payload):
     """Re-answer the activity route, then make the page ask again."""
@@ -788,17 +788,6 @@ def test_a_working_agent_says_so_with_its_elapsed_time(page):
     assert "14s" in line.inner_text()
 
 
-def test_an_idle_agent_says_when_it_was_used_and_how_long_it_took(page):
-    page = page
-    _activity(page, {"agent-mine-a1b2": {
-        "state": "idle", "last_status": "completed",
-        "last_run_at": "2026-08-28T12:00:00+00:00",
-        "last_duration_seconds": 8, "source": "schedule"}})
-    text = page.locator('[data-activity-for="agent-mine-a1b2"]').inner_text()
-    assert "Idle" in text
-    assert "took 8s" in text
-
-
 def test_an_agent_that_has_never_run_says_nothing(page):
     """Calling something idle when it has never done anything reads as a
     status. Saying nothing reads as new, which is what it is."""
@@ -806,16 +795,6 @@ def test_an_agent_that_has_never_run_says_nothing(page):
     _activity(page, {})
     assert page.locator(
         '[data-activity-for="agent-mine-a1b2"]').inner_text().strip() == ""
-
-
-def test_a_failed_run_is_not_dressed_up_as_idle(page):
-    page = page
-    _activity(page, {"agent-mine-a1b2": {
-        "state": "idle", "last_status": "failed",
-        "last_run_at": "2026-08-28T12:00:00+00:00",
-        "last_duration_seconds": 3, "source": "channel"}})
-    assert "Failed" in page.locator(
-        '[data-activity-for="agent-mine-a1b2"]').inner_text()
 
 
 def _dot_state(page):
@@ -830,41 +809,6 @@ def test_the_dot_is_green_while_a_run_is_in_flight(page):
         "state": "working", "running_for_seconds": 5,
         "last_run_at": "2026-08-28T12:00:00+00:00", "source": "schedule"}})
     assert "working" in _dot_state(page)
-
-
-def test_the_dot_is_amber_when_the_agent_is_resting(page):
-    """Grey read as "switched off" for an agent that is simply between runs
-    and perfectly healthy."""
-    page = page
-    _activity(page, {"agent-mine-a1b2": {
-        "state": "idle", "last_status": "completed",
-        "last_run_at": "2026-08-28T12:00:00+00:00",
-        "last_duration_seconds": 8, "source": "schedule"}})
-    assert "idle" in _dot_state(page)
-    assert "blocked" not in _dot_state(page)
-
-
-def test_the_dot_is_red_after_a_failure(page):
-    page = page
-    _activity(page, {"agent-mine-a1b2": {
-        "state": "idle", "last_status": "failed",
-        "last_run_at": "2026-08-28T12:00:00+00:00",
-        "last_duration_seconds": 3, "source": "channel"}})
-    assert "blocked" in _dot_state(page)
-
-
-def test_an_agent_stopped_for_approval_reads_as_blocked_not_idle(page):
-    """It ended asking permission, so it is stuck on a person. Calling that
-    idle hides the one state the owner has to act on."""
-    page = page
-    _activity(page, {"agent-mine-a1b2": {
-        "state": "idle", "last_status": "waiting",
-        "last_run_at": "2026-08-28T12:00:00+00:00",
-        "last_duration_seconds": 2, "source": "channel"}})
-    text = page.locator('[data-activity-for="agent-mine-a1b2"]').inner_text()
-    assert "Needs approval" in text
-    assert "Idle" not in text
-    assert "blocked" in _dot_state(page)
 
 
 def test_an_agent_that_never_ran_wears_no_state_colour(page):
@@ -985,48 +929,55 @@ def test_search_finds_an_agent_by_its_role(page):
     assert shown == ["agent-mine-a1b2"]
 
 
-# --- awake ----------------------------------------------------------------
+# --- ready, needs you, failed ----------------------------------------------
 
 # Ralph, watching a card say Idle a second after Ada answered him: "they idle
-# even though its not 10minutes yet". Awake is the state between working and
-# resting, and it is what somebody looking at the card actually wants.
+# even though its not 10minutes yet". Ready is what somebody looking at the
+# card actually wants: it stays true whether the agent ran a second ago or
+# last week, so there is no clock left to feel wrong.
 
-def test_a_recently_used_agent_reads_as_awake(page):
+def test_a_finished_agent_reads_as_ready(page):
     _activity(page, {"agent-mine-a1b2": {
-        "state": "awake", "last_status": "completed",
+        "state": "ready", "last_status": "completed",
         "last_run_at": "2026-08-28T12:00:00+00:00",
         "last_duration_seconds": 2, "source": "channel"}})
     text = page.locator('[data-activity-for="agent-mine-a1b2"]').inner_text()
-    assert "Awake" in text
-    assert "Idle" not in text
+    assert "Ready" in text
+    assert "Idle" not in text and "Awake" not in text
     assert "took 2s" in text
 
 
-def test_the_dot_is_green_when_the_agent_is_awake(page):
-    """Green like Working, because both mean the agent is with you. The pulse
-    is what separates them: Working is thinking right now."""
+def test_ready_is_green_and_does_not_pulse(page):
+    """Green because the agent is fine. No pulse: that is reserved for a run
+    in flight, and spending it on every resting agent makes it mean nothing."""
     _activity(page, {"agent-mine-a1b2": {
-        "state": "awake", "last_status": "completed",
-        "last_run_at": "2026-08-28T12:00:00+00:00",
-        "last_duration_seconds": 2, "source": "channel"}})
-    klass = _dot_state(page)
-    assert "awake" in klass
-    assert "idle" not in klass and "blocked" not in klass
-
-
-def test_awake_is_still_green_but_does_not_pulse(page):
-    """The pulse is reserved for a run in flight. An agent that pulsed for ten
-    minutes after every answer would make the one signal that means "it is
-    thinking right now" mean nothing."""
-    _activity(page, {"agent-mine-a1b2": {
-        "state": "awake", "last_status": "completed",
+        "state": "ready", "last_status": "completed",
         "last_run_at": "2026-08-28T12:00:00+00:00",
         "last_duration_seconds": 2, "source": "channel"}})
     dot = page.locator('[data-activity-for="agent-mine-a1b2"] .dot')
-    colour = dot.evaluate("el => getComputedStyle(el).backgroundColor")
-    animation = dot.evaluate("el => getComputedStyle(el).animationName")
-    assert colour == "rgb(74, 222, 128)", colour
-    assert animation == "none", animation
+    assert dot.evaluate("el => getComputedStyle(el).backgroundColor") \
+        == "rgb(74, 222, 128)"
+    assert dot.evaluate("el => getComputedStyle(el).animationName") == "none"
+
+
+def test_an_agent_waiting_on_you_says_so(page):
+    _activity(page, {"agent-mine-a1b2": {
+        "state": "waiting", "last_status": "waiting",
+        "last_run_at": "2026-08-28T12:00:00+00:00",
+        "last_duration_seconds": 2, "source": "channel"}})
+    line = page.locator('[data-activity-for="agent-mine-a1b2"]')
+    assert "Needs you" in line.inner_text()
+    assert "waiting" in line.get_attribute("class")
+
+
+def test_a_failed_agent_says_failed(page):
+    _activity(page, {"agent-mine-a1b2": {
+        "state": "failed", "last_status": "failed",
+        "last_run_at": "2026-08-28T12:00:00+00:00",
+        "last_duration_seconds": 3, "source": "channel"}})
+    line = page.locator('[data-activity-for="agent-mine-a1b2"]')
+    assert "Failed" in line.inner_text()
+    assert "failed" in line.get_attribute("class")
 
 
 # --- the edit form is two columns on a wide screen -------------------------
