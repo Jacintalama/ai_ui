@@ -343,16 +343,51 @@
      further for the same fields. Reserved for the skills list, which goes
      full width underneath because a skill is pickable only when its name and
      what it does fit on one line. */
-  #agent-form { width: min(980px, 94vw); }
+  /* One scroll region, not four. The modal, the tools grid, the tag row and
+     the skills list all scrolled independently, so reaching Save meant
+     scrolling past three lists that each ate the wheel on the way. Head and
+     foot are pinned and the middle is the only thing that moves. Scoped to
+     this form: .modal is shared with Connections and the clear confirm. */
+  #agent-form { width: min(980px, 94vw); display: flex;
+                flex-direction: column; padding: 0; overflow: hidden; }
+  #agent-form .modal-head { flex: 0 0 auto; padding: 20px 24px 0; }
+  #agent-form .modal-head h2 { margin-bottom: 14px; }
+  #agent-form .modal-body { flex: 1 1 auto; overflow-y: auto;
+                            padding: 0 24px 6px; }
+  /* Always reachable, whatever the body is doing. The save button used to
+     sit below the fold behind sixty-four skills. */
+  #agent-form .modal-foot { flex: 0 0 auto; padding: 12px 24px 18px;
+                            border-top: 1px solid var(--border);
+                            background: var(--surface); }
+  #agent-form .modal-foot .form-actions { margin-top: 0; }
+  #agent-form .modal-foot .form-error { margin-top: 0; margin-bottom: 10px; }
+
+  /* Collapsed by default. Most edits never touch skills, and sixty-four rows
+     between the fields and the save button made every edit pay for them. */
+  #agent-form .skill-block { margin-top: 18px; }
+  .skill-toggle { width: 100%; display: flex; align-items: center; gap: 10px;
+                  background: var(--surface-2); border: 1px solid var(--border);
+                  border-radius: var(--radius); padding: 11px 13px;
+                  cursor: pointer; color: var(--text); font: inherit;
+                  text-align: left; }
+  .skill-toggle:hover { border-color: var(--border-2); }
+  .skill-toggle .tw-chev { color: var(--muted); display: inline-block;
+                           transition: transform 0.15s ease; }
+  .skill-toggle[aria-expanded="true"] .tw-chev { transform: rotate(90deg); }
+  .skill-toggle-name { font-weight: 600; font-size: 13px; }
+  .skill-toggle-count { color: var(--muted); font-size: 12px; }
+  .skill-toggle-act { margin-left: auto; color: var(--accent); font-size: 12px; }
+  #skills-panel { margin-top: 10px; }
   #agent-form .form-cols {
     display: grid; grid-template-columns: 1fr 1fr; gap: 0 28px;
     align-items: start; }
   /* Full width under both columns. A skill is pickable only when its name
      and what it does fit on one line; in half the width a person would be
-     choosing from names alone. Scrolls rather than growing, because this
-     list gets longer and the modal must not run off the screen. */
+     choosing from names alone. It grows rather than scrolling: it lives
+     inside the body's single scroll region, and a scroll box inside a scroll
+     box is the thing being removed. It is collapsed until asked for, so the
+     length costs nothing until someone wants the list. */
   .skill-list { display: flex; flex-direction: column; gap: 4px;
-                max-height: min(52vh, 460px); overflow-y: auto;
                 margin-top: 6px; padding-right: 4px; }
   .skill-list .skill { border: 1px solid var(--border);
                        border-radius: var(--radius); font-size: 13px; }
@@ -382,8 +417,7 @@
      nothing behind it is worse than no tag. */
   .skill-controls { display: flex; flex-direction: column; gap: 8px;
                     margin-top: 6px; }
-  .skill-tags { display: flex; flex-wrap: wrap; gap: 5px;
-                max-height: 56px; overflow-y: auto; }
+  .skill-tags { display: flex; flex-wrap: wrap; gap: 5px; }
   .tag-chip { background: var(--surface-2); border: 1px solid var(--border);
               border-radius: 999px; padding: 2px 9px; font-size: 11px;
               color: var(--text-2); cursor: pointer; font-family: inherit;
@@ -461,7 +495,9 @@
      The real input stays visible and clickable: Playwright drives it by id. */
   /* Scrolls rather than growing. The list gets longer every time a tool is
      added, and it must not keep pushing the rest of the form down. */
-  #native-tools { max-height: 208px; overflow-y: auto; padding-right: 4px; }
+  /* No inner scroll. Twelve tiles fit, and a scroll box inside a scroll box
+     is what made the wheel unpredictable. */
+  #native-tools { padding-right: 4px; }
   .tools { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px,1fr));
            gap: 8px; margin-top: 14px; }
   .tools label {
@@ -736,7 +772,8 @@
 
     <div class="modal-overlay" id="agent-overlay" hidden>
       <div class="modal" id="agent-form">
-        <h2 id="form-title">New agent</h2>
+        <div class="modal-head"><h2 id="form-title">New agent</h2></div>
+        <div class="modal-body">
         <div class="form-cols">
         <div class="form-col">
         <label for="agent-name">Name</label>
@@ -796,23 +833,36 @@
         </div>
         </div>
 
-        <label for="agent-skills">Skills</label>
-        <div class="hint">Ready-made instructions for one kind of job. Tick one
-          and the agent follows it whenever that job comes up, instead of
-          working it out each time. Click a name to see what it does.</div>
-        <div class="skill-controls">
-          <input id="skill-search" type="search" autocomplete="off"
-                 placeholder="Search skills" aria-label="Search skills">
-          <div class="skill-tags" id="skill-tags"></div>
+        <div class="skill-block">
+          <button type="button" class="skill-toggle" id="skills-toggle"
+                  aria-expanded="false" aria-controls="skills-panel">
+            <span class="tw-chev">&#8250;</span>
+            <span class="skill-toggle-name">Skills</span>
+            <span class="skill-toggle-count" id="skills-chosen">None chosen</span>
+            <span class="skill-toggle-act" id="skills-act">Choose skills</span>
+          </button>
+          <div id="skills-panel" hidden>
+            <div class="hint">Ready-made instructions for one kind of job. Tick
+              one and the agent follows it whenever that job comes up, instead
+              of working it out each time. Click a name to see what it does.</div>
+            <div class="skill-controls">
+              <input id="skill-search" type="search" autocomplete="off"
+                     placeholder="Search skills" aria-label="Search skills">
+              <div class="skill-tags" id="skill-tags"></div>
+            </div>
+            <div class="skill-list" id="agent-skills"></div>
+            <div class="skill-empty" id="skill-none" hidden>Nothing matches that.</div>
+            <div class="hint" id="skill-count"></div>
+          </div>
         </div>
-        <div class="skill-list" id="agent-skills"></div>
-        <div class="skill-empty" id="skill-none" hidden>Nothing matches that.</div>
-        <div class="hint" id="skill-count"></div>
+        </div>
 
-        <div class="form-error" id="form-error"></div>
-        <div class="form-actions">
-          <button class="btn" type="button" id="agent-cancel">Cancel</button>
-          <button class="btn primary" type="button" id="agent-save">Save agent</button>
+        <div class="modal-foot">
+          <div class="form-error" id="form-error"></div>
+          <div class="form-actions">
+            <button class="btn" type="button" id="agent-cancel">Cancel</button>
+            <button class="btn primary" type="button" id="agent-save">Save agent</button>
+          </div>
         </div>
       </div>
     </div>
@@ -1742,6 +1792,7 @@
       applySkillFilter();
       wrap.addEventListener("click", onSkillClick);
       wrap.addEventListener("change", applySkillFilter);
+      wrap.addEventListener("change", updateSkillsSummary);
       document.getElementById("skill-search")
         .addEventListener("input", function (e) {
           skillFilter.query = e.target.value.trim().toLowerCase();
@@ -1832,6 +1883,39 @@
         var cb = document.getElementById("skill-" + s.name);
         if (cb) cb.checked = ids.indexOf(s.name) !== -1;
       });
+      updateSkillsSummary();
+      // Collapsed on every open, including an agent that already has skills.
+      // The count on the toggle is what says it has them; opening the list
+      // would put us back to scrolling past sixty-four rows to reach Save.
+      showSkills(false);
+    }
+
+    // The collapsed row has to carry everything the open list would have told
+    // them, or collapsing it just hides the state.
+    function updateSkillsSummary() {
+      var el = document.getElementById("skills-chosen");
+      if (!el) return;
+      var picked = chosenSkills();
+      if (!picked.length) {
+        el.textContent = "None chosen";
+        return;
+      }
+      // Names, not just a number. "3 chosen" makes you open it to find out
+      // which three, which is the thing this is trying to save you.
+      el.textContent = picked.length <= 3
+        ? picked.join(", ")
+        : picked.slice(0, 2).join(", ") + " and " + (picked.length - 2)
+          + " more";
+    }
+
+    function showSkills(open) {
+      var panel = document.getElementById("skills-panel");
+      var btn = document.getElementById("skills-toggle");
+      var act = document.getElementById("skills-act");
+      if (!panel || !btn) return;
+      panel.hidden = !open;
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+      if (act) act.textContent = open ? "Hide" : "Choose skills";
     }
 
 
@@ -2206,6 +2290,12 @@
         .addEventListener("change", showModelWarning);
       document.getElementById("use-my-apps")
         .addEventListener("change", showToolPicker);
+      document.getElementById("skills-toggle")
+        .addEventListener("click", function () {
+          var open = document.getElementById("skills-toggle")
+            .getAttribute("aria-expanded") === "true";
+          showSkills(!open);
+        });
       document.getElementById("agent-cancel").addEventListener("click", closeForm);
       document.getElementById("agent-save").addEventListener("click", save);
       document.getElementById("agent-instructions")

@@ -77,6 +77,20 @@ TOOLS_BODY = {"tools": [
 ]}
 
 
+# Forty, not two. The whole complaint is about a list long enough to scroll,
+# so a fixture with two rows cannot reproduce it and any scroll assertion
+# against it passes by construction.
+SKILLS_BODY = {"skills": (
+    [{"name": "draft-reply", "description": "Draft a reply to an email.",
+      "tags": ["email", "writing"], "tools": []},
+     {"name": "vip-watch", "description": "Watch for mail from named people.",
+      "tags": ["email", "triage"], "tools": []}]
+    + [{"name": "filler-skill-%02d" % i,
+        "description": "A skill that exists to make the list long.",
+        "tags": ["planning"], "tools": []} for i in range(38)]
+)}
+
+
 @pytest.fixture(scope="module")
 def browser():
     with playwright_api.sync_playwright() as p:
@@ -129,6 +143,8 @@ def page_with_tools(browser, tmp_path):
             sent.append({"url": url, "method": r.request.method,
                         "body": r.request.post_data})
             body = {"seeded": True, "created": 2}
+        elif "/api/tasks/agents/skills" in url:
+            body = SKILLS_BODY
         elif "/api/tasks/agents/tools" in url:
             body = TOOLS_BODY
         else:
@@ -348,6 +364,106 @@ def test_an_everything_agent_reopens_ticked(page_with_tools):
     _open_saved_agent(page, wide)
     assert page.locator("#use-my-apps").is_checked(), (
         "an agent that was never narrowed came back narrowed")
+
+
+def test_save_is_reachable_without_scrolling(page_with_tools):
+    """The reported problem. Save sat inside the scrolling area, below the
+    fields, the tools and sixty-four skills, so reaching it meant scrolling
+    past three lists that each ate the wheel on the way."""
+    page = page_with_tools
+    page.locator("#new-agent").click()
+    page.wait_for_timeout(250)
+    btn = page.locator("#agent-save")
+    assert btn.is_visible()
+    box = btn.bounding_box()
+    modal = page.locator("#agent-form").bounding_box()
+    assert box is not None and modal is not None
+    # Inside the modal's own painted area, with nothing to scroll to get there.
+    assert box["y"] + box["height"] <= modal["y"] + modal["height"] + 1, (
+        box, modal)
+    assert page.evaluate(
+        """() => {
+             const b = document.querySelector('#agent-form .modal-body');
+             return b.scrollTop;
+        }""") == 0
+
+
+def test_the_form_has_exactly_one_scrolling_region(page_with_tools):
+    """Four things scrolled independently: the modal, the tools grid, the tag
+    row and the skills list. Nested scroll boxes are why the wheel behaved
+    differently depending on what happened to be under the pointer."""
+    page = page_with_tools
+    page.locator("#new-agent").click()
+    page.wait_for_timeout(250)
+    page.locator("#skills-toggle").click()   # the worst case, list open
+    page.wait_for_timeout(250)
+    nested = page.evaluate("""() => {
+      const form = document.querySelector('#agent-form');
+      const scrolls = el => {
+        const st = getComputedStyle(el);
+        return /(auto|scroll)/.test(st.overflowY)
+               && el.scrollHeight > el.clientHeight + 2;
+      };
+      // The form itself counts. Leaving it out is what let this assertion
+      // pass the very layout it was written to reject.
+      const all = [form, ...form.querySelectorAll('*')].filter(scrolls);
+      const bad = [];
+      all.forEach(el => {
+        let p = el.parentElement;
+        while (p && p !== form.parentElement) {
+          if (all.includes(p)) { bad.push((el.id || el.className) + ' inside '
+                                          + (p.id || p.className)); break; }
+          p = p.parentElement;
+        }
+      });
+      return { all: all.map(e => e.id || e.className), bad };
+    }""")
+    assert nested["bad"] == [], nested
+    assert len(nested["all"]) <= 1, nested
+
+
+def test_skills_start_collapsed_and_say_what_is_chosen(page_with_tools):
+    page = page_with_tools
+    page.locator("#new-agent").click()
+    page.wait_for_timeout(250)
+    assert page.locator("#skills-panel").is_hidden()
+    assert "None chosen" in page.locator("#skills-chosen").inner_text()
+
+
+def test_opening_skills_reveals_the_list(page_with_tools):
+    page = page_with_tools
+    page.locator("#new-agent").click()
+    page.wait_for_timeout(250)
+    page.locator("#skills-toggle").click()
+    page.wait_for_timeout(200)
+    assert page.locator("#skills-panel").is_visible()
+    assert page.locator("#skill-search").is_visible()
+    # Still reachable with the list open: that is what the pinned foot is for.
+    assert page.locator("#agent-save").is_visible()
+
+
+def test_a_collapsed_skill_still_saves(page_with_tools):
+    """Collapsing must hide the list, never the choice. chosenSkills() reads
+    checkboxes by id, so this is the assertion that keeps it that way."""
+    page = page_with_tools
+    page.locator("#new-agent").click()
+    page.wait_for_timeout(250)
+    page.locator("#skills-toggle").click()
+    page.wait_for_timeout(200)
+    first = page.locator("#agent-skills input[type=checkbox]").first
+    name = first.get_attribute("id").replace("skill-", "")
+    first.check()
+    page.locator("#skills-toggle").click()
+    page.wait_for_timeout(150)
+    assert page.locator("#skills-panel").is_hidden()
+    assert name in page.locator("#skills-chosen").inner_text()
+    page.fill("#agent-name", "Scout")
+    page.fill("#agent-instructions", "You look things up and report back.")
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(800)
+    posted = [c for c in page.sent if c.get("body") and "skillIds" in (c["body"] or "")]
+    assert posted, page.sent
+    assert name in posted[-1]["body"], posted[-1]["body"]
 
 
 def test_the_card_says_what_the_agent_may_reach(page_with_tools):
