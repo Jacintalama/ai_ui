@@ -178,6 +178,9 @@
   .card-chips .chip.skill { color: var(--accent);
                             border-color: rgba(124,140,255,0.28);
                             background: rgba(124,140,255,0.10); }
+  .card-chips .chip.scope { color: var(--text-2, #b8b8c0); }
+  .card-chips .chip.scope.narrow { color: var(--accent, #6366f1);
+    border-color: color-mix(in srgb, var(--accent, #6366f1) 45%, transparent); }
   .card-chips .chip.model, .card-chips .chip.more, .card-chips .chip.none {
     color: var(--muted); font-variant-numeric: tabular-nums; }
   /* Ready or busy, and how long the last one took. An agent is not a
@@ -965,7 +968,21 @@
 
     function toolChips(m) {
       var ids = (m.meta && m.meta.toolIds) || [];
-      if (!ids.length) return '<span class="chip none">No tools</span>';
+      var narrowed = !!(m.meta && m.meta.toolScope === "picked");
+      // The scope was only ever visible inside the form, which meant the one
+      // way to check what an agent was set to was to open the thing that sets
+      // it. Three rounds of "did that save?" came out of exactly that.
+      var scope = narrowed
+        ? '<span class="chip scope narrow">Only what is picked</span>'
+        : '<span class="chip scope">Every tool you have</span>';
+      // Narrowed to nothing is a real state and a surprising one: the agent
+      // can reach no tool at all. It reads as an empty card otherwise.
+      if (narrowed && !ids.length) {
+        return scope + '<span class="chip none">Nothing picked yet</span>';
+      }
+      if (!ids.length) return scope + '<span class="chip none">No tools</span>';
+      ids = ids.filter(function (id) { return id !== "server:mcp-proxy"; });
+      if (!ids.length) return scope;
       // Glyph AND name. An icon on its own looks tidier, but this card exists
       // to say what the agent can reach, and a bare envelope does not say it.
       var out = "";
@@ -976,7 +993,7 @@
       if (ids.length > 2) {
         out += '<span class="chip more">+' + (ids.length - 2) + "</span>";
       }
-      return out;
+      return scope + out;
     }
 
     function card(m, mine) {
@@ -1425,7 +1442,13 @@
     // and the page tells a signed-out user that they have no agents. Read the
     // status first.
     async function getJson(url) {
-      var r = await fetch(url, { headers: authHeaders() });
+      // no-store, because save() writes and then immediately re-reads this
+      // list to redraw the page. These responses carry no cache-control at
+      // all, so the decision is left to the browser's heuristics, and a
+      // agent list served from cache after a write shows the agent exactly as
+      // it was BEFORE the save. Everything the form fills in then comes from
+      // that stale row, including whether the agent is narrowed.
+      var r = await fetch(url, { headers: authHeaders(), cache: "no-store" });
       if (r.status === 401) throw new Error("signed out");
       if (!r.ok) throw new Error("http " + r.status);
       return r.json();

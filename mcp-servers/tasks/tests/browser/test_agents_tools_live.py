@@ -350,6 +350,70 @@ def test_an_everything_agent_reopens_ticked(page_with_tools):
         "an agent that was never narrowed came back narrowed")
 
 
+def test_the_card_says_what_the_agent_may_reach(page_with_tools):
+    """The scope used to be visible only inside the form, so the only way to
+    check what an agent was set to was to open the thing that sets it. Three
+    rounds of "did that save?" came out of exactly that."""
+    page = page_with_tools
+    _open_saved_agent(page, PICKED_AGENT)
+    page.locator("#agent-cancel").click()
+    page.wait_for_timeout(200)
+    chips = page.locator('.card[data-agent-id="agent-mia-ab12"] .card-chips')
+    assert "Only what is picked" in chips.inner_text(), chips.inner_text()
+
+
+def test_the_card_says_when_an_agent_reaches_everything(page_with_tools):
+    page = page_with_tools
+    wide = dict(PICKED_AGENT)
+    wide["meta"] = dict(PICKED_AGENT["meta"])
+    wide["meta"].pop("toolScope")
+    _open_saved_agent(page, wide)
+    page.locator("#agent-cancel").click()
+    page.wait_for_timeout(200)
+    chips = page.locator('.card[data-agent-id="agent-mia-ab12"] .card-chips')
+    assert "Every tool you have" in chips.inner_text(), chips.inner_text()
+
+
+def test_narrowed_to_nothing_says_so(page_with_tools):
+    """A real state, and a surprising one: the agent can reach no tool at all.
+    It read as an ordinary empty card before."""
+    page = page_with_tools
+    empty = dict(PICKED_AGENT)
+    empty["meta"] = dict(PICKED_AGENT["meta"])
+    empty["meta"]["toolIds"] = []
+    _open_saved_agent(page, empty)
+    page.locator("#agent-cancel").click()
+    page.wait_for_timeout(200)
+    chips = page.locator('.card[data-agent-id="agent-mia-ab12"] .card-chips')
+    assert "Nothing picked yet" in chips.inner_text(), chips.inner_text()
+
+
+def test_the_agent_list_is_never_read_from_cache(page_with_tools):
+    """save() writes and then immediately re-reads this list to redraw. These
+    responses carry no cache-control, so a cached read would fill the form
+    from the row as it was BEFORE the save."""
+    page = page_with_tools
+    modes = page.evaluate("""() => {
+      const seen = [];
+      const real = window.fetch;
+      window.fetch = function (u, o) {
+        seen.push({ url: String(u), cache: (o && o.cache) || "default" });
+        return real.apply(this, arguments);
+      };
+      window.__seenFetch = seen;
+      return true;
+    }""")
+    page.locator("#new-agent").click()
+    page.wait_for_timeout(150)
+    page.locator("#agent-cancel").click()
+    page.evaluate("() => window.__aiuiAgents.load()")
+    page.wait_for_timeout(900)
+    seen = page.evaluate("() => window.__seenFetch || []")
+    lists = [c for c in seen if "/models/list" in c["url"]]
+    assert lists, "the list was never fetched, so this proves nothing"
+    assert all(c["cache"] == "no-store" for c in lists), lists
+
+
 def test_saving_says_it_saved(page_with_tools):
     """Ralph asked for this: saving used to say nothing at all, so a save that
     worked and a save that quietly did not looked the same."""
