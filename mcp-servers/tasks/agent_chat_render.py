@@ -74,15 +74,43 @@ def queued_bubble(text: str) -> str:
             f'<div class="ab">{esc(text)}</div></div>')
 
 
-def agent_bubble(name: str, content: str) -> str:
+#: How much of the question a reply quotes. Enough to recognise, not enough
+#: to reprint: a paragraph you typed would otherwise reappear above every
+#: answer to it, twice over when two agents both reply.
+QUOTE_CHARS = 90
+
+
+def _quote(text) -> str:
+    """The message an answer is answering, shown above it.
+
+    Empty when there is nothing to quote, which is the ordinary case: one
+    question, one answer, and nothing above it to confuse it with. A quote
+    there only repeats the line directly above.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return ""
+    one_line = " ".join(text.split())
+    if len(one_line) > QUOTE_CHARS:
+        one_line = one_line[:QUOTE_CHARS].rstrip() + "…"
+    return f'<div class="aquote">{esc(one_line)}</div>'
+
+
+def agent_bubble(name: str, content: str, replying_to=None) -> str:
     """One agent's finished answer: its own row, its own name, its own avatar.
 
     This is the entire feature. Nothing is stacked into another agent's bubble,
     because the panel draws the bubbles itself.
+
+    `replying_to` is the message being answered, and it is passed only when
+    more than one of the person's messages is on screen unanswered. Nobody has
+    to press anything to see it, which is the whole point: in an ordinary chat
+    app you long-press a message to reply to it, and here the answer says what
+    it belongs to by itself.
     """
     return ('<div class="am agent">'
             f'{_avatar(name)}'
             '<div class="abody">'
+            f'{_quote(replying_to)}'
             f'<div class="awho">{esc(name)}</div>'
             f'<div class="atext md">{esc(content)}</div>'
             '</div></div>')
@@ -183,7 +211,12 @@ def thread(messages: list[dict]) -> str:
         elif role == "assistant":
             name = str(m.get("agent_name") or "Agent")
             if content:
-                out.append(agent_bubble(name, content))
+                # The stored decision, not a fresh one. After a reload the
+                # messages are in order and nothing looks ambiguous any more,
+                # so recomputing would silently drop a quote that was on
+                # screen a moment ago.
+                out.append(agent_bubble(name, content,
+                                        m.get("replying_to")))
             awaiting = m.get("awaiting")
             if isinstance(awaiting, dict) and awaiting.get("calls"):
                 out.append(approval_bubble(name,

@@ -260,7 +260,7 @@ async def _keep_within_budget(email: str, s: store.RoomSession,
 
 
 async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
-                     request: Request | None = None):
+                     request: Request | None = None, quote: bool = False):
     """Yield one SSE event per thing that happens in a round.
 
     Agents run one at a time, never in parallel: a turn can run tools and this
@@ -272,6 +272,10 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
     # and everybody hears it and decides for itself.
     asked = agent_routing.last_user_text(s.messages)
     speakers, may_pass = _speakers_for(asked, agents)
+    # What this round is answering, carried onto every answer so the bubble can
+    # say so. Only when there is something to be confused about: with one
+    # question and one answer, a quote repeats the line directly above it.
+    answering = asked if quote else None
     # Built once, before the first agent runs, and handed unchanged to every
     # agent. See the module docstring of routes_agent_turn for what happens
     # when agents read each other's labelled replies.
@@ -328,10 +332,11 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
             awaiting["ask_id"] = ask_id
             messages.append({"role": "assistant", "agent_id": agent_id,
                              "agent_name": name, "content": answer,
+                             "replying_to": answering,
                              "awaiting": awaiting})
             if answer:
                 yield {"event": "message",
-                       "data": render.agent_bubble(name, answer)}
+                       "data": render.agent_bubble(name, answer, answering)}
             yield {"event": "message",
                    "data": render.approval_bubble(name, ask_id,
                                                   page_pending["calls"])}
@@ -340,8 +345,10 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
             continue
 
         messages.append({"role": "assistant", "agent_id": agent_id,
-                         "agent_name": name, "content": answer})
-        yield {"event": "message", "data": render.agent_bubble(name, answer)}
+                         "agent_name": name, "content": answer,
+                         "replying_to": answering})
+        yield {"event": "message",
+               "data": render.agent_bubble(name, answer, answering)}
 
     if speakers and passed == len(speakers):
         # Everybody passed, which leaves the person talking to an empty room.
@@ -355,8 +362,10 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
         if answer and not _is_pass(answer):
             messages.append({"role": "assistant",
                              "agent_id": str(fallback.get("id") or ""),
-                             "agent_name": name, "content": answer})
-            yield {"event": "message", "data": render.agent_bubble(name, answer)}
+                             "agent_name": name, "content": answer,
+                             "replying_to": answering})
+            yield {"event": "message",
+                   "data": render.agent_bubble(name, answer, answering)}
         else:
             # It passed again even without being offered the option. Say so
             # rather than leave the room silent: a person who typed something
@@ -472,11 +481,16 @@ async def agent_chat_stream(request: Request,
         s.messages.append(claim)
         try:
             agents = await _agents_for(user.email)
+            # True once anything is waiting behind this round, and it stays
+            # true for the rest of the drain: every message after the first is
+            # one of several on screen at once.
+            quote = bool(s.queued)
             while True:
                 # Before the round, so the agents answering this message are
                 # the ones reading the notes.
                 await _keep_within_budget(user.email, s, agents)
-                async for event in _run_round(user.email, s, agents, request):
+                async for event in _run_round(user.email, s, agents, request,
+                                              quote=quote):
                     yield event
 
                 # Anything typed while that was running gets answered now, on
@@ -497,6 +511,7 @@ async def agent_chat_stream(request: Request,
                 _drop(s.messages, claim)
                 s.messages.append({"role": "user", "content": nxt})
                 s.messages.append(claim)
+                quote = True
                 # No bubble is emitted: the send that queued this already
                 # returned one and the browser has drawn it.
         finally:

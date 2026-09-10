@@ -118,10 +118,15 @@ class _Req:
 
 async def _drain(monkeypatch, s, rounds_seen):
     """Run the stream generator with the round itself stubbed out."""
-    async def fake_round(email, sess, agents, request=None):
+    async def fake_round(email, sess, agents, request=None, quote=False):
         rounds_seen.append(chat.agent_routing.last_user_text(sess.messages))
-        sess.messages.append({"role": "assistant", "agent_id": "a",
-                              "agent_name": "Ada", "content": "ok"})
+        sess.messages.append({
+            "role": "assistant", "agent_id": "a", "agent_name": "Ada",
+            "content": "ok",
+            # What the real round stores, so the tests above it are testing
+            # the shape the panel actually reads back.
+            "replying_to": (chat.agent_routing.last_user_text(sess.messages)
+                            if quote else None)})
         yield {"event": "message", "data": "x"}
 
     async def no_agents(email):
@@ -177,7 +182,7 @@ async def test_a_cleared_room_abandons_whatever_was_queued(monkeypatch):
     s.queued = ["belongs to the old one"]
     seen = []
 
-    async def clearing_round(email, sess, agents, request=None):
+    async def clearing_round(email, sess, agents, request=None, quote=False):
         seen.append(chat.agent_routing.last_user_text(sess.messages))
         sess.generation += 1          # as New chat does, mid round
         yield {"event": "message", "data": "x"}
@@ -255,3 +260,94 @@ async def test_the_first_message_uses_the_ordinary_bubble():
     body = out.body.decode()
     assert "hx-swap-oob" not in body
     assert "first" in body
+
+
+# --- the reply says what it is answering ------------------------------------
+
+# Ralph: "in human chat you long press the message to reply. What I need is
+# the agent will reply on the message so it is not confusing." Nothing to
+# press: when more than one of your messages is on screen unanswered, the
+# answer carries the one it belongs to.
+
+def test_an_answer_can_carry_the_question_it_answers():
+    from agent_chat_render import agent_bubble
+    html = agent_bubble("Mia", "Here are your emails",
+                        replying_to="what is in my inbox?")
+    assert "what is in my inbox?" in html
+    assert "aquote" in html
+
+
+def test_an_ordinary_answer_carries_no_quote():
+    """One question, one answer, nothing above it to confuse it with. A quote
+    there just repeats the line directly above."""
+    from agent_chat_render import agent_bubble
+    assert "aquote" not in agent_bubble("Mia", "Here are your emails")
+
+
+def test_the_quoted_question_is_escaped_like_any_other_user_text():
+    from agent_chat_render import agent_bubble
+    html = agent_bubble("Mia", "ok",
+                        replying_to='<img src=x onerror="alert(1)">')
+    assert "<img" not in html
+    assert "&lt;img" in html
+
+
+def test_a_long_question_is_trimmed_not_reprinted():
+    """Otherwise a paragraph you typed reappears above every answer to it,
+    and with two agents answering you would read it twice."""
+    from agent_chat_render import agent_bubble
+    long = "tell me about " + ("everything " * 60)
+    html = agent_bubble("Mia", "ok", replying_to=long)
+    assert len(html) < len(long)
+    assert "\u2026" in html or "..." in html
+
+
+def test_a_replayed_conversation_shows_the_same_quotes():
+    """What you saw before a reload is what you see after it. The decision is
+    stored rather than recomputed, because after a reload the messages are in
+    order and nothing looks ambiguous any more."""
+    from agent_chat_render import thread
+    html = thread([
+        {"role": "user", "content": "what is in my inbox?"},
+        {"role": "user", "content": "and my calendar?"},
+        {"role": "assistant", "agent_name": "Mia", "content": "Your emails",
+         "replying_to": "what is in my inbox?"},
+        {"role": "assistant", "agent_name": "Ada", "content": "Your day",
+         "replying_to": "and my calendar?"},
+    ])
+    assert html.count("aquote") == 2
+    assert "what is in my inbox?" in html
+    assert "and my calendar?" in html
+
+
+def test_a_replayed_answer_without_one_shows_no_quote():
+    from agent_chat_render import thread
+    html = thread([
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "agent_name": "Mia", "content": "hello"},
+    ])
+    assert "aquote" not in html
+
+
+async def test_answers_quote_the_question_when_more_are_waiting(monkeypatch):
+    """The case Ralph described: several messages on screen, and no way to
+    tell which one an answer belongs to."""
+    s = store.get_session(_User.email)
+    await _send("what is in my inbox?")
+    s.queued = ["and my calendar?"]
+    seen = []
+    await _drain(monkeypatch, s, seen)
+    answers = [m for m in s.messages if m.get("role") == "assistant"]
+    assert len(answers) == 2, s.messages
+    assert answers[0]["replying_to"] == "what is in my inbox?"
+    assert answers[1]["replying_to"] == "and my calendar?"
+
+
+async def test_an_ordinary_exchange_quotes_nothing(monkeypatch):
+    """One question, one answer. The quote would repeat the line above it."""
+    s = store.get_session(_User.email)
+    await _send("hi")
+    await _drain(monkeypatch, s, [])
+    answers = [m for m in s.messages if m.get("role") == "assistant"]
+    assert answers
+    assert not any(a.get("replying_to") for a in answers)
