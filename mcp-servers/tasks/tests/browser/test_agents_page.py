@@ -308,14 +308,20 @@ def test_a_saved_agent_sends_the_instructions_as_params_system(page):
 
 def test_the_connected_apps_switch_adds_the_proxy_tool(page):
     _fill(page)
-    page.check("#use-my-apps")
+    page.check("#use-my-apps")   # already on by default; explicit on purpose
     page.locator("#agent-save").click()
     page.wait_for_timeout(300)
     assert json.loads(page.sent[-1]["body"])["meta"]["toolIds"] == ["server:mcp-proxy"]
 
 
-def test_leaving_the_switch_off_sends_no_tools(page):
+def test_turning_everything_off_and_picking_nothing_sends_no_tools(page):
+    """The switch defaults to on now, so this has to turn it off first. An
+    agent narrowed to nothing is somebody who has not finished choosing, and
+    the server treats it as everything rather than as an agent that can do
+    nothing at all."""
     _fill(page)
+    page.uncheck("#use-my-apps")
+    page.wait_for_timeout(100)
     page.locator("#agent-save").click()
     page.wait_for_timeout(300)
     assert json.loads(page.sent[-1]["body"])["meta"]["toolIds"] == []
@@ -326,6 +332,8 @@ def test_leaving_the_switch_off_sends_no_tools(page):
     "executive_dashboard", "remember"])
 def test_each_native_tool_adds_only_itself(page, tool_id):
     _fill(page)
+    page.uncheck("#use-my-apps")
+    page.wait_for_timeout(100)
     page.check("#tool-" + tool_id)
     page.locator("#agent-save").click()
     page.wait_for_timeout(300)
@@ -1389,3 +1397,83 @@ def test_the_free_router_is_still_choosable(page):
     page.locator("#agent-save").click()
     page.wait_for_timeout(300)
     assert json.loads(page.sent[-1]["body"])["base_model_id"] == "auto_router.auto"
+
+
+# --- tools: everything, or only what you pick -------------------------------
+
+# Measured on production: Mia had one tool ticked and reached twelve, because
+# _resolve_agent added everything the owner could reach on top of whatever was
+# ticked. The checkboxes implied a choice nobody was making. Ralph's words:
+# "let this agent use my connected apps should be like connect to all apps,
+# and then the apps below will hide; if not, it will show". He said yes to the
+# narrow choice actually restricting.
+
+def test_the_master_switch_is_on_and_the_list_is_hidden(page):
+    _open_form(page)
+    assert page.is_checked("#use-my-apps")
+    assert not page.locator("#native-tools").is_visible(), (
+        "the list is showing while the switch says everything")
+
+
+def test_turning_it_off_shows_the_list(page):
+    _open_form(page)
+    page.uncheck("#use-my-apps")
+    page.wait_for_timeout(120)
+    assert page.locator("#native-tools").is_visible()
+
+
+def test_everything_writes_no_scope(page):
+    """Every agent that existed before this has none, so the default must
+    write none: an unrelated edit cannot quietly narrow an agent."""
+    _fill(page, name="Researcher", instructions="Research carefully.")
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    assert "toolScope" not in json.loads(page.sent[-1]["body"])["meta"]
+
+
+def test_picking_writes_the_scope_and_the_tools(page):
+    _fill(page, name="Researcher", instructions="Research carefully.")
+    page.uncheck("#use-my-apps")
+    page.wait_for_timeout(100)
+    page.check("#tool-gmail")
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    meta = json.loads(page.sent[-1]["body"])["meta"]
+    assert meta["toolScope"] == "picked"
+    assert "gmail" in meta["toolIds"]
+    assert "server:mcp-proxy" not in meta["toolIds"]
+
+
+def test_edit_shows_the_scope_the_agent_has(page):
+    page.evaluate(
+        "() => { const a = window.__aiuiAgents.state.agents"
+        ".find(x => x.id === 'agent-mine-a1b2');"
+        " a.meta.toolScope = 'picked';"
+        " window.__aiuiAgents.openForm(a); }")
+    page.wait_for_selector("#agent-form", state="visible")
+    page.wait_for_timeout(120)
+    assert not page.is_checked("#use-my-apps")
+    assert page.locator("#native-tools").is_visible()
+
+
+def test_a_new_form_goes_back_to_everything(page):
+    page.evaluate(
+        "() => { const a = window.__aiuiAgents.state.agents"
+        ".find(x => x.id === 'agent-mine-a1b2');"
+        " a.meta.toolScope = 'picked';"
+        " window.__aiuiAgents.openForm(a); }")
+    page.wait_for_selector("#agent-form", state="visible")
+    page.locator("#agent-cancel").click()
+    _open_form(page)
+    assert page.is_checked("#use-my-apps")
+
+
+def test_the_tool_list_scrolls_rather_than_growing(page):
+    """Ralph asked for this directly: the list gets longer as tools are added
+    and must not keep pushing the rest of the form down."""
+    _open_form(page)
+    page.uncheck("#use-my-apps")
+    page.wait_for_timeout(120)
+    overflow = page.locator("#native-tools").evaluate(
+        "el => getComputedStyle(el).overflowY")
+    assert overflow in ("auto", "scroll"), overflow

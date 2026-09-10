@@ -455,6 +455,9 @@
      the page, and the tools are the most interesting thing an agent has.
      Tiles, with the same glyphs the card shows, so the two views agree.
      The real input stays visible and clickable: Playwright drives it by id. */
+  /* Scrolls rather than growing. The list gets longer every time a tool is
+     added, and it must not keep pushing the rest of the form down. */
+  #native-tools { max-height: 208px; overflow-y: auto; padding-right: 4px; }
   .tools { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px,1fr));
            gap: 8px; margin-top: 14px; }
   .tools label {
@@ -767,13 +770,14 @@
           scheduled runs. Web chat here always has full access.</div>
 
         <label class="switch">
-          <input type="checkbox" id="use-my-apps">
-          <span>Let this agent use my connected apps</span>
+          <input type="checkbox" id="use-my-apps" checked>
+          <span>Let this agent use everything I have connected</span>
         </label>
-        <div class="hint">Everything you connected under Connections, acting as
-          your account.</div>
+        <div class="hint" id="tools-hint">Every tool you have, including
+          anything you connect later. Turn this off to pick a few, and it will
+          say it cannot do the rest rather than quietly doing it.</div>
 
-        <div class="tools" id="native-tools"></div>
+        <div class="tools" id="native-tools" hidden></div>
         </div>
         </div>
 
@@ -1611,9 +1615,19 @@
       return "agent-" + slug(name) + "-" + suffix;
     }
 
+    // On means everything, so the list underneath is beside the point and is
+    // hidden. Off means a deliberate few, which the server now honours.
+    function toolsAreEverything() {
+      return document.getElementById("use-my-apps").checked;
+    }
+
+    function showToolPicker() {
+      document.getElementById("native-tools").hidden = toolsAreEverything();
+    }
+
     function chosenTools() {
       var ids = [];
-      if (document.getElementById("use-my-apps").checked) ids.push("server:mcp-proxy");
+      if (toolsAreEverything()) ids.push("server:mcp-proxy");
       NATIVE_TOOLS.forEach(function (t) {
         // Guarded: loadTools() renders tiles asynchronously, so a save
         // clicked in the instant before it settles must not throw on a tile
@@ -1834,6 +1848,10 @@
       // Only when there are any, for the same reason as the role: an agent
       // with none has to look exactly as it did before this existed.
       if (f.skillIds && f.skillIds.length) meta.skillIds = f.skillIds;
+      // Only when narrowed. Every agent that existed before this has no
+      // scope, and absent has to keep meaning everything, or an unrelated
+      // edit would quietly take an agent's tools away.
+      if (f.toolScope) meta.toolScope = f.toolScope;
       // Only when a level is actually selected. See chosenAccess: an agent
       // with no level behaves exactly as it did before this setting existed,
       // and an unrelated edit must not quietly give it one.
@@ -1885,8 +1903,11 @@
       document.getElementById("agent-instructions").value =
         agent && agent.params ? (agent.params.system || "") : "";
       var tools = (agent && agent.meta && agent.meta.toolIds) || [];
+      // A new agent gets everything, which is what every agent does today.
+      // An existing one is narrowed only if it says so.
       document.getElementById("use-my-apps").checked =
-        tools.indexOf("server:mcp-proxy") !== -1;
+        !(agent && agent.meta && agent.meta.toolScope === "picked");
+      showToolPicker();
       NATIVE_TOOLS.forEach(function (t) {
         var cb = document.getElementById("tool-" + t[0]);
         if (cb) cb.checked = tools.indexOf(t[0]) !== -1;
@@ -1977,6 +1998,7 @@
       var body = buildAgentBody({
         id: editingId || newAgentId(name), name: name,
         baseModel: baseModel, role: role, skillIds: chosenSkills(),
+        toolScope: toolsAreEverything() ? null : "picked",
         instructions: instructions, toolIds: chosenTools(),
         access: chosenAccess(),
         accessGrants: (existing && existing.access_grants) || []
@@ -2109,6 +2131,8 @@
       });
       document.getElementById("agent-base")
         .addEventListener("change", showModelWarning);
+      document.getElementById("use-my-apps")
+        .addEventListener("change", showToolPicker);
       document.getElementById("agent-cancel").addEventListener("click", closeForm);
       document.getElementById("agent-save").addEventListener("click", save);
       document.getElementById("agent-instructions")

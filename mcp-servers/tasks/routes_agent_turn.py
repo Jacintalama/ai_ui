@@ -76,6 +76,11 @@ class ResumeIn(BaseModel):
 #: waiting on the outer one.
 _TOOLS_AN_AGENT_MAY_NOT_HAVE = frozenset({"agents"})
 
+#: An agent limited to the tools somebody actually picked. Anything else,
+#: including absent and including junk, means everything the owner can reach,
+#: which is what every agent has always done.
+TOOL_SCOPE_PICKED = "picked"
+
 
 async def _every_tool_for(user_email: str) -> list[str]:
     """Every tool this person can use, whatever any one agent was ticked for.
@@ -129,6 +134,19 @@ async def _resolve_agent(user_email: str, agent_id: str) -> tuple[str, list[str]
     meta = agent.get("meta") if isinstance(agent.get("meta"), dict) else {}
     own = meta.get("toolIds")
     own = [t for t in own if isinstance(t, str)] if isinstance(own, list) else []
+    own = [t for t in own if t not in _TOOLS_AN_AGENT_MAY_NOT_HAVE]
+
+    # Narrowed on purpose, and only then. Everything else, including anything
+    # unrecognised, means the behaviour this has always had: an agent that
+    # cannot look up its owner's own account guesses, and a guess about
+    # somebody's own things reads as a lie.
+    #
+    # Picking nothing is not a request for nothing. Somebody who chose the
+    # narrow option and then unticked every box has not finished choosing,
+    # and an agent with no tools at all would simply look broken.
+    if meta.get("toolScope") == TOOL_SCOPE_PICKED and own:
+        return token, own, agent_access.level_of(meta)
+
     # Everything this person can reach, not only what this agent was ticked
     # for. Its own list stays in front so an explicitly granted tool is never
     # lost if the wider read comes back short.
