@@ -229,3 +229,83 @@ async def test_a_working_router_answer_is_left_alone(monkeypatch):
         token="t", model="agent-1", messages=[{"role": "user", "content": "hi"}],
         tool_ids=None, user_email="who@example.com", tool_mode="read_only")
     assert answer == good
+
+
+# --- room to look a skill up AND do the job ---------------------------------
+
+# Found by running it. gpt-5-mini called find_skills, then use_skill, then
+# list_unread_emails, and was out of iterations before it could answer. Two
+# of a chat turn's three rounds went on finding the procedure, leaving one
+# for the work, and the person saw an empty bubble.
+
+def test_a_chat_turn_has_room_to_find_a_skill_and_still_work():
+    """Looking a skill up costs two rounds. A cap of three left one, which is
+    not enough to read a mailbox and answer from it."""
+    assert agent_runner.CHANNEL_MAX_TOOL_ITERATIONS >= 5
+
+
+def test_the_longer_cap_still_fits_inside_the_awake_window():
+    """The card calls a chat run dead after STALE_AFTER_CHANNEL. Raising the
+    iteration cap without checking that is how a working agent gets reported
+    as failed."""
+    from datetime import timedelta
+
+    from agent_activity import STALE_AFTER_CHANNEL
+    worst = timedelta(seconds=agent_runner.CHANNEL_HTTP_TIMEOUT_SECONDS
+                      * agent_runner.CHANNEL_MAX_TOOL_ITERATIONS)
+    assert STALE_AFTER_CHANNEL > worst, (STALE_AFTER_CHANNEL, worst)
+
+
+async def test_running_out_of_rounds_says_so_instead_of_nothing(monkeypatch):
+    """The loop already writes a note when it stops at the cap, and the chat
+    path threw it away and returned an empty string. An empty bubble tells
+    the person nothing; it looks like the agent ignored them."""
+    async def always_wants_tools(payload, token, timeout=None):
+        return {"choices": [{"message": {
+            "content": "",
+            "tool_calls": [{"id": "1", "type": "function",
+                            "function": {"name": "list_unread_emails",
+                                         "arguments": "{}"}}]}}]}
+
+    monkeypatch.setattr(agent_runner, "_post_chat", always_wants_tools)
+    monkeypatch.setattr(agent_runner, "execute_tool_call",
+                        _fake_tool_result)
+    answer, notes = await agent_runner._chat(
+        token="t", model="agent-1", messages=[{"role": "user", "content": "hi"}],
+        tool_ids=["gmail"], user_email="who@example.com",
+        tool_mode="read_only", max_iterations=2)
+    assert answer == ""
+    assert notes and "stopped after" in notes[0].lower()
+
+
+async def _fake_tool_result(tool_call, user_email, allowed=None, agent_id=None):
+    return "nothing to report"
+
+
+async def test_the_chat_path_shows_the_note_when_there_is_no_answer(monkeypatch):
+    """_run_turn returned {"answer": "", "notes": [...]} and the panel drew an
+    empty bubble. The schedule path has always merged them; the chat path did
+    not, which is why this only showed up once agents started using enough
+    rounds to hit the cap."""
+    import routes_agent_turn as rt
+
+    async def resolve(email, agent_id):
+        return "tok", ["gmail"], "ask"
+
+    async def chat(**kw):
+        return "", ["Stopped after 5 rounds of tool use, so this answer may "
+                    "be incomplete."]
+
+    monkeypatch.setattr(rt, "_resolve_agent", resolve)
+    monkeypatch.setattr(rt, "_chat", chat)
+    monkeypatch.setattr(rt.agent_activity, "start_run",
+                        lambda *a, **k: _none())
+    monkeypatch.setattr(rt.agent_activity, "finish_run",
+                        lambda *a, **k: _none())
+    out = await rt._run_turn("who@example.com", "agent-1",
+                             [{"role": "user", "content": "hi"}])
+    assert "Stopped after 5 rounds" in out["answer"]
+
+
+async def _none():
+    return None

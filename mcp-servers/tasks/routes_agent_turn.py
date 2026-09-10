@@ -194,6 +194,16 @@ async def _run_turn(user_email: str, agent_id: str,
             max_iterations=CHANNEL_MAX_TOOL_ITERATIONS,
             timeout=CHANNEL_HTTP_TIMEOUT_SECONDS)
         outcome = "completed"
+        if not answer and notes:
+            # The loop writes a note when it stops at the iteration cap or
+            # refuses a write, and this path used to throw it away and return
+            # an empty string. An empty bubble tells the person nothing and
+            # reads as the agent ignoring them; the note says what happened.
+            # The schedule path has always done this; the chat path did not,
+            # which only surfaced once agents used enough rounds to hit the
+            # cap by looking a skill up first.
+            answer = "\n".join(notes)
+            notes = []
         return {"answer": answer, "notes": notes}
     except agent_access.ApprovalRequired as err:
         outcome = STATUS_WAITING
@@ -274,6 +284,16 @@ async def _resume_turn(user_email: str, agent_id: str, conversation: list[dict],
             max_iterations=CHANNEL_MAX_TOOL_ITERATIONS,
             timeout=CHANNEL_HTTP_TIMEOUT_SECONDS)
         outcome = "completed"
+        if not answer and notes:
+            # The loop writes a note when it stops at the iteration cap or
+            # refuses a write, and this path used to throw it away and return
+            # an empty string. An empty bubble tells the person nothing and
+            # reads as the agent ignoring them; the note says what happened.
+            # The schedule path has always done this; the chat path did not,
+            # which only surfaced once agents used enough rounds to hit the
+            # cap by looking a skill up first.
+            answer = "\n".join(notes)
+            notes = []
         return {"answer": answer, "notes": notes}
     except agent_access.ApprovalRequired as err:
         outcome = STATUS_WAITING

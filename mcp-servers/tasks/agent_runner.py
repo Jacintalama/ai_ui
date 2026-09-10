@@ -48,9 +48,17 @@ MAX_TOOL_ITERATIONS = 5
 
 #: A channel is somebody waiting at a keyboard, not a cron entry. The
 #: schedule path's five rounds at 240 seconds each is a 20 minute worst
-#: case, which is fine at 3am and absurd in a Discord window. These bring it
-#: to about 3 minutes.
-CHANNEL_MAX_TOOL_ITERATIONS = 3
+#: case, which is fine at 3am and absurd in a Discord window. The 60 second
+#: timeout is what keeps this bounded.
+#:
+#: Five rounds, not three. Three was right until agents could look a skill
+#: up: find_skills and use_skill cost two rounds between them, which left
+#: one for the actual work. Seen live on 2026-09-10, gpt-5-mini found the
+#: right skill, loaded it, read the mailbox, and was out of rounds before it
+#: could answer, so the person got an empty bubble. Five at 60 seconds is a
+#: five minute worst case, still comfortably inside the ten minute window
+#: after which the card calls a chat run dead, which a test asserts.
+CHANNEL_MAX_TOOL_ITERATIONS = 5
 CHANNEL_HTTP_TIMEOUT_SECONDS = 60
 
 #: The chat token has to outlive the WHOLE loop, not one completion: the loop

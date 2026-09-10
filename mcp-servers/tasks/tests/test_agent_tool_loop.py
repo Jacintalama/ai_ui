@@ -484,7 +484,11 @@ async def test_a_channel_can_be_given_a_shorter_leash():
             max_iterations=agent_runner.CHANNEL_MAX_TOOL_ITERATIONS)
 
     assert len(posts) == agent_runner.CHANNEL_MAX_TOOL_ITERATIONS
-    assert "3 rounds" in notes[-1], "the note must report the real cap"
+    # Read from the constant, not hardcoded. This said "3 rounds" and became
+    # wrong the moment the cap moved to make room for a skill lookup, which is
+    # a test failing on a deliberate change rather than catching a defect.
+    assert ("%d rounds" % agent_runner.CHANNEL_MAX_TOOL_ITERATIONS
+            in notes[-1]), "the note must report the real cap"
 
 
 async def test_the_per_call_timeout_reaches_the_request():
