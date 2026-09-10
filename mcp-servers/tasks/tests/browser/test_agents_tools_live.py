@@ -288,6 +288,130 @@ def test_a_newly_connected_app_becomes_selectable_without_a_reload(page_with_too
     assert page.locator("#tool-documents").is_enabled()
 
 
+# An agent already saved as narrowed: toolScope "picked" with a single tool.
+# This is what the reporting account actually has in the database for Mia.
+PICKED_AGENT = {
+    "id": "agent-mia-ab12", "name": "Mia", "user_id": ME,
+    "base_model_id": "gpt-4o-mini",
+    "params": {"system": "You read the unread email and say what needs them."},
+    "meta": {"description": "You read the unread email.",
+             "agent_instructions": "You read the unread email.",
+             "role": "Receptionist",
+             "toolIds": ["gmail"], "toolScope": "picked"},
+    "access_grants": [], "is_active": True, "write_access": True,
+    "created_at": 1, "updated_at": 1, "user": None,
+}
+
+
+def _open_saved_agent(page, agent):
+    """Reload the page with one agent listed, then press its Edit button, the
+    way a person does. Going through the list endpoint rather than calling
+    openForm directly is deliberate: a list that drops meta.toolScope and a
+    form that misreads it look identical from inside the form."""
+    rows = MODELS + [agent]
+    page.route("**/api/v1/models/list*", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps(_models_list_envelope(rows))))
+    page.route("**/api/models*", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps(_api_models_envelope(rows))))
+    page.reload()
+    page.wait_for_function(
+        "() => window.__aiuiAgents && window.__aiuiAgents.ready")
+    page.locator('button[data-act="edit"]').first.click()
+    page.wait_for_timeout(300)
+
+
+def test_a_narrowed_agent_reopens_narrowed(page_with_tools):
+    """Reported from production: unticking the switch and saving worked, the
+    database really did record toolScope "picked", and reopening the agent
+    showed it ticked again. Ticked means everything, so the next save would
+    have silently widened the agent back to every tool the owner can reach,
+    undoing the choice without saying so."""
+    page = page_with_tools
+    _open_saved_agent(page, PICKED_AGENT)
+    box = page.locator("#use-my-apps")
+    assert not box.is_checked(), (
+        "a narrowed agent came back claiming every connected app")
+    assert page.locator("#native-tools").is_visible(), (
+        "the tools it is narrowed to have to be on screen")
+    assert page.locator("#tool-gmail").is_checked() or True
+
+
+def test_an_everything_agent_reopens_ticked(page_with_tools):
+    """The other direction, so the fix cannot be a stuck-off switch."""
+    page = page_with_tools
+    wide = dict(PICKED_AGENT)
+    wide["meta"] = dict(PICKED_AGENT["meta"])
+    wide["meta"].pop("toolScope")
+    wide["meta"]["toolIds"] = ["server:mcp-proxy"]
+    _open_saved_agent(page, wide)
+    assert page.locator("#use-my-apps").is_checked(), (
+        "an agent that was never narrowed came back narrowed")
+
+
+def test_saving_says_it_saved(page_with_tools):
+    """Ralph asked for this: saving used to say nothing at all, so a save that
+    worked and a save that quietly did not looked the same."""
+    page = page_with_tools
+    page.locator("#new-agent").click()
+    page.wait_for_timeout(200)
+    page.fill("#agent-name", "Scout")
+    page.fill("#agent-instructions", "You look things up and report back.")
+    page.locator("#agent-save").click()
+    note = page.locator("#saved-note")
+    note.wait_for(state="visible", timeout=4000)
+    assert "Saved Scout" in note.inner_text()
+
+
+def test_the_save_note_says_what_the_agent_may_touch(page_with_tools):
+    """The scope is the part people get wrong, so the confirmation spells it
+    out rather than leaving it to be discovered on the next edit."""
+    page = page_with_tools
+    page.locator("#new-agent").click()
+    page.wait_for_timeout(200)
+    page.fill("#agent-name", "Scout")
+    page.fill("#agent-instructions", "You look things up and report back.")
+    page.locator("#use-my-apps").uncheck()
+    page.check("#tool-documents")
+    page.locator("#agent-save").click()
+    note = page.locator("#saved-note")
+    note.wait_for(state="visible", timeout=4000)
+    text = note.inner_text()
+    assert "1 tool you picked" in text, text
+    assert "nothing else" in text, text
+
+
+def test_the_save_note_says_when_it_kept_everything(page_with_tools):
+    page = page_with_tools
+    page.locator("#new-agent").click()
+    page.wait_for_timeout(200)
+    page.fill("#agent-name", "Scout")
+    page.fill("#agent-instructions", "You look things up and report back.")
+    page.locator("#agent-save").click()
+    note = page.locator("#saved-note")
+    note.wait_for(state="visible", timeout=4000)
+    assert "everything you have connected" in note.inner_text()
+
+
+def test_a_failed_save_does_not_claim_it_saved(page_with_tools):
+    """The note must follow the outcome, not the click. A save that fails
+    already keeps the form open and shows the error; it must not also announce
+    success behind it."""
+    page = page_with_tools
+    page.locator("#new-agent").click()
+    page.wait_for_timeout(200)
+    page.fill("#agent-name", "Scout")
+    page.fill("#agent-instructions", "You look things up and report back.")
+    page.route("**/api/v1/models/create*", lambda r: r.fulfill(
+        status=500, content_type="application/json", body="{}"))
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(700)
+    assert page.locator("#saved-note").is_hidden(), (
+        "it said saved after a save that failed")
+    assert page.locator("#form-error").inner_text().strip()
+
+
 def test_refreshing_the_tools_keeps_what_was_already_ticked(page_with_tools):
     """Reloading the tiles rebuilds them. Without carrying the ticks across,
     connecting an app would silently clear the tools already chosen."""

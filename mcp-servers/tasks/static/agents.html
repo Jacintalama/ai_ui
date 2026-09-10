@@ -522,6 +522,16 @@
   .form-error { color: #f87171; font-size: 12.5px; min-height: 0; margin-top: 16px; }
   .form-error:empty { margin-top: 0; }
   .form-actions { display: flex; gap: 9px; justify-content: flex-end; margin-top: 6px; }
+  /* Saving used to say nothing at all, so there was no way to tell a save
+     that worked from one that quietly did not. Ralph asked for this. */
+  .saved { position: fixed; left: 50%; transform: translateX(-50%);
+           bottom: 22px; z-index: 60; max-width: 520px;
+           background: var(--card, #17171c); color: var(--text, #e7e7ea);
+           border: 1px solid var(--accent, #6366f1); border-radius: 10px;
+           padding: 11px 15px; font-size: 13px; line-height: 1.45;
+           box-shadow: 0 10px 30px rgba(0,0,0,.45); }
+  .saved b { font-weight: 600; }
+  .saved-what { color: var(--muted, #8b8b96); font-size: 12px; margin-top: 3px; }
 </style>
 <script src="/tasks/static/vendor/htmx.min.js"></script>
 <script src="/tasks/static/vendor/sse.js"></script>
@@ -532,6 +542,7 @@
 <link rel="stylesheet" href="/tasks/static/agent-chat.css">
 </head>
 <body>
+  <div class="saved" id="saved-note" hidden></div>
   <div class="topbar">
     <div class="mark">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1949,6 +1960,30 @@
 
     function closeForm() { document.getElementById("agent-overlay").hidden = true; }
 
+    var savedTimer = null;
+
+    // Says what was saved AND how the tools ended up. The scope is the part
+    // people get wrong, because the switch reads as a preference rather than
+    // as the thing that decides what the agent may touch, so it is spelled
+    // out here rather than left to be discovered on the next edit.
+    function saidSaved(name, isNew, everything, picked) {
+      var note = document.getElementById("saved-note");
+      if (!note) return;
+      var what = everything
+        ? "It can use everything you have connected."
+        : (picked === 1
+            ? "It can use the 1 tool you picked, and nothing else."
+            : "It can use the " + picked + " tools you picked, and nothing "
+              + "else.");
+      note.innerHTML = "<b>Saved " + esc(name) + ".</b>"
+        + '<div class="saved-what">' + esc(what) + "</div>";
+      note.hidden = false;
+      if (savedTimer) clearTimeout(savedTimer);
+      // Long enough to read twice. It is a confirmation, not a warning, so it
+      // goes away on its own rather than asking to be dismissed.
+      savedTimer = setTimeout(function () { note.hidden = true; }, 6000);
+    }
+
     // A duplicate id arrives as a 401, the same status as "you may not do
     // this". The only thing telling them apart is the detail text. Read a clone
     // so the caller can still read the body afterwards.
@@ -2035,8 +2070,15 @@
         if (r.status === 401) throw new Error("Agents are not switched on for " +
                                               "your account yet.");
         if (!r.ok) throw new Error("Could not save that agent.");
+        var wasNew = !editingId;
+        // Read before closeForm, while the form is still the truth.
+        var everything = toolsAreEverything();
+        var picked = chosenTools().filter(function (id) {
+          return id !== "server:mcp-proxy";
+        }).length;
         closeForm();
         await load();
+        saidSaved(name, wasNew, everything, picked);
       } catch (e) {
         // Never clear the form on failure: the user typed that, and losing
         // several paragraphs to a network blip is the worst thing this page
