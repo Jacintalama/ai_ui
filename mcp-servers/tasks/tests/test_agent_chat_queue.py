@@ -81,12 +81,20 @@ async def test_a_new_message_opens_a_turn():
 async def test_a_queued_message_opens_its_own_turn():
     """It is a separate question and gets its own block, or its answers land
     inside the previous turn and belong to the wrong message."""
+    import re
     s = store.get_session(_User.email)
     s.streaming = True
     out = await _send("and my calendar?")
     body = out.body.decode()
     assert "aturn" in body
     assert "hx-swap-oob" in body, "it must not append after the open turn"
+    # The id in the response is what the browser actually rendered. It has
+    # to be the one the drain later pops and answers under (see
+    # _take_queued_turn_id), or the round's answers name a turn nothing on
+    # screen has. Parsed out rather than assumed, so this fails loudly if
+    # the two diverge instead of passing on a fallback id neither side used.
+    rendered_id = re.search(r'id="aturn-([^"]+)"', body).group(1)
+    assert s.queued_turn_ids == [rendered_id]
 
 
 async def test_several_queued_messages_keep_their_order():
@@ -95,6 +103,12 @@ async def test_several_queued_messages_keep_their_order():
     for text in ("one", "two", "three"):
         await _send(text)
     assert s.queued == ["one", "two", "three"]
+    # Popped in lockstep with `queued` by _take_queued_turn_id: every send
+    # while streaming pushes onto both, so a length mismatch here means a
+    # later pop reads the wrong id for the wrong message and falls back to
+    # a fresh, unrendered one instead of erroring, which is Critical 2
+    # arriving again by a different route.
+    assert len(s.queued_turn_ids) == len(s.queued)
 
 
 async def test_an_empty_message_is_still_refused_while_busy():

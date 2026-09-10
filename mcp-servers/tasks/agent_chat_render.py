@@ -56,9 +56,12 @@ def new_turn_id() -> str:
     """A name for one turn.
 
     Short enough to sit comfortably in a CSS selector, long enough not to
-    collide within one conversation. Never shown to a person, so no esc()
-    call is skipped by using it raw in a selector string: it never carries
-    anything a person or a model wrote.
+    collide within one conversation. Generated here, it is always plain
+    hex, but turn_body_target/turn_status_target/turn_open all escape it
+    anyway: thread() also feeds them a turn_id read back out of a saved
+    conversation, which is only ever this codebase's own output today but
+    is not guaranteed to stay that shape, and four functions silently
+    agreeing to trust it was worse than one esc() call each.
     """
     return uuid.uuid4().hex[:12]
 
@@ -77,12 +80,12 @@ def turn_body_target(turn_id: str) -> str:
     stealing :last-child from the one a round was still answering, so a
     drain could answer turn 1 into turn 2's body. An id does not move.
     """
-    return f"#aturn-{turn_id} .aturn-body"
+    return f"#aturn-{esc(turn_id)} .aturn-body"
 
 
 def turn_status_target(turn_id: str) -> str:
     """Where one turn's status line lands. See turn_body_target."""
-    return f"#aturn-{turn_id} .aturn-status"
+    return f"#aturn-{esc(turn_id)} .aturn-status"
 
 
 def turn_open(text: str, turn_id: str) -> str:

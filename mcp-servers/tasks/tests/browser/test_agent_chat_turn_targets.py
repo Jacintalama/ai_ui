@@ -150,10 +150,15 @@ def test_an_earlier_turns_targets_still_resolve_once_a_newer_one_exists(page):
     assert page.locator(render.turn_body_target(second_id)).count() == 1
     # Not each other's element. A selector that matched two would be just as
     # wrong as one that matches zero: the answer would land in both turns,
-    # or htmx would refuse the ambiguous target outright.
-    body_first = page.locator(render.turn_body_target(first_id)).element_handle()
-    body_second = page.locator(render.turn_body_target(second_id)).element_handle()
-    assert body_first != body_second
+    # or htmx would refuse the ambiguous target outright. Checked with the
+    # browser's own node identity (===), not by comparing two Python
+    # ElementHandle objects: that class has no __eq__ of its own, so two
+    # handles are never equal to each other even when they wrap the exact
+    # same node, and the comparison would pass no matter what it pointed at.
+    same_node = page.evaluate(
+        "([a, b]) => document.querySelector(a) === document.querySelector(b)",
+        [render.turn_body_target(first_id), render.turn_body_target(second_id)])
+    assert not same_node
 
 
 def test_an_answer_reaches_the_turn_it_names_through_a_real_sse_swap(server, page):
