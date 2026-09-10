@@ -743,6 +743,7 @@
         <div class="form-col">
         <label for="agent-base">Model</label>
         <select id="agent-base"></select>
+        <div class="hint" id="model-warn" hidden></div>
 
         <label>Access</label>
         <div class="access" id="agent-access">
@@ -1775,6 +1776,35 @@
     }
 
 
+    // Models that cannot hold an agent up, and why. Measured rather than
+    // guessed: over forty hours the agent on Auto (Free) failed 409 times
+    // against 62 for the one on a real model, and every failing hour was an
+    // hour it was on the router.
+    //
+    // Warned about, never removed. Somebody running a cheap experiment is
+    // entitled to pick one; they are not entitled to be surprised by it.
+    var MODEL_WARNINGS = {
+      "auto_router.auto":
+        "Auto (Free) shares a pool of free models that runs out, so an agent "
+        + "on it will often say it could not answer. Pick a specific model "
+        + "for anything you rely on.",
+      "auto_smart.auto-smart":
+        "Auto (Smart) picks a different model per message, so this agent's "
+        + "answers will change character between replies. Pick a specific "
+        + "model if you want it to behave the same way twice.",
+      "arena-model":
+        "Arena picks a model at random to compare them. Pick a specific "
+        + "model for an agent that has to be reliable."
+    };
+
+    function showModelWarning() {
+      var el = document.getElementById("model-warn");
+      var msg = MODEL_WARNINGS[document.getElementById("agent-base").value];
+      el.textContent = msg || "";
+      el.hidden = !msg;
+    }
+
+
     function chosenAccess() {
       var picked = document.querySelector(
         'input[name="agent-access"]:checked');
@@ -1869,6 +1899,7 @@
         base.appendChild(o);
       });
       if (agent && agent.base_model_id) base.value = agent.base_model_id;
+      showModelWarning();
       // A new agent starts on "ask": capable, and it checks with you first.
       // An existing agent with no level shows nothing selected, because it
       // genuinely has no level and pretending otherwise would write one.
@@ -2076,6 +2107,8 @@
       document.getElementById("new-agent").addEventListener("click", function () {
         openForm(null);
       });
+      document.getElementById("agent-base")
+        .addEventListener("change", showModelWarning);
       document.getElementById("agent-cancel").addEventListener("click", closeForm);
       document.getElementById("agent-save").addEventListener("click", save);
       document.getElementById("agent-instructions")

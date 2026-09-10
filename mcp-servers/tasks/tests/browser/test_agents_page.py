@@ -40,6 +40,12 @@ MODELS = [
      "base_model_id": None, "params": {}, "meta": {},
      "access_grants": [], "is_active": True, "write_access": False,
      "created_at": 1, "updated_at": 1, "user": None},
+    # The free-model router. Selectable, and the reason Ada failed 409 times
+    # in forty hours, so the form has to say something about it.
+    {"id": "auto_router.auto", "name": "Auto (Free)", "user_id": None,
+     "base_model_id": None, "params": {}, "meta": {},
+     "access_grants": [], "is_active": True, "write_access": False,
+     "created_at": 7, "updated_at": 7, "user": None},
     {"id": "agent-mine-a1b2", "name": "Researcher",
      "user_id": ME, "base_model_id": "gpt-4o-mini",
      "params": {"system": "You research things carefully."},
@@ -1324,3 +1330,62 @@ def test_no_emoji_on_the_card(page):
     text = card.inner_text()
     assert not any(ord(ch) > 0x2100 for ch in text), \
         [ch for ch in text if ord(ch) > 0x2100]
+
+
+# --- warning about a model that cannot hold up --------------------------
+
+# Ada failed 409 times in forty hours against Mia's 62, and every failing
+# hour was an hour Ada was on Auto (Free). The dropdown offered it with
+# nothing to say it is a shared free pool that runs out.
+
+def test_choosing_the_free_router_warns_you(page):
+    _open_form(page)
+    page.select_option("#agent-base", "auto_router.auto")
+    page.wait_for_timeout(120)
+    warn = page.locator("#model-warn")
+    assert warn.is_visible()
+    text = warn.inner_text().lower()
+    assert "free" in text
+    assert "specific model" in text, "it does not say what to do instead"
+
+
+def test_an_ordinary_model_warns_about_nothing(page):
+    _open_form(page)
+    page.select_option("#agent-base", "gpt-4o-mini")
+    page.wait_for_timeout(120)
+    assert not page.locator("#model-warn").is_visible()
+
+
+def test_the_warning_clears_when_you_pick_something_else(page):
+    _open_form(page)
+    page.select_option("#agent-base", "auto_router.auto")
+    page.wait_for_timeout(120)
+    assert page.locator("#model-warn").is_visible()
+    page.select_option("#agent-base", "gpt-4o-mini")
+    page.wait_for_timeout(120)
+    assert not page.locator("#model-warn").is_visible()
+
+
+def test_the_warning_shows_on_opening_an_agent_already_on_it(page):
+    """The case that matters most: somebody who already chose it and is
+    wondering why their agent keeps failing."""
+    page.evaluate(
+        "() => { const a = window.__aiuiAgents.state.agents"
+        ".find(x => x.id === 'agent-mine-a1b2');"
+        " a.base_model_id = 'auto_router.auto';"
+        " window.__aiuiAgents.openForm(a); }")
+    page.wait_for_selector("#agent-form", state="visible")
+    page.wait_for_timeout(120)
+    assert page.locator("#model-warn").is_visible()
+
+
+def test_the_free_router_is_still_choosable(page):
+    """Warned about, not removed. Somebody running a cheap experiment is
+    entitled to pick it, and taking the option away would be us deciding."""
+    _open_form(page)
+    page.select_option("#agent-base", "auto_router.auto")
+    page.fill("#agent-name", "Cheap")
+    page.fill("#agent-instructions", "Do a thing.")
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    assert json.loads(page.sent[-1]["body"])["base_model_id"] == "auto_router.auto"
