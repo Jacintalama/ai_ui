@@ -34,8 +34,8 @@ One permanent room per person. Every agent hears every message; naming one
 means only they answer. Stored in `tasks.agent_chats`, one row per person.
 The store has `create_chat`, `list_chats`, `load_chat` and `delete_chat`, and
 **only `create_chat` is reachable from the panel**: the other three are
-written, tested and unused. There is no way to have two conversations, and
-Clear is the only way to end one.
+written, untested and never called. There is no way to have two
+conversations, and Clear is the only way to end one.
 
 ## The five things it cannot currently say
 
