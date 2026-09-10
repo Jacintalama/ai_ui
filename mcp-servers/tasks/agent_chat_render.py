@@ -74,6 +74,34 @@ def queued_bubble(text: str) -> str:
             f'<div class="ab">{esc(text)}</div></div>')
 
 
+#: Where a running turn's answers and status land. The turn block is opened
+#: by the send response and everything after it swaps into these, so the
+#: selectors live here beside the element that creates them. Tests check both
+#: halves: the classes come from turn_open, the id from agents.html.
+TURN_BODY_TARGET = "#agent-thread .aturn:last-child .aturn-body"
+TURN_STATUS_TARGET = "#agent-thread .aturn:last-child .aturn-status"
+
+
+def turn_open(text: str) -> str:
+    """One turn: the person's message, a status row, and room for answers.
+
+    A turn rather than loose bubbles, because the panel had no way to say
+    anything that was not an answer. Status, failures and what an agent is
+    doing all had to be dressed up as chat messages, and a failure that looks
+    like an answer is a failure people re-read as an answer.
+    """
+    return ('<div class="aturn">'
+            '<div class="am user"><div class="ab">'
+            f'{esc(text)}</div></div>'
+            '<div class="aturn-status"></div>'
+            '<div class="aturn-body"></div>')
+
+
+def turn_close() -> str:
+    """Closes the element turn_open left open."""
+    return "</div>"
+
+
 #: How much of the question a reply quotes. Enough to recognise, not enough
 #: to reprint: a paragraph you typed would otherwise reappear above every
 #: answer to it, twice over when two agents both reply.
@@ -173,15 +201,18 @@ def note(text: str) -> str:
 def stream_block() -> str:
     """The element that opens the SSE connection for one round.
 
-    One connection with two swap targets: finished bubbles append to the live
-    thread, and the working line replaces itself. `sse-close` stops the browser
+    One connection with two swap targets, both aimed at the turn that was
+    just opened: finished bubbles append to its body, and the working line
+    replaces the content of its status row. `sse-close` stops the browser
     reconnecting, which would otherwise re-run a round that has already been
     paid for.
     """
     return ('<div class="astream" hx-ext="sse" '
             'sse-connect="/tasks/agents/chat/stream" sse-close="close">'
-            '<div class="alive" sse-swap="message" hx-swap="beforeend"></div>'
-            '<div class="awork" sse-swap="working" hx-swap="innerHTML"></div>'
+            f'<div sse-swap="message" hx-target="{TURN_BODY_TARGET}" '
+            'hx-swap="beforeend"></div>'
+            f'<div sse-swap="working" hx-target="{TURN_STATUS_TARGET}" '
+            'hx-swap="innerHTML"></div>'
             '</div>')
 
 
@@ -192,20 +223,33 @@ def empty_thread() -> str:
 
 
 def thread(messages: list[dict]) -> str:
-    """A saved conversation replayed.
+    """A saved conversation replayed, grouped into turns.
 
     Roles other than user, assistant and note are the round bookkeeping (see
     routes_agent_chat) and render as nothing. Notes ARE drawn, because a round
     stores them on purpose: a skipped agent said out loud while the round ran
     and then gone on reload leaves a conversation that no longer makes sense.
+
+    Every user message opens a new turn, closing whichever one was open, so
+    replay produces the same one-block-per-question shape a live round does.
+    No messages, or none that leave anything to show (round bookkeeping only,
+    say), still falls back to the empty state: that placeholder is what a
+    brand new conversation and a freshly cleared one show live today, and
+    this function is what /tasks/agents/chat/thread renders on every page
+    load, so returning "" here would blank that out instead.
     """
     out = []
+    open_turn = False
     for m in messages or []:
         role = m.get("role")
         content = m.get("content") or ""
         if role == "user":
-            out.append(user_bubble(content))
-        elif role == "note":
+            if open_turn:
+                out.append(turn_close())
+            out.append(turn_open(content))
+            open_turn = True
+            continue
+        if role == "note":
             if content:
                 out.append(note(content))
         elif role == "assistant":
@@ -222,4 +266,6 @@ def thread(messages: list[dict]) -> str:
                 out.append(approval_bubble(name,
                                            str(awaiting.get("ask_id") or ""),
                                            awaiting["calls"]))
+    if open_turn:
+        out.append(turn_close())
     return "".join(out) if out else empty_thread()

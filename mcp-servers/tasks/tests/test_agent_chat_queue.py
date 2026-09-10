@@ -69,6 +69,26 @@ async def test_the_first_message_still_opens_a_stream():
     assert s.queued == []
 
 
+async def test_a_new_message_opens_a_turn():
+    s = store.get_session(_User.email)
+    out = await _send("what is in my inbox?")
+    body = out.body.decode()
+    assert "aturn" in body
+    assert "what is in my inbox?" in body
+    assert "sse" in body.lower(), "the stream block is still needed"
+
+
+async def test_a_queued_message_opens_its_own_turn():
+    """It is a separate question and gets its own block, or its answers land
+    inside the previous turn and belong to the wrong message."""
+    s = store.get_session(_User.email)
+    s.streaming = True
+    out = await _send("and my calendar?")
+    body = out.body.decode()
+    assert "aturn" in body
+    assert "hx-swap-oob" in body, "it must not append after the open turn"
+
+
 async def test_several_queued_messages_keep_their_order():
     s = store.get_session(_User.email)
     s.streaming = True
@@ -211,6 +231,16 @@ async def _agents_stub():
 # INSIDE .astream .alive, which is itself a child of #agent-thread. So a
 # queued bubble appended to the thread lands BELOW every answer, including the
 # answer to itself. You would see your own question underneath its reply.
+#
+# queued_bubble/QUEUED_TARGET below are that original fix, kept for the shape
+# they establish (out of band, straight into the thread) but no longer called
+# by the send route: a queued message is now its own turn (turn_open +
+# turn_close, see test_a_queued_message_opens_its_own_turn in this file),
+# which needs a whole block rather than one bubble. The cross-file check that
+# used to live here (that queued_bubble's target class was one stream_block
+# still creates) is gone with it: stream_block's swap targets aim at
+# TURN_BODY_TARGET/TURN_STATUS_TARGET now, not at a ".alive" class, so that
+# assertion would fail on a fact that stopped mattering, not on a real drift.
 
 def test_a_queued_bubble_targets_the_live_area(monkeypatch):
     from agent_chat_render import queued_bubble
@@ -218,18 +248,6 @@ def test_a_queued_bubble_targets_the_live_area(monkeypatch):
     assert "hx-swap-oob" in html
     assert ".alive" in html, "it does not aim at the live area"
     assert "and another thing" in html
-
-
-def test_the_live_area_it_aims_at_is_the_one_the_stream_makes():
-    """A cross-file check. The selector is a string in one file and the
-    element is created in another, and nothing else would notice them
-    drifting apart: the bubble would simply stop appearing."""
-    from agent_chat_render import queued_bubble, stream_block
-    import re
-    target = re.search(r'hx-swap-oob="beforeend:([^"]+)"',
-                       queued_bubble("x")).group(1)
-    leaf = target.rsplit(" ", 1)[-1].lstrip(".")
-    assert leaf in stream_block(), (target, "not a class the stream creates")
 
 
 def test_the_thread_id_in_the_selector_is_the_one_on_the_page():

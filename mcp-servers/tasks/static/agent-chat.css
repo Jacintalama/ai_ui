@@ -93,12 +93,17 @@
 .aargs { color: var(--text-2); overflow-wrap: anywhere; }
 .aactions { display: flex; gap: 8px; margin-top: 6px; }
 
+/* A turn is the person's message and everything that answered it. Grouping
+   them gives status and failures somewhere to live that is not a bubble
+   pretending to be a message. */
+.aturn { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
+.aturn-status:empty { display: none; }
+.aturn-body { display: flex; flex-direction: column; gap: 10px; }
+
 /* A bubble that streamed in and one replayed from a saved conversation have
-   to be indistinguishable. Replayed bubbles are flex children of .ap-thread
-   and take its 12px gap; streamed ones land inside .alive, two levels down,
-   so the same spacing is set up again here. Empty wrappers are hidden rather
-   than left in place, or a round that has not started yet leaves two gaps
-   under the last message. */
+   to be indistinguishable. Both are now flex children of .aturn-body, which
+   sets the same spacing either way, so this wrapper carries none of its own
+   any more; it stays only to open and close the SSE connection. */
 .astream, .alive { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .awork { min-width: 0; }
 .astream:empty, .alive:empty, .awork:empty { display: none; }

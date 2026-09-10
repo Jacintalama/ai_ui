@@ -433,10 +433,12 @@ async def agent_chat_send(message: str = Form(...),
         # run two at once, which is what the single-round guard exists to
         # prevent.
         s.queued.append(body)
-        # Out of band into the live area, not appended to the thread. The
-        # round in flight is writing its answers into that area, and a bubble
-        # appended to the thread would sit underneath them.
-        return HTMLResponse(render.queued_bubble(body))
+        # Its own turn, appended to the thread out of band so it lands after
+        # the running turn rather than inside it. Its answers swap into
+        # :last-child, which is this one from the moment it exists.
+        return HTMLResponse(
+            f'<div hx-swap-oob="beforeend:#agent-thread">'
+            f'{render.turn_open(body)}{render.turn_close()}</div>')
 
     s.messages.append({"role": "user", "content": body})
     s.streaming = True
@@ -452,7 +454,8 @@ async def agent_chat_send(message: str = Form(...),
             log.exception("agent chat: could not create the conversation row; "
                           "continuing unsaved")
 
-    resp = HTMLResponse(render.user_bubble(body) + render.stream_block())
+    resp = HTMLResponse(render.turn_open(body) + render.turn_close()
+                        + render.stream_block())
     resp.headers["HX-Trigger"] = "agent-chats-changed"
     return resp
 

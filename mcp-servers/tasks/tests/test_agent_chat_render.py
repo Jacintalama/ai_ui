@@ -51,6 +51,40 @@ def test_agent_answer_is_escaped():
     assert "<img" not in render.agent_bubble("Ada", '<img onerror=x>')
 
 
+def test_a_turn_carries_the_message_and_a_place_for_answers():
+    from agent_chat_render import turn_open
+    html = turn_open("what is in my inbox?")
+    assert "what is in my inbox?" in html
+    assert "aturn-body" in html
+    assert "aturn-status" in html
+
+
+def test_a_turn_escapes_what_the_person_typed():
+    from agent_chat_render import turn_open
+    html = turn_open('<img src=x onerror="alert(1)">')
+    assert "<img" not in html
+    assert "&lt;img" in html
+
+
+def test_the_turn_targets_point_inside_a_turn():
+    """Two other files swap into these. A selector that stops matching does
+    not error; the answers simply stop appearing."""
+    from agent_chat_render import (TURN_BODY_TARGET, TURN_STATUS_TARGET,
+                                   turn_open)
+    html = turn_open("x")
+    for target in (TURN_BODY_TARGET, TURN_STATUS_TARGET):
+        leaf = target.rsplit(" ", 1)[-1].lstrip(".")
+        assert leaf in html, (target, leaf)
+
+
+def test_the_turn_targets_name_the_thread_on_the_page():
+    import pathlib
+    from agent_chat_render import TURN_BODY_TARGET
+    page = (pathlib.Path(__file__).resolve().parents[1]
+            / "static" / "agents.html").read_text(encoding="utf-8")
+    assert 'id="%s"' % TURN_BODY_TARGET.split()[0].lstrip("#") in page
+
+
 def test_approval_shows_the_call_and_offers_both_answers():
     html = render.approval_bubble("Ada", "q-1", CALLS)
     assert "send_email" in html
@@ -114,6 +148,31 @@ def test_round_bookkeeping_still_draws_as_nothing():
     html = render.thread([{"role": "round", "content": ""}])
     # Nothing to show, so the empty state is what a person gets.
     assert "Every agent hears it" in html
+
+
+def test_a_replayed_conversation_groups_answers_into_turns():
+    from agent_chat_render import thread
+    html = thread([
+        {"role": "user", "content": "one"},
+        {"role": "assistant", "agent_name": "Mia", "content": "first"},
+        {"role": "user", "content": "two"},
+        {"role": "assistant", "agent_name": "Ada", "content": "second"},
+    ])
+    assert html.count('class="aturn"') == 2
+    assert html.count("</div>") >= 2
+    assert html.index("first") < html.index("two"), "an answer escaped its turn"
+
+
+def test_a_replay_with_no_messages_falls_back_to_the_empty_state():
+    """/tasks/agents/chat/thread renders this on every page load, including a
+    brand new conversation and one just cleared, and those already show the
+    empty state today (see test_round_bookkeeping_still_draws_as_nothing
+    above, which covers the same case with no visible content for a
+    different reason). Turning this into "" would blank that placeholder out
+    from under every first-time visitor and everyone who just hit Clear."""
+    from agent_chat_render import empty_thread, thread
+    assert thread([]) == empty_thread()
+    assert thread(None) == empty_thread()
 
 
 # The panel's avatars are ported from the agent cards so a person recognises
