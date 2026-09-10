@@ -1534,24 +1534,29 @@
     // Grey the connected apps switch when the person has connected nothing,
     // and point them at where to fix it. Same treatment the tiles get, so the
     // form tells one story about what will actually work.
-    function applyUmbrellaState(t) {
+    function applyUmbrellaState(t, others) {
       var box = document.getElementById("use-my-apps");
       var row = box && box.closest(".switch");
       if (!box || !row) return;
       var existing = row.parentNode.querySelector(".umbrella-connect");
       if (existing) existing.remove();
-      var connected = !t || t.connected !== false;
-      box.disabled = !connected;
-      row.classList.toggle("not-connected", !connected);
-      if (!connected) {
-        // Unticking here is deliberate: a saved agent may still carry the
-        // tool, and offering it as ticked when nothing is behind it would
-        // claim it works.
-        box.checked = false;
+      var haveProxy = !t || t.connected !== false;
+      var haveAny = haveProxy || (others || []).some(function (o) {
+        return o && o.connected !== false;
+      });
+      box.disabled = !haveAny;
+      row.classList.toggle("not-connected", !haveAny);
+      // Only when there is nothing at all. A saved agent may still carry the
+      // tool, and offering it as ticked with nothing behind it would claim
+      // it works.
+      if (!haveAny) box.checked = false;
+      if (!haveProxy) {
+        // Shown whether or not the switch is usable, because it points at the
+        // apps that are not linked yet, not at the tools that already are.
+        // The panel on this page. The old fallback pointed at a static file
+        // that has never existed.
         var a = document.createElement("a");
         a.className = "umbrella-connect";
-        // The panel on this page. The old fallback pointed at a static
-        // file that has never existed.
         a.href = "#connections";
         a.textContent = "Connect an app";
         row.parentNode.insertBefore(a, row.nextSibling);
@@ -1572,16 +1577,16 @@
       }
       if (tools) {
         // server:mcp-proxy is offered through the "Let this agent use my
-        // connected apps" switch above, not as a tile of its own. That switch
-        // still has to say whether anything is behind it: leaving it always
-        // tickable would keep the exact checkbox that ticks and does nothing
-        // which this endpoint exists to get rid of.
+        // connected apps" switch above, not as a tile of its own. The switch
+        // is handed the rest of the list as well, because what it decides is
+        // scope over every tool this person can reach, not whether one of
+        // them in particular is linked.
         var umbrella = null;
         tools = tools.filter(function (t) {
           if (t.id === "server:mcp-proxy") { umbrella = t; return false; }
           return true;
         });
-        applyUmbrellaState(umbrella);
+        applyUmbrellaState(umbrella, tools);
         renderToolTiles(tools);
         NATIVE_TOOLS = tools.map(function (t) { return [t.id, t.label]; });
       } else {
@@ -1616,6 +1621,19 @@
 
     function showToolPicker() {
       document.getElementById("native-tools").hidden = toolsAreEverything();
+    }
+
+    // Never ticks a box the person cannot untick. applyUmbrellaState disables
+    // this switch when there is nothing behind it, and the two paths that
+    // fill the form used to set .checked straight afterwards without looking.
+    // That left it ticked AND disabled: it read as "this agent uses every app
+    // I have connected", it was not true, and clicking it did nothing at all.
+    // Reported from production, with no connected proxy apps on the account.
+    function setUmbrella(on) {
+      var box = document.getElementById("use-my-apps");
+      if (!box) return;
+      box.checked = !box.disabled && !!on;
+      showToolPicker();
     }
 
     function chosenTools() {
@@ -1898,9 +1916,7 @@
       var tools = (agent && agent.meta && agent.meta.toolIds) || [];
       // A new agent gets everything, which is what every agent does today.
       // An existing one is narrowed only if it says so.
-      document.getElementById("use-my-apps").checked =
-        !(agent && agent.meta && agent.meta.toolScope === "picked");
-      showToolPicker();
+      setUmbrella(!(agent && agent.meta && agent.meta.toolScope === "picked"));
       NATIVE_TOOLS.forEach(function (t) {
         var cb = document.getElementById("tool-" + t[0]);
         if (cb) cb.checked = tools.indexOf(t[0]) !== -1;
@@ -2094,8 +2110,7 @@
                   "Write your own below and save.");
       }
       var tools = (agent.meta && agent.meta.toolIds) || [];
-      document.getElementById("use-my-apps").checked =
-        tools.indexOf("server:mcp-proxy") !== -1;
+      setUmbrella(tools.indexOf("server:mcp-proxy") !== -1);
       NATIVE_TOOLS.forEach(function (t) {
         var cb = document.getElementById("tool-" + t[0]);
         if (cb) cb.checked = tools.indexOf(t[0]) !== -1;

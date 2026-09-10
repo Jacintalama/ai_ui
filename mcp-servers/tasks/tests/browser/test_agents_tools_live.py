@@ -172,24 +172,79 @@ def test_the_page_seeds_once_on_load(page_with_tools):
     assert len(seeds) == 1
 
 
-def test_the_connected_apps_switch_is_disabled_with_nothing_behind_it(
+def test_the_switch_stays_usable_when_only_proxy_apps_are_missing(
         page_with_tools):
-    """It is the same tick-and-do-nothing checkbox the tiles were fixed for.
-    Nobody on this platform has connected a proxy app, so for every user the
-    switch was offering a capability that does not exist."""
+    """Reported from production. The switch decides SCOPE, meaning every tool
+    this person can reach or a picked few, and that is a real choice whether
+    or not a third-party app is linked. It used to be disabled purely on
+    server:mcp-proxy, which is a different question, so an account with a
+    dozen working tools and no ClickUp could not touch it.
+
+    TOOLS_BODY is exactly that account: proxy unconnected, the rest connected.
+    """
     page = page_with_tools
     page.locator("#new-agent").click()
     page.wait_for_timeout(200)
-    assert page.locator("#use-my-apps").is_disabled()
+    assert page.locator("#use-my-apps").is_enabled()
 
 
-def test_the_disabled_switch_says_where_to_connect_one(page_with_tools):
+def test_the_switch_is_never_ticked_and_unusable_at_once(page_with_tools):
+    """The shape of the bug as it was reported: it read as on, it claimed
+    every connected app, and clicking it did nothing, because the form filled
+    it in after something else had disabled it. Ticked and disabled together
+    is the state that must never exist, whichever of the two is right."""
+    page = page_with_tools
+    page.locator("#new-agent").click()
+    page.wait_for_timeout(200)
+    box = page.locator("#use-my-apps")
+    assert not (box.is_checked() and box.is_disabled())
+
+
+def test_the_switch_can_actually_be_turned_off(page_with_tools):
+    """The literal complaint: it could not be unticked. Clicking has to change
+    it, and the tool list it was hiding has to appear."""
+    page = page_with_tools
+    page.locator("#new-agent").click()
+    page.wait_for_timeout(200)
+    box = page.locator("#use-my-apps")
+    assert box.is_checked(), "everything is still the default for a new agent"
+    assert page.locator("#native-tools").is_hidden()
+
+    box.uncheck()
+    assert not box.is_checked(), "it could not be turned off"
+    assert page.locator("#native-tools").is_visible(), (
+        "turning it off has to reveal the tools it was standing in for")
+
+
+def test_the_switch_says_where_to_connect_an_app(page_with_tools):
+    """Shown whether or not the switch is usable. It points at the apps that
+    are not linked yet, which is still true and still worth saying."""
     page = page_with_tools
     page.locator("#new-agent").click()
     page.wait_for_timeout(200)
     link = page.locator(".umbrella-connect")
     assert link.count() == 1
     assert link.get_attribute("href")
+
+
+def test_the_switch_is_disabled_when_nothing_at_all_is_connected(
+        page_with_tools):
+    """The honest half of the old rule, kept. With nothing behind it the
+    switch would be claiming a capability that does not exist, so it is both
+    unticked and unusable, and it must not be ticked back on by the form."""
+    page = page_with_tools
+    nothing = {"tools": [dict(t, connected=False)
+                         for t in TOOLS_BODY["tools"]]}
+    page.route("**/api/tasks/agents/tools*", lambda r: r.fulfill(
+        status=200, content_type="application/json", body=json.dumps(nothing)))
+    page.reload()
+    page.wait_for_function(
+        "() => window.__aiuiAgents && window.__aiuiAgents.ready")
+    page.locator("#new-agent").click()
+    page.wait_for_timeout(200)
+    box = page.locator("#use-my-apps")
+    assert box.is_disabled()
+    assert not box.is_checked(), "the form ticked a box nobody can untick"
 
 
 def test_connecting_does_not_throw_away_the_agent_being_written(page_with_tools):
@@ -239,6 +294,9 @@ def test_refreshing_the_tools_keeps_what_was_already_ticked(page_with_tools):
     page = page_with_tools
     page.locator("#new-agent").click()
     page.wait_for_timeout(200)
+    # The tiles live behind the umbrella now: on means everything, so the list
+    # is hidden and there is nothing to pick from until it is turned off.
+    page.locator("#use-my-apps").uncheck()
     page.check("#tool-documents")
     page.check("#tool-remember")
 
