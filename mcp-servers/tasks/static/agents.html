@@ -1972,6 +1972,12 @@
     //
     // Warned about, never removed. Somebody running a cheap experiment is
     // entitled to pick one; they are not entitled to be surprised by it.
+    // Pipes that hand the question back to your agents. Never offerable as
+    // an agent's own model: such an agent answers itself, forever. Kept
+    // beside the warnings because both answer "is this model a bad idea",
+    // and the two get read together whenever a model misbehaves.
+    var CALLBACK_MODELS = ["auto_router.auto", "io.io"];
+
     var MODEL_WARNINGS = {
       "auto_router.auto":
         "Auto (Free) shares a pool of free models that runs out, so an agent "
@@ -1988,7 +1994,15 @@
 
     function showModelWarning() {
       var el = document.getElementById("model-warn");
-      var msg = MODEL_WARNINGS[document.getElementById("agent-base").value];
+      var chosen = document.getElementById("agent-base").value;
+      var msg = MODEL_WARNINGS[chosen];
+      // Takes precedence over any tuning note: this one is not "you may get a
+      // worse answer", it is "this cannot work at all".
+      if (CALLBACK_MODELS.indexOf(chosen) !== -1) {
+        msg = "This model hands the question back to your agents, so an agent "
+            + "set to it answers itself and never stops. Pick a specific "
+            + "model.";
+      }
       el.textContent = msg || "";
       el.hidden = !msg;
     }
@@ -2087,12 +2101,35 @@
       });
       var base = document.getElementById("agent-base");
       base.innerHTML = "";
-      state.models.filter(function (m) { return !isAgent(m); }).forEach(function (m) {
+      // Auto (Free) and IO are pipes that hand the question back to your
+      // agents. An agent set to one answers itself, forever, and takes the
+      // platform down with it. They are also the two that do not forward
+      // tools, so such an agent would have none. Not offered here at all:
+      // a warning was not enough, because the choice reads as reasonable.
+      state.models.filter(function (m) {
+        return !isAgent(m) && CALLBACK_MODELS.indexOf(m.id) === -1;
+      }).forEach(function (m) {
         var o = document.createElement("option");
         o.value = m.id; o.textContent = m.name || m.id;
         base.appendChild(o);
       });
-      if (agent && agent.base_model_id) base.value = agent.base_model_id;
+      if (agent && agent.base_model_id) {
+        base.value = agent.base_model_id;
+        // The dropdown no longer offers callback pipes, so an agent already
+        // on one would land on whatever option happens to be first and be
+        // silently moved by the next save. Show it, marked, and make them
+        // choose: quietly rewriting somebody's model is worse than the
+        // problem this is trying to fix.
+        if (base.value !== agent.base_model_id) {
+          var o = document.createElement("option");
+          o.value = agent.base_model_id;
+          o.textContent = agent.base_model_id
+            + (CALLBACK_MODELS.indexOf(agent.base_model_id) !== -1
+                 ? " (cannot run an agent)" : " (not available)");
+          base.insertBefore(o, base.firstChild);
+          base.value = agent.base_model_id;
+        }
+      }
       showModelWarning();
       // A new agent starts on "ask": capable, and it checks with you first.
       // An existing agent with no level shows nothing selected, because it
@@ -2185,6 +2222,14 @@
       // disappears from the account, which the free model roster does.
       var baseModel = document.getElementById("agent-base").value;
       if (!baseModel) return formError("Pick a model for this agent.");
+      // Belt as well as braces: the dropdown does not offer these, but an
+      // agent edited from an older page, or written straight through the API,
+      // can still arrive here on one.
+      if (CALLBACK_MODELS.indexOf(baseModel) !== -1) {
+        return formError("That model hands the question back to your agents, "
+                         + "so this agent would answer itself and never stop. "
+                         + "Pick a specific model.");
+      }
 
       // Carry the current grants through an edit. A new agent has none, which
       // is exactly what makes it private to you.

@@ -23,8 +23,9 @@ from auth import CurrentUser, current_user
 import agent_access
 import agent_routing
 from agent_runner import CHANNEL_HTTP_TIMEOUT_SECONDS, ROUTER_EXHAUSTED, _chat
-from routes_agent_turn import (_agents_for, _resolve_agent,
-                               _resume_turn, _turn_failed_sentence, _turn_for)
+from routes_agent_turn import (AGENT_ON_CALLBACK_MODEL, _agents_for,
+                               _resolve_agent, _resume_turn,
+                               _turn_failed_sentence, _turn_for)
 from routes_agents import _pending_for_page
 
 log = logging.getLogger(__name__)
@@ -200,6 +201,11 @@ def _failure_reason(name: str, answer: str) -> tuple[str, str] | None:
         return ("The free models are all busy right now.",
                "This agent is set to Auto (Free). Choosing a specific "
                "model on its card fixes this.")
+    if answer == AGENT_ON_CALLBACK_MODEL:
+        return ("This agent is set to a model that cannot run an agent.",
+               "Auto (Free) and IO both hand the question back to your "
+               "agents, so an agent set to one would answer itself forever. "
+               "Pick a specific model on the agent's card.")
     return None
 
 

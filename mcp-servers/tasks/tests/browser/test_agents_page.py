@@ -1329,57 +1329,86 @@ def test_no_emoji_on_the_card(page):
 # hour was an hour Ada was on Auto (Free). The dropdown offered it with
 # nothing to say it is a shared free pool that runs out.
 
-def test_choosing_the_free_router_warns_you(page):
+def test_a_callback_pipe_is_not_offered_as_an_agent_model(page):
+    """Reversal of an earlier decision, recorded because the reasoning matters.
+
+    This used to warn and allow: "somebody running a cheap experiment is
+    entitled to pick it, and taking the option away would be us deciding."
+    That held while the cost of a bad choice fell on the person making it.
+
+    It does not hold any more. Auto (Free) and IO hand the question back to
+    the agents service, which matches the agent and runs it again. Measured
+    2026-09-10: two agents on Auto (Free) opened dozens of chats a second and
+    restarted Open WebUI twice. The cost lands on everybody using the
+    platform, so it stopped being a personal choice.
+    """
     _open_form(page)
-    page.select_option("#agent-base", "auto_router.auto")
-    page.wait_for_timeout(120)
-    warn = page.locator("#model-warn")
-    assert warn.is_visible()
-    text = warn.inner_text().lower()
-    assert "free" in text
-    assert "specific model" in text, "it does not say what to do instead"
+    offered = page.locator("#agent-base option").evaluate_all(
+        "els => els.map(e => e.value)")
+    assert "auto_router.auto" not in offered, offered
+    assert "io.io" not in offered, offered
 
 
-def test_an_ordinary_model_warns_about_nothing(page):
+def test_a_model_that_does_not_call_back_is_still_offered(page):
+    """The guard must remove exactly two things. Filtering by a name pattern
+    would have taken Auto (Smart) with it, and refusing everything looks
+    identical from outside to refusing the right things."""
     _open_form(page)
-    page.select_option("#agent-base", "gpt-4o-mini")
-    page.wait_for_timeout(120)
-    assert not page.locator("#model-warn").is_visible()
+    offered = page.locator("#agent-base option").evaluate_all(
+        "els => els.map(e => e.value)")
+    assert "gpt-4o-mini" in offered, offered
+    assert len(offered) >= 1
 
 
-def test_the_warning_clears_when_you_pick_something_else(page):
-    _open_form(page)
-    page.select_option("#agent-base", "auto_router.auto")
-    page.wait_for_timeout(120)
-    assert page.locator("#model-warn").is_visible()
-    page.select_option("#agent-base", "gpt-4o-mini")
-    page.wait_for_timeout(120)
-    assert not page.locator("#model-warn").is_visible()
+def test_an_agent_already_on_a_callback_pipe_shows_it_rather_than_moving_it(page):
+    """The case that matters most: somebody who chose it before this existed.
 
-
-def test_the_warning_shows_on_opening_an_agent_already_on_it(page):
-    """The case that matters most: somebody who already chose it and is
-    wondering why their agent keeps failing."""
+    The dropdown no longer carries that option, so the agent would land on
+    whatever is first and be silently switched by the next save. Quietly
+    rewriting somebody's model is worse than the bug being fixed.
+    """
     page.evaluate(
         "() => { const a = window.__aiuiAgents.state.agents"
         ".find(x => x.id === 'agent-mine-a1b2');"
         " a.base_model_id = 'auto_router.auto';"
         " window.__aiuiAgents.openForm(a); }")
     page.wait_for_selector("#agent-form", state="visible")
-    page.wait_for_timeout(120)
+    page.wait_for_timeout(150)
+    assert page.locator("#agent-base").input_value() == "auto_router.auto", (
+        "it silently moved the agent to another model")
+    assert "cannot run an agent" in page.locator("#agent-base").inner_text()
     assert page.locator("#model-warn").is_visible()
 
 
-def test_the_free_router_is_still_choosable(page):
-    """Warned about, not removed. Somebody running a cheap experiment is
-    entitled to pick it, and taking the option away would be us deciding."""
-    _open_form(page)
-    page.select_option("#agent-base", "auto_router.auto")
-    page.fill("#agent-name", "Cheap")
-    page.fill("#agent-instructions", "Do a thing.")
+def test_saving_onto_a_callback_pipe_is_refused(page):
+    """Belt as well as braces. The dropdown does not offer these, but an older
+    page or a direct API write can still put an agent on one."""
+    page.evaluate(
+        "() => { const a = window.__aiuiAgents.state.agents"
+        ".find(x => x.id === 'agent-mine-a1b2');"
+        " a.base_model_id = 'auto_router.auto';"
+        " window.__aiuiAgents.openForm(a); }")
+    page.wait_for_selector("#agent-form", state="visible")
+    page.wait_for_timeout(150)
+    before = len(page.sent)
     page.locator("#agent-save").click()
     page.wait_for_timeout(300)
-    assert json.loads(page.sent[-1]["body"])["base_model_id"] == "auto_router.auto"
+    assert len(page.sent) == before, "it saved an agent that cannot run"
+    assert "answer itself" in page.locator("#form-error").inner_text()
+
+
+def test_the_warning_clears_when_you_pick_something_else(page):
+    page.evaluate(
+        "() => { const a = window.__aiuiAgents.state.agents"
+        ".find(x => x.id === 'agent-mine-a1b2');"
+        " a.base_model_id = 'auto_router.auto';"
+        " window.__aiuiAgents.openForm(a); }")
+    page.wait_for_selector("#agent-form", state="visible")
+    page.wait_for_timeout(150)
+    assert page.locator("#model-warn").is_visible()
+    page.select_option("#agent-base", "gpt-4o-mini")
+    page.wait_for_timeout(150)
+    assert not page.locator("#model-warn").is_visible()
 
 
 # --- tools: everything, or only what you pick -------------------------------

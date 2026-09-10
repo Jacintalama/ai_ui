@@ -108,6 +108,30 @@ async def _every_tool_for(user_email: str) -> list[str]:
     return out
 
 
+#: Model ids that are pipes which call BACK into this service. An agent whose
+#: base model is one of these cannot run at all.
+#:
+#: It loops: the pipe asks /agents/chat who should answer, that matches the
+#: agent, and the agent runs again. The pipe's own route_only guard does not
+#: help, because it only short-circuits when NO agent matches, and an agent
+#: running itself always matches. Measured 2026-09-10: two agents on Auto
+#: (Free) opened dozens of chats a second and restarted Open WebUI twice.
+#:
+#: Independently, neither pipe forwards `tools`, so an agent on one silently
+#: loses every tool and skill it has. Either reason alone would be enough.
+#:
+#: To regenerate this list:
+#:   select id from public.function
+#:    where type='pipe' and content like '%/agents/chat%';
+#: then map each pipe to its model id: pipe "io" registers model "io.io".
+CALLBACK_MODEL_IDS = frozenset({"auto_router.auto", "io.io"})
+
+#: Said in place of an answer, and recognised in routes_agent_chat so it draws
+#: as a failure carrying the fix rather than as something the agent said.
+AGENT_ON_CALLBACK_MODEL = (
+    "This agent is set to a model that cannot run an agent.")
+
+
 async def _resolve_agent(user_email: str, agent_id: str) -> tuple[str, list[str], str | None]:
     """(token, the agent's own tool ids, its access level).
 
@@ -131,6 +155,12 @@ async def _resolve_agent(user_email: str, agent_id: str) -> tuple[str, list[str]
                 status_code=503,
                 detail="could not check that agent just now")
         raise HTTPException(status_code=404, detail="no such agent")
+    # Before anything is spent on the turn. Running it would not merely fail,
+    # it would recurse until something upstream fell over.
+    base = agent.get("base_model_id")
+    if isinstance(base, str) and base in CALLBACK_MODEL_IDS:
+        raise HTTPException(status_code=409,
+                            detail=AGENT_ON_CALLBACK_MODEL)
     meta = agent.get("meta") if isinstance(agent.get("meta"), dict) else {}
     own = meta.get("toolIds")
     own = [t for t in own if isinstance(t, str)] if isinstance(own, list) else []
@@ -713,10 +743,17 @@ async def _turn_for(user_email: str, agent: dict, messages: list[dict],
                + agent_routing.clean_history_for_agent(messages, names))
     try:
         out = await _run_turn(user_email, agent["id"], history)
-    except Exception:                                       # noqa: BLE001
-        logger.warning("agent turn failed for %s", agent.get("id"),
-                       exc_info=True)
-        out = {"answer": _turn_failed_sentence(agent.get("name")), "notes": []}
+    except Exception as exc:                                # noqa: BLE001
+        # One failure is worth naming rather than generalising: an agent on a
+        # callback pipe cannot run at all, and the person fixes it in one
+        # click. It is also not a surprise, so it is not logged as one.
+        if getattr(exc, "detail", None) == AGENT_ON_CALLBACK_MODEL:
+            out = {"answer": AGENT_ON_CALLBACK_MODEL, "notes": []}
+        else:
+            logger.warning("agent turn failed for %s", agent.get("id"),
+                           exc_info=True)
+            out = {"answer": _turn_failed_sentence(agent.get("name")),
+                   "notes": []}
     out = dict(out)  # Defensive copy: caller must never get a shared dict modified
     out["answer"] = agent_routing.strip_leading_labels(out.get("answer"), names)
     out["agent"] = {"id": agent["id"], "name": agent.get("name") or agent["id"]}

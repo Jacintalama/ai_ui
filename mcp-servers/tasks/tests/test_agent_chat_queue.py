@@ -526,3 +526,98 @@ async def test_an_ordinary_exchange_quotes_nothing(monkeypatch):
     answers = [m for m in s.messages if m.get("role") == "assistant"]
     assert answers
     assert not any(a.get("replying_to") for a in answers)
+
+
+# ---------------------------------------------------------------------------
+# An agent may not run on a pipe that calls back into this service. Measured
+# 2026-09-10: two agents set to Auto (Free) opened dozens of chats a second
+# and restarted Open WebUI twice, because the pipe asks /agents/chat who
+# should answer, that matches the agent, and the agent runs again. The pipe's
+# own route_only guard does not help: it only short-circuits when NO agent
+# matches, and an agent running itself always matches.
+# ---------------------------------------------------------------------------
+
+
+def test_the_callback_models_are_named_not_guessed():
+    """Named rather than pattern-matched on "auto" or "pipe", because the
+    property that matters is calling back into this service, and no naming
+    convention carries that. Regenerate with:
+      select id from public.function
+       where type='pipe' and content like '%/agents/chat%';
+    """
+    import routes_agent_turn as rt
+    assert "auto_router.auto" in rt.CALLBACK_MODEL_IDS
+    assert "io.io" in rt.CALLBACK_MODEL_IDS
+    # Auto (Smart) does NOT call back, and must stay usable by an agent.
+    assert "auto_smart.auto-smart" not in rt.CALLBACK_MODEL_IDS
+
+
+async def test_an_agent_on_a_callback_model_never_runs(monkeypatch):
+    """The loop must be refused before the turn costs anything, and the
+    refusal must name the fix rather than read as a mystery."""
+    import routes_agent_turn as rt
+
+    async def listed(token):
+        return ([{"id": "agent-a", "name": "Ada",
+                  "base_model_id": "auto_router.auto", "meta": {}}], False)
+
+    async def owner(email):
+        return "user-1"
+
+    ran = []
+
+    async def must_not_run(**kw):
+        ran.append(kw)
+        return ("should never happen", [])
+
+    monkeypatch.setattr(rt, "_list_agents", listed)
+    monkeypatch.setattr(rt, "_owui_user_id_for", owner)
+    monkeypatch.setattr(rt, "mint_owui_token", lambda *a, **k: "tok")
+    monkeypatch.setattr(rt, "_chat", must_not_run)
+
+    out = await rt._turn_for("me@example.com",
+                             {"id": "agent-a", "name": "Ada"},
+                             [{"role": "user", "content": "hi"}])
+    assert out["answer"] == rt.AGENT_ON_CALLBACK_MODEL, out
+    assert ran == [], "it ran the turn anyway, which is the loop"
+
+
+async def test_a_normal_model_still_runs(monkeypatch):
+    """The guard must not refuse everything: that would be a worse bug than
+    the one it fixes, and it would look identical from the outside."""
+    import routes_agent_turn as rt
+
+    async def listed(token):
+        return ([{"id": "agent-a", "name": "Ada",
+                  "base_model_id": "openai/gpt-5-mini", "meta": {}}], False)
+
+    async def owner(email):
+        return "user-1"
+
+    async def answers(**kw):
+        return ("PONG", [])
+
+    monkeypatch.setattr(rt, "_list_agents", listed)
+    monkeypatch.setattr(rt, "_owui_user_id_for", owner)
+    monkeypatch.setattr(rt, "mint_owui_token", lambda *a, **k: "tok")
+    monkeypatch.setattr(rt, "_chat", answers)
+    monkeypatch.setattr(rt.agent_activity, "start_run",
+                        lambda *a, **k: _nothing())
+    monkeypatch.setattr(rt.agent_activity, "finish_run",
+                        lambda *a, **k: _nothing())
+
+    out = await rt._turn_for("me@example.com",
+                             {"id": "agent-a", "name": "Ada"},
+                             [{"role": "user", "content": "hi"}])
+    assert out["answer"] == "PONG", out
+
+
+def test_the_refusal_renders_as_a_failure_with_the_fix():
+    """It must not arrive as an ordinary bubble. The whole point of naming
+    this failure is that the person can act on it."""
+    import routes_agent_turn as rt
+    pair = chat._failure_reason("Ada", rt.AGENT_ON_CALLBACK_MODEL)
+    assert pair is not None, "it would render as something the agent said"
+    reason, fix = pair
+    assert "cannot run an agent" in reason
+    assert "Pick a specific model" in fix, fix
