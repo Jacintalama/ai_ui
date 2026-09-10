@@ -180,6 +180,45 @@ def _is_pass(answer: str) -> bool:
     return stripped == PASS_TOKEN
 
 
+def _failure_reason(name: str, answer: str) -> tuple[str, str] | None:
+    """The reason and fix for a failed turn, or None when the answer is real.
+
+    _turn_for never raises: one agent blowing up must not cost the others
+    their answer. So a failure comes back as an ordinary answer string, and
+    this is the only place that recognises one, whichever of the two calls a
+    round makes produced it (the per-agent loop, or the everybody-passed
+    fallback that calls _turn_for a second time). One helper rather than the
+    comparison written out twice, so a third failure sentence only has to be
+    added once. Two are recognised today; a stale model cache is not among
+    them, because it refreshes and retries inside _turn_for and never
+    surfaces a sentence of its own to match on. fix is "" when there is
+    nothing more specific to say than the reason itself.
+    """
+    if answer == _turn_failed_sentence(name):
+        return render.GENERIC_FAILURE_REASON, ""
+    if answer == ROUTER_EXHAUSTED:
+        return ("The free models are all busy right now.",
+               "This agent is set to Auto (Free). Choosing a specific "
+               "model on its card fixes this.")
+    return None
+
+
+def _failure_fragment(messages: list[dict], tid: str, name: str, answer: str,
+                      reason: str, fix: str) -> str:
+    """Records one failed turn and returns what to stream for it.
+
+    Shared by the per-agent loop and the everybody-passed fallback so the
+    stored message and the streamed fragment can only ever agree with each
+    other, in both callers, rather than being built twice and drifting.
+    """
+    msg = {"role": "failure", "agent_name": name, "content": answer,
+          "reason": reason}
+    if fix:
+        msg["fix"] = fix
+    messages.append(msg)
+    return render.into_turn(tid, render.failure(name, reason, fix))
+
+
 def _speakers_for(text: str, agents: list[dict]) -> tuple[list[dict], bool]:
     """Who answers this message, and whether they are allowed to pass.
 
@@ -321,29 +360,12 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
         out = await _turn_for(email, agent, turn_history, names)
         answer = out.get("answer") or ""
 
-        # _turn_for never raises: one agent blowing up must not cost the
-        # others their answer. So a failure arrives here as an ordinary
-        # answer string, and this is the only place that can tell. Two
-        # sentences are recognised, because they are the two ways a failure
-        # comes back looking like a real answer; a stale model cache is not
-        # among them; it refreshes and retries inside _turn_for and never
-        # surfaces a sentence of its own to match on.
-        if answer == _turn_failed_sentence(name):
-            reason = render.GENERIC_FAILURE_REASON
-            messages.append({"role": "failure", "agent_name": name,
-                             "content": answer, "reason": reason})
+        fr = _failure_reason(name, answer)
+        if fr is not None:
+            reason, fix = fr
             yield {"event": "message",
-                   "data": render.into_turn(tid, render.failure(name, reason))}
-            continue
-        if answer == ROUTER_EXHAUSTED:
-            reason = "The free models are all busy right now."
-            fix = ("This agent is set to Auto (Free). Choosing a specific "
-                  "model on its card fixes this.")
-            messages.append({"role": "failure", "agent_name": name,
-                             "content": answer, "reason": reason, "fix": fix})
-            yield {"event": "message",
-                   "data": render.into_turn(tid, render.failure(
-                       name, reason, fix))}
+                   "data": _failure_fragment(messages, tid, name, answer,
+                                             reason, fix)}
             continue
 
         if may_pass and _is_pass(answer) and not out.get("pending"):
@@ -399,7 +421,18 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
               "data": render.turn_status(tid, render.working(name))}
         out = await _turn_for(email, fallback, history, names)
         answer = out.get("answer") or ""
-        if answer and not _is_pass(answer):
+        fr = _failure_reason(name, answer)
+        if fr is not None:
+            # This extra call can fail exactly like any other: a transient
+            # error, or the router running dry between the first round of
+            # calls and this one. It must not fall into the "nobody had
+            # anything to add" note below, which would say nothing happened
+            # when something did, and it failed.
+            reason, fix = fr
+            yield {"event": "message",
+                   "data": _failure_fragment(messages, tid, name, answer,
+                                             reason, fix)}
+        elif answer and not _is_pass(answer):
             messages.append({"role": "assistant",
                              "agent_id": str(fallback.get("id") or ""),
                              "agent_name": name, "content": answer,

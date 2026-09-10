@@ -354,6 +354,51 @@ async def test_the_free_router_giving_up_also_renders_as_a_failure(
     assert "Auto (Free)" in failures[0]["fix"]
 
 
+async def test_the_everybody_passed_fallback_call_can_also_fail(monkeypatch):
+    """Every agent passes, so the round makes one more call, without the
+    option to pass, rather than leave the room silent. That extra call is
+    exactly as capable of failing as any other _turn_for call, and it is a
+    second, separate call site from the per-agent loop above: recognising a
+    failure there does nothing for this one unless the two share the same
+    check."""
+    import routes_agent_turn as rt
+    s = store.get_session(_User.email)
+    await _send("hi")
+
+    calls = []
+
+    async def pass_once_then_fail(email, agent, history, names=()):
+        calls.append(1)
+        if len(calls) == 1:
+            # The one agent in the room, asked with the option to pass.
+            return {"answer": "PASS", "notes": [],
+                    "agent": {"id": "agent-a", "name": "Ada"}}
+        # The fallback call, made without that option, and it blows up.
+        return {"answer": rt._turn_failed_sentence("Ada"), "notes": [],
+                "agent": {"id": "agent-a", "name": "Ada"}}
+
+    monkeypatch.setattr(chat, "_turn_for", pass_once_then_fail)
+    monkeypatch.setattr(chat, "_agents_for",
+                        lambda e: _agents_stub())
+    monkeypatch.setattr(chat, "_keep_within_budget",
+                        lambda e, sess, a: _nothing())
+    monkeypatch.setattr(store, "save_chat", lambda e, sess: _nothing())
+    events = []
+    resp = await chat.agent_chat_stream(request=_Req(), user=_User())
+    async for event in resp.body_iterator:
+        events.append(str(event))
+    assert len(calls) == 2, "expected a pass, then the fallback's own call"
+    assert any("afail" in e for e in events), events
+    assert not any('class=\\"am agent\\"' in e or 'class="am agent"' in e
+                  for e in events), events
+    # The wrong old behaviour was not silence, it was a real-looking bubble
+    # OR the "nobody had anything to add" note; a failure must not read as
+    # either.
+    assert not any("Nobody had anything to add" in e for e in events), events
+    assert any(m.get("role") == "failure" for m in s.messages), s.messages
+    assert not any(m.get("role") == "note" for m in s.messages), s.messages
+
+
 # --- where a queued message actually lands ----------------------------------
 
 # Found by reading the DOM wiring rather than by a failing test, which is the
