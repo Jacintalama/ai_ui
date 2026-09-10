@@ -242,3 +242,63 @@ async def test_agents_first_strips_a_marker_inside_an_agents_words(mod, monkeypa
     out = await p._agents_first({"messages": _q("hi team")}, "o@example.com")
     assert out.count("aiui:turns") == 1
     assert out.endswith("<!-- aiui:turns agent-a,agent-m -->")
+
+
+# ---------------------------------------------------------------------------
+# Withdrawn model ids. Measured against the live API on 2026-09-10: the general
+# route pointed at openai/gpt-oss-20b:free, which OpenRouter no longer serves,
+# and two of the four fallbacks were withdrawn or permanently rate-limited. A
+# request for a withdrawn id fails exactly the way a rate limit does, so the
+# router spent its whole retry budget on models that could not have answered
+# and then reported that every free model was busy.
+# ---------------------------------------------------------------------------
+
+
+def test_a_withdrawn_model_is_dropped_before_it_costs_a_retry(mod):
+    pool = ["gone:free", "alive:free"]
+    assert mod._keep_available(pool, {"alive:free"}) == ["alive:free"]
+
+
+def test_the_order_of_the_pool_survives_filtering(mod):
+    """The pool is a priority order, fastest first. Filtering must not shuffle
+    it, or a slow model gets tried before a fast one."""
+    pool = ["first:free", "second:free", "third:free"]
+    kept = mod._keep_available(pool, {"third:free", "first:free"})
+    assert kept == ["first:free", "third:free"]
+
+
+def test_an_unreadable_catalogue_leaves_the_pool_alone(mod):
+    """Fails open. A router that refuses to try anything because it could not
+    read a catalogue is worse than one that tries an id that turns out to be
+    gone: the first can never answer, the second usually does."""
+    pool = ["a:free", "b:free"]
+    assert mod._keep_available(pool, set()) == pool
+
+
+def test_a_catalogue_matching_nothing_leaves_the_pool_alone(mod):
+    """If the catalogue claims not one of our models exists, the catalogue is
+    far likelier to be wrong than every provider to have withdrawn at once."""
+    pool = ["a:free", "b:free"]
+    assert mod._keep_available(pool, {"unrelated:free"}) == pool
+
+
+def test_the_withdrawn_ids_are_not_in_the_pool(mod):
+    """Named rather than counted, so re-adding one is a visible failure."""
+    for dead in ("openai/gpt-oss-20b:free", "nvidia/nemotron-nano-9b-v2:free"):
+        assert dead not in mod.FALLBACK_POOL, dead
+        assert dead != mod.Pipe.Valves().MODEL_GENERAL, dead
+
+
+def test_the_permanently_rate_limited_model_is_not_in_the_pool(mod):
+    """google/gemma-4-26b-a4b-it:free answered 429 on every probe. It is not a
+    fallback: a fallback that is always busy is a wasted retry."""
+    assert "google/gemma-4-26b-a4b-it:free" not in mod.FALLBACK_POOL
+
+
+def test_every_pool_entry_is_a_free_id(mod):
+    """The whole promise of this router is that no paid model is ever used."""
+    assert mod.FALLBACK_POOL, "the pool is empty"
+    for m in mod.FALLBACK_POOL:
+        assert m.endswith(":free"), m
+    for name in ("MODEL_GENERAL", "MODEL_CODER", "MODEL_REASONING"):
+        assert getattr(mod.Pipe.Valves(), name).endswith(":free"), name
