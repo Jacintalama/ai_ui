@@ -101,9 +101,13 @@
 .aturn-body { display: flex; flex-direction: column; gap: 10px; }
 
 /* A bubble that streamed in and one replayed from a saved conversation have
-   to be indistinguishable. Both are now flex children of .aturn-body, which
-   sets the same spacing either way, so this wrapper carries none of its own
-   any more; it stays only to open and close the SSE connection. */
+   to be indistinguishable. Both end up as flex children of .aturn-body,
+   which is where the spacing above actually comes from: a streamed answer
+   is swapped out of band straight into a turn's own .aturn-body, not into
+   .alive. .alive/.awork below are just the sinks the SSE swap lands on
+   before its out-of-band content is pulled back out of them, so they stay
+   empty in the ordinary case; still styled and hidden-when-empty so a round
+   that has not produced anything yet does not leave a stray gap on screen. */
 .astream, .alive { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .awork { min-width: 0; }
 .astream:empty, .alive:empty, .awork:empty { display: none; }

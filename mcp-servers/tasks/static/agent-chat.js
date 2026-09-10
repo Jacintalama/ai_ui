@@ -93,14 +93,14 @@
     for (var i = 0; i < open.length; i++) {
       open[i].removeAttribute("sse-connect");
     }
-    // The server already clears this with an empty "working" event at the
-    // end of every round; this is the fallback for a close that beats that
-    // last swap. The target moved from a fixed ".awork" element to the open
-    // turn's own status row when turns were introduced, so this selector has
-    // to match TURN_STATUS_TARGET in agent_chat_render.py or a round that
-    // ends right on the close event leaves "is working..." stuck for good.
-    var work = document.querySelector(
-      "#agent-thread .aturn:last-child .aturn-status");
+    // Belt and suspenders: the server already clears the real status row
+    // with an empty "working" event at the end of every round, addressed
+    // out of band at the turn it belongs to (see into_turn/turn_status in
+    // agent_chat_render.py), not at this element. .awork itself is a sink
+    // that out-of-band content is swapped out of before it ever lands here,
+    // so this is normally already empty; this only covers a close that
+    // somehow beats that last swap.
+    var work = document.querySelector(".awork");
     if (work) { work.innerHTML = ""; }
     settle();
   });

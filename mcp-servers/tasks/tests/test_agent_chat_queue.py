@@ -227,40 +227,21 @@ async def _agents_stub():
 
 # Found by reading the DOM wiring rather than by a failing test, which is the
 # wrong way round and worth writing down. The composer appends to
-# #agent-thread with hx-swap="beforeend", and the open round's answers append
-# INSIDE .astream .alive, which is itself a child of #agent-thread. So a
-# queued bubble appended to the thread lands BELOW every answer, including the
-# answer to itself. You would see your own question underneath its reply.
+# #agent-thread with hx-swap="beforeend", and the open round's answers used
+# to append INSIDE .astream .alive, itself a child of #agent-thread. So a
+# queued bubble appended to the thread ordinarily would have landed BELOW
+# every answer, including the answer to itself: you would see your own
+# question underneath its reply.
 #
-# queued_bubble/QUEUED_TARGET below are that original fix, kept for the shape
-# they establish (out of band, straight into the thread) but no longer called
-# by the send route: a queued message is now its own turn (turn_open +
-# turn_close, see test_a_queued_message_opens_its_own_turn in this file),
-# which needs a whole block rather than one bubble. The cross-file check that
-# used to live here (that queued_bubble's target class was one stream_block
-# still creates) is gone with it: stream_block's swap targets aim at
-# TURN_BODY_TARGET/TURN_STATUS_TARGET now, not at a ".alive" class, so that
-# assertion would fail on a fact that stopped mattering, not on a real drift.
-
-def test_a_queued_bubble_targets_the_live_area(monkeypatch):
-    from agent_chat_render import queued_bubble
-    html = queued_bubble("and another thing")
-    assert "hx-swap-oob" in html
-    assert ".alive" in html, "it does not aim at the live area"
-    assert "and another thing" in html
-
-
-def test_the_thread_id_in_the_selector_is_the_one_on_the_page():
-    import pathlib
-    import re
-    from agent_chat_render import queued_bubble
-    page = (pathlib.Path(__file__).resolve().parents[1]
-            / "static" / "agents.html").read_text(encoding="utf-8")
-    target = re.search(r'hx-swap-oob="beforeend:([^"]+)"',
-                       queued_bubble("x")).group(1)
-    thread = target.split()[0].lstrip("#")
-    assert 'id="%s"' % thread in page, thread
-
+# That first fix was a bubble named `queued_bubble`, targeted out of band
+# straight at `.alive` (`QUEUED_TARGET`). It is gone now, not merely unused:
+# a queued message needs a whole turn, not one bubble, and a round's answers
+# no longer land in `.alive` either (they are addressed by turn id, out of
+# band, wherever they land in the DOM; see into_turn/turn_status in
+# agent_chat_render.py). Keeping queued_bubble around after nothing called
+# it would have meant a function whose docstring described a placement that
+# stopped happening. See test_a_new_message_opens_a_turn and
+# test_a_queued_message_opens_its_own_turn above for what replaced it.
 
 async def test_sending_while_busy_returns_the_out_of_band_bubble():
     s = store.get_session(_User.email)

@@ -77,7 +77,14 @@ def test_send_records_the_message_and_opens_a_stream(monkeypatch):
     assert 'sse-connect="/tasks/agents/chat/stream"' in r.text
     assert r.headers.get("HX-Trigger") == "agent-chats-changed"
     s = mod.store.get_session(EMAIL)
-    assert s.messages[-1] == {"role": "user", "content": "hi team"}
+    # Carries the turn id the send response already drew on the page, so
+    # _run_round can address its answers at the same turn (see s.turn_id and
+    # into_turn/turn_status in agent_chat_render.py).
+    stored = s.messages[-1]
+    assert stored["role"] == "user"
+    assert stored["content"] == "hi team"
+    assert stored["turn_id"] == s.turn_id
+    assert stored["turn_id"]
 
 
 def test_every_agent_in_the_room_gets_its_own_bubble_in_order(monkeypatch):

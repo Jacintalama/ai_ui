@@ -265,7 +265,18 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
 
     Agents run one at a time, never in parallel: a turn can run tools and this
     box has 3.8GB of RAM.
+
+    Every yielded fragment is wrapped for the turn this round is answering
+    (`s.turn_id`, read once here): one SSE connection can answer more than
+    one turn across a drain, so a fragment has to name its own turn rather
+    than rely on the connection's own swap target or on DOM position.
     """
+    # Nothing reachable today leaves this unset before a round runs (the
+    # send route and the drain loop both set it right before calling this),
+    # but a fresh id here is still a correctly-shaped, if unrendered, turn,
+    # where an empty one would build a selector nothing was ever given to
+    # match.
+    tid = s.turn_id or render.new_turn_id()
     names = [a.get("name") for a in agents if a.get("name")]
     # Who speaks is decided from the message, not from a room the person had
     # to build first. Name an agent and only that agent answers; name nobody
@@ -301,7 +312,8 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
             break
         agent_id = str(agent.get("id") or "")
         name = str(agent.get("name") or agent_id)
-        yield {"event": "working", "data": render.working(name)}
+        yield {"event": "working",
+              "data": render.turn_status(tid, render.working(name))}
         turn_history = history
         if may_pass:
             turn_history = history + [{"role": "user",
@@ -336,10 +348,11 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
                              "awaiting": awaiting})
             if answer:
                 yield {"event": "message",
-                       "data": render.agent_bubble(name, answer, answering)}
+                       "data": render.into_turn(tid, render.agent_bubble(
+                           name, answer, answering))}
             yield {"event": "message",
-                   "data": render.approval_bubble(name, ask_id,
-                                                  page_pending["calls"])}
+                   "data": render.into_turn(tid, render.approval_bubble(
+                       name, ask_id, page_pending["calls"]))}
             # And on to the next agent. Pausing the one that asked is the
             # point; silently losing everybody else is not.
             continue
@@ -348,7 +361,8 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
                          "agent_name": name, "content": answer,
                          "replying_to": answering})
         yield {"event": "message",
-               "data": render.agent_bubble(name, answer, answering)}
+               "data": render.into_turn(tid, render.agent_bubble(
+                   name, answer, answering))}
 
     if speakers and passed == len(speakers):
         # Everybody passed, which leaves the person talking to an empty room.
@@ -356,7 +370,8 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
         # option of passing. One extra call, and only in this case.
         fallback = _last_speaker(s.messages, speakers) or speakers[0]
         name = str(fallback.get("name") or fallback.get("id") or "")
-        yield {"event": "working", "data": render.working(name)}
+        yield {"event": "working",
+              "data": render.turn_status(tid, render.working(name))}
         out = await _turn_for(email, fallback, history, names)
         answer = out.get("answer") or ""
         if answer and not _is_pass(answer):
@@ -365,22 +380,25 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
                              "agent_name": name, "content": answer,
                              "replying_to": answering})
             yield {"event": "message",
-                   "data": render.agent_bubble(name, answer, answering)}
+                   "data": render.into_turn(tid, render.agent_bubble(
+                       name, answer, answering))}
         else:
             # It passed again even without being offered the option. Say so
             # rather than leave the room silent: a person who typed something
             # and got nothing back cannot tell that from a broken panel.
             line = "Nobody had anything to add to that."
             messages.append({"role": "note", "content": line})
-            yield {"event": "message", "data": render.note(line)}
+            yield {"event": "message",
+                   "data": render.into_turn(tid, render.note(line))}
 
     if not agents:
         line = ("You have no agents yet. Make one and it will hear the next "
                 "thing you say.")
         messages.append({"role": "note", "content": line})
-        yield {"event": "message", "data": render.note(line)}
+        yield {"event": "message",
+               "data": render.into_turn(tid, render.note(line))}
 
-    yield {"event": "working", "data": ""}
+    yield {"event": "working", "data": render.turn_status(tid, "")}
 
 
 def _take_queued(s: store.RoomSession):
@@ -390,6 +408,20 @@ def _take_queued(s: store.RoomSession):
     answered on every round for the rest of the session.
     """
     return s.queued.pop(0) if s.queued else None
+
+
+def _take_queued_turn_id(s: store.RoomSession) -> str:
+    """The turn id that goes with whatever _take_queued just returned.
+
+    Kept in a parallel list rather than folded into `queued` itself, because
+    `queued` is a plain list of strings elsewhere in this module and in its
+    tests, and the two are always popped together from index 0. Falls back
+    to a fresh id if the parallel list has run out, which only happens if
+    the two are pushed out of lockstep; a fresh id here is still a correct,
+    if unrendered, turn, where an IndexError would drop the round.
+    """
+    return (s.queued_turn_ids.pop(0) if s.queued_turn_ids
+           else render.new_turn_id())
 
 
 async def _hydrate(email: str, s: store.RoomSession) -> None:
@@ -433,14 +465,22 @@ async def agent_chat_send(message: str = Form(...),
         # run two at once, which is what the single-round guard exists to
         # prevent.
         s.queued.append(body)
+        # Decided now, not when the drain gets to it: this turn is drawn on
+        # the page right away (below), and the round that eventually answers
+        # it has to name the very id that is already sitting in the DOM, not
+        # a fresh one nobody rendered. Carried alongside the text in
+        # queued_turn_ids until the drain reaches this message.
+        tid = render.new_turn_id()
+        s.queued_turn_ids.append(tid)
         # Its own turn, appended to the thread out of band so it lands after
-        # the running turn rather than inside it. Its answers swap into
-        # :last-child, which is this one from the moment it exists.
+        # the running turn rather than inside it.
         return HTMLResponse(
             f'<div hx-swap-oob="beforeend:#agent-thread">'
-            f'{render.turn_open(body)}{render.turn_close()}</div>')
+            f'{render.turn_open(body, tid)}{render.turn_close()}</div>')
 
-    s.messages.append({"role": "user", "content": body})
+    tid = render.new_turn_id()
+    s.turn_id = tid
+    s.messages.append({"role": "user", "content": body, "turn_id": tid})
     s.streaming = True
     # First message ever: write the row now rather than at the end of the
     # round, so a browser that closes mid-answer still has the question.
@@ -454,7 +494,7 @@ async def agent_chat_send(message: str = Form(...),
             log.exception("agent chat: could not create the conversation row; "
                           "continuing unsaved")
 
-    resp = HTMLResponse(render.turn_open(body) + render.turn_close()
+    resp = HTMLResponse(render.turn_open(body, tid) + render.turn_close()
                         + render.stream_block())
     resp.headers["HX-Trigger"] = "agent-chats-changed"
     return resp
@@ -506,13 +546,19 @@ async def agent_chat_stream(request: Request,
                 nxt = _take_queued(s)
                 if nxt is None:
                     break
+                # The id already drawn on the page for this message (see
+                # agent_chat_send), not a fresh one: _run_round wraps every
+                # fragment in the turn this names, and a fresh id here would
+                # name a turn the browser never rendered.
+                s.turn_id = _take_queued_turn_id(s)
                 # The claim moves to the top again. Between rounds the tail is
                 # an assistant message, and appending a user message would put
                 # "user" back on the tail, which is exactly the shape a
                 # reconnecting EventSource reads as "nobody has answered this
                 # yet" and would run a second round for.
                 _drop(s.messages, claim)
-                s.messages.append({"role": "user", "content": nxt})
+                s.messages.append({"role": "user", "content": nxt,
+                                   "turn_id": s.turn_id})
                 s.messages.append(claim)
                 quote = True
                 # No bubble is emitted: the send that queued this already
@@ -680,6 +726,11 @@ async def agent_chat_clear(user: CurrentUser = Depends(current_user)
     # Emptied with everything else. A message typed into the conversation that
     # was just cleared must not be answered inside the new one.
     s.queued = []
+    # Kept in lockstep with `queued`: a leftover id here would let a message
+    # queued after this clear be answered under a turn id from before it,
+    # one nothing on screen has that id for any more.
+    s.queued_turn_ids = []
+    s.turn_id = ""
     s.summary = ""
     s.summarised_upto = 0
     s.streaming = False

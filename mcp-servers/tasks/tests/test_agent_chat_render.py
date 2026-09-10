@@ -13,7 +13,10 @@ CALLS = [{"function": {"name": "send_email",
 
 def _fragments():
     return [
-        render.user_bubble("hi team"),
+        render.turn_open("hi team", "abc123def456"),
+        render.turn_close(),
+        render.into_turn("abc123def456", render.agent_bubble("Ada", "hi")),
+        render.turn_status("abc123def456", render.working("Ada")),
         render.agent_bubble("Ada", "hello"),
         render.approval_bubble("Ada", "9f2c1ab34de54f0b", CALLS),
         render.working("Ada"),
@@ -42,18 +45,13 @@ def test_every_agent_answer_is_its_own_row():
     assert "Ada here" in html and "Mia here" in html
 
 
-def test_user_text_is_escaped():
-    assert "<script>" not in render.user_bubble("<script>alert(1)</script>")
-    assert "&lt;script&gt;" in render.user_bubble("<script>alert(1)</script>")
-
-
 def test_agent_answer_is_escaped():
     assert "<img" not in render.agent_bubble("Ada", '<img onerror=x>')
 
 
 def test_a_turn_carries_the_message_and_a_place_for_answers():
     from agent_chat_render import turn_open
-    html = turn_open("what is in my inbox?")
+    html = turn_open("what is in my inbox?", "abc123def456")
     assert "what is in my inbox?" in html
     assert "aturn-body" in html
     assert "aturn-status" in html
@@ -61,28 +59,51 @@ def test_a_turn_carries_the_message_and_a_place_for_answers():
 
 def test_a_turn_escapes_what_the_person_typed():
     from agent_chat_render import turn_open
-    html = turn_open('<img src=x onerror="alert(1)">')
+    html = turn_open('<img src=x onerror="alert(1)">', "abc123def456")
     assert "<img" not in html
     assert "&lt;img" in html
 
 
-def test_the_turn_targets_point_inside_a_turn():
-    """Two other files swap into these. A selector that stops matching does
-    not error; the answers simply stop appearing."""
-    from agent_chat_render import (TURN_BODY_TARGET, TURN_STATUS_TARGET,
-                                   turn_open)
-    html = turn_open("x")
-    for target in (TURN_BODY_TARGET, TURN_STATUS_TARGET):
-        leaf = target.rsplit(" ", 1)[-1].lstrip(".")
-        assert leaf in html, (target, leaf)
+def test_a_turn_carries_its_own_id():
+    """Two other turns can be on screen at once (a queued message opens its
+    own while an earlier one is still running), so the id is what tells a
+    streamed answer which one it belongs to. Different ids must render
+    different elements, not collide on a shared class."""
+    from agent_chat_render import turn_open
+    first = turn_open("one", "aaa111")
+    second = turn_open("two", "bbb222")
+    assert 'id="aturn-aaa111"' in first
+    assert 'id="aturn-bbb222"' in second
+    assert "bbb222" not in first
 
 
-def test_the_turn_targets_name_the_thread_on_the_page():
-    import pathlib
-    from agent_chat_render import TURN_BODY_TARGET
-    page = (pathlib.Path(__file__).resolve().parents[1]
-            / "static" / "agents.html").read_text(encoding="utf-8")
-    assert 'id="%s"' % TURN_BODY_TARGET.split()[0].lstrip("#") in page
+def test_the_turn_target_functions_agree_with_what_turn_open_renders():
+    """turn_body_target/turn_status_target build a selector from an id, and
+    turn_open has to stamp that exact id onto the element it creates, or the
+    two drift apart with nothing to notice until an answer has nowhere to
+    go. This only checks the two agree on the id; whether the resulting
+    selector actually resolves against a real, rendered page is checked for
+    real in tests/browser/test_agent_chat_turn_targets.py, since a selector
+    that looks right as a string can still match nothing once the turn sits
+    next to a sibling it did not have before (see that file's docstring for
+    the bug this was written to catch)."""
+    from agent_chat_render import turn_body_target, turn_open, turn_status_target
+    tid = "abc123def456"
+    html = turn_open("x", tid)
+    assert f'id="aturn-{tid}"' in html
+    assert turn_body_target(tid) == f"#aturn-{tid} .aturn-body"
+    assert turn_status_target(tid) == f"#aturn-{tid} .aturn-status"
+
+
+def test_into_turn_and_turn_status_wrap_a_fragment_out_of_band_for_its_id():
+    from agent_chat_render import into_turn, turn_status
+    tid = "abc123def456"
+    body = into_turn(tid, "<div>hi</div>")
+    assert 'hx-swap-oob="beforeend:#aturn-abc123def456 .aturn-body"' in body
+    assert "<div>hi</div>" in body
+    status = turn_status(tid, "Ada is working...")
+    assert 'hx-swap-oob="innerHTML:#aturn-abc123def456 .aturn-status"' in status
+    assert "Ada is working..." in status
 
 
 def test_approval_shows_the_call_and_offers_both_answers():
