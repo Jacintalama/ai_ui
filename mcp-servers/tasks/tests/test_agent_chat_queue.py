@@ -196,3 +196,62 @@ async def test_a_cleared_room_abandons_whatever_was_queued(monkeypatch):
 
 async def _agents_stub():
     return [{"id": "agent-a", "name": "Ada"}]
+
+
+# --- where a queued message actually lands ----------------------------------
+
+# Found by reading the DOM wiring rather than by a failing test, which is the
+# wrong way round and worth writing down. The composer appends to
+# #agent-thread with hx-swap="beforeend", and the open round's answers append
+# INSIDE .astream .alive, which is itself a child of #agent-thread. So a
+# queued bubble appended to the thread lands BELOW every answer, including the
+# answer to itself. You would see your own question underneath its reply.
+
+def test_a_queued_bubble_targets_the_live_area(monkeypatch):
+    from agent_chat_render import queued_bubble
+    html = queued_bubble("and another thing")
+    assert "hx-swap-oob" in html
+    assert ".alive" in html, "it does not aim at the live area"
+    assert "and another thing" in html
+
+
+def test_the_live_area_it_aims_at_is_the_one_the_stream_makes():
+    """A cross-file check. The selector is a string in one file and the
+    element is created in another, and nothing else would notice them
+    drifting apart: the bubble would simply stop appearing."""
+    from agent_chat_render import queued_bubble, stream_block
+    import re
+    target = re.search(r'hx-swap-oob="beforeend:([^"]+)"',
+                       queued_bubble("x")).group(1)
+    leaf = target.rsplit(" ", 1)[-1].lstrip(".")
+    assert leaf in stream_block(), (target, "not a class the stream creates")
+
+
+def test_the_thread_id_in_the_selector_is_the_one_on_the_page():
+    import pathlib
+    import re
+    from agent_chat_render import queued_bubble
+    page = (pathlib.Path(__file__).resolve().parents[1]
+            / "static" / "agents.html").read_text(encoding="utf-8")
+    target = re.search(r'hx-swap-oob="beforeend:([^"]+)"',
+                       queued_bubble("x")).group(1)
+    thread = target.split()[0].lstrip("#")
+    assert 'id="%s"' % thread in page, thread
+
+
+async def test_sending_while_busy_returns_the_out_of_band_bubble():
+    s = store.get_session(_User.email)
+    s.streaming = True
+    out = await _send("second")
+    body = out.body.decode()
+    assert "hx-swap-oob" in body
+    assert "second" in body
+
+
+async def test_the_first_message_uses_the_ordinary_bubble():
+    """Nothing is out of band when there is no live area to aim at."""
+    s = store.get_session(_User.email)
+    out = await _send("first")
+    body = out.body.decode()
+    assert "hx-swap-oob" not in body
+    assert "first" in body

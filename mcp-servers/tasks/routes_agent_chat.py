@@ -424,7 +424,10 @@ async def agent_chat_send(message: str = Form(...),
         # run two at once, which is what the single-round guard exists to
         # prevent.
         s.queued.append(body)
-        return HTMLResponse(render.user_bubble(body))
+        # Out of band into the live area, not appended to the thread. The
+        # round in flight is writing its answers into that area, and a bubble
+        # appended to the thread would sit underneath them.
+        return HTMLResponse(render.queued_bubble(body))
 
     s.messages.append({"role": "user", "content": body})
     s.streaming = True

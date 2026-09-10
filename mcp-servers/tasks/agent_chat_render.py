@@ -55,6 +55,25 @@ def user_bubble(text: str) -> str:
     return f'<div class="am user"><div class="ab">{esc(text)}</div></div>'
 
 
+#: Where a message typed mid-round has to land.
+#:
+#: The composer appends to the thread, and the running round's answers append
+#: inside the live area, which is itself a child of the thread. So a queued
+#: bubble appended the ordinary way lands BELOW every answer, including the
+#: answer to itself: you would read your own question underneath its reply.
+#:
+#: Out of band, into the live area, puts it in the order it was said. The two
+#: halves of this selector live in two other files, so tests check both: the
+#: class comes from stream_block, the id from agents.html.
+QUEUED_TARGET = "#agent-thread .alive"
+
+
+def queued_bubble(text: str) -> str:
+    """A message typed while the agents were still answering the last one."""
+    return (f'<div class="am user" hx-swap-oob="beforeend:{QUEUED_TARGET}">'
+            f'<div class="ab">{esc(text)}</div></div>')
+
+
 def agent_bubble(name: str, content: str) -> str:
     """One agent's finished answer: its own row, its own name, its own avatar.
 
