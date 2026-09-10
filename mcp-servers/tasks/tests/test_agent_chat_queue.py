@@ -233,6 +233,52 @@ async def test_a_cleared_room_abandons_whatever_was_queued(monkeypatch):
     assert seen == ["first"], "it answered a message from a cleared room"
 
 
+async def test_each_drained_round_answers_under_the_turn_it_was_given(
+        monkeypatch):
+    """_take_queued and _take_queued_turn_id both pop from index 0, kept in
+    lockstep so the id a drained round wraps its answers in is the one the
+    browser actually rendered for that message (see agent_chat_send). If the
+    two ever pop out of order, a round answers under a turn nothing on
+    screen has for that message: the original Critical, back by a third
+    route, on exactly the state a later task is about to touch.
+
+    _run_round is stubbed to record `sess.turn_id` from INSIDE each round,
+    the same moment the real one reads it to wrap its fragments, rather than
+    reading it after the drain: the drain's own final state can look correct
+    even when an earlier round briefly answered under the wrong id.
+    """
+    s = store.get_session(_User.email)
+    await _send("first")
+    first_tid = s.turn_id
+    s.queued = ["second", "third"]
+    # Distinguishable, and distinguishable from first_tid, so a swapped or
+    # off-by-one pop shows up as a wrong id rather than an accidental match.
+    s.queued_turn_ids = ["tid-for-second", "tid-for-third"]
+
+    seen = []
+
+    async def recording_round(email, sess, agents, request=None,
+                              quote=False):
+        seen.append((chat.agent_routing.last_user_text(sess.messages),
+                    sess.turn_id))
+        sess.messages.append({"role": "assistant", "agent_id": "a",
+                              "agent_name": "Ada", "content": "ok"})
+        yield {"event": "message", "data": "x"}
+
+    monkeypatch.setattr(chat, "_run_round", recording_round)
+    monkeypatch.setattr(chat, "_agents_for", lambda e: _agents_stub())
+    monkeypatch.setattr(chat, "_keep_within_budget",
+                        lambda e, sess, a: _nothing())
+    monkeypatch.setattr(store, "save_chat", lambda e, sess: _nothing())
+    resp = await chat.agent_chat_stream(request=_Req(), user=_User())
+    async for _event in resp.body_iterator:
+        pass
+
+    assert seen == [("first", first_tid),
+                    ("second", "tid-for-second"),
+                    ("third", "tid-for-third")], seen
+
+
 async def _agents_stub():
     return [{"id": "agent-a", "name": "Ada"}]
 

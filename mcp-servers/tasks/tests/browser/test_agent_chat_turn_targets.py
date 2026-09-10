@@ -193,3 +193,144 @@ def test_an_answer_reaches_the_turn_it_names_through_a_real_sse_swap(server, pag
     page.wait_for_selector("%s .am.agent" % render.turn_body_target(tid))
     body_html = page.locator(render.turn_body_target(tid)).inner_html()
     assert "hello there" in body_html
+
+
+# --- the sseClose fallback clears the turn, not the sink beneath it --------
+
+# static/agent-chat.js's htmx:sseClose handler used to clear .awork, which
+# looked right (that WAS where the working line's own sse-swap sink lived)
+# right up until the working line stopped being delivered there. Since
+# into_turn/turn_status wrap every streamed fragment out of band, htmx pulls
+# that content out of the sink and places it at the turn's own id before the
+# sink's own swap ever runs, so .awork is unconditionally empty and
+# `querySelector(".awork").innerHTML = ""` clears nothing, ever. The gap
+# this leaves: a connection that drops and reconnects lands on the stream
+# route with the tail no longer "user", which closes immediately with no
+# round and no clearing "working" event, and "X is working..." stays pinned
+# on that turn's status row until the page is reloaded.
+#
+# Only a real DOM, a real close event and a held-open connection (to arrive
+# AFTER the working line is already on screen, the way a real drop does)
+# can tell "cleared the status row" from "cleared nothing": a substring
+# check on static/agent-chat.js's source, the shape every prior check in
+# this suite used, cannot see where an already-rendered line actually goes
+# when the handler runs.
+
+class _CloseHandler(http.server.BaseHTTPRequestHandler):
+    """Serves the real, on-disk static/agent-chat.js (not a copy), so this
+    test breaks the moment that file's fix reverts, and a held-open /stream
+    that only sends its close event once told to, so the working line can
+    be observed on screen before the close arrives."""
+
+    sse_body = b""
+    close_now: threading.Event
+
+    def do_GET(self):                                        # noqa: N802
+        if self.path == "/panel.html":
+            self._send(200, "text/html", _CLOSE_PAGE.encode("utf-8"))
+        elif self.path in ("/vendor/htmx.min.js", "/vendor/sse.js"):
+            fname = self.path.rsplit("/", 1)[-1]
+            self._send(200, "application/javascript",
+                      (STATIC / "vendor" / fname).read_bytes())
+        elif self.path == "/agent-chat.js":
+            self._send(200, "application/javascript",
+                      (STATIC / "agent-chat.js").read_bytes())
+        elif self.path == "/stream":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(self.sse_body)
+            self.wfile.flush()
+            self.close_now.wait(10)
+            self.wfile.write(b"event: close\ndata: \n\n")
+            self.wfile.flush()
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def _send(self, status, content_type, body):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *a):
+        pass
+
+
+_CLOSE_PAGE = """<!doctype html>
+<html><body>
+<div class="agents-layout"><div id="agent-thread"></div></div>
+<script src="/vendor/htmx.min.js"></script>
+<script src="/vendor/sse.js"></script>
+<script src="/agent-chat.js"></script>
+</body></html>"""
+
+
+def test_sse_close_clears_the_turns_status_row_not_the_empty_sink(browser):
+    """Adapted from a verification harness written during review
+    (scratchpad/verify_sseclose.py), turned into a permanent regression
+    test: the exact check shape that let this ship broken twice
+    (substring checks on agent-chat.js's source in test_agent_chat_page.py)
+    would not notice a revert of the fix, so only a real DOM run can.
+
+    Two turns are on screen: t1 has a live working line and a finished
+    answer already in its body (so the test can tell "cleared the status
+    row" from "cleared the whole turn"); t2 has neither, and stays untouched
+    throughout, proving the clear is not indiscriminate.
+    """
+    t1, t2 = "aaa111aaa111", "bbb222bbb222"
+    _CloseHandler.sse_body = (
+        "event: working\ndata: %s\n\n"
+        % render.turn_status(t1, render.working("Mia"))).encode("utf-8")
+    _CloseHandler.close_now = threading.Event()
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _CloseHandler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        pg = browser.new_page()
+        pg.set_default_timeout(8000)
+        pg.goto("http://127.0.0.1:%d/panel.html" % srv.server_address[1])
+
+        # Exactly what agent_chat_send returns for a first message (t1) and
+        # a queued one (t2): a turn + stream block, then a second turn out
+        # of band after it.
+        _append_beforeend(pg, render.turn_open("what is in my inbox?", t1)
+                              + render.turn_close() + render.stream_block())
+        _append_beforeend(pg, render.turn_open("and my calendar?", t2)
+                              + render.turn_close())
+        pg.evaluate(
+            "([sel, html]) => document.querySelector(sel)"
+            ".insertAdjacentHTML('beforeend', html)",
+            [render.turn_body_target(t1),
+             render.agent_bubble("Mia", "here is your inbox")])
+        pg.evaluate(
+            """() => {
+              var el = document.querySelector('.astream');
+              el.setAttribute('sse-connect', '/stream');
+              htmx.process(el);
+            }""")
+
+        pg.wait_for_selector("%s .aworking" % render.turn_status_target(t1))
+        # Before the close: the working line really is in the turn's own
+        # status row, and the sink it streamed through is really empty,
+        # confirming the premise this fix and this test both depend on.
+        assert pg.locator(".awork").inner_html() == ""
+        assert pg.locator(render.turn_status_target(t2)).inner_html() == ""
+
+        _CloseHandler.close_now.set()
+        pg.wait_for_function(
+            "() => !document.querySelector('.astream')"
+            ".hasAttribute('sse-connect')")
+
+        assert pg.locator(render.turn_status_target(t1)).inner_html() == ""
+        # Untouched: not the whole turn, and not the other turn either.
+        assert "here is your inbox" in pg.locator(
+            render.turn_body_target(t1)).inner_html()
+        assert pg.locator(render.turn_status_target(t2)).inner_html() == ""
+        assert pg.locator("#agent-thread .aturn").count() == 2
+        pg.close()
+    finally:
+        srv.shutdown()

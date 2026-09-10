@@ -57,11 +57,11 @@ def new_turn_id() -> str:
 
     Short enough to sit comfortably in a CSS selector, long enough not to
     collide within one conversation. Generated here, it is always plain
-    hex, but turn_body_target/turn_status_target/turn_open all escape it
-    anyway: thread() also feeds them a turn_id read back out of a saved
-    conversation, which is only ever this codebase's own output today but
-    is not guaranteed to stay that shape, and four functions silently
-    agreeing to trust it was worse than one esc() call each.
+    hex, so turn_body_target/turn_status_target/turn_open escaping it costs
+    nothing. It is still done in all three: turn_open already escaped it
+    before turn_body_target/turn_status_target existed, so the two either
+    agreed with that choice or silently disagreed with it, and disagreeing
+    for free was worse than agreeing for free.
     """
     return uuid.uuid4().hex[:12]
 
