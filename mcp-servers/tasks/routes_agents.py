@@ -427,6 +427,34 @@ async def skills() -> dict:
     return {"skills": agent_skills.catalogue()}
 
 
+@router.get("/skills/find")
+async def find_skills(q: str = "", limit: int = 0) -> dict:
+    """The skills that best answer a plain-language request.
+
+    This is what the find_skills tool calls. An agent can carry about 13 of
+    the 64, so without search the other 51 are unreachable unless somebody
+    predicted in advance they would be needed.
+
+    Descriptions only. Five bodies would be most of a turn.
+    """
+    return {"skills": agent_skills.search(q, limit or agent_skills.SEARCH_LIMIT),
+            "total": len(agent_skills.load_all())}
+
+
+@router.get("/skills/body")
+async def skill_body(name: str = "") -> dict:
+    """One skill's instructions, for an agent about to follow them.
+
+    Addressed by name against the loaded set, never by a path built from the
+    argument. The name arrives from a model, and the schedules tool grew a
+    directory traversal exactly by rebuilding a path from one.
+    """
+    body = agent_skills.body_of(name)
+    if body is None:
+        raise HTTPException(status_code=404, detail="no skill by that name")
+    return {"name": name, "body": body}
+
+
 @router.get("/templates")
 async def templates() -> dict:
     """The starter agents, for a user who has none.

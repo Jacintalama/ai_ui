@@ -296,3 +296,70 @@ def test_the_note_about_dropped_skills_cannot_outgrow_the_budget(monkeypatch):
     out = agent_skills.brief_for({"skillIds": every})
     assert "and %d more" % (len(every) - 1 - agent_skills.NAMED_WHEN_DROPPED) in out
     assert len(out) < 2000, len(out)
+
+
+# --- finding a skill you were never given -----------------------------------
+
+# Measured before building: 64 skills, all bodies 37,990 chars, all
+# descriptions 10,858, and an agent can hold about 13. So 51 of 64 are
+# unreachable to any given agent, because a skill only works if somebody
+# predicted in advance they would need it. Search makes them reachable at the
+# cost of one sentence in the brief instead of a catalogue.
+
+def test_search_finds_a_skill_by_what_it_is_for():
+    hits = agent_skills.search("chase unpaid invoices")
+    names = [h["name"] for h in hits]
+    assert "follow-up-chaser" in names or "invoice-tracker" in names, names
+
+
+def test_search_matches_the_name_itself():
+    assert agent_skills.search("inbox triage")[0]["name"] == "inbox-triage"
+
+
+def test_search_matches_a_tag():
+    hits = [h["name"] for h in agent_skills.search("calendar")]
+    assert any(h in hits for h in ("day-ahead", "meeting-scheduler",
+                                   "protect-focus-time")), hits
+
+
+def test_search_returns_the_description_not_the_body():
+    """What comes back goes into a tool result the model reads. Bodies are
+    600 characters each and five of them would be most of a turn."""
+    for hit in agent_skills.search("email"):
+        assert "body" not in hit
+        assert hit["description"]
+
+
+def test_search_is_capped():
+    assert len(agent_skills.search("a", limit=3)) <= 3
+    assert len(agent_skills.search("email")) <= 5
+
+
+def test_a_query_matching_nothing_returns_nothing():
+    """Better than five bad guesses. The agent is told to say so and get on
+    with the job itself."""
+    assert agent_skills.search("xylophone repair in antarctica") == []
+
+
+def test_search_survives_junk():
+    for junk in (None, "", "   ", 5, [], {"a": 1}):
+        assert agent_skills.search(junk) == []
+
+
+def test_a_better_match_comes_first():
+    hits = agent_skills.search("write a document")
+    assert hits[0]["name"] == "write-a-document", [h["name"] for h in hits]
+
+
+def test_the_body_can_be_fetched_by_name():
+    body = agent_skills.body_of("inbox-triage")
+    assert "Needs a reply today" in body
+
+
+def test_an_unknown_name_has_no_body():
+    """The name comes from a model. A dict lookup is the whole defence: there
+    is no path built from it, which is how the schedules tool grew a
+    directory traversal that deleted stored credentials."""
+    for bad in ("../secrets", "no-such-skill", "", None, 5,
+                "inbox-triage/../../etc/passwd"):
+        assert agent_skills.body_of(bad) is None

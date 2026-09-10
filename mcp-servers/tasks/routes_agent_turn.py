@@ -632,6 +632,11 @@ def _identity_line(agent: dict, names) -> dict:
         "next conversation starts where this one ended.")
 
     said.append(
+        "Before doing a job you have no instructions for, call find_skills "
+        "with what they asked in their own words. If one fits, use_skill and "
+        "follow it. If none does, do the job and say so.")
+
+    said.append(
         "Answer, then stop. Do not close with an offer of further help or an "
         "invitation to let you know. If something is genuinely out of reach, "
         "say what is missing and what would fix it, rather than apologising.")

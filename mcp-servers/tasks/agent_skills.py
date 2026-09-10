@@ -21,6 +21,7 @@ out, never to a turn that fails.
 """
 import logging
 import os
+import re
 
 try:
     import yaml
@@ -160,6 +161,93 @@ def catalogue() -> list:
     return [{"name": s["name"], "description": s["description"],
              "tools": list(s["tools"]), "tags": list(s["tags"])}
             for s in sorted(load_all().values(), key=lambda s: s["name"])]
+
+
+#: How many matches a search hands back. These go into a tool result the model
+#: reads, so the list has to be short enough to act on rather than a second
+#: catalogue to wade through.
+SEARCH_LIMIT = 5
+
+#: Words that match everything and so tell us nothing about what somebody
+#: wants. Without this, "can you find a skill for email" scores every skill
+#: whose description contains "use when".
+_STOPWORDS = frozenset({
+    "a", "an", "and", "the", "for", "of", "to", "in", "on", "is", "it", "my",
+    "me", "i", "you", "can", "do", "does", "how", "what", "with", "that",
+    "this", "use", "used", "using", "when", "skill", "skills", "please",
+    "help", "need", "want", "get", "make", "any", "some", "there",
+})
+
+
+def _words(text) -> list:
+    if not isinstance(text, str):
+        return []
+    out = []
+    for raw in re.split(r"[^a-z0-9]+", text.lower()):
+        if len(raw) > 2 and raw not in _STOPWORDS:
+            out.append(raw)
+    return out
+
+
+def _score(skill: dict, wanted: list) -> int:
+    """How well this skill answers that request.
+
+    Weighted by where the word was found, because the three places mean
+    different things. A word in the NAME is what the skill is called, a word
+    in a TAG is the area it belongs to, and a word in the description is a
+    detail that may be incidental.
+    """
+    name = set(_words(skill["name"]))
+    tags = set(w for t in skill["tags"] for w in _words(t))
+    desc = set(_words(skill["description"]))
+    hits = 0
+    for w in wanted:
+        if w in name:
+            hits += 8
+        elif w in tags:
+            hits += 4
+        elif w in desc:
+            hits += 1
+    return hits
+
+
+def search(query, limit: int = SEARCH_LIMIT) -> list:
+    """The skills that best answer a plain-language request.
+
+    This is what makes a library of 64 usable at all. An agent can carry about
+    13 of them, so the other 51 are unreachable unless somebody predicted in
+    advance that they would be needed. Searching costs one sentence in the
+    brief rather than the 10,858 characters a full catalogue would.
+
+    Descriptions only, never bodies: five bodies would be most of a turn.
+    """
+    wanted = _words(query)
+    if not wanted:
+        return []
+    scored = []
+    for skill in load_all().values():
+        n = _score(skill, wanted)
+        if n:
+            scored.append((n, skill))
+    # Name as the tiebreak so the same query gives the same answer twice.
+    scored.sort(key=lambda pair: (-pair[0], pair[1]["name"]))
+    return [{"name": s["name"], "description": s["description"],
+             "tools": list(s["tools"]), "tags": list(s["tags"])}
+            for _n, s in scored[:max(1, int(limit or SEARCH_LIMIT))]]
+
+
+def body_of(name) -> str | None:
+    """One skill's instructions, or None.
+
+    A dictionary lookup on a name that came from a model is the whole
+    defence, and it is deliberate: nothing here builds a path out of it. The
+    schedules tool grew a directory traversal exactly by rebuilding a path
+    from a model's argument, and it would have deleted stored credentials.
+    """
+    if not isinstance(name, str):
+        return None
+    skill = load_all().get(name.strip())
+    return skill["body"] if skill else None
 
 
 def _ids_from(meta) -> list:

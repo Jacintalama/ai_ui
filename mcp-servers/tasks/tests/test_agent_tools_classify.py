@@ -164,3 +164,30 @@ def test_pinning_a_name_does_not_widen_to_its_relatives():
     assert is_write_tool("delete_my_account") is True
     assert is_write_tool("my_account_delete") is True
     assert is_write_tool("reset_my_account") is True
+
+
+# --- the skills tool --------------------------------------------------------
+
+def test_finding_a_skill_is_a_read():
+    """"find" is already a read verb, so this needs no pin. Asserted anyway,
+    because the classifier defaults to write and a read-only agent refused its
+    own skill library would look like the feature was broken."""
+    assert not is_write_tool("find_skills")
+
+
+def test_using_a_skill_is_a_read():
+    """It reads instructions. Nothing is changed by fetching them, and
+    whatever the agent then does still goes through the same gate.
+
+    It has to be PINNED: "use" is neither a write verb nor a read verb, so the
+    name falls through to the default, and the default is write. Exactly the
+    my_account bug, where a read-only agent was refused a read and told its
+    owner it had no access to their own account."""
+    assert not is_write_tool("use_skill")
+
+
+def test_the_pin_is_narrow():
+    """Pinning a name must not accidentally bless its neighbours."""
+    assert is_write_tool("delete_skill")
+    assert is_write_tool("create_skill")
+    assert is_write_tool("write_skill")

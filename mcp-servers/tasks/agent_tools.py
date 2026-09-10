@@ -102,6 +102,14 @@ READ_METHODS: frozenset[str] = frozenset({
     # thing keeping apply_app_change a write, so weakening it, or adding
     # "apply" to _READ_VERBS, would open a real write path.
     "propose_app_change",
+    # Pinned because the verb rule has no opinion: "use" is neither a write
+    # verb nor a read verb, so this falls through to the default, and the
+    # default is write. It fetches the instructions for one skill and changes
+    # nothing; whatever the agent then does with them still goes through this
+    # same gate. Unpinned, a read-only agent would be refused its own skill
+    # library, which is the my_account bug again: a read refused, and the
+    # owner told their agent had no access to something it plainly should.
+    "use_skill",
 })
 
 
