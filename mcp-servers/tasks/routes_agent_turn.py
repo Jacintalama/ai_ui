@@ -162,6 +162,26 @@ async def _resolve_agent(user_email: str, agent_id: str) -> tuple[str, list[str]
         raise HTTPException(status_code=409,
                             detail=AGENT_ON_CALLBACK_MODEL)
     meta = agent.get("meta") if isinstance(agent.get("meta"), dict) else {}
+    return (token, await tools_for_agent(user_email, meta),
+            agent_access.level_of(meta))
+
+
+async def tools_for_agent(user_email: str, meta: dict) -> list[str]:
+    """Which tools this agent may use, from its own meta.
+
+    Public and shared on purpose. It used to live inline in _resolve_agent,
+    which meant it applied on the chat path and nowhere else, and
+    agent_runner.run_agent read meta["toolIds"] verbatim instead. Measured
+    2026-09-10: the same agent had twelve tools in chat and one on a
+    schedule, and that one was the connected-apps umbrella with nothing
+    behind it. So a scheduled agent could read nothing, wrote its report
+    from nothing, and its card still said it could use every tool the owner
+    had. Nothing in either file said the two surfaces disagreed.
+
+    A schedule may still narrow what its agent may DO, through tool_mode and
+    agent_access. That is a separate axis and deliberately still separate:
+    what it may reach should not depend on which surface woke it.
+    """
     own = meta.get("toolIds")
     own = [t for t in own if isinstance(t, str)] if isinstance(own, list) else []
     own = [t for t in own if t not in _TOOLS_AN_AGENT_MAY_NOT_HAVE]
@@ -175,7 +195,7 @@ async def _resolve_agent(user_email: str, agent_id: str) -> tuple[str, list[str]
     # narrow option and then unticked every box has not finished choosing,
     # and an agent with no tools at all would simply look broken.
     if meta.get("toolScope") == TOOL_SCOPE_PICKED and own:
-        return token, own, agent_access.level_of(meta)
+        return own
 
     # Everything this person can reach, not only what this agent was ticked
     # for. Its own list stays in front so an explicitly granted tool is never
@@ -184,7 +204,7 @@ async def _resolve_agent(user_email: str, agent_id: str) -> tuple[str, list[str]
     for tool_id in await _every_tool_for(user_email):
         if tool_id not in tools:
             tools.append(tool_id)
-    return token, tools, agent_access.level_of(meta)
+    return tools
 
 
 def _trim_for_storage(conversation: list[dict]) -> list[dict]:

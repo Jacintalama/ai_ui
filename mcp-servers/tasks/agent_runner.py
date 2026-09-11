@@ -422,8 +422,16 @@ async def run_agent(sched) -> tuple[str, str, dict]:
                     "a different agent.", {})
 
         meta = agent.get("meta") if isinstance(agent.get("meta"), dict) else {}
-        tools = meta.get("toolIds")
-        tools = [t for t in tools if isinstance(t, str)] if isinstance(tools, list) else []
+        # The same resolution the chat path uses, not meta["toolIds"] read
+        # raw. Measured 2026-09-10: reading it raw gave this agent one tool on
+        # a schedule against twelve in chat, and the one was the connected
+        # apps umbrella with nothing behind it, so a scheduled run could read
+        # nothing at all while its card still promised every tool the owner
+        # had. Imported here rather than at module scope because
+        # routes_agent_turn imports this module, which is the same deferred
+        # import scheduler.py uses to reach run_agent.
+        from routes_agent_turn import tools_for_agent
+        tools = await tools_for_agent(sched.user_email, meta)
 
         # Mint a long-lived token immediately before the chat call. The token
         # must outlive the WHOLE tool loop, not one call: up to

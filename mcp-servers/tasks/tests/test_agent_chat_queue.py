@@ -621,3 +621,108 @@ def test_the_refusal_renders_as_a_failure_with_the_fix():
     reason, fix = pair
     assert "cannot run an agent" in reason
     assert "Pick a specific model" in fix, fix
+
+
+# ---------------------------------------------------------------------------
+# The same agent must reach the same tools whichever surface woke it.
+# Measured on production 2026-09-10: Ada had 12 tools in chat and 1 on a
+# schedule, and that 1 was the connected-apps umbrella with nothing behind
+# it. So a scheduled run could read nothing, wrote from nothing, and the card
+# still said "Every tool you have". Nothing in either file said they differed.
+# ---------------------------------------------------------------------------
+
+
+async def test_an_unnarrowed_agent_gets_everything_the_owner_can_reach(monkeypatch):
+    import routes_agent_turn as rt
+
+    async def every(email):
+        return ["gmail", "calendar", "remember", "skills"]
+
+    monkeypatch.setattr(rt, "_every_tool_for", every)
+    tools = await rt.tools_for_agent("me@example.com",
+                                     {"toolIds": ["server:mcp-proxy"]})
+    assert "skills" in tools and "gmail" in tools, tools
+    # Its own list stays in front, so an explicit grant is never lost to a
+    # short read from the wider lookup.
+    assert tools[0] == "server:mcp-proxy", tools
+
+
+async def test_a_narrowed_agent_keeps_only_what_was_picked(monkeypatch):
+    """The narrowing must survive the extraction, or picking a few tools
+    would silently become picking all of them."""
+    import routes_agent_turn as rt
+
+    async def every(email):
+        return ["gmail", "calendar", "remember", "skills"]
+
+    monkeypatch.setattr(rt, "_every_tool_for", every)
+    tools = await rt.tools_for_agent(
+        "me@example.com", {"toolIds": ["gmail"], "toolScope": "picked"})
+    assert tools == ["gmail"], tools
+
+
+async def test_narrowed_to_nothing_still_gets_everything(monkeypatch):
+    """Picking nothing is not a request for nothing: an agent with no tools
+    at all just looks broken. Pre-existing behaviour, pinned here because the
+    extraction moved the branch that implements it."""
+    import routes_agent_turn as rt
+
+    async def every(email):
+        return ["gmail", "skills"]
+
+    monkeypatch.setattr(rt, "_every_tool_for", every)
+    tools = await rt.tools_for_agent(
+        "me@example.com", {"toolIds": [], "toolScope": "picked"})
+    assert "gmail" in tools and "skills" in tools, tools
+
+
+async def test_a_scheduled_run_resolves_tools_like_the_chat_path(monkeypatch):
+    """The defect itself. run_agent used to read meta["toolIds"] verbatim, so
+    the two surfaces disagreed about the same agent."""
+    import agent_runner as ar
+    import routes_agent_turn as rt
+
+    async def every(email):
+        return ["gmail", "calendar", "remember", "skills"]
+
+    monkeypatch.setattr(rt, "_every_tool_for", every)
+    meta = {"toolIds": ["server:mcp-proxy"]}
+
+    seen = {}
+
+    async def fake_chat(**kw):
+        seen.update(kw)
+        return ("done", [])
+
+    async def fake_list(token):
+        return ([{"id": "agent-a", "name": "Ada", "meta": meta,
+                  "base_model_id": "openai/gpt-5-mini"}], False)
+
+    async def fake_owner(email):
+        return "user-1"
+
+    monkeypatch.setattr(ar, "_chat", fake_chat)
+    monkeypatch.setattr(ar, "_list_agents", fake_list)
+    monkeypatch.setattr(ar, "_owui_user_id_for", fake_owner)
+    monkeypatch.setattr(ar, "mint_owui_token", lambda *a, **k: "tok")
+    monkeypatch.setattr(ar.agent_activity, "start_run",
+                        lambda *a, **k: _nothing())
+    monkeypatch.setattr(ar.agent_activity, "finish_run",
+                        lambda *a, **k: _nothing())
+
+    class Sched:
+        id = "s1"
+        user_email = "me@example.com"
+        agent_id = "agent-a"
+        tool_mode = "read_only"
+        prompt = "write the weekly review"
+        last_run_status = None
+        last_result = None
+
+    await ar.run_agent(Sched())
+    got = seen.get("tool_ids") or []
+    assert "skills" in got, (
+        "a scheduled agent could not reach the skills tool, so use_skill "
+        "could never fire: %r" % (got,))
+    assert len(got) > 1, (
+        "the schedule got only its raw toolIds, which is the defect: %r" % (got,))

@@ -65,24 +65,64 @@ async def test_it_runs_the_named_agent(wired):
     assert wired.chat.await_args.kwargs["model"] == "agent-triage-0002"
 
 
-async def test_it_sends_the_agents_own_tools(wired):
+async def test_it_sends_the_agents_own_tools_first(wired):
     """Open WebUI attaches a model's tools only for its own UI. An API caller
-    that does not ask gets none, and the agent arrives unable to do anything."""
+    that does not ask gets none, and the agent arrives unable to do anything.
+
+    The agent's own picks lead the list. They used to be the WHOLE list here,
+    which is what made a scheduled agent weaker than the same agent in chat.
+    """
     await agent_runner.run_agent(_sched())
 
-    assert wired.chat.await_args.kwargs["tool_ids"] == ["gmail"]
+    sent = wired.chat.await_args.kwargs["tool_ids"]
+    assert sent[0] == "gmail", sent
+    assert "gmail" in sent
 
 
-async def test_an_agent_with_no_tools_sends_none(wired, monkeypatch):
-    """None is not the same as an empty list, which reads as an explicit
-    request for no tools."""
+async def test_a_schedule_reaches_what_the_same_agent_reaches_in_chat(wired):
+    """Resolves through routes_agent_turn.tools_for_agent, the one the chat
+    path uses, rather than reading meta["toolIds"] raw.
+
+    Measured on production 2026-09-10: the same agent had twelve tools in chat
+    and one on a schedule, and that one was the connected-apps umbrella with
+    nothing behind it. It could read nothing, so it wrote its weekly report
+    from nothing, while its card still said "Every tool you have".
+    """
+    await agent_runner.run_agent(_sched())
+
+    sent = wired.chat.await_args.kwargs["tool_ids"]
+    assert len(sent) > 1, (
+        "the schedule got only the agent's raw toolIds: %r" % (sent,))
+
+
+async def test_an_empty_tool_list_is_not_a_request_for_no_tools(wired, monkeypatch):
+    """A deliberate reversal, recorded because the two surfaces disagreed.
+
+    This test used to assert the opposite, and said why: "None is not the same
+    as an empty list, which reads as an explicit request for no tools." The
+    chat path had already decided the other way, in as many words: "Picking
+    nothing is not a request for nothing. Somebody who chose the narrow option
+    and then unticked every box has not finished choosing, and an agent with
+    no tools at all would simply look broken."
+
+    Both cannot be right for the same agent. The chat path's reading wins,
+    because it is the newer one, because it came with the toolScope setting
+    that lets somebody say "only these" explicitly, and because an empty list
+    is far more often an unfinished thought than an instruction.
+
+    What an agent may DO on a schedule is unchanged and still narrower: a
+    schedule's tool_mode defaults to read_only, and agent_runner refuses every
+    write call. This widens what it can READ, which is the axis that was
+    accidentally different, not the one that was deliberately narrow.
+    """
     monkeypatch.setattr(agent_runner, "_list_agents", AsyncMock(
         return_value=([{"id": "agent-triage-0002", "name": "Triage",
                         "meta": {"toolIds": []}}], False)))
 
     await agent_runner.run_agent(_sched())
 
-    assert wired.chat.await_args.kwargs["tool_ids"] is None
+    sent = wired.chat.await_args.kwargs["tool_ids"]
+    assert sent, "an empty list still meant no tools at all"
 
 
 async def test_identity_is_resolved_from_the_schedules_own_email(wired):
