@@ -41,10 +41,28 @@ TOOL_RESULT_EXCERPT_CHARS = 6000
 
 HTTP_TIMEOUT_SECONDS = 240
 
+#: Said when the loop hits its cap. A sentinel rather than a sentence matched
+#: twice: run_agent has to tell "stopped early with nothing to show" apart
+#: from "answered, and also mentioned something", and comparing prose in two
+#: files is how that kind of check rots.
+RAN_OUT_OF_ROUNDS = "Stopped after %d rounds of tool use, so this answer may be incomplete."
+
 #: How many times the model may ask for tools before we stop. Each iteration
 #: is a full completion, so this bounds the run's wall clock as well as its
 #: appetite.
-MAX_TOOL_ITERATIONS = 5
+#:
+#: Eight, not five. Measured on the first real weekly review, 2026-09-11: one
+#: run spent find_skills, use_skill, list_my_apps and list_my_schedules, four
+#: of the five, and wrote a proper report; the run before it used all five and
+#: returned nothing but the note saying so. Same schedule, same prompt, a
+#: minute apart. So five was not a limit this work fits inside, it was a coin
+#: toss with one round of margin, resolved weekly, unattended.
+#:
+#: Nothing forces a run to use them. The cost of the extra headroom is only
+#: paid by a run that needs it, and this surface has no one waiting: the
+#: comment on CHANNEL_MAX_TOOL_ITERATIONS below explains why a chat window
+#: cannot be given the same slack.
+MAX_TOOL_ITERATIONS = 8
 
 #: A channel is somebody waiting at a keyboard, not a cron entry. The
 #: schedule path's five rounds at 240 seconds each is a 20 minute worst
@@ -342,8 +360,7 @@ async def _chat(token: str, model: str, messages: list[dict],
             # before the next completion, which is what the resume writes.
             raise agent_access.ApprovalRequired(convo, pending)
 
-    notes.append("Stopped after " + str(max_iterations)
-                 + " rounds of tool use, so this answer may be incomplete.")
+    notes.append(RAN_OUT_OF_ROUNDS % max_iterations)
     return content, notes
 
 
@@ -463,6 +480,16 @@ async def run_agent(sched) -> tuple[str, str, dict]:
         if not answer and not notes:
             outcome = "failed"
             return ("failed", "The agent returned an empty answer.", {})
+        # A run that spent every round and produced no answer is a failed run,
+        # whatever the loop called it. It used to come back "completed"
+        # carrying only the note about stopping early, which on a schedule
+        # means the delivered report IS that sentence: 69 characters, once a
+        # week, with a green card. Measured on the first real weekly review.
+        if not answer and any(n.startswith("Stopped after") for n in notes):
+            outcome = "failed"
+            return ("failed",
+                    "The agent ran out of tool rounds before it could answer. "
+                    "Nothing was delivered for this run.", {})
         if notes:
             # Say what was refused or stopped early, even when the model's
             # own final content is empty. A run that quietly skipped part of
