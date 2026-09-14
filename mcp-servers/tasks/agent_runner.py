@@ -77,7 +77,18 @@ MAX_TOOL_ITERATIONS = 8
 #: could answer, so the person got an empty bubble. Five at 60 seconds is a
 #: five minute worst case, still comfortably inside the ten minute window
 #: after which the card calls a chat run dead, which a test asserts.
-CHANNEL_MAX_TOOL_ITERATIONS = 5
+#: Seven, not five. Measured 2026-09-14 on the first research turn that could
+#: actually reach the web: a question needing a search and two pages costs
+#: three rounds on a good run and hit the cap on a bad one, so five was the
+#: same one-round margin the schedule path had, resolved per question instead
+#: of per week. Unlike that one it fails visibly, saying it stopped early, so
+#: it annoys rather than deceives.
+#:
+#: Seven is what the abandon window allows, not a round number: at 60 seconds
+#: each the worst case is seven minutes, and STALE_AFTER_CHANNEL is ten, which
+#: a test asserts. Nine would leave one minute of margin for tool time on top
+#: of model time, which is not margin.
+CHANNEL_MAX_TOOL_ITERATIONS = 7
 CHANNEL_HTTP_TIMEOUT_SECONDS = 60
 
 #: The chat token has to outlive the WHOLE loop, not one completion: the loop

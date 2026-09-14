@@ -31,14 +31,14 @@ logger = logging.getLogger(__name__)
 #: have very different worst cases and one number cannot be honest about
 #: both.
 #:
-#: A chat turn is bounded by CHANNEL_MAX_TOOL_ITERATIONS (3) completions of
-#: up to CHANNEL_HTTP_TIMEOUT_SECONDS (60) each, so roughly three minutes of
-#: model time plus tool time. Ten minutes is comfortable room over that, and
+#: A chat turn is bounded by CHANNEL_MAX_TOOL_ITERATIONS (7) completions of
+#: up to CHANNEL_HTTP_TIMEOUT_SECONDS (60) each, so roughly seven minutes of
+#: model time plus tool time. Ten minutes is room over that, and
 #: it is what somebody watching the card actually wants: an agent that says
 #: it is working ten minutes after they asked it something is not working.
 STALE_AFTER_CHANNEL = timedelta(minutes=10)
 
-#: A scheduled run uses MAX_TOOL_ITERATIONS (5) and HTTP_TIMEOUT_SECONDS
+#: A scheduled run uses MAX_TOOL_ITERATIONS (8) and HTTP_TIMEOUT_SECONDS
 #: (240), so twenty minutes of model time alone is healthy before a single
 #: tool has run. Ten minutes here would mark a working schedule as failed
 #: while it was still going, which is this constant's own failure mode in
