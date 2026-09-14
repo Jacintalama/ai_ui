@@ -210,10 +210,15 @@ def test_the_brief_stays_short_enough_to_send_every_turn():
     re-printing a list it had already printed, after being told it was not
     needed, was worth more than the tokens the instruction costs. Raise this
     again only for something that has actually gone wrong in front of
-    somebody, not for a rule that seems like a good idea."""
+    somebody, not for a rule that seems like a good idea.
+
+    Raised from 2100 to 2250 on 2026-09-14 for the long-dash rule, which
+    clears that bar: the owner sent a screenshot of his own agents using the
+    dash he has a standing rule against. The rule was written twice and cut
+    to two lines before this rose, so it is the smallest rise that fits."""
     from routes_agent_turn import _identity_line
     said = _identity_line({"id": "a", "name": "Ada"}, ["Ada", "Mia"])["content"]
-    assert len(said) < 2100, len(said)
+    assert len(said) < 2250, len(said)
 
 
 def test_the_brief_says_not_to_repeat_itself():
@@ -278,3 +283,29 @@ def test_a_long_role_is_cut_rather_than_allowed_to_run_the_brief():
     said = _identity_line(
         {"id": "a", "name": "Ada", "meta": {"role": "x" * 500}}, ["Ada"])["content"]
     assert "x" * 200 not in said
+
+
+def test_every_agent_is_told_not_to_use_long_dashes():
+    """Ralph's standing rule, and he reported his own agents breaking it with
+    a screenshot. Put in the shared identity line rather than in seven briefs,
+    so it reaches every agent on every surface, including ones made later.
+
+    The characters are shown literally because "avoid em-dashes" does not
+    survive a model that cannot tell which key that is. The words "em-dash"
+    and "en-dash" are deliberately NOT in the brief: they were cut to stay
+    inside the length budget, and showing the character is what does the work.
+    """
+    from routes_agent_turn import _identity_line
+    said = _identity_line({"id": "a", "name": "Ada"}, ["Ada", "Mia"])["content"]
+    assert "\u2014" in said, "the em-dash itself is not shown"
+    assert "\u2013" in said, "the en-dash itself is not shown"
+    assert "long dashes" in said, "nothing names what they are"
+
+
+def test_the_brief_does_not_itself_contain_a_stray_long_dash():
+    """It would be teaching the format it forbids. The two in the rule are
+    deliberate, so count them rather than banning them."""
+    from routes_agent_turn import _identity_line
+    said = _identity_line({"id": "a", "name": "Ada"}, ["Ada", "Mia"])["content"]
+    assert said.count("\u2014") == 1, "an em-dash outside the rule itself"
+    assert said.count("\u2013") == 1, "an en-dash outside the rule itself"

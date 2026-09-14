@@ -54,6 +54,17 @@ def _is_collective(hay: str) -> bool:
     return any(_whole_word_hit(hay, word) for word in COLLECTIVE_WORDS)
 
 
+def addresses_everyone(text) -> bool:
+    """True when a collective word put this to the room rather than to one.
+
+    Public because the caller needs to tell the two kinds of match apart and
+    match_agents cannot say: it returns every agent for "hey everyone" and for
+    "Ada and Mia" alike. The difference matters because naming somebody is a
+    question put to them, and addressing a room is not.
+    """
+    return _is_collective(text if isinstance(text, str) else "")
+
+
 def match_agents(text: str, agents) -> list[dict]:
     """Every agent the message addresses, in the order that makes sense.
 

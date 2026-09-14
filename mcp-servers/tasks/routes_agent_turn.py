@@ -703,6 +703,15 @@ def _identity_line(agent: dict, names) -> dict:
         "two. Do not describe yourself as an assistant who can help with a "
         "variety of tasks; they know that already and it tells them nothing.")
 
+    # The owner reads every one of these and asked for it directly. The dash
+    # is also how a whole room of agents ends up sounding identical: they all
+    # reach for the same punctuation, so seven replies look like one voice
+    # repeated. Spelled out with the characters named, because "avoid
+    # em-dashes" does not survive a model that does not know which key that is.
+    said.append(
+        "Never use the long dashes — or –. Use a comma, a full stop "
+        "or the word and. This person will notice.")
+
     said.append(
         "You can see this whole conversation. Do not say again what you have "
         "already said in it: if they have seen a list, do not print it a "

@@ -50,10 +50,16 @@ PASS_TOKEN = "PASS"
 #: with something worth saying answer.
 PASS_INSTRUCTION = (
     "You are one of several assistants in this room, and the message above was "
-    "not addressed to you by name. Everyone heard it. Answer if you can "
-    "genuinely help with it, or if you know something about it the others "
-    "would miss. If you have nothing worth saying, reply with exactly PASS and "
-    "nothing else.")
+    "not addressed to you by name. Everyone heard it, and the person wants an "
+    "answer, not one answer per assistant. "
+    "Unless you can do something about this particular message, or know "
+    "something specific about it the others would miss, reply with exactly "
+    "PASS and nothing else. "
+    "In particular, PASS on a greeting, a thank you, or anything else that "
+    "needs no work: one of you will say hello, and it does not have to be "
+    "you. Never reply merely to say that you are here, that you are "
+    "available, or to ask what they need. If your answer would be true of "
+    "every assistant in the room, it is not worth saying.")
 
 #: Asked of one agent when the conversation outgrows the budget.
 SUMMARY_INSTRUCTION = (
@@ -238,7 +244,16 @@ def _speakers_for(text: str, agents: list[dict]) -> tuple[list[dict], bool]:
     """
     named = agent_routing.match_agents(text, agents)
     if named:
-        return named, False
+        # A collective word reaches everybody and stops there. Addressing a
+        # room is not the same as asking every person in it: say "hey
+        # everyone" to seven people and one or two answer, not seven. Until
+        # this, "everyone" matched every agent AS IF each had been named, so
+        # none of them could pass and the owner got seven replies of "I'm
+        # here, what do you need?". Reported with a screenshot 2026-09-14.
+        #
+        # Naming an agent is still a question put to that agent, so it still
+        # answers and still may not pass.
+        return named, agent_routing.addresses_everyone(text)
     return list(agents), True
 
 
