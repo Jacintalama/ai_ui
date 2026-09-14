@@ -253,3 +253,21 @@ def test_arguments_are_decoded_however_the_model_sent_them():
         {"function": {"name": "x", "arguments": "not json"}}) == {}
     assert agent_tools.arguments_of({"function": {"name": "x"}}) == {}
     assert agent_tools.arguments_of("not a call") == {}
+
+
+def test_reading_a_web_page_does_not_need_permission():
+    """A researcher that asks before reading a page is one nobody uses.
+    Both are pinned: the verb rule gets web_search by accident (its read verb
+    lands in the third and last token step 3 inspects) and misses web_scrape
+    entirely."""
+    assert not agent_tools.is_write_tool("web-search_web_search")
+    assert not agent_tools.is_write_tool("web-search_web_scrape")
+    assert not agent_tools.is_write_call(
+        "call_tool", {"tool_name": "web-search_web_scrape"})
+
+
+def test_saving_a_page_somewhere_does_need_permission():
+    """The line between reading the web and writing to the owner's things."""
+    assert agent_tools.is_write_tool("web-search_web_save_to_kb")
+    assert agent_tools.is_write_call(
+        "call_tool", {"tool_name": "web-search_web_save_to_kb"})

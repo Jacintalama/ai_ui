@@ -138,6 +138,23 @@ READ_METHODS: frozenset[str] = frozenset({
     # library, which is the my_account bug again: a read refused, and the
     # owner told their agent had no access to something it plainly should.
     "use_skill",
+    # Fetching a public web page changes nothing of the owner's, so both of
+    # these are reads, and a researcher that has to ask permission before
+    # reading a page is a researcher nobody uses.
+    #
+    # Pinned rather than left to the verb rule, because the verb rule gets
+    # them by accident or not at all. Tokens split on underscore only, so
+    # web-search_web_search becomes ["web-search", "web", "search"] and is a
+    # read purely because "search" lands in the third token, which is the last
+    # one step 3 looks at. A one-token-longer server prefix would push it out
+    # and silently make every web search need approval.
+    # web-search_web_scrape becomes ["web-search", "web", "scrape"], has no
+    # read verb at all, and was a write until this line.
+    #
+    # web-search_web_save_to_kb is deliberately NOT here: "save" is a write
+    # verb and saving to a knowledge base really does write.
+    "web-search_web_search",
+    "web-search_web_scrape",
 })
 
 
