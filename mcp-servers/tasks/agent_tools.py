@@ -141,6 +141,52 @@ READ_METHODS: frozenset[str] = frozenset({
 })
 
 
+def arguments_of(call) -> dict:
+    """A tool call's arguments as a dict, however the model encoded them.
+
+    The same decoding execute_tool_call does, lifted out so the write
+    classifier can see them BEFORE the call is allowed to run. Degrades to an
+    empty dict rather than raising: a malformed call must be refused by the
+    classifier, not crash the run on its way to it.
+    """
+    fn = call.get("function") if isinstance(call, dict) else None
+    fn = fn if isinstance(fn, dict) else {}
+    raw = fn.get("arguments") or "{}"
+    try:
+        out = json.loads(raw) if isinstance(raw, str) else dict(raw)
+    except (ValueError, TypeError):
+        return {}
+    return out if isinstance(out, dict) else {}
+
+
+def is_write_call(method_name: str, params: dict | None = None) -> bool:
+    """True when THIS call could change something, arguments included.
+
+    is_write_tool judges a name. That is enough for every native tool, where
+    the name is the whole story, and wrong for exactly one: call_tool is the
+    proxy's generic runner, so its name says nothing and what matters is the
+    tool_name inside it.
+
+    Judged on the name alone, call_tool is a write, which is the safe default
+    and also makes research unusable: every web search would stop and ask,
+    and a search that needs permission is a search nobody runs. Judged on its
+    argument, web-search_web_search is a read and clickup_create_task is not,
+    which is the distinction that was wanted all along.
+
+    A call_tool whose tool_name is missing or not a string stays a write. So
+    does one nested inside another, which nothing should be doing.
+    """
+    if method_name != "call_tool":
+        return is_write_tool(method_name)
+    inner = (params or {}).get("tool_name")
+    if not isinstance(inner, str) or not inner.strip():
+        return True
+    inner = inner.strip()
+    if inner == "call_tool":
+        return True
+    return is_write_tool(inner)
+
+
 def is_write_tool(method_name: str) -> bool:
     """True when calling this method could change something.
 

@@ -6,6 +6,7 @@ So the writes are asserted individually, by name, from the real tool list.
 """
 import pytest
 
+import agent_tools
 from agent_tools import is_write_tool
 
 
@@ -191,3 +192,64 @@ def test_the_pin_is_narrow():
     assert is_write_tool("delete_skill")
     assert is_write_tool("create_skill")
     assert is_write_tool("write_skill")
+
+
+# ---------------------------------------------------------------------------
+# call_tool is the proxy's generic runner, so its NAME says nothing about what
+# it does. Judged on the name it is a write, which is the safe default and
+# also makes research unusable: every web search would stop and ask, and a
+# search that needs permission is a search nobody runs.
+# ---------------------------------------------------------------------------
+
+
+def test_calling_a_search_through_the_proxy_is_a_read():
+    assert not agent_tools.is_write_call(
+        "call_tool", {"tool_name": "web-search_web_search",
+                      "arguments": {"query": "x"}})
+
+
+def test_calling_a_create_through_the_proxy_is_a_write():
+    """The whole point of looking inside. Same outer name, opposite answer."""
+    assert agent_tools.is_write_call(
+        "call_tool", {"tool_name": "clickup_create_task", "arguments": {}})
+
+
+def test_call_tool_with_no_inner_name_is_a_write():
+    """Unknown counts as a write, and a call_tool carrying nothing to call is
+    as unknown as it gets."""
+    assert agent_tools.is_write_call("call_tool", {})
+    assert agent_tools.is_write_call("call_tool", {"tool_name": ""})
+    assert agent_tools.is_write_call("call_tool", {"tool_name": 42})
+    assert agent_tools.is_write_call("call_tool", None)
+
+
+def test_call_tool_nested_in_call_tool_is_a_write():
+    """Nothing should do this. If something does, it does not get to launder
+    a write into a read by wrapping it twice."""
+    assert agent_tools.is_write_call(
+        "call_tool", {"tool_name": "call_tool",
+                      "arguments": {"tool_name": "web-search_web_search"}})
+
+
+def test_every_other_tool_is_judged_exactly_as_before():
+    """is_write_call must be a strict extension of is_write_tool, or this
+    change quietly reclassifies the whole native surface."""
+    for name in ("list_unread_emails", "send_email", "read_email",
+                 "delete_calendar_event", "list_my_apps", "apply_app_change",
+                 "use_skill", "my_account", "search_tools", "describe_tools"):
+        assert agent_tools.is_write_call(name, {"anything": 1}) is \
+            agent_tools.is_write_tool(name), name
+
+
+def test_arguments_are_decoded_however_the_model_sent_them():
+    import json as _json
+    assert agent_tools.arguments_of(
+        {"function": {"name": "x", "arguments": _json.dumps({"a": 1})}}) == {"a": 1}
+    # Already decoded, which models and hand-built tests both do.
+    assert agent_tools.arguments_of(
+        {"function": {"name": "x", "arguments": {"a": 1}}}) == {"a": 1}
+    # Malformed must degrade to empty so the classifier refuses, not crash.
+    assert agent_tools.arguments_of(
+        {"function": {"name": "x", "arguments": "not json"}}) == {}
+    assert agent_tools.arguments_of({"function": {"name": "x"}}) == {}
+    assert agent_tools.arguments_of("not a call") == {}

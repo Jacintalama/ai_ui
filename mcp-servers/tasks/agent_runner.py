@@ -23,7 +23,8 @@ import httpx
 
 import agent_access
 import agent_activity
-from agent_tools import execute_tool_call, is_write_tool
+from agent_tools import (arguments_of, execute_tool_call,
+                         is_write_call, is_write_tool)
 from owui_token import mint_owui_token
 
 logger = logging.getLogger(__name__)
@@ -322,7 +323,11 @@ async def _chat(token: str, model: str, messages: list[dict],
             raw_name = fn.get("name")
             name = raw_name.strip() if isinstance(raw_name, str) else ""
             label = name or "an unnamed tool call"
-            if is_write_tool(name) and not write_allowed:
+            # Arguments included, because call_tool's own name says nothing
+            # about what it runs: searching the web and creating a ClickUp
+            # task arrive here under the same name.
+            probe = arguments_of(call)
+            if is_write_call(name, probe) and not write_allowed:
                 if mode == agent_access.MODE_ASK:
                     # Held back, not refused. The turn ends below and picks
                     # up again once the owner answers.
