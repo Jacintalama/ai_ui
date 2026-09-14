@@ -483,7 +483,13 @@ async def test_a_channel_can_be_given_a_shorter_leash():
             tool_mode="read_only",
             max_iterations=agent_runner.CHANNEL_MAX_TOOL_ITERATIONS)
 
-    assert len(posts) == agent_runner.CHANNEL_MAX_TOOL_ITERATIONS
+    # Tool rounds are what the cap bounds. After the last one there is exactly
+    # one more completion with no tools attached, so the model writes up what
+    # it read instead of the person getting only a note that it stopped.
+    offered_tools = [p for p in posts if p.get("tool_ids")]
+    assert len(offered_tools) == agent_runner.CHANNEL_MAX_TOOL_ITERATIONS
+    assert len(posts) == agent_runner.CHANNEL_MAX_TOOL_ITERATIONS + 1
+    assert "tool_ids" not in posts[-1], "the closing completion offered tools"
     # Read from the constant, not hardcoded. This said "3 rounds" and became
     # wrong the moment the cap moved to make room for a skill lookup, which is
     # a test failing on a deliberate change rather than catching a defect.
@@ -507,3 +513,106 @@ async def test_the_per_call_timeout_reaches_the_request():
             timeout=agent_runner.CHANNEL_HTTP_TIMEOUT_SECONDS)
 
     assert seen["timeout"] == agent_runner.CHANNEL_HTTP_TIMEOUT_SECONDS
+
+
+# ---------------------------------------------------------------------------
+# A final answer round after the cap. Measured 2026-09-14: Kai spent seven
+# rounds reading five files of the shoe app and returned nothing but the note
+# that he had stopped, because the loop ended while the model was still
+# asking. The reading was done; only the writing was missing.
+# ---------------------------------------------------------------------------
+
+
+def _calls_reply():
+    return {"choices": [{"message": {"content": "", "tool_calls": [
+        {"id": "c1", "type": "function",
+         "function": {"name": "list_unread_emails", "arguments": "{}"}}]}}]}
+
+
+async def test_after_the_cap_the_model_answers_from_what_it_read():
+    seen = []
+
+    async def fake_post(payload, token, timeout=None):
+        seen.append(payload)
+        if payload.get("tool_ids"):
+            return _calls_reply()
+        return {"choices": [{"message": {
+            "content": "Found it: the root page is still the old one."}}]}
+
+    with patch.object(agent_runner, "_post_chat", new=fake_post), \
+         patch("agent_runner.execute_tool_call",
+               new=AsyncMock(return_value="r")) as ex:
+        answer, notes = await agent_runner._chat(
+            token="t", model="agent-1",
+            messages=[{"role": "user", "content": "q"}],
+            tool_ids=["gmail"], user_email="owner@example.com",
+            tool_mode="read_only", max_iterations=3)
+
+    assert answer == "Found it: the root page is still the old one."
+    assert ex.await_count == 3, "the final round must not run tools"
+    assert "tool_ids" not in seen[-1], "the final round still offered tools"
+    assert any("stopped" in n.lower() for n in notes), "the caveat was dropped"
+
+
+async def test_the_final_round_gets_longer_than_a_chat_round():
+    """It carries everything the rounds read. At the 60s chat timeout Kai's
+    write-up after seven rounds of app files timed out, live."""
+    timeouts = []
+
+    async def fake_post(payload, token, timeout=None):
+        timeouts.append((bool(payload.get("tool_ids")), timeout))
+        if payload.get("tool_ids"):
+            return _calls_reply()
+        return {"choices": [{"message": {"content": "done"}}]}
+
+    with patch.object(agent_runner, "_post_chat", new=fake_post), \
+         patch("agent_runner.execute_tool_call",
+               new=AsyncMock(return_value="r")):
+        await agent_runner._chat(
+            token="t", model="agent-1",
+            messages=[{"role": "user", "content": "q"}],
+            tool_ids=["gmail"], user_email="owner@example.com",
+            tool_mode="read_only", max_iterations=2,
+            timeout=agent_runner.CHANNEL_HTTP_TIMEOUT_SECONDS)
+
+    assert timeouts[0] == (True, agent_runner.CHANNEL_HTTP_TIMEOUT_SECONDS)
+    assert timeouts[-1] == (False, agent_runner.FINAL_ROUND_MIN_TIMEOUT_SECONDS)
+
+
+async def test_a_failing_final_round_still_says_it_stopped():
+    """The final round is a bonus. If it errors, the owner still hears that
+    the run stopped early rather than getting an exception or silence."""
+    async def fake_post(payload, token, timeout=None):
+        if payload.get("tool_ids"):
+            return _calls_reply()
+        raise RuntimeError("upstream fell over")
+
+    with patch.object(agent_runner, "_post_chat", new=fake_post), \
+         patch("agent_runner.execute_tool_call",
+               new=AsyncMock(return_value="r")):
+        answer, notes = await agent_runner._chat(
+            token="t", model="agent-1",
+            messages=[{"role": "user", "content": "q"}],
+            tool_ids=["gmail"], user_email="owner@example.com",
+            tool_mode="read_only", max_iterations=2)
+
+    assert answer == ""
+    assert any("stopped" in n.lower() for n in notes)
+
+
+async def test_tool_calls_returned_in_the_final_round_are_not_run():
+    """No tools are attached, but a model can still return tool_calls.
+    Running them would be the round the cap exists to refuse."""
+    async def fake_post(payload, token, timeout=None):
+        return _calls_reply()
+
+    with patch.object(agent_runner, "_post_chat", new=fake_post), \
+         patch("agent_runner.execute_tool_call",
+               new=AsyncMock(return_value="r")) as ex:
+        await agent_runner._chat(
+            token="t", model="agent-1",
+            messages=[{"role": "user", "content": "q"}],
+            tool_ids=["gmail"], user_email="owner@example.com",
+            tool_mode="read_only", max_iterations=2)
+
+    assert ex.await_count == 2, ex.await_count

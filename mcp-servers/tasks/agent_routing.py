@@ -54,6 +54,17 @@ def _is_collective(hay: str) -> bool:
     return any(_whole_word_hit(hay, word) for word in COLLECTIVE_WORDS)
 
 
+def addresses_everyone(text) -> bool:
+    """True when a collective word put this to the room rather than to one.
+
+    Public because the caller needs to tell the two kinds of match apart and
+    match_agents cannot say: it returns every agent for "hey everyone" and for
+    "Ada and Mia" alike. The difference matters because naming somebody is a
+    question put to them, and addressing a room is not.
+    """
+    return _is_collective(text if isinstance(text, str) else "")
+
+
 def match_agents(text: str, agents) -> list[dict]:
     """Every agent the message addresses, in the order that makes sense.
 
@@ -209,3 +220,58 @@ def clean_history_for_agent(messages, names) -> list:
             m["content"] = strip_label_lines(m["content"], names)
         cleaned.append(m)
     return cleaned
+
+
+#: The owner has a standing rule against these, and the shared brief says so,
+#: and gpt-5-mini used one in 25 of 36 replies measured on 2026-09-14 while
+#: that rule was live. Asking did not work, so every answer is cleaned on the
+#: way out instead. Order matters: bullets first, then number ranges, then
+#: everything else, then the punctuation the replacement leaves doubled.
+_DASH_BULLET = re.compile("^[ \t]*[\u2013\u2014][ \t]+", re.M)
+_EN_DASH_RANGE = re.compile("(\\d)[ \t]*\u2013[ \t]*(\\d)")
+_EM_DASH_RANGE = re.compile("(\\d)[ \t]*\u2014[ \t]*(\\d)")
+_ANY_LONG_DASH = re.compile("[ \t]*[\u2013\u2014][ \t]*")
+_COMMA_BEFORE_PUNCT = re.compile(",[ \t]*([,.;:!?)])")
+_COMMA_AT_LINE_END = re.compile(",[ \t]*$", re.M)
+#: A fenced block, closed or running to the end, or an inline code span. Code
+#: is what someone pastes into a file, so it comes back exactly as written;
+#: the first live run turned "<title>Shoe Product \u2014 Landing" into a comma.
+_CODE = re.compile("```.*?(?:```|\\Z)|`[^`\n]*`", re.S)
+
+
+def scrub_long_dashes(text):
+    """The same text with every em-dash and en-dash replaced, outside code.
+
+    A dash used as a bullet becomes a hyphen bullet, an en-dash between two
+    numbers becomes a hyphen ("7-11"), an em-dash between two numbers becomes
+    "to" (a date range), and any other becomes a comma. Code blocks and inline
+    code are left exactly as written. Text with no long dash comes back
+    unchanged, and anything that is not text comes back as it was.
+    """
+    if not isinstance(text, str):
+        return text
+    if "\u2014" not in text and "\u2013" not in text:
+        return text
+    # Code is swapped for placeholders rather than cut out, so the text around
+    # it keeps its real line starts: after a code span is not a new line, and
+    # a dash there is not a bullet.
+    code = []
+
+    def _hold(m):
+        code.append(m.group(0))
+        return "\ue000%d\ue001" % (len(code) - 1)
+
+    out = _scrub_prose(_CODE.sub(_hold, text))
+    return re.sub("\ue000(\\d+)\ue001", lambda m: code[int(m.group(1))], out)
+
+
+def _scrub_prose(text: str) -> str:
+    if "\u2014" not in text and "\u2013" not in text:
+        return text
+    out = _DASH_BULLET.sub("- ", text)
+    out = _EN_DASH_RANGE.sub(r"\1-\2", out)
+    out = _EM_DASH_RANGE.sub(r"\1 to \2", out)
+    out = _ANY_LONG_DASH.sub(", ", out)
+    out = _COMMA_BEFORE_PUNCT.sub(r"\1", out)
+    out = _COMMA_AT_LINE_END.sub("", out)
+    return out

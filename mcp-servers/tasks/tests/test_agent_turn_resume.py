@@ -231,3 +231,20 @@ async def test_the_run_is_recorded_as_a_channel_run(monkeypatch):
     await rt.resume(_body(approved=True), x_internal_secret="s")
     assert (rt.agent_activity.start_run.await_args.args[2]
             == rt.agent_activity.SOURCE_CHANNEL)
+
+
+async def test_a_resumed_answer_carries_no_long_dashes(monkeypatch):
+    """The approval path returns straight to its handler, never through
+    _turn_for, and it is where replies like "Done, I added the page" come
+    from, so it scrubs the same way."""
+    async def fake_chat(**kwargs):
+        return "Done \u2014 I added the page.", []
+
+    monkeypatch.setattr(rt, "_list_agents",
+                        AsyncMock(return_value=([_agent()], False)))
+    monkeypatch.setattr(rt, "_chat", fake_chat)
+    monkeypatch.setattr(rt, "execute_tool_call", AsyncMock(return_value="sent"))
+
+    out = await rt.resume(_body(approved=True), x_internal_secret="s")
+
+    assert out["answer"] == "Done, I added the page.", out["answer"]

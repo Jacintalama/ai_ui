@@ -47,6 +47,13 @@ class RoomSession:
     #: as it goes, and putting an unanswered question in the middle of that
     #: would interleave it into a reply still being written.
     queued: list[str] = field(default_factory=list)
+    #: One id per entry in `queued`, in the same order, popped in lockstep.
+    #: A queued message's turn is drawn on the page the moment it is sent
+    #: (out of band, see agent_chat_send), before the round that will answer
+    #: it ever runs, so that id has to be decided at send time and carried
+    #: here until the drain reaches it. Reusing a fresh id at drain time
+    #: instead would answer a turn the browser never rendered with that id.
+    queued_turn_ids: list[str] = field(default_factory=list)
     last_used: float = field(default_factory=time.time)
     #: The saved conversation this session is working on, or None before the
     #: first message has been sent.
@@ -55,6 +62,12 @@ class RoomSession:
     #: back when it changed, so an abandoned round cannot be stapled onto a
     #: conversation the person has since replaced.
     generation: int = 0
+    #: The turn the round in flight is answering. Read fresh by _run_round on
+    #: every entry to its loop, and updated by whoever is about to start a
+    #: new round (the send route for the first message, the drain loop for a
+    #: queued one), so every streamed fragment can name the turn it belongs
+    #: to instead of relying on where it happens to sit in the DOM.
+    turn_id: str = ""
 
 
 _SESSIONS: dict[str, RoomSession] = {}

@@ -23,7 +23,8 @@ import httpx
 
 import agent_access
 import agent_activity
-from agent_tools import execute_tool_call, is_write_tool
+from agent_tools import (arguments_of, execute_tool_call,
+                         is_write_call, is_write_tool)
 from owui_token import mint_owui_token
 
 logger = logging.getLogger(__name__)
@@ -41,10 +42,38 @@ TOOL_RESULT_EXCERPT_CHARS = 6000
 
 HTTP_TIMEOUT_SECONDS = 240
 
+#: Said when the loop hits its cap. A sentinel rather than a sentence matched
+#: twice: run_agent has to tell "stopped early with nothing to show" apart
+#: from "answered, and also mentioned something", and comparing prose in two
+#: files is how that kind of check rots.
+RAN_OUT_OF_ROUNDS = "Stopped after %d rounds of tool use, so this answer may be incomplete."
+
+#: Asked once, with no tools attached, after the last round is spent. The
+#: reads the model did are real and already in the conversation; only the
+#: writing is missing. Measured 2026-09-14: Kai spent seven rounds reading
+#: five files of the shoe app, had what he needed to say why the new page was
+#: not showing, and returned nothing but the note that he had stopped.
+FINAL_ROUND_PROMPT = (
+    "You have used every tool call you get for this reply. Answer now from "
+    "what you have already read. Say plainly what you found, and name "
+    "anything you did not get to check.")
+
 #: How many times the model may ask for tools before we stop. Each iteration
 #: is a full completion, so this bounds the run's wall clock as well as its
 #: appetite.
-MAX_TOOL_ITERATIONS = 5
+#:
+#: Eight, not five. Measured on the first real weekly review, 2026-09-11: one
+#: run spent find_skills, use_skill, list_my_apps and list_my_schedules, four
+#: of the five, and wrote a proper report; the run before it used all five and
+#: returned nothing but the note saying so. Same schedule, same prompt, a
+#: minute apart. So five was not a limit this work fits inside, it was a coin
+#: toss with one round of margin, resolved weekly, unattended.
+#:
+#: Nothing forces a run to use them. The cost of the extra headroom is only
+#: paid by a run that needs it, and this surface has no one waiting: the
+#: comment on CHANNEL_MAX_TOOL_ITERATIONS below explains why a chat window
+#: cannot be given the same slack.
+MAX_TOOL_ITERATIONS = 8
 
 #: A channel is somebody waiting at a keyboard, not a cron entry. The
 #: schedule path's five rounds at 240 seconds each is a 20 minute worst
@@ -58,8 +87,26 @@ MAX_TOOL_ITERATIONS = 5
 #: could answer, so the person got an empty bubble. Five at 60 seconds is a
 #: five minute worst case, still comfortably inside the ten minute window
 #: after which the card calls a chat run dead, which a test asserts.
-CHANNEL_MAX_TOOL_ITERATIONS = 5
+#: Seven, not five. Measured 2026-09-14 on the first research turn that could
+#: actually reach the web: a question needing a search and two pages costs
+#: three rounds on a good run and hit the cap on a bad one, so five was the
+#: same one-round margin the schedule path had, resolved per question instead
+#: of per week. Unlike that one it fails visibly, saying it stopped early, so
+#: it annoys rather than deceives.
+#:
+#: Seven is what the abandon window allows, not a round number: at 60 seconds
+#: each the worst case is seven minutes, and STALE_AFTER_CHANNEL is ten, which
+#: a test asserts. Nine would leave one minute of margin for tool time on top
+#: of model time, which is not margin.
+CHANNEL_MAX_TOOL_ITERATIONS = 7
 CHANNEL_HTTP_TIMEOUT_SECONDS = 60
+
+#: The write-up after the tool cap carries every file and result the rounds
+#: gathered, so it is the slowest completion of the run. Measured 2026-09-14:
+#: gpt-5-mini took 22s for a plain turn with the brief, and Kai's write-up
+#: after seven rounds of app files hit the 60s timeout and he said nothing.
+#: Seven rounds at 60 plus this is nine minutes, inside STALE_AFTER_CHANNEL.
+FINAL_ROUND_MIN_TIMEOUT_SECONDS = 120
 
 #: The chat token has to outlive the WHOLE loop, not one completion: the loop
 #: can make up to MAX_TOOL_ITERATIONS sequential calls of up to
@@ -119,13 +166,22 @@ async def _list_agents(token: str) -> tuple[list[dict], bool]:
 
 
 #: What Open WebUI says when its in-memory model list is behind the database.
-#: A derived model whose base changed is still routed as whatever its base was
-#: when the cache was built, so it goes looking for a pipe function by the new
-#: base's name and does not find one. Seen live on 2026-09-08 as
-#: "Function not found: gpt-4o-mini" after two agents were moved between
-#: models: every turn 400ed until somebody opened the site in a browser, which
-#: calls /api/models and rebuilds it.
-_STALE_MODEL_DETAIL = "Function not found"
+#: It says it two different ways, and only one of them was handled here.
+#:
+#: "Function not found" is the DERIVED model case: an agent whose base model
+#: changed is still routed as whatever its base was when the cache was built,
+#: so it looks for a pipe function by the new base's name. Seen live
+#: 2026-09-08 as "Function not found: gpt-4o-mini" after two agents were
+#: moved between models.
+#:
+#: "Model not found" is the NEW model case, and it is the more common one: a
+#: model row created since the cache was built is not in it at all. Seen live
+#: 2026-09-14, the first time an agent was created through the API rather than
+#: the browser: five new agents, every turn 400ing, while the retry that
+#: exists for exactly this sat there matching the other string.
+#:
+#: Both heal the same way, by calling /api/models, which is why one list.
+_STALE_MODEL_DETAILS = ("Function not found", "Model not found")
 
 
 def _is_stale_model_cache(response) -> bool:
@@ -144,7 +200,7 @@ def _is_stale_model_cache(response) -> bool:
         # Not everything that answers this URL is Open WebUI. A proxy or a
         # gateway failing returns HTML, and .json() raises on it.
         return False
-    return isinstance(detail, str) and _STALE_MODEL_DETAIL in detail
+    return isinstance(detail, str) and any(d in detail for d in _STALE_MODEL_DETAILS)
 
 
 async def _post_once(client, payload: dict, token: str):
@@ -304,7 +360,11 @@ async def _chat(token: str, model: str, messages: list[dict],
             raw_name = fn.get("name")
             name = raw_name.strip() if isinstance(raw_name, str) else ""
             label = name or "an unnamed tool call"
-            if is_write_tool(name) and not write_allowed:
+            # Arguments included, because call_tool's own name says nothing
+            # about what it runs: searching the web and creating a ClickUp
+            # task arrive here under the same name.
+            probe = arguments_of(call)
+            if is_write_call(name, probe) and not write_allowed:
                 if mode == agent_access.MODE_ASK:
                     # Held back, not refused. The turn ends below and picks
                     # up again once the owner answers.
@@ -342,9 +402,33 @@ async def _chat(token: str, model: str, messages: list[dict],
             # before the next completion, which is what the resume writes.
             raise agent_access.ApprovalRequired(convo, pending)
 
-    notes.append("Stopped after " + str(max_iterations)
-                 + " rounds of tool use, so this answer may be incomplete.")
-    return content, notes
+    # The rounds are spent but the reading is not wasted. One more completion
+    # with no tools attached makes the model write up what it gathered,
+    # instead of the owner getting only a note that it stopped. No tool_ids
+    # means Open WebUI attaches none; any tool_calls that come back anyway are
+    # ignored rather than run, because running them is the round the cap
+    # exists to refuse.
+    #
+    # Skipped when the cap is zero. That asks for no completions at all, and
+    # answering it with one would be the loop overriding its own caller.
+    final = ""
+    if max_iterations > 0:
+        convo.append({"role": "user", "content": FINAL_ROUND_PROMPT})
+        try:
+            data = await _post_chat(
+                {"model": model, "messages": convo, "stream": False},
+                token, max(timeout, FINAL_ROUND_MIN_TIMEOUT_SECONDS))
+            choices = data.get("choices") or []
+            message = (choices[0].get("message") or {}) if choices else {}
+            final = (message.get("content") or "").strip()
+        except Exception:                                   # noqa: BLE001
+            logger.warning("the final answer round after the tool cap failed",
+                           exc_info=True)
+            final = ""
+        if final and _router_gave_up(final):
+            return ROUTER_EXHAUSTED, notes
+    notes.append(RAN_OUT_OF_ROUNDS % max_iterations)
+    return (final or content), notes
 
 
 def _messages_for(sched) -> list[dict]:
@@ -422,8 +506,16 @@ async def run_agent(sched) -> tuple[str, str, dict]:
                     "a different agent.", {})
 
         meta = agent.get("meta") if isinstance(agent.get("meta"), dict) else {}
-        tools = meta.get("toolIds")
-        tools = [t for t in tools if isinstance(t, str)] if isinstance(tools, list) else []
+        # The same resolution the chat path uses, not meta["toolIds"] read
+        # raw. Measured 2026-09-10: reading it raw gave this agent one tool on
+        # a schedule against twelve in chat, and the one was the connected
+        # apps umbrella with nothing behind it, so a scheduled run could read
+        # nothing at all while its card still promised every tool the owner
+        # had. Imported here rather than at module scope because
+        # routes_agent_turn imports this module, which is the same deferred
+        # import scheduler.py uses to reach run_agent.
+        from routes_agent_turn import tools_for_agent
+        tools = await tools_for_agent(sched.user_email, meta)
 
         # Mint a long-lived token immediately before the chat call. The token
         # must outlive the WHOLE tool loop, not one call: up to
@@ -455,6 +547,16 @@ async def run_agent(sched) -> tuple[str, str, dict]:
         if not answer and not notes:
             outcome = "failed"
             return ("failed", "The agent returned an empty answer.", {})
+        # A run that spent every round and produced no answer is a failed run,
+        # whatever the loop called it. It used to come back "completed"
+        # carrying only the note about stopping early, which on a schedule
+        # means the delivered report IS that sentence: 69 characters, once a
+        # week, with a green card. Measured on the first real weekly review.
+        if not answer and any(n.startswith("Stopped after") for n in notes):
+            outcome = "failed"
+            return ("failed",
+                    "The agent ran out of tool rounds before it could answer. "
+                    "Nothing was delivered for this run.", {})
         if notes:
             # Say what was refused or stopped early, even when the model's
             # own final content is empty. A run that quietly skipped part of
@@ -463,7 +565,11 @@ async def run_agent(sched) -> tuple[str, str, dict]:
             note_text = "\n".join(notes)
             answer = (answer + "\n\n" + note_text) if answer else note_text
         outcome = "completed"
-        return ("completed", answer, {})
+        # Guaranteed rather than requested. The brief asks for no long dashes
+        # and the model used one in 25 of 36 replies anyway, so a report that
+        # lands in the owner's Discord is cleaned on the way out.
+        from agent_routing import scrub_long_dashes
+        return ("completed", scrub_long_dashes(answer), {})
     except agent_access.ApprovalRequired:
         # Unreachable today: effective_mode never gives a schedule "ask".
         # Kept so that if it ever becomes reachable the owner is told the

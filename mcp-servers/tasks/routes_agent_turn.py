@@ -108,6 +108,30 @@ async def _every_tool_for(user_email: str) -> list[str]:
     return out
 
 
+#: Model ids that are pipes which call BACK into this service. An agent whose
+#: base model is one of these cannot run at all.
+#:
+#: It loops: the pipe asks /agents/chat who should answer, that matches the
+#: agent, and the agent runs again. The pipe's own route_only guard does not
+#: help, because it only short-circuits when NO agent matches, and an agent
+#: running itself always matches. Measured 2026-09-10: two agents on Auto
+#: (Free) opened dozens of chats a second and restarted Open WebUI twice.
+#:
+#: Independently, neither pipe forwards `tools`, so an agent on one silently
+#: loses every tool and skill it has. Either reason alone would be enough.
+#:
+#: To regenerate this list:
+#:   select id from public.function
+#:    where type='pipe' and content like '%/agents/chat%';
+#: then map each pipe to its model id: pipe "io" registers model "io.io".
+CALLBACK_MODEL_IDS = frozenset({"auto_router.auto", "io.io"})
+
+#: Said in place of an answer, and recognised in routes_agent_chat so it draws
+#: as a failure carrying the fix rather than as something the agent said.
+AGENT_ON_CALLBACK_MODEL = (
+    "This agent is set to a model that cannot run an agent.")
+
+
 async def _resolve_agent(user_email: str, agent_id: str) -> tuple[str, list[str], str | None]:
     """(token, the agent's own tool ids, its access level).
 
@@ -131,7 +155,33 @@ async def _resolve_agent(user_email: str, agent_id: str) -> tuple[str, list[str]
                 status_code=503,
                 detail="could not check that agent just now")
         raise HTTPException(status_code=404, detail="no such agent")
+    # Before anything is spent on the turn. Running it would not merely fail,
+    # it would recurse until something upstream fell over.
+    base = agent.get("base_model_id")
+    if isinstance(base, str) and base in CALLBACK_MODEL_IDS:
+        raise HTTPException(status_code=409,
+                            detail=AGENT_ON_CALLBACK_MODEL)
     meta = agent.get("meta") if isinstance(agent.get("meta"), dict) else {}
+    return (token, await tools_for_agent(user_email, meta),
+            agent_access.level_of(meta))
+
+
+async def tools_for_agent(user_email: str, meta: dict) -> list[str]:
+    """Which tools this agent may use, from its own meta.
+
+    Public and shared on purpose. It used to live inline in _resolve_agent,
+    which meant it applied on the chat path and nowhere else, and
+    agent_runner.run_agent read meta["toolIds"] verbatim instead. Measured
+    2026-09-10: the same agent had twelve tools in chat and one on a
+    schedule, and that one was the connected-apps umbrella with nothing
+    behind it. So a scheduled agent could read nothing, wrote its report
+    from nothing, and its card still said it could use every tool the owner
+    had. Nothing in either file said the two surfaces disagreed.
+
+    A schedule may still narrow what its agent may DO, through tool_mode and
+    agent_access. That is a separate axis and deliberately still separate:
+    what it may reach should not depend on which surface woke it.
+    """
     own = meta.get("toolIds")
     own = [t for t in own if isinstance(t, str)] if isinstance(own, list) else []
     own = [t for t in own if t not in _TOOLS_AN_AGENT_MAY_NOT_HAVE]
@@ -145,7 +195,7 @@ async def _resolve_agent(user_email: str, agent_id: str) -> tuple[str, list[str]
     # narrow option and then unticked every box has not finished choosing,
     # and an agent with no tools at all would simply look broken.
     if meta.get("toolScope") == TOOL_SCOPE_PICKED and own:
-        return token, own, agent_access.level_of(meta)
+        return own
 
     # Everything this person can reach, not only what this agent was ticked
     # for. Its own list stays in front so an explicitly granted tool is never
@@ -154,7 +204,7 @@ async def _resolve_agent(user_email: str, agent_id: str) -> tuple[str, list[str]
     for tool_id in await _every_tool_for(user_email):
         if tool_id not in tools:
             tools.append(tool_id)
-    return token, tools, agent_access.level_of(meta)
+    return tools
 
 
 def _trim_for_storage(conversation: list[dict]) -> list[dict]:
@@ -312,7 +362,11 @@ async def _resume_turn(user_email: str, agent_id: str, conversation: list[dict],
             # cap by looking a skill up first.
             answer = "\n".join(notes)
             notes = []
-        return {"answer": answer, "notes": notes}
+        # This path returns straight to the approval handler without passing
+        # through _turn_for, and it is where "Done, I added the page" style
+        # replies come from, so it scrubs the same way.
+        return {"answer": agent_routing.scrub_long_dashes(answer),
+                "notes": notes}
     except agent_access.ApprovalRequired as err:
         outcome = STATUS_WAITING
         return _pending_payload(user_email, agent_id, err)
@@ -605,6 +659,69 @@ def _role_of(agent: dict) -> str:
     return role[0].lower() + role[1:]
 
 
+#: What each tool reaches, in the words the owner would use. Kept here rather
+#: than imported from routes_agents, which imports this module.
+_TOOL_WORDS = {
+    "gmail": "email",
+    "calendar": "the calendar",
+    "gdrive": "Drive",
+    "code": "the apps they build",
+    "schedules": "their schedules",
+    "remember": "saved notes",
+    "documents": "making documents",
+    "excel_creator": "making spreadsheets",
+    "executive_dashboard": "making dashboards",
+    "account": "their account and connections",
+    "server:mcp-proxy": "their connected apps and the web",
+    "agents": "the other assistants",
+}
+
+
+def _own_tools(agent: dict):
+    """This agent's own tools when it is narrowed, or None when it reaches
+    everything. The same rule tools_for_agent applies, so the brief and the
+    tools actually attached can never describe different agents."""
+    meta = agent.get("meta") if isinstance(agent.get("meta"), dict) else {}
+    own = [t for t in (meta.get("toolIds") or []) if isinstance(t, str)]
+    if meta.get("toolScope") == TOOL_SCOPE_PICKED and own:
+        return own
+    return None
+
+
+def _reaches(agent: dict, tool_id: str) -> bool:
+    own = _own_tools(agent)
+    return own is None or tool_id in own
+
+
+def _join_words(words: list) -> str:
+    if len(words) <= 1:
+        return "".join(words)
+    return ", ".join(words[:-1]) + " and " + words[-1]
+
+
+def _tools_sentence(agent: dict) -> str:
+    """What this agent can reach, and what to do about the rest.
+
+    It used to say the same thing to every agent: that it had tools for
+    mail, files, apps, connections, schedules and saved notes. True of an
+    agent with everything, false of every narrowed one, so Mia, Nora and Iris
+    each offered to bug-hunt an app none of them can open.
+    """
+    base = ("When they ask about their own things, use a tool and answer "
+            "from what it returns. Never state a number or a name you have "
+            "not looked up. Never describe what you could do instead of "
+            "doing it: if you can check, check, then say what you found.")
+    own = _own_tools(agent)
+    if own is None:
+        return "You have tools that read this person's real account. " + base
+    reach = [_TOOL_WORDS.get(t, t) for t in own if t != "skills"]
+    if not reach:
+        return base
+    return ("Your tools reach %s, and nothing else. %s Anything that needs "
+            "another tool is not yours to do: say so or pass, and never "
+            "offer to do it." % (_join_words(reach), base))
+
+
 def _identity_line(agent: dict, names) -> dict:
     """Who the agent is and how it is expected to work, as one system line.
 
@@ -637,21 +754,26 @@ def _identity_line(agent: dict, names) -> dict:
             "not this person's colleagues: when they say team or everyone "
             "they mean you and the other assistants, so answer for yourself "
             "rather than suggesting they go and ask somebody. Never answer "
-            "for them or invent what they said." % ", ".join(others))
+            "for them or invent what they said. Earlier replies here came "
+            "from several of you, so never say you changed or checked "
+            "something unless you did it in this reply." % ", ".join(others))
 
-    said.append(
-        "You have tools that read this person's real account: their mail, "
-        "files, apps, connections, schedules and saved notes. When they ask "
-        "anything about their own things, use a tool and answer from what it "
-        "returns. Never state a number or a name you have not looked up. "
-        "Never describe what you could do instead of doing it: if you can "
-        "check, check, then say what you found.")
+    said.append(_tools_sentence(agent))
 
     said.append(
         "Asked what you do or what you are working on, answer from your own "
         "instructions in terms of this person's actual work, in a sentence or "
         "two. Do not describe yourself as an assistant who can help with a "
         "variety of tasks; they know that already and it tells them nothing.")
+
+    # The owner reads every one of these and asked for it directly. The dash
+    # is also how a whole room of agents ends up sounding identical: they all
+    # reach for the same punctuation, so seven replies look like one voice
+    # repeated. Spelled out with the characters named, because "avoid
+    # em-dashes" does not survive a model that does not know which key that is.
+    said.append(
+        "Never use the long dashes — or –. Use a comma, a full stop "
+        "or the word and. This person will notice.")
 
     said.append(
         "You can see this whole conversation. Do not say again what you have "
@@ -664,15 +786,20 @@ def _identity_line(agent: dict, names) -> dict:
         "Answer the question they actually asked. Running your usual job and "
         "reporting the result is not an answer to a different question.")
 
-    said.append(
-        "You have a tool for remembering things. When they tell you something "
-        "worth keeping, a preference, a decision, a name, save it, so the "
-        "next conversation starts where this one ended.")
+    if _reaches(agent, "remember"):
+        said.append(
+            "You have a tool for remembering things. When they tell you "
+            "something worth keeping, a preference, a decision, a name, save "
+            "it, so the next conversation starts where this one ended.")
 
-    said.append(
-        "Before doing a job you have no instructions for, call find_skills "
-        "with what they asked in their own words. If one fits, use_skill and "
-        "follow it. If none does, do the job and say so.")
+    # A narrowed agent without the skills tool still gets its assigned skills
+    # through brief_for below; telling it to call find_skills only spends a
+    # round on "not available".
+    if _reaches(agent, "skills"):
+        said.append(
+            "Before doing a job you have no instructions for, call find_skills "
+            "with what they asked in their own words. If one fits, use_skill "
+            "and follow it. If none does, do the job and say so.")
 
     said.append(
         "Answer, then stop. Do not close with an offer of further help or an "
@@ -713,12 +840,22 @@ async def _turn_for(user_email: str, agent: dict, messages: list[dict],
                + agent_routing.clean_history_for_agent(messages, names))
     try:
         out = await _run_turn(user_email, agent["id"], history)
-    except Exception:                                       # noqa: BLE001
-        logger.warning("agent turn failed for %s", agent.get("id"),
-                       exc_info=True)
-        out = {"answer": _turn_failed_sentence(agent.get("name")), "notes": []}
+    except Exception as exc:                                # noqa: BLE001
+        # One failure is worth naming rather than generalising: an agent on a
+        # callback pipe cannot run at all, and the person fixes it in one
+        # click. It is also not a surprise, so it is not logged as one.
+        if getattr(exc, "detail", None) == AGENT_ON_CALLBACK_MODEL:
+            out = {"answer": AGENT_ON_CALLBACK_MODEL, "notes": []}
+        else:
+            logger.warning("agent turn failed for %s", agent.get("id"),
+                           exc_info=True)
+            out = {"answer": _turn_failed_sentence(agent.get("name")),
+                   "notes": []}
     out = dict(out)  # Defensive copy: caller must never get a shared dict modified
-    out["answer"] = agent_routing.strip_leading_labels(out.get("answer"), names)
+    # Scrubbed, not requested: the brief forbids long dashes and the model
+    # used one in 25 of 36 replies anyway.
+    out["answer"] = agent_routing.scrub_long_dashes(
+        agent_routing.strip_leading_labels(out.get("answer"), names))
     out["agent"] = {"id": agent["id"], "name": agent.get("name") or agent["id"]}
     return out
 

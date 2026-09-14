@@ -78,6 +78,34 @@ _READ_VERBS = frozenset({
 #: opinion on either; see the note beside each. Written out so that
 #: renaming a method has to break a test rather than silently change
 #: what an unattended agent may do.
+#: mcp-proxy's own discovery endpoints. They are NOT tools it can call, they
+#: are routes on the proxy itself: /meta/search_tools, /meta/describe_tools,
+#: /meta/call_tool. Open WebUI advertises all of them to the model because
+#: they sit in the proxy's OpenAPI spec, and sending them through
+#: /meta/call_tool asks the proxy for a tool NAMED "search_tools", which is a
+#: category error and 404s.
+#:
+#: Measured 2026-09-14: an agent asked to look something up spent three rounds
+#: calling these, got "is not available" each time, and concluded it had no
+#: way to reach the web. /meta/search_tools was answering the whole time, with
+#: web_search, web_scrape and two hundred others behind it. The proxy's own
+#: comment calls this "3 tools replace 200+"; none of the 200 were reachable.
+#:
+#: search_tools and describe_tools classify as reads by verb, so a read only
+#: agent may discover. call_tool does not, and must not: what it runs might
+#: write anything, so it stays a write and goes through the same approval.
+PROXY_META_METHODS: frozenset[str] = frozenset({
+    "search_tools", "describe_tools", "call_tool",
+})
+
+#: Advertised by the same spec and not implemented at all. Probed 2026-09-14:
+#: /meta/list_servers, /meta/health_check and /meta/refresh_cache each 404.
+#: Naming the one that does work turns a wasted round into a useful one,
+#: which matters because rounds are the budget an agent runs out of.
+PROXY_META_ABSENT: frozenset[str] = frozenset({
+    "list_servers", "health_check", "refresh_cache",
+})
+
 READ_METHODS: frozenset[str] = frozenset({
     "list_unread_emails", "list_important_emails", "list_recent_emails",
     "search_emails", "read_email",
@@ -110,7 +138,70 @@ READ_METHODS: frozenset[str] = frozenset({
     # library, which is the my_account bug again: a read refused, and the
     # owner told their agent had no access to something it plainly should.
     "use_skill",
+    # Fetching a public web page changes nothing of the owner's, so both of
+    # these are reads, and a researcher that has to ask permission before
+    # reading a page is a researcher nobody uses.
+    #
+    # Pinned rather than left to the verb rule, because the verb rule gets
+    # them by accident or not at all. Tokens split on underscore only, so
+    # web-search_web_search becomes ["web-search", "web", "search"] and is a
+    # read purely because "search" lands in the third token, which is the last
+    # one step 3 looks at. A one-token-longer server prefix would push it out
+    # and silently make every web search need approval.
+    # web-search_web_scrape becomes ["web-search", "web", "scrape"], has no
+    # read verb at all, and was a write until this line.
+    #
+    # web-search_web_save_to_kb is deliberately NOT here: "save" is a write
+    # verb and saving to a knowledge base really does write.
+    "web-search_web_search",
+    "web-search_web_scrape",
 })
+
+
+def arguments_of(call) -> dict:
+    """A tool call's arguments as a dict, however the model encoded them.
+
+    The same decoding execute_tool_call does, lifted out so the write
+    classifier can see them BEFORE the call is allowed to run. Degrades to an
+    empty dict rather than raising: a malformed call must be refused by the
+    classifier, not crash the run on its way to it.
+    """
+    fn = call.get("function") if isinstance(call, dict) else None
+    fn = fn if isinstance(fn, dict) else {}
+    raw = fn.get("arguments") or "{}"
+    try:
+        out = json.loads(raw) if isinstance(raw, str) else dict(raw)
+    except (ValueError, TypeError):
+        return {}
+    return out if isinstance(out, dict) else {}
+
+
+def is_write_call(method_name: str, params: dict | None = None) -> bool:
+    """True when THIS call could change something, arguments included.
+
+    is_write_tool judges a name. That is enough for every native tool, where
+    the name is the whole story, and wrong for exactly one: call_tool is the
+    proxy's generic runner, so its name says nothing and what matters is the
+    tool_name inside it.
+
+    Judged on the name alone, call_tool is a write, which is the safe default
+    and also makes research unusable: every web search would stop and ask,
+    and a search that needs permission is a search nobody runs. Judged on its
+    argument, web-search_web_search is a read and clickup_create_task is not,
+    which is the distinction that was wanted all along.
+
+    A call_tool whose tool_name is missing or not a string stays a write. So
+    does one nested inside another, which nothing should be doing.
+    """
+    if method_name != "call_tool":
+        return is_write_tool(method_name)
+    inner = (params or {}).get("tool_name")
+    if not isinstance(inner, str) or not inner.strip():
+        return True
+    inner = inner.strip()
+    if inner == "call_tool":
+        return True
+    return is_write_tool(inner)
 
 
 def is_write_tool(method_name: str) -> bool:
@@ -376,11 +467,26 @@ async def execute_tool_call(
             return await _run_native(source, name, params, user_email,
                                      agent_id)
 
-        response = await _post_json(
-            _proxy_url() + "/meta/call_tool",
-            json={"tool_name": name, "arguments": params},
-            headers={"X-User-Email": user_email},
-            timeout=TOOL_TIMEOUT_SECONDS)
+        if name in PROXY_META_ABSENT:
+            return ("There is no tool called " + name + ". To find one, call "
+                    "search_tools with what you are trying to do, then "
+                    "call_tool to run what it returns.")
+
+        if name in PROXY_META_METHODS:
+            # Straight at the route, carrying the model's own arguments. These
+            # three ARE the proxy's endpoints; wrapping them in call_tool asks
+            # it for a tool by that name and gets a 404.
+            response = await _post_json(
+                _proxy_url() + "/meta/" + name,
+                json=params,
+                headers={"X-User-Email": user_email},
+                timeout=TOOL_TIMEOUT_SECONDS)
+        else:
+            response = await _post_json(
+                _proxy_url() + "/meta/call_tool",
+                json={"tool_name": name, "arguments": params},
+                headers={"X-User-Email": user_email},
+                timeout=TOOL_TIMEOUT_SECONDS)
         if response.status_code == 403:
             return ("You do not have access to the service behind the tool "
                     + name + ".")

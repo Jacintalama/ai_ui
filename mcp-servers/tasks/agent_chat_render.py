@@ -9,6 +9,7 @@ page: the panel then has no client-side model of the conversation that can
 drift from the server's.
 """
 import html
+import uuid
 
 
 def esc(s: str) -> str:
@@ -51,27 +52,80 @@ def _avatar(name: str) -> str:
             f'{_initials(name)}</div>')
 
 
-def user_bubble(text: str) -> str:
-    return f'<div class="am user"><div class="ab">{esc(text)}</div></div>'
+def new_turn_id() -> str:
+    """A name for one turn.
+
+    Short enough to sit comfortably in a CSS selector, long enough not to
+    collide within one conversation. Generated here, it is always plain
+    hex, so turn_body_target/turn_status_target/turn_open escaping it costs
+    nothing. It is still done in all three: turn_open already escaped it
+    before turn_body_target/turn_status_target existed, so the two either
+    agreed with that choice or silently disagreed with it, and disagreeing
+    for free was worse than agreeing for free.
+    """
+    return uuid.uuid4().hex[:12]
 
 
-#: Where a message typed mid-round has to land.
-#:
-#: The composer appends to the thread, and the running round's answers append
-#: inside the live area, which is itself a child of the thread. So a queued
-#: bubble appended the ordinary way lands BELOW every answer, including the
-#: answer to itself: you would read your own question underneath its reply.
-#:
-#: Out of band, into the live area, puts it in the order it was said. The two
-#: halves of this selector live in two other files, so tests check both: the
-#: class comes from stream_block, the id from agents.html.
-QUEUED_TARGET = "#agent-thread .alive"
+def turn_body_target(turn_id: str) -> str:
+    """Where one turn's answers land, addressed by id rather than position.
+
+    The first version of this selector was
+    `#agent-thread .aturn:last-child .aturn-body`. It matched nothing the
+    moment a real round ran: the send response is turn_open + turn_close +
+    stream_block(), all appended by ONE beforeend swap, which makes the
+    stream block a SIBLING of the turn rather than something inside it, and
+    the stream block sits after the turn, so it is the stream block that
+    ends up last, not the turn. A queued turn arriving later, also as a
+    sibling, made it worse, not better: whichever turn was newest kept
+    stealing :last-child from the one a round was still answering, so a
+    drain could answer turn 1 into turn 2's body. An id does not move.
+    """
+    return f"#aturn-{esc(turn_id)} .aturn-body"
 
 
-def queued_bubble(text: str) -> str:
-    """A message typed while the agents were still answering the last one."""
-    return (f'<div class="am user" hx-swap-oob="beforeend:{QUEUED_TARGET}">'
-            f'<div class="ab">{esc(text)}</div></div>')
+def turn_status_target(turn_id: str) -> str:
+    """Where one turn's status line lands. See turn_body_target."""
+    return f"#aturn-{esc(turn_id)} .aturn-status"
+
+
+def turn_open(text: str, turn_id: str) -> str:
+    """One turn: the person's message, a status row, and room for answers.
+
+    Carries its own id because more than one turn can be open on screen at
+    once (a queued message opens its own turn while an earlier one is still
+    being answered), and one SSE connection answers both, one after another,
+    on its way through a drain. Only an id lets a streamed fragment say which
+    turn it belongs to regardless of what has been appended after it since.
+    """
+    return (f'<div class="aturn" id="aturn-{esc(turn_id)}">'
+            '<div class="am user"><div class="ab">'
+            f'{esc(text)}</div></div>'
+            '<div class="aturn-status"></div>'
+            '<div class="aturn-body"></div>')
+
+
+def turn_close() -> str:
+    """Closes the element turn_open left open."""
+    return "</div>"
+
+
+def into_turn(turn_id: str, fragment: str) -> str:
+    """Wraps a streamed answer so it swaps into the turn that asked for it.
+
+    Out of band and addressed by id, not left to the SSE element's own swap
+    target: one connection answers more than one turn across a drain (the
+    round in flight, then whatever was queued behind it), so the target has
+    to travel with each message. See stream_block for the sink this content
+    would otherwise land in.
+    """
+    return (f'<div hx-swap-oob="beforeend:{turn_body_target(turn_id)}">'
+            f'{fragment}</div>')
+
+
+def turn_status(turn_id: str, fragment: str) -> str:
+    """Wraps a status line the way into_turn wraps an answer."""
+    return (f'<div hx-swap-oob="innerHTML:{turn_status_target(turn_id)}">'
+            f'{fragment}</div>')
 
 
 #: How much of the question a reply quotes. Enough to recognise, not enough
@@ -170,13 +224,36 @@ def note(text: str) -> str:
     return f'<div class="am note">{esc(text)}</div>'
 
 
+#: What a failure says when the round did not have a more specific reason to
+#: give, and what a stored failure falls back to when it predates recording
+#: one at all (an older conversation, saved before this field existed).
+GENERIC_FAILURE_REASON = "Something went wrong on our side. Nothing was changed."
+
+
+def failure(name: str, reason: str, fix: str = "") -> str:
+    """An agent that could not answer, drawn as a failure.
+
+    Deliberately not a bubble. These used to arrive as prose in the thread,
+    in the same shape as an answer, and a failure that looks like an answer
+    is one people re-read as an answer.
+    """
+    tail = f'<div class="afail-fix">{esc(fix)}</div>' if fix else ""
+    return ('<div class="afail">'
+            f'<div class="afail-what">{esc(name)} could not answer. '
+            f'{esc(reason)}</div>{tail}</div>')
+
+
 def stream_block() -> str:
     """The element that opens the SSE connection for one round.
 
-    One connection with two swap targets: finished bubbles append to the live
-    thread, and the working line replaces itself. `sse-close` stops the browser
-    reconnecting, which would otherwise re-run a round that has already been
-    paid for.
+    The two sse-swap divs are sinks, not destinations. One connection can
+    answer more than one turn across a drain (the round in flight, then
+    whatever was queued behind it), so a fixed target here cannot follow
+    that; every message and working line this connection delivers already
+    names its own turn and swaps out of band into it (see into_turn,
+    turn_status), which leaves nothing for these two to actually show.
+    `sse-close` stops the browser reconnecting, which would otherwise re-run
+    a round that has already been paid for.
     """
     return ('<div class="astream" hx-ext="sse" '
             'sse-connect="/tasks/agents/chat/stream" sse-close="close">'
@@ -192,22 +269,48 @@ def empty_thread() -> str:
 
 
 def thread(messages: list[dict]) -> str:
-    """A saved conversation replayed.
+    """A saved conversation replayed, grouped into turns.
 
-    Roles other than user, assistant and note are the round bookkeeping (see
-    routes_agent_chat) and render as nothing. Notes ARE drawn, because a round
-    stores them on purpose: a skipped agent said out loud while the round ran
+    Roles other than user, assistant, note and failure are the round
+    bookkeeping (see routes_agent_chat) and render as nothing. Notes and
+    failures ARE drawn, because a round stores them on purpose: a skipped
+    agent, or one that could not answer, said out loud while the round ran
     and then gone on reload leaves a conversation that no longer makes sense.
+
+    Every user message opens a new turn, closing whichever one was open, so
+    replay produces the same one-block-per-question shape a live round does.
+    The turn id is the one that was stored with the message; a message from
+    before turns existed has none, so a fresh one is generated on the way
+    out so old conversations still render instead of erroring on a missing
+    key. No messages, or none that leave anything to show (round bookkeeping
+    only, say), still falls back to the empty state: that placeholder is
+    what a brand new conversation and a freshly cleared one show live today,
+    and this function is what /tasks/agents/chat/thread renders on every
+    page load, so returning "" here would blank that out instead.
     """
     out = []
+    open_turn = False
     for m in messages or []:
         role = m.get("role")
         content = m.get("content") or ""
         if role == "user":
-            out.append(user_bubble(content))
-        elif role == "note":
+            if open_turn:
+                out.append(turn_close())
+            turn_id = str(m.get("turn_id") or new_turn_id())
+            out.append(turn_open(content, turn_id))
+            open_turn = True
+            continue
+        if role == "note":
             if content:
                 out.append(note(content))
+        elif role == "failure":
+            # reason/fix are the ones stored when the round hit this, kept so
+            # a reload shows the same words that were on screen live. Falls
+            # back to the generic reason only for a message saved before
+            # these fields existed.
+            out.append(failure(str(m.get("agent_name") or "That agent"),
+                               str(m.get("reason") or GENERIC_FAILURE_REASON),
+                               str(m.get("fix") or "")))
         elif role == "assistant":
             name = str(m.get("agent_name") or "Agent")
             if content:
@@ -222,4 +325,6 @@ def thread(messages: list[dict]) -> str:
                 out.append(approval_bubble(name,
                                            str(awaiting.get("ask_id") or ""),
                                            awaiting["calls"]))
+    if open_turn:
+        out.append(turn_close())
     return "".join(out) if out else empty_thread()

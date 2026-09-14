@@ -142,14 +142,25 @@
   }
   .tag .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 
-  .card { padding: 14px 16px 11px; border-radius: var(--radius-lg); }
+  /* The avatar already gives every agent a colour. The card borrows it for
+     its border so a wall of cards is scannable by colour before you read a
+     single name. Kept low: this is identification, not decoration, and the
+     hover state is what should draw the eye. */
+  .card { padding: 15px 16px 12px; border-radius: var(--radius-lg);
+          border-color: hsl(var(--agent-hue, 240) 30% 24%); }
+  .card:hover { border-color: hsl(var(--agent-hue, 240) 45% 40%); }
   .card-head { align-items: center; gap: 12px; }
   .avatar {
     width: 38px; height: 38px; border-radius: 10px; flex: 0 0 38px;
     font-size: 12.5px; font-weight: 700; letter-spacing: 0.3px;
   }
-  .card-heading { gap: 8px; flex: 1; flex-direction: row;
-                  align-items: baseline; min-width: 0; }
+  /* Two lines, not one. The name carries the state beside it, the way you
+     read a person's name and then whether they are in. The role drops to its
+     own line underneath rather than competing with both. */
+  .card-heading { gap: 3px; flex: 1; flex-direction: column;
+                  align-items: stretch; min-width: 0; }
+  .card-name-row { display: flex; align-items: center; gap: 9px;
+                   min-width: 0; }
   .card-title { font-size: 15px; font-weight: 650; letter-spacing: -0.1px; }
   /* The model an agent thinks with is the second thing you want to know and
      the card never showed it. Quiet, because it is reference, not identity. */
@@ -178,31 +189,41 @@
   .card-chips .chip.skill { color: var(--accent);
                             border-color: rgba(124,140,255,0.28);
                             background: rgba(124,140,255,0.10); }
+  .card-chips .chip.scope { color: var(--text-2, #b8b8c0); }
+  .card-chips .chip.scope.narrow { color: var(--accent, #6366f1);
+    border-color: color-mix(in srgb, var(--accent, #6366f1) 45%, transparent); }
   .card-chips .chip.model, .card-chips .chip.more, .card-chips .chip.none {
     color: var(--muted); font-variant-numeric: tabular-nums; }
-  /* Awake or asleep, and how long the last one took. An agent is not a
+  /* Ready or busy, and how long the last one took. An agent is not a
      service that is up or down: it sleeps until something asks it to work,
      so "working" means a run is actually in flight right now. */
-  .card-activity { display: flex; align-items: center; gap: 7px; margin-top: 7px;
-                   font-size: 11.5px; color: var(--muted); min-height: 15px; }
+  /* Inline beside the name now, so it has no margin of its own and does not
+     shrink when the name is long. The last-run detail is on the title rather
+     than in the line: the spec calls it detail rather than state, and reading
+     "used 8 hours ago" every time you glance at a card is what made the old
+     line feel like noise. */
+  .card-activity { display: inline-flex; align-items: center; gap: 6px;
+                   font-size: 11.5px; color: var(--muted); flex: 0 0 auto;
+                   white-space: nowrap; }
   /* The dot carries the state on its own, so a row of cards can be read
      without reading any of the words: green while a run is actually in
-     flight, amber resting between runs, red when the run stopped on
-     something only a person can clear. Grey is the fourth case, an agent
-     that has never run, and that line draws no dot at all. */
+     flight or once it has finished cleanly, amber when the run stopped to
+     ask a person something, red when it failed. Grey is the fourth case, an
+     agent that has never run, and that line draws no dot at all. */
   .card-activity .dot { width: 7px; height: 7px; border-radius: 50%;
                         background: var(--border-2); flex: 0 0 7px; }
   .card-activity.working { color: #4ade80; }
   .card-activity.working .dot { background: #4ade80;
                                 animation: livePulse 1.6s ease-in-out infinite; }
-  /* Awake: used recently, not running anything this second. Green like
-     working, because both mean the agent is with you, and NOT pulsing,
-     because the pulse is the one signal that means it is thinking right
-     now. Pulsing for ten minutes after every answer would spend it. */
-  .card-activity.awake { color: #4ade80; }
-  .card-activity.awake .dot { background: #4ade80; }
-  .card-activity.idle .dot { background: #fbbf24; }
-  .card-activity.blocked .dot { background: #f87171; }
+  /* Green because the agent is fine, and NOT pulsing: the pulse is reserved
+     for a run in flight, and spending it on every resting agent would make
+     it mean nothing. */
+  .card-activity.ready { color: #4ade80; }
+  .card-activity.ready .dot { background: #4ade80; }
+  .card-activity.waiting { color: #fbbf24; }
+  .card-activity.waiting .dot { background: #fbbf24; }
+  .card-activity.failed { color: #f87171; }
+  .card-activity.failed .dot { background: #f87171; }
   @keyframes livePulse {
     0%, 100% { opacity: 1; transform: scale(1); }
     50%      { opacity: 0.45; transform: scale(0.82); }
@@ -339,16 +360,51 @@
      further for the same fields. Reserved for the skills list, which goes
      full width underneath because a skill is pickable only when its name and
      what it does fit on one line. */
-  #agent-form { width: min(980px, 94vw); }
+  /* One scroll region, not four. The modal, the tools grid, the tag row and
+     the skills list all scrolled independently, so reaching Save meant
+     scrolling past three lists that each ate the wheel on the way. Head and
+     foot are pinned and the middle is the only thing that moves. Scoped to
+     this form: .modal is shared with Connections and the clear confirm. */
+  #agent-form { width: min(980px, 94vw); display: flex;
+                flex-direction: column; padding: 0; overflow: hidden; }
+  #agent-form .modal-head { flex: 0 0 auto; padding: 20px 24px 0; }
+  #agent-form .modal-head h2 { margin-bottom: 14px; }
+  #agent-form .modal-body { flex: 1 1 auto; overflow-y: auto;
+                            padding: 0 24px 6px; }
+  /* Always reachable, whatever the body is doing. The save button used to
+     sit below the fold behind sixty-four skills. */
+  #agent-form .modal-foot { flex: 0 0 auto; padding: 12px 24px 18px;
+                            border-top: 1px solid var(--border);
+                            background: var(--surface); }
+  #agent-form .modal-foot .form-actions { margin-top: 0; }
+  #agent-form .modal-foot .form-error { margin-top: 0; margin-bottom: 10px; }
+
+  /* Collapsed by default. Most edits never touch skills, and sixty-four rows
+     between the fields and the save button made every edit pay for them. */
+  #agent-form .skill-block { margin-top: 18px; }
+  .skill-toggle { width: 100%; display: flex; align-items: center; gap: 10px;
+                  background: var(--surface-2); border: 1px solid var(--border);
+                  border-radius: var(--radius); padding: 11px 13px;
+                  cursor: pointer; color: var(--text); font: inherit;
+                  text-align: left; }
+  .skill-toggle:hover { border-color: var(--border-2); }
+  .skill-toggle .tw-chev { color: var(--muted); display: inline-block;
+                           transition: transform 0.15s ease; }
+  .skill-toggle[aria-expanded="true"] .tw-chev { transform: rotate(90deg); }
+  .skill-toggle-name { font-weight: 600; font-size: 13px; }
+  .skill-toggle-count { color: var(--muted); font-size: 12px; }
+  .skill-toggle-act { margin-left: auto; color: var(--accent); font-size: 12px; }
+  #skills-panel { margin-top: 10px; }
   #agent-form .form-cols {
     display: grid; grid-template-columns: 1fr 1fr; gap: 0 28px;
     align-items: start; }
   /* Full width under both columns. A skill is pickable only when its name
      and what it does fit on one line; in half the width a person would be
-     choosing from names alone. Scrolls rather than growing, because this
-     list gets longer and the modal must not run off the screen. */
+     choosing from names alone. It grows rather than scrolling: it lives
+     inside the body's single scroll region, and a scroll box inside a scroll
+     box is the thing being removed. It is collapsed until asked for, so the
+     length costs nothing until someone wants the list. */
   .skill-list { display: flex; flex-direction: column; gap: 4px;
-                max-height: min(52vh, 460px); overflow-y: auto;
                 margin-top: 6px; padding-right: 4px; }
   .skill-list .skill { border: 1px solid var(--border);
                        border-radius: var(--radius); font-size: 13px; }
@@ -378,8 +434,7 @@
      nothing behind it is worse than no tag. */
   .skill-controls { display: flex; flex-direction: column; gap: 8px;
                     margin-top: 6px; }
-  .skill-tags { display: flex; flex-wrap: wrap; gap: 5px;
-                max-height: 56px; overflow-y: auto; }
+  .skill-tags { display: flex; flex-wrap: wrap; gap: 5px; }
   .tag-chip { background: var(--surface-2); border: 1px solid var(--border);
               border-radius: 999px; padding: 2px 9px; font-size: 11px;
               color: var(--text-2); cursor: pointer; font-family: inherit;
@@ -457,7 +512,9 @@
      The real input stays visible and clickable: Playwright drives it by id. */
   /* Scrolls rather than growing. The list gets longer every time a tool is
      added, and it must not keep pushing the rest of the form down. */
-  #native-tools { max-height: 208px; overflow-y: auto; padding-right: 4px; }
+  /* No inner scroll. Twelve tiles fit, and a scroll box inside a scroll box
+     is what made the wheel unpredictable. */
+  #native-tools { padding-right: 4px; }
   .tools { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px,1fr));
            gap: 8px; margin-top: 14px; }
   .tools label {
@@ -520,7 +577,21 @@
   .conn-err { color: #f87171; font-size: 12px; min-height: 0; margin-bottom: 8px; }
   .form-error { color: #f87171; font-size: 12.5px; min-height: 0; margin-top: 16px; }
   .form-error:empty { margin-top: 0; }
+  .ap-title { min-width: 0; }
+  .ap-title h2 { margin-bottom: 2px; }
+  .ap-sub { margin: 0; font-size: 11.5px; color: var(--muted);
+            line-height: 1.45; }
   .form-actions { display: flex; gap: 9px; justify-content: flex-end; margin-top: 6px; }
+  /* Saving used to say nothing at all, so there was no way to tell a save
+     that worked from one that quietly did not. Ralph asked for this. */
+  .saved { position: fixed; left: 50%; transform: translateX(-50%);
+           bottom: 22px; z-index: 60; max-width: 520px;
+           background: var(--card, #17171c); color: var(--text, #e7e7ea);
+           border: 1px solid var(--accent, #6366f1); border-radius: 10px;
+           padding: 11px 15px; font-size: 13px; line-height: 1.45;
+           box-shadow: 0 10px 30px rgba(0,0,0,.45); }
+  .saved b { font-weight: 600; }
+  .saved-what { color: var(--muted, #8b8b96); font-size: 12px; margin-top: 3px; }
 </style>
 <script src="/tasks/static/vendor/htmx.min.js"></script>
 <script src="/tasks/static/vendor/sse.js"></script>
@@ -531,6 +602,7 @@
 <link rel="stylesheet" href="/tasks/static/agent-chat.css">
 </head>
 <body>
+  <div class="saved" id="saved-note" hidden></div>
   <div class="topbar">
     <div class="mark">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -666,7 +738,13 @@
           aria-orientation="vertical" aria-label="Resize the agents column"
           title="Drag to resize"></button>
   <div class="ap-head">
-    <h2>Chat with your agents</h2>
+    <div class="ap-title">
+      <h2>Chat with your agents</h2>
+      <!-- The panel never said what it was. Everyone who has opened it has
+           had to work out from the placeholder that naming an agent picks
+           one and saying nothing asks them all. -->
+      <p class="ap-sub">Everyone hears you. Name one to ask only them.</p>
+    </div>
     <!-- One permanent room. Nobody is seated and nothing is listed: every
          agent hears every message, and this is the same conversation you
          left. Clearing it is the only destructive thing here, so it is the
@@ -721,7 +799,8 @@
 
     <div class="modal-overlay" id="agent-overlay" hidden>
       <div class="modal" id="agent-form">
-        <h2 id="form-title">New agent</h2>
+        <div class="modal-head"><h2 id="form-title">New agent</h2></div>
+        <div class="modal-body">
         <div class="form-cols">
         <div class="form-col">
         <label for="agent-name">Name</label>
@@ -781,23 +860,36 @@
         </div>
         </div>
 
-        <label for="agent-skills">Skills</label>
-        <div class="hint">Ready-made instructions for one kind of job. Tick one
-          and the agent follows it whenever that job comes up, instead of
-          working it out each time. Click a name to see what it does.</div>
-        <div class="skill-controls">
-          <input id="skill-search" type="search" autocomplete="off"
-                 placeholder="Search skills" aria-label="Search skills">
-          <div class="skill-tags" id="skill-tags"></div>
+        <div class="skill-block">
+          <button type="button" class="skill-toggle" id="skills-toggle"
+                  aria-expanded="false" aria-controls="skills-panel">
+            <span class="tw-chev">&#8250;</span>
+            <span class="skill-toggle-name">Skills</span>
+            <span class="skill-toggle-count" id="skills-chosen">None chosen</span>
+            <span class="skill-toggle-act" id="skills-act">Choose skills</span>
+          </button>
+          <div id="skills-panel" hidden>
+            <div class="hint">Ready-made instructions for one kind of job. Tick
+              one and the agent follows it whenever that job comes up, instead
+              of working it out each time. Click a name to see what it does.</div>
+            <div class="skill-controls">
+              <input id="skill-search" type="search" autocomplete="off"
+                     placeholder="Search skills" aria-label="Search skills">
+              <div class="skill-tags" id="skill-tags"></div>
+            </div>
+            <div class="skill-list" id="agent-skills"></div>
+            <div class="skill-empty" id="skill-none" hidden>Nothing matches that.</div>
+            <div class="hint" id="skill-count"></div>
+          </div>
         </div>
-        <div class="skill-list" id="agent-skills"></div>
-        <div class="skill-empty" id="skill-none" hidden>Nothing matches that.</div>
-        <div class="hint" id="skill-count"></div>
+        </div>
 
-        <div class="form-error" id="form-error"></div>
-        <div class="form-actions">
-          <button class="btn" type="button" id="agent-cancel">Cancel</button>
-          <button class="btn primary" type="button" id="agent-save">Save agent</button>
+        <div class="modal-foot">
+          <div class="form-error" id="form-error"></div>
+          <div class="form-actions">
+            <button class="btn" type="button" id="agent-cancel">Cancel</button>
+            <button class="btn primary" type="button" id="agent-save">Save agent</button>
+          </div>
         </div>
       </div>
     </div>
@@ -953,7 +1045,21 @@
 
     function toolChips(m) {
       var ids = (m.meta && m.meta.toolIds) || [];
-      if (!ids.length) return '<span class="chip none">No tools</span>';
+      var narrowed = !!(m.meta && m.meta.toolScope === "picked");
+      // The scope was only ever visible inside the form, which meant the one
+      // way to check what an agent was set to was to open the thing that sets
+      // it. Three rounds of "did that save?" came out of exactly that.
+      var scope = narrowed
+        ? '<span class="chip scope narrow">Only what is picked</span>'
+        : '<span class="chip scope">Every tool you have</span>';
+      // Narrowed to nothing is a real state and a surprising one: the agent
+      // can reach no tool at all. It reads as an empty card otherwise.
+      if (narrowed && !ids.length) {
+        return scope + '<span class="chip none">Nothing picked yet</span>';
+      }
+      if (!ids.length) return scope + '<span class="chip none">No tools</span>';
+      ids = ids.filter(function (id) { return id !== "server:mcp-proxy"; });
+      if (!ids.length) return scope;
       // Glyph AND name. An icon on its own looks tidier, but this card exists
       // to say what the agent can reach, and a bare envelope does not say it.
       var out = "";
@@ -964,13 +1070,16 @@
       if (ids.length > 2) {
         out += '<span class="chip more">+' + (ids.length - 2) + "</span>";
       }
-      return out;
+      return scope + out;
     }
 
     function card(m, mine) {
       var el = document.createElement("div");
       el.className = "card";
       el.setAttribute("data-agent-id", m.id);
+      // Same hue the avatar is built from, so the border and the badge always
+      // agree about which agent this is.
+      el.style.setProperty("--agent-hue", String(avatarHue(m.name)));
       // Same blanking as duplicate: a ready-made agent's params come back
       // empty because it is read-only to you, so fall back to the meta copy or
       // its card would be a blank rectangle.
@@ -989,9 +1098,15 @@
             + "hsl(" + hue + " 58% 46%),hsl(" + ((hue + 26) % 360) + " 58% 34%))"
             + '">' + esc(initials(m.name)) + "</div>" +
           '<div class="card-heading">' +
+            '<div class="card-name-row">' +
             // Only the name goes in here. A test asserts this text equals the
             // agent's name exactly, and it is also the XSS surface.
             '<div class="card-title">' + esc(m.name) + "</div>" +
+            // Beside the name, where you look anyway, rather than on a line
+            // of its own underneath the whole heading.
+            '<span class="card-activity" data-activity-for="'
+              + esc(m.id) + '"></span>' +
+            "</div>" +
             (role
               ? '<div class="card-role">' + esc(role) + "</div>"
               : (model ? '<div class="card-model">' + esc(model) + "</div>" : "")) +
@@ -1000,8 +1115,6 @@
             ? '<span class="tag"><span class="dot"></span>Shared with everyone</span>'
             : "") +
         "</div>" +
-        '<div class="card-activity" data-activity-for="' + esc(m.id) + '">'
-          + "</div>" +
         '<div class="card-sys">' + esc(preview(sys, 96)) + "</div>" +
         // One row, not three. Skills first because what an agent knows how to
         // do says more about it than what it can reach, then the tools, then
@@ -1330,36 +1443,40 @@
           continue;
         }
         if (a.state === "working") {
+          // Elapsed stays ON the line here, unlike every other state. How
+          // long a run has been going is the whole question while it is
+          // going: it is the difference between working and stuck. The
+          // last-run time on a finished agent is not that, which is why only
+          // that one is demoted to the title.
           el.classList.add("working");
+          el.title = "";
           el.innerHTML = '<span class="dot"></span><span>Working'
             + (a.running_for_seconds !== undefined
-                 ? " \u00b7 " + esc(secs(a.running_for_seconds)) : "")
+                 ? " · " + esc(secs(a.running_for_seconds)) : "")
             + "</span>";
           continue;
         }
-        // A run that ended asking for approval is not idle: it stopped and
-        // it is waiting on a person, which is the same kind of stuck as a
-        // failure, so it reads red rather than amber.
-        var blocked = a.last_status === "failed" || a.last_status === "waiting";
-        // Awake sits between working and idle: the last run finished, and it
-        // finished recently enough that the person still thinks of this agent
-        // as with them. The server decides how recent that is and never sends
-        // "awake" for a run that failed or is waiting on an answer, so the
-        // blocked check still wins here.
-        var resting = blocked ? "blocked"
-          : (a.state === "awake" ? "awake" : "idle");
-        el.classList.add(resting);
+        // One state, one word, one colour. The server decides; the page does
+        // not re-derive it from last_status, which is how the old code ended
+        // up with two sources of truth for the same fact.
+        var STATE_WORD = { ready: "Ready", waiting: "Needs you",
+                           failed: "Failed" };
+        var state = STATE_WORD[a.state] ? a.state : "ready";
+        el.classList.add(state);
         var bits = [];
         if (a.last_run_at) bits.push("used " + ago(a.last_run_at));
         if (a.last_duration_seconds !== null
             && a.last_duration_seconds !== undefined) {
           bits.push("took " + secs(a.last_duration_seconds));
         }
-        var word = a.last_status === "failed" ? "Failed"
-          : a.last_status === "waiting" ? "Needs approval"
-          : resting === "awake" ? "Awake" : "Idle";
-        el.innerHTML = '<span class="dot"></span><span>' + word
-          + (bits.length ? " \u00b7 " + esc(bits.join(", ")) : "") + "</span>";
+        // The word is the state. The detail rides on the title, because the
+        // spec is explicit that the last-run time is detail rather than the
+        // state, and a card you glance at should answer "is it fine" without
+        // making you read a timestamp to find out.
+        el.title = bits.length
+          ? STATE_WORD[state] + ", " + bits.join(", ") : STATE_WORD[state];
+        el.innerHTML = '<span class="dot"></span><span>'
+          + STATE_WORD[state] + "</span>";
       }
     }
 
@@ -1421,7 +1538,13 @@
     // and the page tells a signed-out user that they have no agents. Read the
     // status first.
     async function getJson(url) {
-      var r = await fetch(url, { headers: authHeaders() });
+      // no-store, because save() writes and then immediately re-reads this
+      // list to redraw the page. These responses carry no cache-control at
+      // all, so the decision is left to the browser's heuristics, and a
+      // agent list served from cache after a write shows the agent exactly as
+      // it was BEFORE the save. Everything the form fills in then comes from
+      // that stale row, including whether the agent is narrowed.
+      var r = await fetch(url, { headers: authHeaders(), cache: "no-store" });
       if (r.status === 401) throw new Error("signed out");
       if (!r.ok) throw new Error("http " + r.status);
       return r.json();
@@ -1541,24 +1664,29 @@
     // Grey the connected apps switch when the person has connected nothing,
     // and point them at where to fix it. Same treatment the tiles get, so the
     // form tells one story about what will actually work.
-    function applyUmbrellaState(t) {
+    function applyUmbrellaState(t, others) {
       var box = document.getElementById("use-my-apps");
       var row = box && box.closest(".switch");
       if (!box || !row) return;
       var existing = row.parentNode.querySelector(".umbrella-connect");
       if (existing) existing.remove();
-      var connected = !t || t.connected !== false;
-      box.disabled = !connected;
-      row.classList.toggle("not-connected", !connected);
-      if (!connected) {
-        // Unticking here is deliberate: a saved agent may still carry the
-        // tool, and offering it as ticked when nothing is behind it would
-        // claim it works.
-        box.checked = false;
+      var haveProxy = !t || t.connected !== false;
+      var haveAny = haveProxy || (others || []).some(function (o) {
+        return o && o.connected !== false;
+      });
+      box.disabled = !haveAny;
+      row.classList.toggle("not-connected", !haveAny);
+      // Only when there is nothing at all. A saved agent may still carry the
+      // tool, and offering it as ticked with nothing behind it would claim
+      // it works.
+      if (!haveAny) box.checked = false;
+      if (!haveProxy) {
+        // Shown whether or not the switch is usable, because it points at the
+        // apps that are not linked yet, not at the tools that already are.
+        // The panel on this page. The old fallback pointed at a static file
+        // that has never existed.
         var a = document.createElement("a");
         a.className = "umbrella-connect";
-        // The panel on this page. The old fallback pointed at a static
-        // file that has never existed.
         a.href = "#connections";
         a.textContent = "Connect an app";
         row.parentNode.insertBefore(a, row.nextSibling);
@@ -1579,16 +1707,16 @@
       }
       if (tools) {
         // server:mcp-proxy is offered through the "Let this agent use my
-        // connected apps" switch above, not as a tile of its own. That switch
-        // still has to say whether anything is behind it: leaving it always
-        // tickable would keep the exact checkbox that ticks and does nothing
-        // which this endpoint exists to get rid of.
+        // connected apps" switch above, not as a tile of its own. The switch
+        // is handed the rest of the list as well, because what it decides is
+        // scope over every tool this person can reach, not whether one of
+        // them in particular is linked.
         var umbrella = null;
         tools = tools.filter(function (t) {
           if (t.id === "server:mcp-proxy") { umbrella = t; return false; }
           return true;
         });
-        applyUmbrellaState(umbrella);
+        applyUmbrellaState(umbrella, tools);
         renderToolTiles(tools);
         NATIVE_TOOLS = tools.map(function (t) { return [t.id, t.label]; });
       } else {
@@ -1623,6 +1751,19 @@
 
     function showToolPicker() {
       document.getElementById("native-tools").hidden = toolsAreEverything();
+    }
+
+    // Never ticks a box the person cannot untick. applyUmbrellaState disables
+    // this switch when there is nothing behind it, and the two paths that
+    // fill the form used to set .checked straight afterwards without looking.
+    // That left it ticked AND disabled: it read as "this agent uses every app
+    // I have connected", it was not true, and clicking it did nothing at all.
+    // Reported from production, with no connected proxy apps on the account.
+    function setUmbrella(on) {
+      var box = document.getElementById("use-my-apps");
+      if (!box) return;
+      box.checked = !box.disabled && !!on;
+      showToolPicker();
     }
 
     function chosenTools() {
@@ -1697,6 +1838,7 @@
       applySkillFilter();
       wrap.addEventListener("click", onSkillClick);
       wrap.addEventListener("change", applySkillFilter);
+      wrap.addEventListener("change", updateSkillsSummary);
       document.getElementById("skill-search")
         .addEventListener("input", function (e) {
           skillFilter.query = e.target.value.trim().toLowerCase();
@@ -1787,6 +1929,39 @@
         var cb = document.getElementById("skill-" + s.name);
         if (cb) cb.checked = ids.indexOf(s.name) !== -1;
       });
+      updateSkillsSummary();
+      // Collapsed on every open, including an agent that already has skills.
+      // The count on the toggle is what says it has them; opening the list
+      // would put us back to scrolling past sixty-four rows to reach Save.
+      showSkills(false);
+    }
+
+    // The collapsed row has to carry everything the open list would have told
+    // them, or collapsing it just hides the state.
+    function updateSkillsSummary() {
+      var el = document.getElementById("skills-chosen");
+      if (!el) return;
+      var picked = chosenSkills();
+      if (!picked.length) {
+        el.textContent = "None chosen";
+        return;
+      }
+      // Names, not just a number. "3 chosen" makes you open it to find out
+      // which three, which is the thing this is trying to save you.
+      el.textContent = picked.length <= 3
+        ? picked.join(", ")
+        : picked.slice(0, 2).join(", ") + " and " + (picked.length - 2)
+          + " more";
+    }
+
+    function showSkills(open) {
+      var panel = document.getElementById("skills-panel");
+      var btn = document.getElementById("skills-toggle");
+      var act = document.getElementById("skills-act");
+      if (!panel || !btn) return;
+      panel.hidden = !open;
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+      if (act) act.textContent = open ? "Hide" : "Choose skills";
     }
 
 
@@ -1797,6 +1972,12 @@
     //
     // Warned about, never removed. Somebody running a cheap experiment is
     // entitled to pick one; they are not entitled to be surprised by it.
+    // Pipes that hand the question back to your agents. Never offerable as
+    // an agent's own model: such an agent answers itself, forever. Kept
+    // beside the warnings because both answer "is this model a bad idea",
+    // and the two get read together whenever a model misbehaves.
+    var CALLBACK_MODELS = ["auto_router.auto", "io.io"];
+
     var MODEL_WARNINGS = {
       "auto_router.auto":
         "Auto (Free) shares a pool of free models that runs out, so an agent "
@@ -1813,7 +1994,15 @@
 
     function showModelWarning() {
       var el = document.getElementById("model-warn");
-      var msg = MODEL_WARNINGS[document.getElementById("agent-base").value];
+      var chosen = document.getElementById("agent-base").value;
+      var msg = MODEL_WARNINGS[chosen];
+      // Takes precedence over any tuning note: this one is not "you may get a
+      // worse answer", it is "this cannot work at all".
+      if (CALLBACK_MODELS.indexOf(chosen) !== -1) {
+        msg = "This model hands the question back to your agents, so an agent "
+            + "set to it answers itself and never stops. Pick a specific "
+            + "model.";
+      }
       el.textContent = msg || "";
       el.hidden = !msg;
     }
@@ -1905,21 +2094,42 @@
       var tools = (agent && agent.meta && agent.meta.toolIds) || [];
       // A new agent gets everything, which is what every agent does today.
       // An existing one is narrowed only if it says so.
-      document.getElementById("use-my-apps").checked =
-        !(agent && agent.meta && agent.meta.toolScope === "picked");
-      showToolPicker();
+      setUmbrella(!(agent && agent.meta && agent.meta.toolScope === "picked"));
       NATIVE_TOOLS.forEach(function (t) {
         var cb = document.getElementById("tool-" + t[0]);
         if (cb) cb.checked = tools.indexOf(t[0]) !== -1;
       });
       var base = document.getElementById("agent-base");
       base.innerHTML = "";
-      state.models.filter(function (m) { return !isAgent(m); }).forEach(function (m) {
+      // Auto (Free) and IO are pipes that hand the question back to your
+      // agents. An agent set to one answers itself, forever, and takes the
+      // platform down with it. They are also the two that do not forward
+      // tools, so such an agent would have none. Not offered here at all:
+      // a warning was not enough, because the choice reads as reasonable.
+      state.models.filter(function (m) {
+        return !isAgent(m) && CALLBACK_MODELS.indexOf(m.id) === -1;
+      }).forEach(function (m) {
         var o = document.createElement("option");
         o.value = m.id; o.textContent = m.name || m.id;
         base.appendChild(o);
       });
-      if (agent && agent.base_model_id) base.value = agent.base_model_id;
+      if (agent && agent.base_model_id) {
+        base.value = agent.base_model_id;
+        // The dropdown no longer offers callback pipes, so an agent already
+        // on one would land on whatever option happens to be first and be
+        // silently moved by the next save. Show it, marked, and make them
+        // choose: quietly rewriting somebody's model is worse than the
+        // problem this is trying to fix.
+        if (base.value !== agent.base_model_id) {
+          var o = document.createElement("option");
+          o.value = agent.base_model_id;
+          o.textContent = agent.base_model_id
+            + (CALLBACK_MODELS.indexOf(agent.base_model_id) !== -1
+                 ? " (cannot run an agent)" : " (not available)");
+          base.insertBefore(o, base.firstChild);
+          base.value = agent.base_model_id;
+        }
+      }
       showModelWarning();
       // A new agent starts on "ask": capable, and it checks with you first.
       // An existing agent with no level shows nothing selected, because it
@@ -1939,6 +2149,30 @@
     }
 
     function closeForm() { document.getElementById("agent-overlay").hidden = true; }
+
+    var savedTimer = null;
+
+    // Says what was saved AND how the tools ended up. The scope is the part
+    // people get wrong, because the switch reads as a preference rather than
+    // as the thing that decides what the agent may touch, so it is spelled
+    // out here rather than left to be discovered on the next edit.
+    function saidSaved(name, isNew, everything, picked) {
+      var note = document.getElementById("saved-note");
+      if (!note) return;
+      var what = everything
+        ? "It can use everything you have connected."
+        : (picked === 1
+            ? "It can use the 1 tool you picked, and nothing else."
+            : "It can use the " + picked + " tools you picked, and nothing "
+              + "else.");
+      note.innerHTML = "<b>Saved " + esc(name) + ".</b>"
+        + '<div class="saved-what">' + esc(what) + "</div>";
+      note.hidden = false;
+      if (savedTimer) clearTimeout(savedTimer);
+      // Long enough to read twice. It is a confirmation, not a warning, so it
+      // goes away on its own rather than asking to be dismissed.
+      savedTimer = setTimeout(function () { note.hidden = true; }, 6000);
+    }
 
     // A duplicate id arrives as a 401, the same status as "you may not do
     // this". The only thing telling them apart is the detail text. Read a clone
@@ -1988,6 +2222,14 @@
       // disappears from the account, which the free model roster does.
       var baseModel = document.getElementById("agent-base").value;
       if (!baseModel) return formError("Pick a model for this agent.");
+      // Belt as well as braces: the dropdown does not offer these, but an
+      // agent edited from an older page, or written straight through the API,
+      // can still arrive here on one.
+      if (CALLBACK_MODELS.indexOf(baseModel) !== -1) {
+        return formError("That model hands the question back to your agents, "
+                         + "so this agent would answer itself and never stop. "
+                         + "Pick a specific model.");
+      }
 
       // Carry the current grants through an edit. A new agent has none, which
       // is exactly what makes it private to you.
@@ -2026,8 +2268,15 @@
         if (r.status === 401) throw new Error("Agents are not switched on for " +
                                               "your account yet.");
         if (!r.ok) throw new Error("Could not save that agent.");
+        var wasNew = !editingId;
+        // Read before closeForm, while the form is still the truth.
+        var everything = toolsAreEverything();
+        var picked = chosenTools().filter(function (id) {
+          return id !== "server:mcp-proxy";
+        }).length;
         closeForm();
         await load();
+        saidSaved(name, wasNew, everything, picked);
       } catch (e) {
         // Never clear the form on failure: the user typed that, and losing
         // several paragraphs to a network blip is the worst thing this page
@@ -2101,8 +2350,7 @@
                   "Write your own below and save.");
       }
       var tools = (agent.meta && agent.meta.toolIds) || [];
-      document.getElementById("use-my-apps").checked =
-        tools.indexOf("server:mcp-proxy") !== -1;
+      setUmbrella(tools.indexOf("server:mcp-proxy") !== -1);
       NATIVE_TOOLS.forEach(function (t) {
         var cb = document.getElementById("tool-" + t[0]);
         if (cb) cb.checked = tools.indexOf(t[0]) !== -1;
@@ -2133,6 +2381,12 @@
         .addEventListener("change", showModelWarning);
       document.getElementById("use-my-apps")
         .addEventListener("change", showToolPicker);
+      document.getElementById("skills-toggle")
+        .addEventListener("click", function () {
+          var open = document.getElementById("skills-toggle")
+            .getAttribute("aria-expanded") === "true";
+          showSkills(!open);
+        });
       document.getElementById("agent-cancel").addEventListener("click", closeForm);
       document.getElementById("agent-save").addEventListener("click", save);
       document.getElementById("agent-instructions")

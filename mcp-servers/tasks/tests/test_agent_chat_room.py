@@ -97,11 +97,25 @@ def test_naming_one_agent_means_only_that_agent_answers(monkeypatch):
     assert "Ada here" not in body
 
 
-def test_a_collective_word_reaches_everyone(monkeypatch):
+def test_a_collective_word_reaches_everyone_without_compelling_them(monkeypatch):
+    """A reversal, and the reasoning it overturns is worth keeping.
+
+    This used to assert the opposite: "the room was addressed", so nobody
+    could pass. That reads correctly and produces something nobody wants.
+    Reported with a screenshot 2026-09-14: seven agents, "hey everyone", and
+    seven replies of "I'm here, what do you need?".
+
+    Addressing a room is not the same as putting a question to every person
+    in it. Say "hey everyone" to seven people and one or two answer. Naming
+    an agent is still a question put to that agent, which the test below
+    still pins.
+    """
     app, mod, seen, _ = _app(monkeypatch)
     _ask(app, "hi team")
-    assert [t["agent"] for t in seen] == [ADA["id"], MIA["id"]]
-    assert not any(t["may_pass"] for t in seen), "the room was addressed"
+    assert [t["agent"] for t in seen] == [ADA["id"], MIA["id"]], (
+        "a collective word must still reach everybody")
+    assert all(t["may_pass"] for t in seen), (
+        "the room was addressed, not interrogated one by one")
 
 
 def test_speakers_for_is_the_whole_rule():

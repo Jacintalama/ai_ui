@@ -65,24 +65,64 @@ async def test_it_runs_the_named_agent(wired):
     assert wired.chat.await_args.kwargs["model"] == "agent-triage-0002"
 
 
-async def test_it_sends_the_agents_own_tools(wired):
+async def test_it_sends_the_agents_own_tools_first(wired):
     """Open WebUI attaches a model's tools only for its own UI. An API caller
-    that does not ask gets none, and the agent arrives unable to do anything."""
+    that does not ask gets none, and the agent arrives unable to do anything.
+
+    The agent's own picks lead the list. They used to be the WHOLE list here,
+    which is what made a scheduled agent weaker than the same agent in chat.
+    """
     await agent_runner.run_agent(_sched())
 
-    assert wired.chat.await_args.kwargs["tool_ids"] == ["gmail"]
+    sent = wired.chat.await_args.kwargs["tool_ids"]
+    assert sent[0] == "gmail", sent
+    assert "gmail" in sent
 
 
-async def test_an_agent_with_no_tools_sends_none(wired, monkeypatch):
-    """None is not the same as an empty list, which reads as an explicit
-    request for no tools."""
+async def test_a_schedule_reaches_what_the_same_agent_reaches_in_chat(wired):
+    """Resolves through routes_agent_turn.tools_for_agent, the one the chat
+    path uses, rather than reading meta["toolIds"] raw.
+
+    Measured on production 2026-09-10: the same agent had twelve tools in chat
+    and one on a schedule, and that one was the connected-apps umbrella with
+    nothing behind it. It could read nothing, so it wrote its weekly report
+    from nothing, while its card still said "Every tool you have".
+    """
+    await agent_runner.run_agent(_sched())
+
+    sent = wired.chat.await_args.kwargs["tool_ids"]
+    assert len(sent) > 1, (
+        "the schedule got only the agent's raw toolIds: %r" % (sent,))
+
+
+async def test_an_empty_tool_list_is_not_a_request_for_no_tools(wired, monkeypatch):
+    """A deliberate reversal, recorded because the two surfaces disagreed.
+
+    This test used to assert the opposite, and said why: "None is not the same
+    as an empty list, which reads as an explicit request for no tools." The
+    chat path had already decided the other way, in as many words: "Picking
+    nothing is not a request for nothing. Somebody who chose the narrow option
+    and then unticked every box has not finished choosing, and an agent with
+    no tools at all would simply look broken."
+
+    Both cannot be right for the same agent. The chat path's reading wins,
+    because it is the newer one, because it came with the toolScope setting
+    that lets somebody say "only these" explicitly, and because an empty list
+    is far more often an unfinished thought than an instruction.
+
+    What an agent may DO on a schedule is unchanged and still narrower: a
+    schedule's tool_mode defaults to read_only, and agent_runner refuses every
+    write call. This widens what it can READ, which is the axis that was
+    accidentally different, not the one that was deliberately narrow.
+    """
     monkeypatch.setattr(agent_runner, "_list_agents", AsyncMock(
         return_value=([{"id": "agent-triage-0002", "name": "Triage",
                         "meta": {"toolIds": []}}], False)))
 
     await agent_runner.run_agent(_sched())
 
-    assert wired.chat.await_args.kwargs["tool_ids"] is None
+    sent = wired.chat.await_args.kwargs["tool_ids"]
+    assert sent, "an empty list still meant no tools at all"
 
 
 async def test_identity_is_resolved_from_the_schedules_own_email(wired):
@@ -365,18 +405,25 @@ async def test_the_cap_note_reaches_the_owner_even_with_an_empty_answer(wired):
     """F4: _chat's own test (test_the_loop_stops_at_the_cap_and_says_so)
     only proves the note exists inside _chat's return value. Without this,
     run_agent's empty-answer check fires first and throws the note away
-    before the owner ever sees it -- so five rounds of real tool use in a
-    full-mode schedule could complete and the stored result would say only
-    "The agent returned an empty answer.", with no record of what ran."""
+    before the owner ever sees it, with no record of what ran.
+
+    That concern still stands and is still asserted. What changed is the
+    STATUS. This used to assert "completed", and on a schedule that is the
+    whole problem: the delivered report becomes the note itself, 69
+    characters saying the answer may be incomplete, with a green card. Seen
+    on the first real weekly review, 2026-09-11. The owner is still told,
+    and now told it failed, which is what the card reads.
+    """
     wired.chat.return_value = (
         "",
-        ["Stopped after 5 rounds of tool use, so this answer may be "
-         "incomplete."])
+        [agent_runner.RAN_OUT_OF_ROUNDS % 5])
 
     status, result, _ = await agent_runner.run_agent(_sched())
 
-    assert status == "completed"
-    assert "stopped after 5 rounds" in result.lower()
+    assert status == "failed", (status, result)
+    # Still a record of what happened, which is what F4 was protecting.
+    assert "ran out of tool rounds" in result.lower()
+    assert result.strip(), "the note was swallowed, which is the F4 bug"
 
 
 async def test_a_refusal_note_reaches_the_owner_even_with_an_empty_answer(wired):
@@ -473,3 +520,82 @@ async def test_an_approval_escaping_into_a_schedule_is_reported_not_swallowed(
 
     assert status == "failed"
     assert "nobody to ask" in result
+
+
+# ---------------------------------------------------------------------------
+# Running out of tool rounds. Measured on the first real weekly review,
+# 2026-09-11: one run used four of five rounds and wrote a proper 1174
+# character report; the run a minute before it spent all five and returned 69
+# characters, the note saying it had stopped early, reported as "completed".
+# On a schedule that note IS the delivered report.
+# ---------------------------------------------------------------------------
+
+
+async def test_stopping_early_with_nothing_to_show_is_a_failure(wired, monkeypatch):
+    """It used to report "completed" and deliver the note as the report."""
+    monkeypatch.setattr(agent_runner, "_chat", AsyncMock(return_value=(
+        "", [agent_runner.RAN_OUT_OF_ROUNDS % 8])))
+
+    status, result, _ = await agent_runner.run_agent(_sched())
+
+    assert status == "failed", (status, result)
+    assert "ran out of tool rounds" in result
+    assert "may be incomplete" not in result, (
+        "the stub note was delivered as the report")
+
+
+async def test_stopping_early_WITH_an_answer_still_completes(wired, monkeypatch):
+    """The opposite mistake would be worse: a real report thrown away because
+    the agent also mentioned it had more it could have read."""
+    monkeypatch.setattr(agent_runner, "_chat", AsyncMock(return_value=(
+        "**Weekly review**\n\nShipped: the thing.",
+        [agent_runner.RAN_OUT_OF_ROUNDS % 8])))
+
+    status, result, _ = await agent_runner.run_agent(_sched())
+
+    assert status == "completed", (status, result)
+    assert "Weekly review" in result
+    assert "may be incomplete" in result, "the caveat was dropped"
+
+
+async def test_an_empty_answer_with_other_notes_still_completes(wired, monkeypatch):
+    """Only the ran-out-of-rounds case is a failure. A refusal note carries
+    real information about what the agent would not do, and that must still
+    reach the owner."""
+    monkeypatch.setattr(agent_runner, "_chat", AsyncMock(return_value=(
+        "", ["Refused: send_email is a write and this run is read only."])))
+
+    status, result, _ = await agent_runner.run_agent(_sched())
+
+    assert status == "completed", (status, result)
+    assert "Refused" in result
+
+
+def test_the_schedule_gets_more_rounds_than_a_chat_window():
+    """A chat window has somebody waiting at a keyboard; a Friday cron does
+    not. The caps are allowed to differ, and the schedule's is the larger."""
+    assert agent_runner.MAX_TOOL_ITERATIONS > agent_runner.CHANNEL_MAX_TOOL_ITERATIONS
+    # Four rounds were needed for a real weekly review, so anything at or
+    # below five leaves a single round of margin, which is what failed.
+    assert agent_runner.MAX_TOOL_ITERATIONS >= 8
+
+
+def test_the_token_outlives_the_whole_loop():
+    """Derived, not hardcoded. Raising the cap without raising the token gives
+    an agent that dies partway through and reports it as a refusal."""
+    assert agent_runner.CHAT_TOKEN_TTL_SECONDS >= (
+        agent_runner.MAX_TOOL_ITERATIONS * agent_runner.HTTP_TIMEOUT_SECONDS)
+
+
+async def test_a_scheduled_report_carries_no_long_dashes(wired):
+    """A report lands in the owner's Discord. The brief forbids long dashes
+    and the model used one in 25 of 36 replies anyway, so the schedule path
+    scrubs on the way out as well as the chat path."""
+    wired.chat.return_value = (
+        "**Weekly review** Sep 7\u201311\n\nShipped \u2014 the portfolio.", [])
+
+    status, result, _ = await agent_runner.run_agent(_sched())
+
+    assert status == "completed", (status, result)
+    assert "\u2014" not in result and "\u2013" not in result, result
+    assert "Sep 7-11" in result

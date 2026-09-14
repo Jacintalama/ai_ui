@@ -251,8 +251,10 @@ def test_the_longer_cap_still_fits_inside_the_awake_window():
     from datetime import timedelta
 
     from agent_activity import STALE_AFTER_CHANNEL
+    # The rounds, then the write-up after the cap, which has its own budget.
     worst = timedelta(seconds=agent_runner.CHANNEL_HTTP_TIMEOUT_SECONDS
-                      * agent_runner.CHANNEL_MAX_TOOL_ITERATIONS)
+                      * agent_runner.CHANNEL_MAX_TOOL_ITERATIONS
+                      + agent_runner.FINAL_ROUND_MIN_TIMEOUT_SECONDS)
     assert STALE_AFTER_CHANNEL > worst, (STALE_AFTER_CHANNEL, worst)
 
 
@@ -309,3 +311,55 @@ async def test_the_chat_path_shows_the_note_when_there_is_no_answer(monkeypatch)
 
 async def _none():
     return None
+
+
+# ---------------------------------------------------------------------------
+# Open WebUI reports a stale in-memory model list two different ways, and only
+# one was recognised. Both heal identically, by calling /api/models.
+# ---------------------------------------------------------------------------
+
+
+def test_a_model_created_since_the_cache_was_built_is_recognised_as_stale():
+    """The NEW model case. Seen live 2026-09-14, the first time agents were
+    created through the API rather than the browser: five new agents, every
+    turn 400ing with {"detail": "Model not found"}, while the retry that
+    exists for exactly this matched only the other string."""
+    import agent_runner
+
+    class R:
+        status_code = 400
+
+        @staticmethod
+        def json():
+            return {"detail": "Model not found"}
+
+    assert agent_runner._is_stale_model_cache(R())
+
+
+def test_a_rebased_agent_is_still_recognised_as_stale():
+    """The DERIVED model case, which already worked and must keep working."""
+    import agent_runner
+
+    class R:
+        status_code = 400
+
+        @staticmethod
+        def json():
+            return {"detail": "Function not found: gpt-4o-mini"}
+
+    assert agent_runner._is_stale_model_cache(R())
+
+
+def test_an_unrelated_400_is_not_treated_as_staleness():
+    """Refreshing and retrying on every 400 would turn one bad request into
+    two, and hide the real reason behind a second identical failure."""
+    import agent_runner
+
+    class R:
+        status_code = 400
+
+        @staticmethod
+        def json():
+            return {"detail": "messages: field required"}
+
+    assert not agent_runner._is_stale_model_cache(R())

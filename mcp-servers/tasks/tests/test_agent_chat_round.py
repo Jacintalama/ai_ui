@@ -77,7 +77,14 @@ def test_send_records_the_message_and_opens_a_stream(monkeypatch):
     assert 'sse-connect="/tasks/agents/chat/stream"' in r.text
     assert r.headers.get("HX-Trigger") == "agent-chats-changed"
     s = mod.store.get_session(EMAIL)
-    assert s.messages[-1] == {"role": "user", "content": "hi team"}
+    # Carries the turn id the send response already drew on the page, so
+    # _run_round can address its answers at the same turn (see s.turn_id and
+    # into_turn/turn_status in agent_chat_render.py).
+    stored = s.messages[-1]
+    assert stored["role"] == "user"
+    assert stored["content"] == "hi team"
+    assert stored["turn_id"] == s.turn_id
+    assert stored["turn_id"]
 
 
 def test_every_agent_in_the_room_gets_its_own_bubble_in_order(monkeypatch):
@@ -262,3 +269,38 @@ def test_history_for_round_keeps_only_real_turns():
     ])
     assert got == [{"role": "user", "content": "hi"},
                    {"role": "assistant", "content": "hello"}]
+
+
+# ---------------------------------------------------------------------------
+# Seven agents, one greeting, seven replies of "I'm here, what do you need?".
+# Reported with a screenshot 2026-09-14. The room is supposed to read like a
+# room of people, and a person who has nothing to add does not announce that
+# they have nothing to add.
+# ---------------------------------------------------------------------------
+
+
+def test_the_pass_instruction_forbids_announcing_availability():
+    """The exact failure: every agent replying that it is here. Pinned by the
+    words, because this is a prompt and the words ARE the mechanism."""
+    import routes_agent_chat
+    text = routes_agent_chat.PASS_INSTRUCTION.lower()
+    assert "pass" in text
+    assert "greeting" in text, "nothing tells them to pass on a hello"
+    assert "available" in text and "you are here" in text, (
+        "nothing forbids the exact reply that was sent seven times")
+    assert "true of every assistant" in text, (
+        "nothing gives them the test for whether a reply is worth making")
+
+
+def test_passing_is_still_only_offered_when_nobody_was_named():
+    """Naming an agent means you asked it, so it must answer. Strengthening
+    the pass wording must not let a named agent duck the question."""
+    agents = [{"id": "a", "name": "Ada"}, {"id": "m", "name": "Mia"}]
+    import routes_agent_chat
+    named, may_pass = routes_agent_chat._speakers_for("hey mia what is in my inbox", agents)
+    assert [a["id"] for a in named] == ["m"]
+    assert may_pass is False, "a named agent was allowed to pass"
+
+    everyone, may_pass = routes_agent_chat._speakers_for("hey everyone", agents)
+    assert len(everyone) == 2
+    assert may_pass is True

@@ -93,8 +93,18 @@
     for (var i = 0; i < open.length; i++) {
       open[i].removeAttribute("sse-connect");
     }
-    var work = document.querySelector(".awork");
-    if (work) { work.innerHTML = ""; }
+    // The status line lives in the turn's own .aturn-status row now (see
+    // into_turn/turn_status in agent_chat_render.py), not in .awork: .awork
+    // is a sink that out-of-band content is swapped OUT OF before it ever
+    // lands there, so it is always empty and clearing it clears nothing.
+    // The server clears .aturn-status itself with an empty "working" event
+    // at the end of every round, but that event never fires when the
+    // connection closes before one: a drop and reconnect lands on the
+    // stream route with the tail no longer "user", which closes right away
+    // with no round and no clearing event, and "X is working..." would
+    // otherwise stay pinned on that turn until the page is reloaded.
+    document.querySelectorAll("#agent-thread .aturn-status")
+      .forEach(function (el) { el.innerHTML = ""; });
     settle();
   });
 

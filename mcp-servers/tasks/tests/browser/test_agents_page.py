@@ -267,6 +267,14 @@ DUPLICATE_ID_BODY = json.dumps({"detail": "Uh-oh! This model id is already "
 def _open_form(page):
     page.locator("#new-agent").click()
     page.wait_for_selector("#agent-form", state="visible")
+    # Skills are collapsed by default now, so every test that touches one has
+    # to open the panel the way a person does. That collapsed default is
+    # asserted in test_agents_tools_live.py, so opening it here hides nothing:
+    # this file is about what the skills list does once you are in it.
+    toggle = page.locator("#skills-toggle")
+    if toggle.count() and toggle.get_attribute("aria-expanded") != "true":
+        toggle.click()
+        page.wait_for_selector("#skills-panel", state="visible")
 
 
 def _fill(page, name="Researcher", instructions="Research carefully."):
@@ -602,10 +610,16 @@ def test_a_long_instruction_is_not_cut_mid_word(page):
 
 
 def test_the_card_says_what_the_agent_can_reach(page):
-    """Tools are the whole point of an agent, and the card showed none."""
+    """Tools are the whole point of an agent, and the card showed none.
+
+    The connected-apps chip is gone on purpose: it named a tool id where what
+    a person actually wants is the scope, so the card leads with that instead
+    and no longer repeats server:mcp-proxy as though it were a tool.
+    """
     chips = page.locator(
         '#my-agents [data-agent-id="agent-mine-a1b2"] .chip').all_inner_texts()
-    assert "Your connected apps" in chips, chips
+    assert "Every tool you have" in chips, chips
+    assert "Your connected apps" not in chips, chips
 
 
 def test_an_agent_with_no_tools_says_so(page):
@@ -613,7 +627,10 @@ def test_an_agent_with_no_tools_says_so(page):
     # agent, and nothing shared is listed any more.
     chips = page.locator(
         '[data-agent-id="agent-mine-second-c5d6"] .chip').all_inner_texts()
-    assert chips == ["No tools"], chips
+    # The scope comes first, then the emptiness. An agent set to everything
+    # with no tools of its own is a different thing from one narrowed to
+    # nothing, and the card has to be able to say which.
+    assert chips == ["Every tool you have", "No tools"], chips
 
 
 def test_search_narrows_the_list(page):
@@ -767,7 +784,7 @@ def test_someone_elses_agent_is_never_rendered(page):
     assert all(i and i.startswith(("agent-mine", "agent-hostile")) for i in ids), ids
 
 
-# --- is the agent awake, and how long did it take -------------------------
+# --- is the agent working, and how long did it take -----------------------
 
 def _activity(page, payload):
     """Re-answer the activity route, then make the page ask again."""
@@ -788,17 +805,6 @@ def test_a_working_agent_says_so_with_its_elapsed_time(page):
     assert "14s" in line.inner_text()
 
 
-def test_an_idle_agent_says_when_it_was_used_and_how_long_it_took(page):
-    page = page
-    _activity(page, {"agent-mine-a1b2": {
-        "state": "idle", "last_status": "completed",
-        "last_run_at": "2026-08-28T12:00:00+00:00",
-        "last_duration_seconds": 8, "source": "schedule"}})
-    text = page.locator('[data-activity-for="agent-mine-a1b2"]').inner_text()
-    assert "Idle" in text
-    assert "took 8s" in text
-
-
 def test_an_agent_that_has_never_run_says_nothing(page):
     """Calling something idle when it has never done anything reads as a
     status. Saying nothing reads as new, which is what it is."""
@@ -806,16 +812,6 @@ def test_an_agent_that_has_never_run_says_nothing(page):
     _activity(page, {})
     assert page.locator(
         '[data-activity-for="agent-mine-a1b2"]').inner_text().strip() == ""
-
-
-def test_a_failed_run_is_not_dressed_up_as_idle(page):
-    page = page
-    _activity(page, {"agent-mine-a1b2": {
-        "state": "idle", "last_status": "failed",
-        "last_run_at": "2026-08-28T12:00:00+00:00",
-        "last_duration_seconds": 3, "source": "channel"}})
-    assert "Failed" in page.locator(
-        '[data-activity-for="agent-mine-a1b2"]').inner_text()
 
 
 def _dot_state(page):
@@ -830,41 +826,6 @@ def test_the_dot_is_green_while_a_run_is_in_flight(page):
         "state": "working", "running_for_seconds": 5,
         "last_run_at": "2026-08-28T12:00:00+00:00", "source": "schedule"}})
     assert "working" in _dot_state(page)
-
-
-def test_the_dot_is_amber_when_the_agent_is_resting(page):
-    """Grey read as "switched off" for an agent that is simply between runs
-    and perfectly healthy."""
-    page = page
-    _activity(page, {"agent-mine-a1b2": {
-        "state": "idle", "last_status": "completed",
-        "last_run_at": "2026-08-28T12:00:00+00:00",
-        "last_duration_seconds": 8, "source": "schedule"}})
-    assert "idle" in _dot_state(page)
-    assert "blocked" not in _dot_state(page)
-
-
-def test_the_dot_is_red_after_a_failure(page):
-    page = page
-    _activity(page, {"agent-mine-a1b2": {
-        "state": "idle", "last_status": "failed",
-        "last_run_at": "2026-08-28T12:00:00+00:00",
-        "last_duration_seconds": 3, "source": "channel"}})
-    assert "blocked" in _dot_state(page)
-
-
-def test_an_agent_stopped_for_approval_reads_as_blocked_not_idle(page):
-    """It ended asking permission, so it is stuck on a person. Calling that
-    idle hides the one state the owner has to act on."""
-    page = page
-    _activity(page, {"agent-mine-a1b2": {
-        "state": "idle", "last_status": "waiting",
-        "last_run_at": "2026-08-28T12:00:00+00:00",
-        "last_duration_seconds": 2, "source": "channel"}})
-    text = page.locator('[data-activity-for="agent-mine-a1b2"]').inner_text()
-    assert "Needs approval" in text
-    assert "Idle" not in text
-    assert "blocked" in _dot_state(page)
 
 
 def test_an_agent_that_never_ran_wears_no_state_colour(page):
@@ -985,48 +946,60 @@ def test_search_finds_an_agent_by_its_role(page):
     assert shown == ["agent-mine-a1b2"]
 
 
-# --- awake ----------------------------------------------------------------
+# --- ready, needs you, failed ----------------------------------------------
 
 # Ralph, watching a card say Idle a second after Ada answered him: "they idle
-# even though its not 10minutes yet". Awake is the state between working and
-# resting, and it is what somebody looking at the card actually wants.
+# even though its not 10minutes yet". Ready is what somebody looking at the
+# card actually wants: it stays true whether the agent ran a second ago or
+# last week, so there is no clock left to feel wrong.
 
-def test_a_recently_used_agent_reads_as_awake(page):
+def test_a_finished_agent_reads_as_ready(page):
     _activity(page, {"agent-mine-a1b2": {
-        "state": "awake", "last_status": "completed",
+        "state": "ready", "last_status": "completed",
         "last_run_at": "2026-08-28T12:00:00+00:00",
         "last_duration_seconds": 2, "source": "channel"}})
-    text = page.locator('[data-activity-for="agent-mine-a1b2"]').inner_text()
-    assert "Awake" in text
-    assert "Idle" not in text
-    assert "took 2s" in text
+    line = page.locator('[data-activity-for="agent-mine-a1b2"]')
+    text = line.inner_text()
+    assert "Ready" in text
+    assert "Idle" not in text and "Awake" not in text
+    # The state is the line; the last run is detail. Reading "used 8 hours
+    # ago" on every glance is what made the old line feel like a log entry
+    # rather than a status. It is kept, on the title.
+    assert "took 2s" not in text, text
+    assert "took 2s" in (line.get_attribute("title") or "")
 
 
-def test_the_dot_is_green_when_the_agent_is_awake(page):
-    """Green like Working, because both mean the agent is with you. The pulse
-    is what separates them: Working is thinking right now."""
+def test_ready_is_green_and_does_not_pulse(page):
+    """Green because the agent is fine. No pulse: that is reserved for a run
+    in flight, and spending it on every resting agent makes it mean nothing."""
     _activity(page, {"agent-mine-a1b2": {
-        "state": "awake", "last_status": "completed",
-        "last_run_at": "2026-08-28T12:00:00+00:00",
-        "last_duration_seconds": 2, "source": "channel"}})
-    klass = _dot_state(page)
-    assert "awake" in klass
-    assert "idle" not in klass and "blocked" not in klass
-
-
-def test_awake_is_still_green_but_does_not_pulse(page):
-    """The pulse is reserved for a run in flight. An agent that pulsed for ten
-    minutes after every answer would make the one signal that means "it is
-    thinking right now" mean nothing."""
-    _activity(page, {"agent-mine-a1b2": {
-        "state": "awake", "last_status": "completed",
+        "state": "ready", "last_status": "completed",
         "last_run_at": "2026-08-28T12:00:00+00:00",
         "last_duration_seconds": 2, "source": "channel"}})
     dot = page.locator('[data-activity-for="agent-mine-a1b2"] .dot')
-    colour = dot.evaluate("el => getComputedStyle(el).backgroundColor")
-    animation = dot.evaluate("el => getComputedStyle(el).animationName")
-    assert colour == "rgb(74, 222, 128)", colour
-    assert animation == "none", animation
+    assert dot.evaluate("el => getComputedStyle(el).backgroundColor") \
+        == "rgb(74, 222, 128)"
+    assert dot.evaluate("el => getComputedStyle(el).animationName") == "none"
+
+
+def test_an_agent_waiting_on_you_says_so(page):
+    _activity(page, {"agent-mine-a1b2": {
+        "state": "waiting", "last_status": "waiting",
+        "last_run_at": "2026-08-28T12:00:00+00:00",
+        "last_duration_seconds": 2, "source": "channel"}})
+    line = page.locator('[data-activity-for="agent-mine-a1b2"]')
+    assert "Needs you" in line.inner_text()
+    assert "waiting" in line.get_attribute("class")
+
+
+def test_a_failed_agent_says_failed(page):
+    _activity(page, {"agent-mine-a1b2": {
+        "state": "failed", "last_status": "failed",
+        "last_run_at": "2026-08-28T12:00:00+00:00",
+        "last_duration_seconds": 3, "source": "channel"}})
+    line = page.locator('[data-activity-for="agent-mine-a1b2"]')
+    assert "Failed" in line.inner_text()
+    assert "failed" in line.get_attribute("class")
 
 
 # --- the edit form is two columns on a wide screen -------------------------
@@ -1296,14 +1269,24 @@ def test_a_card_is_short_enough_to_scan_a_screenful(page):
     assert box["height"] < 240, box["height"]
 
 
-def test_the_name_and_role_share_a_line(page):
-    """The role is two or three words. Giving it a line of its own costs
-    twenty pixels a card for nothing."""
+def test_the_state_sits_beside_the_name_and_the_role_below(page):
+    """The name answers who, the state answers whether it is fine, and those
+    two belong together. The role is a description and reads underneath, which
+    also stops a long role squeezing the state off the line."""
     card = page.locator('#my-agents [data-agent-id="agent-mine-a1b2"]')
     name = card.locator(".card-title").bounding_box()
+    state = card.locator(".card-activity").bounding_box()
     role = card.locator(".card-role").bounding_box()
-    assert role["x"] > name["x"] + name["width"] - 1, "the role is not beside the name"
-    assert abs(role["y"] - name["y"]) < 8, "they are on different lines"
+    def mid(b):
+        # Centres, not tops. The name is 15px and the state is 11.5px, so two
+        # things sitting on the same line have boxes that start at different
+        # heights. Comparing tops measures the font size, not the layout.
+        return b["y"] + b["height"] / 2
+
+    assert state["x"] > name["x"] + name["width"] - 1, "the state is not beside the name"
+    assert abs(mid(state) - mid(name)) < 6, (
+        "the state is on another line", mid(state), mid(name))
+    assert mid(role) > mid(name) + 6, "the role is not below the name"
 
 
 def test_skills_and_tools_share_one_row(page):
@@ -1346,57 +1329,86 @@ def test_no_emoji_on_the_card(page):
 # hour was an hour Ada was on Auto (Free). The dropdown offered it with
 # nothing to say it is a shared free pool that runs out.
 
-def test_choosing_the_free_router_warns_you(page):
+def test_a_callback_pipe_is_not_offered_as_an_agent_model(page):
+    """Reversal of an earlier decision, recorded because the reasoning matters.
+
+    This used to warn and allow: "somebody running a cheap experiment is
+    entitled to pick it, and taking the option away would be us deciding."
+    That held while the cost of a bad choice fell on the person making it.
+
+    It does not hold any more. Auto (Free) and IO hand the question back to
+    the agents service, which matches the agent and runs it again. Measured
+    2026-09-10: two agents on Auto (Free) opened dozens of chats a second and
+    restarted Open WebUI twice. The cost lands on everybody using the
+    platform, so it stopped being a personal choice.
+    """
     _open_form(page)
-    page.select_option("#agent-base", "auto_router.auto")
-    page.wait_for_timeout(120)
-    warn = page.locator("#model-warn")
-    assert warn.is_visible()
-    text = warn.inner_text().lower()
-    assert "free" in text
-    assert "specific model" in text, "it does not say what to do instead"
+    offered = page.locator("#agent-base option").evaluate_all(
+        "els => els.map(e => e.value)")
+    assert "auto_router.auto" not in offered, offered
+    assert "io.io" not in offered, offered
 
 
-def test_an_ordinary_model_warns_about_nothing(page):
+def test_a_model_that_does_not_call_back_is_still_offered(page):
+    """The guard must remove exactly two things. Filtering by a name pattern
+    would have taken Auto (Smart) with it, and refusing everything looks
+    identical from outside to refusing the right things."""
     _open_form(page)
-    page.select_option("#agent-base", "gpt-4o-mini")
-    page.wait_for_timeout(120)
-    assert not page.locator("#model-warn").is_visible()
+    offered = page.locator("#agent-base option").evaluate_all(
+        "els => els.map(e => e.value)")
+    assert "gpt-4o-mini" in offered, offered
+    assert len(offered) >= 1
 
 
-def test_the_warning_clears_when_you_pick_something_else(page):
-    _open_form(page)
-    page.select_option("#agent-base", "auto_router.auto")
-    page.wait_for_timeout(120)
-    assert page.locator("#model-warn").is_visible()
-    page.select_option("#agent-base", "gpt-4o-mini")
-    page.wait_for_timeout(120)
-    assert not page.locator("#model-warn").is_visible()
+def test_an_agent_already_on_a_callback_pipe_shows_it_rather_than_moving_it(page):
+    """The case that matters most: somebody who chose it before this existed.
 
-
-def test_the_warning_shows_on_opening_an_agent_already_on_it(page):
-    """The case that matters most: somebody who already chose it and is
-    wondering why their agent keeps failing."""
+    The dropdown no longer carries that option, so the agent would land on
+    whatever is first and be silently switched by the next save. Quietly
+    rewriting somebody's model is worse than the bug being fixed.
+    """
     page.evaluate(
         "() => { const a = window.__aiuiAgents.state.agents"
         ".find(x => x.id === 'agent-mine-a1b2');"
         " a.base_model_id = 'auto_router.auto';"
         " window.__aiuiAgents.openForm(a); }")
     page.wait_for_selector("#agent-form", state="visible")
-    page.wait_for_timeout(120)
+    page.wait_for_timeout(150)
+    assert page.locator("#agent-base").input_value() == "auto_router.auto", (
+        "it silently moved the agent to another model")
+    assert "cannot run an agent" in page.locator("#agent-base").inner_text()
     assert page.locator("#model-warn").is_visible()
 
 
-def test_the_free_router_is_still_choosable(page):
-    """Warned about, not removed. Somebody running a cheap experiment is
-    entitled to pick it, and taking the option away would be us deciding."""
-    _open_form(page)
-    page.select_option("#agent-base", "auto_router.auto")
-    page.fill("#agent-name", "Cheap")
-    page.fill("#agent-instructions", "Do a thing.")
+def test_saving_onto_a_callback_pipe_is_refused(page):
+    """Belt as well as braces. The dropdown does not offer these, but an older
+    page or a direct API write can still put an agent on one."""
+    page.evaluate(
+        "() => { const a = window.__aiuiAgents.state.agents"
+        ".find(x => x.id === 'agent-mine-a1b2');"
+        " a.base_model_id = 'auto_router.auto';"
+        " window.__aiuiAgents.openForm(a); }")
+    page.wait_for_selector("#agent-form", state="visible")
+    page.wait_for_timeout(150)
+    before = len(page.sent)
     page.locator("#agent-save").click()
     page.wait_for_timeout(300)
-    assert json.loads(page.sent[-1]["body"])["base_model_id"] == "auto_router.auto"
+    assert len(page.sent) == before, "it saved an agent that cannot run"
+    assert "answer itself" in page.locator("#form-error").inner_text()
+
+
+def test_the_warning_clears_when_you_pick_something_else(page):
+    page.evaluate(
+        "() => { const a = window.__aiuiAgents.state.agents"
+        ".find(x => x.id === 'agent-mine-a1b2');"
+        " a.base_model_id = 'auto_router.auto';"
+        " window.__aiuiAgents.openForm(a); }")
+    page.wait_for_selector("#agent-form", state="visible")
+    page.wait_for_timeout(150)
+    assert page.locator("#model-warn").is_visible()
+    page.select_option("#agent-base", "gpt-4o-mini")
+    page.wait_for_timeout(150)
+    assert not page.locator("#model-warn").is_visible()
 
 
 # --- tools: everything, or only what you pick -------------------------------
@@ -1468,12 +1480,23 @@ def test_a_new_form_goes_back_to_everything(page):
     assert page.is_checked("#use-my-apps")
 
 
-def test_the_tool_list_scrolls_rather_than_growing(page):
+def test_the_tool_list_never_pushes_save_off_screen(page):
     """Ralph asked for this directly: the list gets longer as tools are added
-    and must not keep pushing the rest of the form down."""
+    and must not keep pushing the rest of the form down.
+
+    It used to be delivered by giving the list its own scroll box, which is
+    what made the wheel unpredictable inside an already scrolling modal. The
+    requirement was never "this list scrolls", it was "the form stays usable
+    as the list grows", so that is what is asserted now: Save is on screen
+    with the whole tool list open.
+    """
     _open_form(page)
     page.uncheck("#use-my-apps")
-    page.wait_for_timeout(120)
-    overflow = page.locator("#native-tools").evaluate(
-        "el => getComputedStyle(el).overflowY")
-    assert overflow in ("auto", "scroll"), overflow
+    page.wait_for_timeout(150)
+    assert page.locator("#native-tools").is_visible()
+    btn = page.locator("#agent-save")
+    assert btn.is_visible()
+    box = btn.bounding_box()
+    modal = page.locator("#agent-form").bounding_box()
+    assert box["y"] + box["height"] <= modal["y"] + modal["height"] + 1, (
+        box, modal)

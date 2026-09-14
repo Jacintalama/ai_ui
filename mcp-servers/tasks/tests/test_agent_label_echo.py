@@ -210,10 +210,15 @@ def test_the_brief_stays_short_enough_to_send_every_turn():
     re-printing a list it had already printed, after being told it was not
     needed, was worth more than the tokens the instruction costs. Raise this
     again only for something that has actually gone wrong in front of
-    somebody, not for a rule that seems like a good idea."""
+    somebody, not for a rule that seems like a good idea.
+
+    Raised from 2100 to 2250 on 2026-09-14 for the long-dash rule, which
+    clears that bar: the owner sent a screenshot of his own agents using the
+    dash he has a standing rule against. The rule was written twice and cut
+    to two lines before this rose, so it is the smallest rise that fits."""
     from routes_agent_turn import _identity_line
     said = _identity_line({"id": "a", "name": "Ada"}, ["Ada", "Mia"])["content"]
-    assert len(said) < 2100, len(said)
+    assert len(said) < 2250, len(said)
 
 
 def test_the_brief_says_not_to_repeat_itself():
@@ -278,3 +283,126 @@ def test_a_long_role_is_cut_rather_than_allowed_to_run_the_brief():
     said = _identity_line(
         {"id": "a", "name": "Ada", "meta": {"role": "x" * 500}}, ["Ada"])["content"]
     assert "x" * 200 not in said
+
+
+def test_every_agent_is_told_not_to_use_long_dashes():
+    """Ralph's standing rule, and he reported his own agents breaking it with
+    a screenshot. Put in the shared identity line rather than in seven briefs,
+    so it reaches every agent on every surface, including ones made later.
+
+    The characters are shown literally because "avoid em-dashes" does not
+    survive a model that cannot tell which key that is. The words "em-dash"
+    and "en-dash" are deliberately NOT in the brief: they were cut to stay
+    inside the length budget, and showing the character is what does the work.
+    """
+    from routes_agent_turn import _identity_line
+    said = _identity_line({"id": "a", "name": "Ada"}, ["Ada", "Mia"])["content"]
+    assert "\u2014" in said, "the em-dash itself is not shown"
+    assert "\u2013" in said, "the en-dash itself is not shown"
+    assert "long dashes" in said, "nothing names what they are"
+
+
+def test_the_brief_does_not_itself_contain_a_stray_long_dash():
+    """It would be teaching the format it forbids. The two in the rule are
+    deliberate, so count them rather than banning them."""
+    from routes_agent_turn import _identity_line
+    said = _identity_line({"id": "a", "name": "Ada"}, ["Ada", "Mia"])["content"]
+    assert said.count("\u2014") == 1, "an em-dash outside the rule itself"
+    assert said.count("\u2013") == 1, "an en-dash outside the rule itself"
+
+
+# ---------------------------------------------------------------------------
+# Measured 2026-09-14 in the owner's panel, asked to fix the shoe app: Mia
+# (Gmail only), Nora (calendar) and Iris (Drive) each offered to bug-hunt it,
+# because the brief told every agent it had tools for mail, files, apps,
+# connections, schedules and saved notes. Iris also claimed she had added the
+# new page, which Ada did: history carries no speaker names.
+# ---------------------------------------------------------------------------
+
+
+def test_a_narrowed_agent_is_told_only_the_tools_it_has():
+    from routes_agent_turn import _identity_line
+    mia = {"id": "m", "name": "Mia",
+           "meta": {"toolIds": ["gmail"], "toolScope": "picked"}}
+    said = _identity_line(mia, ["Mia", "Kai"])["content"]
+    assert "Your tools reach email, and nothing else" in said, said
+    assert "files, apps, connections" not in said
+    assert "never offer to do it" in said
+    assert "find_skills" not in said, "told to call a tool it does not have"
+    assert "tool for remembering" not in said, "told to use memory it lacks"
+
+
+def test_a_narrowed_agent_names_each_of_its_tools():
+    from routes_agent_turn import _identity_line
+    nora = {"id": "n", "name": "Nora",
+            "meta": {"toolIds": ["calendar", "remember"], "toolScope": "picked"}}
+    said = _identity_line(nora, ["Nora"])["content"]
+    assert "Your tools reach the calendar and saved notes" in said, said
+    assert "tool for remembering" in said, "it does hold memory"
+
+
+def test_an_unnarrowed_agent_keeps_the_general_lines():
+    """Absent scope still means everything, so nothing is taken away from an
+    agent that predates narrowing."""
+    from routes_agent_turn import _identity_line
+    said = _identity_line({"id": "a", "name": "Ada"}, ["Ada", "Mia"])["content"]
+    assert "real account" in said
+    assert "find_skills" in said
+    assert "tool for remembering" in said
+
+
+def test_picked_with_nothing_ticked_still_means_everything():
+    """The same rule as tools_for_agent: picking nothing is not a request for
+    nothing, so the brief must not tell it that it reaches nothing."""
+    from routes_agent_turn import _identity_line
+    said = _identity_line({"id": "a", "name": "Ada", "meta": {
+        "toolIds": [], "toolScope": "picked"}}, ["Ada"])["content"]
+    assert "real account" in said
+    assert "and nothing else" not in said
+
+
+def test_an_agent_is_told_not_to_claim_another_agents_work():
+    from routes_agent_turn import _identity_line
+    said = _identity_line({"id": "i", "name": "Iris"}, ["Iris", "Ada"])["content"]
+    assert "unless you did it in this reply" in said
+
+
+import pytest as _pytest
+
+
+@_pytest.mark.parametrize("before, after", [
+    ("I'm here \u2014 what do you need?", "I'm here, what do you need?"),
+    ("Sep 7\u201311, 2026", "Sep 7-11, 2026"),
+    ("2026-09-07 \u2014 2026-09-11", "2026-09-07 to 2026-09-11"),
+    ("\u2014 first\n\u2014 second", "- first\n- second"),
+    ("Done \u2014\nnext", "Done\nnext"),
+    ("a \u2014.", "a."),
+    ("no dashes here, a-b stays", "no dashes here, a-b stays"),
+    # Code is pasted into files, so it comes back exactly as written.
+    ("Put this in:\n```html\n<title>Shoe — Landing</title>\n```\ndone — ok",
+     "Put this in:\n```html\n<title>Shoe — Landing</title>\n```\ndone, ok"),
+    ("run `echo a—b` — then check", "run `echo a—b`, then check"),
+    ("```\nunclosed — block", "```\nunclosed — block"),
+])
+def test_long_dashes_are_scrubbed_from_what_an_agent_says(before, after):
+    import agent_routing
+    assert agent_routing.scrub_long_dashes(before) == after
+
+
+def test_scrubbing_leaves_non_text_alone():
+    import agent_routing
+    assert agent_routing.scrub_long_dashes(None) is None
+
+
+async def test_every_turn_is_scrubbed_whatever_the_model_did(monkeypatch):
+    """The brief asks. This is what guarantees it, on every surface that goes
+    through _turn_for: the panel, the gateway, and the agents page."""
+    import routes_agent_turn as rt
+
+    async def fake_run(email, agent_id, history):
+        return {"answer": "I'm here \u2014 what do you need?", "notes": []}
+
+    monkeypatch.setattr(rt, "_run_turn", fake_run)
+    out = await rt._turn_for("me@example.com", {"id": "a", "name": "Ada"},
+                             [{"role": "user", "content": "hi"}], ["Ada"])
+    assert out["answer"] == "I'm here, what do you need?", out["answer"]

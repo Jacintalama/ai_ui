@@ -16,6 +16,7 @@ description: One "Auto" model that reads your question and routes it to the best
 import json
 import os
 import re
+import time
 from typing import Any, AsyncIterator, Callable, Optional, Union
 
 import httpx
@@ -37,15 +38,78 @@ AIUI_TURNS_STRIP_RE = re.compile(r"<!--\s*aiui:turns\b[^>]*-->")
 DEFAULT_CATEGORY = "general"
 
 # When the chosen free model is rate-limited (429) or errors, Auto retries these
-# in order so a busy free provider never dead-ends the user. Kept to the more
-# reliable free models; gemma-4-31b is excluded (its only provider, Google AI
-# Studio, is almost always rate-limited on the free tier).
+# in order so a busy free provider never dead-ends the user.
+#
+# Every id here was measured against the live API on 2026-09-10: each one
+# answered "what is 17 times 4" correctly, in the time noted. The previous pool
+# listed openai/gpt-oss-20b:free and nvidia/nemotron-nano-9b-v2:free, both of
+# which OpenRouter had withdrawn, and google/gemma-4-26b-a4b-it:free, which
+# answers 429 on essentially every call. So three of four retries could not
+# have worked no matter what was asked.
+#
+# Deliberately excluded, and why:
+#   google/gemma-4-31b-it:free       answered once, then 429 on the next call
+#   poolside/laguna-*:free           429
+#   thinkingmachines/inkling*:free   403, not available on this account
+#   nvidia/nemotron-3-ultra-*:free   timed out at 45s
+#   nvidia/nemotron-3-nano-omni-*    returned a body with no choices
+#   nvidia/nemotron-3.5-lightning    correct but 9.4s, too slow to wait on
 FALLBACK_POOL = [
-    "openai/gpt-oss-20b:free",
-    "nvidia/nemotron-3-super-120b-a12b:free",
-    "nvidia/nemotron-nano-9b-v2:free",
-    "google/gemma-4-26b-a4b-it:free",
+    "nex-agi/nex-n2.5-mini:free",              # 0.5s
+    "inclusionai/ling-3.0-flash-fin:free",     # 0.8s
+    "nvidia/nemotron-3-super-120b-a12b:free",  # 1.0s
+    "nex-agi/nex-n2.5-pro:free",               # 1.3s
+    "liquid/lfm-2.5-2.6b:free",                # 1.4s
 ]
+
+#: OpenRouter's free ids rotate: a model that worked last month can be gone
+#: today, and asking for a withdrawn id fails exactly like a rate limit. That
+#: is what made this router look permanently broken rather than occasionally
+#: busy, so the ids above are checked against what is actually being served
+#: before any of them is tried. Fresh ids alone would have rotted the same way.
+_MODELS_URL = "https://openrouter.ai/api/v1/models"
+AVAILABLE_TTL_SECONDS = 900
+_available_ids: set = set()
+_available_at = 0.0
+
+
+async def _available_models(key: str) -> set:
+    """Model ids OpenRouter is serving right now, cached for a quarter hour.
+
+    Fails OPEN, twice over: a fetch that errors returns whatever was cached
+    before, and an empty result is never cached. A router that refuses to try
+    anything because it could not read a catalogue is worse than one that
+    tries an id that turns out to be gone.
+    """
+    global _available_ids, _available_at
+    now = time.time()
+    if _available_ids and now - _available_at < AVAILABLE_TTL_SECONDS:
+        return _available_ids
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(
+                _MODELS_URL, headers={"Authorization": f"Bearer {key}"})
+            r.raise_for_status()
+            ids = {m.get("id") for m in (r.json().get("data") or []) if m.get("id")}
+    except Exception:
+        return _available_ids
+    if ids:
+        _available_ids = ids
+        _available_at = now
+    return _available_ids
+
+
+def _keep_available(candidates: list, available: set) -> list:
+    """The candidates OpenRouter still serves, in order.
+
+    Never returns empty: if the catalogue says none of them exist, that is far
+    more likely to mean the catalogue is wrong than that every model vanished,
+    so the caller still gets its list and finds out by asking.
+    """
+    if not available:
+        return candidates
+    live = [m for m in candidates if m in available]
+    return live or candidates
 
 RULES = {
     "coder": [
@@ -120,7 +184,10 @@ class Pipe:
         # Model ids are OpenRouter :free ids and DO rotate. If a route starts
         # failing, re-check https://openrouter.ai/api/v1/models and update here.
         MODEL_GENERAL: str = Field(
-            default="openai/gpt-oss-20b:free",
+            # Was openai/gpt-oss-20b:free, which OpenRouter has withdrawn.
+            # General is where most questions land, so this one id being dead
+            # is most of why Auto (Free) failed. Measured at 0.5s and correct.
+            default="nex-agi/nex-n2.5-mini:free",
             description="Free model for general questions.",
         )
         MODEL_CODER: str = Field(
@@ -252,6 +319,10 @@ class Pipe:
             return agents
 
         candidates = self._candidates(category)
+        # Before spending a retry on it. A withdrawn id and a rate-limited one
+        # fail identically from here, so without this the pool gets burned on
+        # models that could not have answered whatever was asked.
+        candidates = _keep_available(candidates, await _available_models(key))
         headers = {
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",

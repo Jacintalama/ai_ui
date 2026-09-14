@@ -69,12 +69,46 @@ async def test_the_first_message_still_opens_a_stream():
     assert s.queued == []
 
 
+async def test_a_new_message_opens_a_turn():
+    s = store.get_session(_User.email)
+    out = await _send("what is in my inbox?")
+    body = out.body.decode()
+    assert "aturn" in body
+    assert "what is in my inbox?" in body
+    assert "sse" in body.lower(), "the stream block is still needed"
+
+
+async def test_a_queued_message_opens_its_own_turn():
+    """It is a separate question and gets its own block, or its answers land
+    inside the previous turn and belong to the wrong message."""
+    import re
+    s = store.get_session(_User.email)
+    s.streaming = True
+    out = await _send("and my calendar?")
+    body = out.body.decode()
+    assert "aturn" in body
+    assert "hx-swap-oob" in body, "it must not append after the open turn"
+    # The id in the response is what the browser actually rendered. It has
+    # to be the one the drain later pops and answers under (see
+    # _take_queued_turn_id), or the round's answers name a turn nothing on
+    # screen has. Parsed out rather than assumed, so this fails loudly if
+    # the two diverge instead of passing on a fallback id neither side used.
+    rendered_id = re.search(r'id="aturn-([^"]+)"', body).group(1)
+    assert s.queued_turn_ids == [rendered_id]
+
+
 async def test_several_queued_messages_keep_their_order():
     s = store.get_session(_User.email)
     s.streaming = True
     for text in ("one", "two", "three"):
         await _send(text)
     assert s.queued == ["one", "two", "three"]
+    # Popped in lockstep with `queued` by _take_queued_turn_id: every send
+    # while streaming pushes onto both, so a length mismatch here means a
+    # later pop reads the wrong id for the wrong message and falls back to
+    # a fresh, unrendered one instead of erroring, which is Critical 2
+    # arriving again by a different route.
+    assert len(s.queued_turn_ids) == len(s.queued)
 
 
 async def test_an_empty_message_is_still_refused_while_busy():
@@ -199,50 +233,191 @@ async def test_a_cleared_room_abandons_whatever_was_queued(monkeypatch):
     assert seen == ["first"], "it answered a message from a cleared room"
 
 
+async def test_each_drained_round_answers_under_the_turn_it_was_given(
+        monkeypatch):
+    """_take_queued and _take_queued_turn_id both pop from index 0, kept in
+    lockstep so the id a drained round wraps its answers in is the one the
+    browser actually rendered for that message (see agent_chat_send). If the
+    two ever pop out of order, a round answers under a turn nothing on
+    screen has for that message: the original Critical, back by a third
+    route, on exactly the state a later task is about to touch.
+
+    _run_round is stubbed to record `sess.turn_id` from INSIDE each round,
+    the same moment the real one reads it to wrap its fragments, rather than
+    reading it after the drain: the drain's own final state can look correct
+    even when an earlier round briefly answered under the wrong id.
+    """
+    s = store.get_session(_User.email)
+    await _send("first")
+    first_tid = s.turn_id
+    s.queued = ["second", "third"]
+    # Distinguishable, and distinguishable from first_tid, so a swapped or
+    # off-by-one pop shows up as a wrong id rather than an accidental match.
+    s.queued_turn_ids = ["tid-for-second", "tid-for-third"]
+
+    seen = []
+
+    async def recording_round(email, sess, agents, request=None,
+                              quote=False):
+        seen.append((chat.agent_routing.last_user_text(sess.messages),
+                    sess.turn_id))
+        sess.messages.append({"role": "assistant", "agent_id": "a",
+                              "agent_name": "Ada", "content": "ok"})
+        yield {"event": "message", "data": "x"}
+
+    monkeypatch.setattr(chat, "_run_round", recording_round)
+    monkeypatch.setattr(chat, "_agents_for", lambda e: _agents_stub())
+    monkeypatch.setattr(chat, "_keep_within_budget",
+                        lambda e, sess, a: _nothing())
+    monkeypatch.setattr(store, "save_chat", lambda e, sess: _nothing())
+    resp = await chat.agent_chat_stream(request=_Req(), user=_User())
+    async for _event in resp.body_iterator:
+        pass
+
+    assert seen == [("first", first_tid),
+                    ("second", "tid-for-second"),
+                    ("third", "tid-for-third")], seen
+
+
 async def _agents_stub():
     return [{"id": "agent-a", "name": "Ada"}]
+
+
+# --- a failed turn renders as a failure, not a bubble ------------------------
+#
+# _turn_for never raises: one agent blowing up must not cost the others their
+# answer. So a failure comes back as an ordinary answer string, and the round
+# is the only place that can tell one from a real answer.
+
+async def test_a_failed_agent_renders_as_a_failure(monkeypatch):
+    """_turn_for never raises; it returns the failure sentence as an answer,
+    which is exactly how a failure became a bubble."""
+    import routes_agent_turn as rt
+    s = store.get_session(_User.email)
+    await _send("hi")
+
+    async def failing(email, agent, history, names=()):
+        return {"answer": rt._turn_failed_sentence("Ada"), "notes": [],
+                "agent": {"id": "agent-a", "name": "Ada"}}
+
+    monkeypatch.setattr(chat, "_turn_for", failing)
+    monkeypatch.setattr(chat, "_agents_for",
+                        lambda e: _agents_stub())
+    monkeypatch.setattr(chat, "_keep_within_budget",
+                        lambda e, sess, a: _nothing())
+    monkeypatch.setattr(store, "save_chat", lambda e, sess: _nothing())
+    events = []
+    resp = await chat.agent_chat_stream(request=_Req(), user=_User())
+    async for event in resp.body_iterator:
+        events.append(str(event))
+    assert any("afail" in e for e in events), events
+    # Not just "afail somewhere in the stream": the same answer must not ALSO
+    # have gone out as a bubble, which is exactly the bug being fixed here.
+    assert not any('class=\\"am agent\\"' in e or 'class="am agent"' in e
+                  for e in events), events
+    assert any(m.get("role") == "failure" for m in s.messages), s.messages
+    assert not any(m.get("role") == "assistant" for m in s.messages), \
+        "the failure was also stored as an answer"
+
+
+async def test_the_free_router_giving_up_also_renders_as_a_failure(
+        monkeypatch):
+    """agent_runner.ROUTER_EXHAUSTED comes back as an ordinary answer string
+    the same way _turn_failed_sentence does, and it is the case Ralph
+    actually hits: an agent left on Auto (Free) when the shared pool runs
+    out. Left unmatched it would still read as a real reply."""
+    from agent_runner import ROUTER_EXHAUSTED
+    s = store.get_session(_User.email)
+    await _send("hi")
+
+    async def exhausted(email, agent, history, names=()):
+        return {"answer": ROUTER_EXHAUSTED, "notes": [],
+                "agent": {"id": "agent-a", "name": "Ada"}}
+
+    monkeypatch.setattr(chat, "_turn_for", exhausted)
+    monkeypatch.setattr(chat, "_agents_for",
+                        lambda e: _agents_stub())
+    monkeypatch.setattr(chat, "_keep_within_budget",
+                        lambda e, sess, a: _nothing())
+    monkeypatch.setattr(store, "save_chat", lambda e, sess: _nothing())
+    events = []
+    resp = await chat.agent_chat_stream(request=_Req(), user=_User())
+    async for event in resp.body_iterator:
+        events.append(str(event))
+    assert any("afail" in e for e in events), events
+    assert any("Auto (Free)" in e for e in events), events
+    assert not any('class=\\"am agent\\"' in e or 'class="am agent"' in e
+                  for e in events), events
+    failures = [m for m in s.messages if m.get("role") == "failure"]
+    assert failures, s.messages
+    assert failures[0]["reason"] == "The free models are all busy right now."
+    assert "Auto (Free)" in failures[0]["fix"]
+
+
+async def test_the_everybody_passed_fallback_call_can_also_fail(monkeypatch):
+    """Every agent passes, so the round makes one more call, without the
+    option to pass, rather than leave the room silent. That extra call is
+    exactly as capable of failing as any other _turn_for call, and it is a
+    second, separate call site from the per-agent loop above: recognising a
+    failure there does nothing for this one unless the two share the same
+    check."""
+    import routes_agent_turn as rt
+    s = store.get_session(_User.email)
+    await _send("hi")
+
+    calls = []
+
+    async def pass_once_then_fail(email, agent, history, names=()):
+        calls.append(1)
+        if len(calls) == 1:
+            # The one agent in the room, asked with the option to pass.
+            return {"answer": "PASS", "notes": [],
+                    "agent": {"id": "agent-a", "name": "Ada"}}
+        # The fallback call, made without that option, and it blows up.
+        return {"answer": rt._turn_failed_sentence("Ada"), "notes": [],
+                "agent": {"id": "agent-a", "name": "Ada"}}
+
+    monkeypatch.setattr(chat, "_turn_for", pass_once_then_fail)
+    monkeypatch.setattr(chat, "_agents_for",
+                        lambda e: _agents_stub())
+    monkeypatch.setattr(chat, "_keep_within_budget",
+                        lambda e, sess, a: _nothing())
+    monkeypatch.setattr(store, "save_chat", lambda e, sess: _nothing())
+    events = []
+    resp = await chat.agent_chat_stream(request=_Req(), user=_User())
+    async for event in resp.body_iterator:
+        events.append(str(event))
+    assert len(calls) == 2, "expected a pass, then the fallback's own call"
+    assert any("afail" in e for e in events), events
+    assert not any('class=\\"am agent\\"' in e or 'class="am agent"' in e
+                  for e in events), events
+    # The wrong old behaviour was not silence, it was a real-looking bubble
+    # OR the "nobody had anything to add" note; a failure must not read as
+    # either.
+    assert not any("Nobody had anything to add" in e for e in events), events
+    assert any(m.get("role") == "failure" for m in s.messages), s.messages
+    assert not any(m.get("role") == "note" for m in s.messages), s.messages
 
 
 # --- where a queued message actually lands ----------------------------------
 
 # Found by reading the DOM wiring rather than by a failing test, which is the
 # wrong way round and worth writing down. The composer appends to
-# #agent-thread with hx-swap="beforeend", and the open round's answers append
-# INSIDE .astream .alive, which is itself a child of #agent-thread. So a
-# queued bubble appended to the thread lands BELOW every answer, including the
-# answer to itself. You would see your own question underneath its reply.
-
-def test_a_queued_bubble_targets_the_live_area(monkeypatch):
-    from agent_chat_render import queued_bubble
-    html = queued_bubble("and another thing")
-    assert "hx-swap-oob" in html
-    assert ".alive" in html, "it does not aim at the live area"
-    assert "and another thing" in html
-
-
-def test_the_live_area_it_aims_at_is_the_one_the_stream_makes():
-    """A cross-file check. The selector is a string in one file and the
-    element is created in another, and nothing else would notice them
-    drifting apart: the bubble would simply stop appearing."""
-    from agent_chat_render import queued_bubble, stream_block
-    import re
-    target = re.search(r'hx-swap-oob="beforeend:([^"]+)"',
-                       queued_bubble("x")).group(1)
-    leaf = target.rsplit(" ", 1)[-1].lstrip(".")
-    assert leaf in stream_block(), (target, "not a class the stream creates")
-
-
-def test_the_thread_id_in_the_selector_is_the_one_on_the_page():
-    import pathlib
-    import re
-    from agent_chat_render import queued_bubble
-    page = (pathlib.Path(__file__).resolve().parents[1]
-            / "static" / "agents.html").read_text(encoding="utf-8")
-    target = re.search(r'hx-swap-oob="beforeend:([^"]+)"',
-                       queued_bubble("x")).group(1)
-    thread = target.split()[0].lstrip("#")
-    assert 'id="%s"' % thread in page, thread
-
+# #agent-thread with hx-swap="beforeend", and the open round's answers used
+# to append INSIDE .astream .alive, itself a child of #agent-thread. So a
+# queued bubble appended to the thread ordinarily would have landed BELOW
+# every answer, including the answer to itself: you would see your own
+# question underneath its reply.
+#
+# That first fix was a bubble named `queued_bubble`, targeted out of band
+# straight at `.alive` (`QUEUED_TARGET`). It is gone now, not merely unused:
+# a queued message needs a whole turn, not one bubble, and a round's answers
+# no longer land in `.alive` either (they are addressed by turn id, out of
+# band, wherever they land in the DOM; see into_turn/turn_status in
+# agent_chat_render.py). Keeping queued_bubble around after nothing called
+# it would have meant a function whose docstring described a placement that
+# stopped happening. See test_a_new_message_opens_a_turn and
+# test_a_queued_message_opens_its_own_turn above for what replaced it.
 
 async def test_sending_while_busy_returns_the_out_of_band_bubble():
     s = store.get_session(_User.email)
@@ -351,3 +526,203 @@ async def test_an_ordinary_exchange_quotes_nothing(monkeypatch):
     answers = [m for m in s.messages if m.get("role") == "assistant"]
     assert answers
     assert not any(a.get("replying_to") for a in answers)
+
+
+# ---------------------------------------------------------------------------
+# An agent may not run on a pipe that calls back into this service. Measured
+# 2026-09-10: two agents set to Auto (Free) opened dozens of chats a second
+# and restarted Open WebUI twice, because the pipe asks /agents/chat who
+# should answer, that matches the agent, and the agent runs again. The pipe's
+# own route_only guard does not help: it only short-circuits when NO agent
+# matches, and an agent running itself always matches.
+# ---------------------------------------------------------------------------
+
+
+def test_the_callback_models_are_named_not_guessed():
+    """Named rather than pattern-matched on "auto" or "pipe", because the
+    property that matters is calling back into this service, and no naming
+    convention carries that. Regenerate with:
+      select id from public.function
+       where type='pipe' and content like '%/agents/chat%';
+    """
+    import routes_agent_turn as rt
+    assert "auto_router.auto" in rt.CALLBACK_MODEL_IDS
+    assert "io.io" in rt.CALLBACK_MODEL_IDS
+    # Auto (Smart) does NOT call back, and must stay usable by an agent.
+    assert "auto_smart.auto-smart" not in rt.CALLBACK_MODEL_IDS
+
+
+async def test_an_agent_on_a_callback_model_never_runs(monkeypatch):
+    """The loop must be refused before the turn costs anything, and the
+    refusal must name the fix rather than read as a mystery."""
+    import routes_agent_turn as rt
+
+    async def listed(token):
+        return ([{"id": "agent-a", "name": "Ada",
+                  "base_model_id": "auto_router.auto", "meta": {}}], False)
+
+    async def owner(email):
+        return "user-1"
+
+    ran = []
+
+    async def must_not_run(**kw):
+        ran.append(kw)
+        return ("should never happen", [])
+
+    monkeypatch.setattr(rt, "_list_agents", listed)
+    monkeypatch.setattr(rt, "_owui_user_id_for", owner)
+    monkeypatch.setattr(rt, "mint_owui_token", lambda *a, **k: "tok")
+    monkeypatch.setattr(rt, "_chat", must_not_run)
+
+    out = await rt._turn_for("me@example.com",
+                             {"id": "agent-a", "name": "Ada"},
+                             [{"role": "user", "content": "hi"}])
+    assert out["answer"] == rt.AGENT_ON_CALLBACK_MODEL, out
+    assert ran == [], "it ran the turn anyway, which is the loop"
+
+
+async def test_a_normal_model_still_runs(monkeypatch):
+    """The guard must not refuse everything: that would be a worse bug than
+    the one it fixes, and it would look identical from the outside."""
+    import routes_agent_turn as rt
+
+    async def listed(token):
+        return ([{"id": "agent-a", "name": "Ada",
+                  "base_model_id": "openai/gpt-5-mini", "meta": {}}], False)
+
+    async def owner(email):
+        return "user-1"
+
+    async def answers(**kw):
+        return ("PONG", [])
+
+    monkeypatch.setattr(rt, "_list_agents", listed)
+    monkeypatch.setattr(rt, "_owui_user_id_for", owner)
+    monkeypatch.setattr(rt, "mint_owui_token", lambda *a, **k: "tok")
+    monkeypatch.setattr(rt, "_chat", answers)
+    monkeypatch.setattr(rt.agent_activity, "start_run",
+                        lambda *a, **k: _nothing())
+    monkeypatch.setattr(rt.agent_activity, "finish_run",
+                        lambda *a, **k: _nothing())
+
+    out = await rt._turn_for("me@example.com",
+                             {"id": "agent-a", "name": "Ada"},
+                             [{"role": "user", "content": "hi"}])
+    assert out["answer"] == "PONG", out
+
+
+def test_the_refusal_renders_as_a_failure_with_the_fix():
+    """It must not arrive as an ordinary bubble. The whole point of naming
+    this failure is that the person can act on it."""
+    import routes_agent_turn as rt
+    pair = chat._failure_reason("Ada", rt.AGENT_ON_CALLBACK_MODEL)
+    assert pair is not None, "it would render as something the agent said"
+    reason, fix = pair
+    assert "cannot run an agent" in reason
+    assert "Pick a specific model" in fix, fix
+
+
+# ---------------------------------------------------------------------------
+# The same agent must reach the same tools whichever surface woke it.
+# Measured on production 2026-09-10: Ada had 12 tools in chat and 1 on a
+# schedule, and that 1 was the connected-apps umbrella with nothing behind
+# it. So a scheduled run could read nothing, wrote from nothing, and the card
+# still said "Every tool you have". Nothing in either file said they differed.
+# ---------------------------------------------------------------------------
+
+
+async def test_an_unnarrowed_agent_gets_everything_the_owner_can_reach(monkeypatch):
+    import routes_agent_turn as rt
+
+    async def every(email):
+        return ["gmail", "calendar", "remember", "skills"]
+
+    monkeypatch.setattr(rt, "_every_tool_for", every)
+    tools = await rt.tools_for_agent("me@example.com",
+                                     {"toolIds": ["server:mcp-proxy"]})
+    assert "skills" in tools and "gmail" in tools, tools
+    # Its own list stays in front, so an explicit grant is never lost to a
+    # short read from the wider lookup.
+    assert tools[0] == "server:mcp-proxy", tools
+
+
+async def test_a_narrowed_agent_keeps_only_what_was_picked(monkeypatch):
+    """The narrowing must survive the extraction, or picking a few tools
+    would silently become picking all of them."""
+    import routes_agent_turn as rt
+
+    async def every(email):
+        return ["gmail", "calendar", "remember", "skills"]
+
+    monkeypatch.setattr(rt, "_every_tool_for", every)
+    tools = await rt.tools_for_agent(
+        "me@example.com", {"toolIds": ["gmail"], "toolScope": "picked"})
+    assert tools == ["gmail"], tools
+
+
+async def test_narrowed_to_nothing_still_gets_everything(monkeypatch):
+    """Picking nothing is not a request for nothing: an agent with no tools
+    at all just looks broken. Pre-existing behaviour, pinned here because the
+    extraction moved the branch that implements it."""
+    import routes_agent_turn as rt
+
+    async def every(email):
+        return ["gmail", "skills"]
+
+    monkeypatch.setattr(rt, "_every_tool_for", every)
+    tools = await rt.tools_for_agent(
+        "me@example.com", {"toolIds": [], "toolScope": "picked"})
+    assert "gmail" in tools and "skills" in tools, tools
+
+
+async def test_a_scheduled_run_resolves_tools_like_the_chat_path(monkeypatch):
+    """The defect itself. run_agent used to read meta["toolIds"] verbatim, so
+    the two surfaces disagreed about the same agent."""
+    import agent_runner as ar
+    import routes_agent_turn as rt
+
+    async def every(email):
+        return ["gmail", "calendar", "remember", "skills"]
+
+    monkeypatch.setattr(rt, "_every_tool_for", every)
+    meta = {"toolIds": ["server:mcp-proxy"]}
+
+    seen = {}
+
+    async def fake_chat(**kw):
+        seen.update(kw)
+        return ("done", [])
+
+    async def fake_list(token):
+        return ([{"id": "agent-a", "name": "Ada", "meta": meta,
+                  "base_model_id": "openai/gpt-5-mini"}], False)
+
+    async def fake_owner(email):
+        return "user-1"
+
+    monkeypatch.setattr(ar, "_chat", fake_chat)
+    monkeypatch.setattr(ar, "_list_agents", fake_list)
+    monkeypatch.setattr(ar, "_owui_user_id_for", fake_owner)
+    monkeypatch.setattr(ar, "mint_owui_token", lambda *a, **k: "tok")
+    monkeypatch.setattr(ar.agent_activity, "start_run",
+                        lambda *a, **k: _nothing())
+    monkeypatch.setattr(ar.agent_activity, "finish_run",
+                        lambda *a, **k: _nothing())
+
+    class Sched:
+        id = "s1"
+        user_email = "me@example.com"
+        agent_id = "agent-a"
+        tool_mode = "read_only"
+        prompt = "write the weekly review"
+        last_run_status = None
+        last_result = None
+
+    await ar.run_agent(Sched())
+    got = seen.get("tool_ids") or []
+    assert "skills" in got, (
+        "a scheduled agent could not reach the skills tool, so use_skill "
+        "could never fire: %r" % (got,))
+    assert len(got) > 1, (
+        "the schedule got only its raw toolIds, which is the defect: %r" % (got,))
