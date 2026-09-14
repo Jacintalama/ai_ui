@@ -78,6 +78,34 @@ _READ_VERBS = frozenset({
 #: opinion on either; see the note beside each. Written out so that
 #: renaming a method has to break a test rather than silently change
 #: what an unattended agent may do.
+#: mcp-proxy's own discovery endpoints. They are NOT tools it can call, they
+#: are routes on the proxy itself: /meta/search_tools, /meta/describe_tools,
+#: /meta/call_tool. Open WebUI advertises all of them to the model because
+#: they sit in the proxy's OpenAPI spec, and sending them through
+#: /meta/call_tool asks the proxy for a tool NAMED "search_tools", which is a
+#: category error and 404s.
+#:
+#: Measured 2026-09-14: an agent asked to look something up spent three rounds
+#: calling these, got "is not available" each time, and concluded it had no
+#: way to reach the web. /meta/search_tools was answering the whole time, with
+#: web_search, web_scrape and two hundred others behind it. The proxy's own
+#: comment calls this "3 tools replace 200+"; none of the 200 were reachable.
+#:
+#: search_tools and describe_tools classify as reads by verb, so a read only
+#: agent may discover. call_tool does not, and must not: what it runs might
+#: write anything, so it stays a write and goes through the same approval.
+PROXY_META_METHODS: frozenset[str] = frozenset({
+    "search_tools", "describe_tools", "call_tool",
+})
+
+#: Advertised by the same spec and not implemented at all. Probed 2026-09-14:
+#: /meta/list_servers, /meta/health_check and /meta/refresh_cache each 404.
+#: Naming the one that does work turns a wasted round into a useful one,
+#: which matters because rounds are the budget an agent runs out of.
+PROXY_META_ABSENT: frozenset[str] = frozenset({
+    "list_servers", "health_check", "refresh_cache",
+})
+
 READ_METHODS: frozenset[str] = frozenset({
     "list_unread_emails", "list_important_emails", "list_recent_emails",
     "search_emails", "read_email",
@@ -376,11 +404,26 @@ async def execute_tool_call(
             return await _run_native(source, name, params, user_email,
                                      agent_id)
 
-        response = await _post_json(
-            _proxy_url() + "/meta/call_tool",
-            json={"tool_name": name, "arguments": params},
-            headers={"X-User-Email": user_email},
-            timeout=TOOL_TIMEOUT_SECONDS)
+        if name in PROXY_META_ABSENT:
+            return ("There is no tool called " + name + ". To find one, call "
+                    "search_tools with what you are trying to do, then "
+                    "call_tool to run what it returns.")
+
+        if name in PROXY_META_METHODS:
+            # Straight at the route, carrying the model's own arguments. These
+            # three ARE the proxy's endpoints; wrapping them in call_tool asks
+            # it for a tool by that name and gets a 404.
+            response = await _post_json(
+                _proxy_url() + "/meta/" + name,
+                json=params,
+                headers={"X-User-Email": user_email},
+                timeout=TOOL_TIMEOUT_SECONDS)
+        else:
+            response = await _post_json(
+                _proxy_url() + "/meta/call_tool",
+                json={"tool_name": name, "arguments": params},
+                headers={"X-User-Email": user_email},
+                timeout=TOOL_TIMEOUT_SECONDS)
         if response.status_code == 403:
             return ("You do not have access to the service behind the tool "
                     + name + ".")

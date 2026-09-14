@@ -450,3 +450,102 @@ async def test_a_kwargs_tool_is_handed_the_agent_too():
             _call("create_schedule"), "owner@example.com",
             None, "agent-research-assistant-0001")
     assert out == "as:agent-research-assistant-0001"
+
+
+# ---------------------------------------------------------------------------
+# mcp-proxy's own discovery endpoints. Measured on production 2026-09-14: an
+# agent was advertised six of them, three of which do not exist, and all six
+# were routed through /meta/call_tool, which asks the proxy for a TOOL by that
+# name and 404s. The agent burned a round per attempt and then told the owner
+# it had no way to reach the web, while /meta/search_tools was answering with
+# web_search, web_scrape and two hundred others the whole time. The proxy's
+# own comment calls this "3 tools replace 200+"; none of the 200 were reachable.
+# ---------------------------------------------------------------------------
+
+
+async def test_search_tools_reaches_its_own_endpoint():
+    captured = {}
+
+    async def fake_post(url, json=None, headers=None, timeout=None):
+        captured["url"] = url
+        captured["json"] = json
+        return _FakeResponse(200, {"results": []})
+
+    with patch("agent_tools._load_native_tool_source",
+               new=AsyncMock(return_value=None)), \
+         patch("agent_tools._post_json", new=fake_post):
+        await execute_tool_call(
+            _call("search_tools", {"query": "web search", "limit": 5}),
+            "owner@example.com")
+
+    assert captured["url"].endswith("/meta/search_tools"), captured["url"]
+    # The model's own arguments, passed straight through. Re-wrapping them in
+    # {"tool_name": ..., "arguments": ...} is exactly what 404'd.
+    assert captured["json"] == {"query": "web search", "limit": 5}
+
+
+async def test_call_tool_reaches_its_own_endpoint_unwrapped():
+    """call_tool wrapped in call_tool asks the proxy for a tool literally
+    named call_tool, and loses the real tool name inside the arguments."""
+    captured = {}
+
+    async def fake_post(url, json=None, headers=None, timeout=None):
+        captured["url"] = url
+        captured["json"] = json
+        return _FakeResponse(200, {"ok": True})
+
+    with patch("agent_tools._load_native_tool_source",
+               new=AsyncMock(return_value=None)), \
+         patch("agent_tools._post_json", new=fake_post):
+        await execute_tool_call(
+            _call("call_tool", {"tool_name": "web-search_web_search",
+                                "arguments": {"query": "x"}}),
+            "owner@example.com")
+
+    assert captured["url"].endswith("/meta/call_tool"), captured["url"]
+    assert captured["json"]["tool_name"] == "web-search_web_search"
+
+
+async def test_an_ordinary_proxy_tool_is_still_wrapped():
+    """The three meta routes are the exception. Every other proxy tool must
+    still go through call_tool, which is the whole normal path."""
+    captured = {}
+
+    async def fake_post(url, json=None, headers=None, timeout=None):
+        captured["url"] = url
+        captured["json"] = json
+        return _FakeResponse(200, {"ok": True})
+
+    with patch("agent_tools._load_native_tool_source",
+               new=AsyncMock(return_value=None)), \
+         patch("agent_tools._post_json", new=fake_post):
+        await execute_tool_call(
+            _call("my-clickup_list_tasks", {"space": "1"}), "owner@example.com")
+
+    assert captured["url"].endswith("/meta/call_tool"), captured["url"]
+    assert captured["json"] == {"tool_name": "my-clickup_list_tasks",
+                                "arguments": {"space": "1"}}
+
+
+async def test_a_meta_tool_that_does_not_exist_points_at_the_one_that_does():
+    """list_servers, health_check and refresh_cache are advertised and each
+    404s. A dead end costs a round and teaches nothing; a signpost costs the
+    same round and fixes the next one, and rounds are the budget an agent
+    actually runs out of."""
+    with patch("agent_tools._load_native_tool_source",
+               new=AsyncMock(return_value=None)):
+        out = await execute_tool_call(_call("list_servers"),
+                                      "owner@example.com")
+
+    assert "search_tools" in out, out
+    assert "call_tool" in out, out
+
+
+def test_discovery_reads_but_calling_writes():
+    """A read only agent must be able to FIND a tool and must not be able to
+    RUN an arbitrary one: what call_tool runs could write anything."""
+    assert not agent_tools.is_write_tool("search_tools")
+    assert not agent_tools.is_write_tool("describe_tools")
+    assert agent_tools.is_write_tool("call_tool"), (
+        "call_tool classified as a read, so a read only agent could run any "
+        "tool behind the proxy")
