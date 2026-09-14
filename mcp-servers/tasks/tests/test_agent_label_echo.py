@@ -378,6 +378,11 @@ import pytest as _pytest
     ("Done \u2014\nnext", "Done\nnext"),
     ("a \u2014.", "a."),
     ("no dashes here, a-b stays", "no dashes here, a-b stays"),
+    # Code is pasted into files, so it comes back exactly as written.
+    ("Put this in:\n```html\n<title>Shoe — Landing</title>\n```\ndone — ok",
+     "Put this in:\n```html\n<title>Shoe — Landing</title>\n```\ndone, ok"),
+    ("run `echo a—b` — then check", "run `echo a—b`, then check"),
+    ("```\nunclosed — block", "```\nunclosed — block"),
 ])
 def test_long_dashes_are_scrubbed_from_what_an_agent_says(before, after):
     import agent_routing

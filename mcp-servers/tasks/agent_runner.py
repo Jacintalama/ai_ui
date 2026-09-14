@@ -101,6 +101,13 @@ MAX_TOOL_ITERATIONS = 8
 CHANNEL_MAX_TOOL_ITERATIONS = 7
 CHANNEL_HTTP_TIMEOUT_SECONDS = 60
 
+#: The write-up after the tool cap carries every file and result the rounds
+#: gathered, so it is the slowest completion of the run. Measured 2026-09-14:
+#: gpt-5-mini took 22s for a plain turn with the brief, and Kai's write-up
+#: after seven rounds of app files hit the 60s timeout and he said nothing.
+#: Seven rounds at 60 plus this is nine minutes, inside STALE_AFTER_CHANNEL.
+FINAL_ROUND_MIN_TIMEOUT_SECONDS = 120
+
 #: The chat token has to outlive the WHOLE loop, not one completion: the loop
 #: can make up to MAX_TOOL_ITERATIONS sequential calls of up to
 #: HTTP_TIMEOUT_SECONDS each, plus tool time in between. A token sized for a
@@ -410,7 +417,7 @@ async def _chat(token: str, model: str, messages: list[dict],
         try:
             data = await _post_chat(
                 {"model": model, "messages": convo, "stream": False},
-                token, timeout)
+                token, max(timeout, FINAL_ROUND_MIN_TIMEOUT_SECONDS))
             choices = data.get("choices") or []
             message = (choices[0].get("message") or {}) if choices else {}
             final = (message.get("content") or "").strip()

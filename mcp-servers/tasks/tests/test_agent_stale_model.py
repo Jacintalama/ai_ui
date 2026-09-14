@@ -251,8 +251,10 @@ def test_the_longer_cap_still_fits_inside_the_awake_window():
     from datetime import timedelta
 
     from agent_activity import STALE_AFTER_CHANNEL
+    # The rounds, then the write-up after the cap, which has its own budget.
     worst = timedelta(seconds=agent_runner.CHANNEL_HTTP_TIMEOUT_SECONDS
-                      * agent_runner.CHANNEL_MAX_TOOL_ITERATIONS)
+                      * agent_runner.CHANNEL_MAX_TOOL_ITERATIONS
+                      + agent_runner.FINAL_ROUND_MIN_TIMEOUT_SECONDS)
     assert STALE_AFTER_CHANNEL > worst, (STALE_AFTER_CHANNEL, worst)
 
 

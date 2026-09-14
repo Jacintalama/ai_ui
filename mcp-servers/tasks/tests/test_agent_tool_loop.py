@@ -554,6 +554,31 @@ async def test_after_the_cap_the_model_answers_from_what_it_read():
     assert any("stopped" in n.lower() for n in notes), "the caveat was dropped"
 
 
+async def test_the_final_round_gets_longer_than_a_chat_round():
+    """It carries everything the rounds read. At the 60s chat timeout Kai's
+    write-up after seven rounds of app files timed out, live."""
+    timeouts = []
+
+    async def fake_post(payload, token, timeout=None):
+        timeouts.append((bool(payload.get("tool_ids")), timeout))
+        if payload.get("tool_ids"):
+            return _calls_reply()
+        return {"choices": [{"message": {"content": "done"}}]}
+
+    with patch.object(agent_runner, "_post_chat", new=fake_post), \
+         patch("agent_runner.execute_tool_call",
+               new=AsyncMock(return_value="r")):
+        await agent_runner._chat(
+            token="t", model="agent-1",
+            messages=[{"role": "user", "content": "q"}],
+            tool_ids=["gmail"], user_email="owner@example.com",
+            tool_mode="read_only", max_iterations=2,
+            timeout=agent_runner.CHANNEL_HTTP_TIMEOUT_SECONDS)
+
+    assert timeouts[0] == (True, agent_runner.CHANNEL_HTTP_TIMEOUT_SECONDS)
+    assert timeouts[-1] == (False, agent_runner.FINAL_ROUND_MIN_TIMEOUT_SECONDS)
+
+
 async def test_a_failing_final_round_still_says_it_stopped():
     """The final round is a bonus. If it errors, the owner still hears that
     the run stopped early rather than getting an exception or silence."""

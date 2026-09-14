@@ -128,11 +128,14 @@ def test_each_cut_off_clears_the_worst_case_of_its_own_path():
     bounded at about three."""
     from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS,
                               CHANNEL_MAX_TOOL_ITERATIONS,
+                              FINAL_ROUND_MIN_TIMEOUT_SECONDS,
                               HTTP_TIMEOUT_SECONDS, MAX_TOOL_ITERATIONS)
+    # Each includes the write-up after the tool cap.
     worst_schedule = timedelta(
-        seconds=HTTP_TIMEOUT_SECONDS * MAX_TOOL_ITERATIONS)
+        seconds=HTTP_TIMEOUT_SECONDS * (MAX_TOOL_ITERATIONS + 1))
     worst_channel = timedelta(
-        seconds=CHANNEL_HTTP_TIMEOUT_SECONDS * CHANNEL_MAX_TOOL_ITERATIONS)
+        seconds=CHANNEL_HTTP_TIMEOUT_SECONDS * CHANNEL_MAX_TOOL_ITERATIONS
+        + FINAL_ROUND_MIN_TIMEOUT_SECONDS)
     assert STALE_AFTER_SCHEDULE > worst_schedule, (
         "a healthy long schedule would be reported as failed")
     assert STALE_AFTER_CHANNEL > worst_channel, (
