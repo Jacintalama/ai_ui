@@ -585,3 +585,17 @@ def test_the_token_outlives_the_whole_loop():
     an agent that dies partway through and reports it as a refusal."""
     assert agent_runner.CHAT_TOKEN_TTL_SECONDS >= (
         agent_runner.MAX_TOOL_ITERATIONS * agent_runner.HTTP_TIMEOUT_SECONDS)
+
+
+async def test_a_scheduled_report_carries_no_long_dashes(wired):
+    """A report lands in the owner's Discord. The brief forbids long dashes
+    and the model used one in 25 of 36 replies anyway, so the schedule path
+    scrubs on the way out as well as the chat path."""
+    wired.chat.return_value = (
+        "**Weekly review** Sep 7\u201311\n\nShipped \u2014 the portfolio.", [])
+
+    status, result, _ = await agent_runner.run_agent(_sched())
+
+    assert status == "completed", (status, result)
+    assert "\u2014" not in result and "\u2013" not in result, result
+    assert "Sep 7-11" in result

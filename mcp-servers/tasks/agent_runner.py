@@ -48,6 +48,16 @@ HTTP_TIMEOUT_SECONDS = 240
 #: files is how that kind of check rots.
 RAN_OUT_OF_ROUNDS = "Stopped after %d rounds of tool use, so this answer may be incomplete."
 
+#: Asked once, with no tools attached, after the last round is spent. The
+#: reads the model did are real and already in the conversation; only the
+#: writing is missing. Measured 2026-09-14: Kai spent seven rounds reading
+#: five files of the shoe app, had what he needed to say why the new page was
+#: not showing, and returned nothing but the note that he had stopped.
+FINAL_ROUND_PROMPT = (
+    "You have used every tool call you get for this reply. Answer now from "
+    "what you have already read. Say plainly what you found, and name "
+    "anything you did not get to check.")
+
 #: How many times the model may ask for tools before we stop. Each iteration
 #: is a full completion, so this bounds the run's wall clock as well as its
 #: appetite.
@@ -385,8 +395,33 @@ async def _chat(token: str, model: str, messages: list[dict],
             # before the next completion, which is what the resume writes.
             raise agent_access.ApprovalRequired(convo, pending)
 
+    # The rounds are spent but the reading is not wasted. One more completion
+    # with no tools attached makes the model write up what it gathered,
+    # instead of the owner getting only a note that it stopped. No tool_ids
+    # means Open WebUI attaches none; any tool_calls that come back anyway are
+    # ignored rather than run, because running them is the round the cap
+    # exists to refuse.
+    #
+    # Skipped when the cap is zero. That asks for no completions at all, and
+    # answering it with one would be the loop overriding its own caller.
+    final = ""
+    if max_iterations > 0:
+        convo.append({"role": "user", "content": FINAL_ROUND_PROMPT})
+        try:
+            data = await _post_chat(
+                {"model": model, "messages": convo, "stream": False},
+                token, timeout)
+            choices = data.get("choices") or []
+            message = (choices[0].get("message") or {}) if choices else {}
+            final = (message.get("content") or "").strip()
+        except Exception:                                   # noqa: BLE001
+            logger.warning("the final answer round after the tool cap failed",
+                           exc_info=True)
+            final = ""
+        if final and _router_gave_up(final):
+            return ROUTER_EXHAUSTED, notes
     notes.append(RAN_OUT_OF_ROUNDS % max_iterations)
-    return content, notes
+    return (final or content), notes
 
 
 def _messages_for(sched) -> list[dict]:
@@ -523,7 +558,11 @@ async def run_agent(sched) -> tuple[str, str, dict]:
             note_text = "\n".join(notes)
             answer = (answer + "\n\n" + note_text) if answer else note_text
         outcome = "completed"
-        return ("completed", answer, {})
+        # Guaranteed rather than requested. The brief asks for no long dashes
+        # and the model used one in 25 of 36 replies anyway, so a report that
+        # lands in the owner's Discord is cleaned on the way out.
+        from agent_routing import scrub_long_dashes
+        return ("completed", scrub_long_dashes(answer), {})
     except agent_access.ApprovalRequired:
         # Unreachable today: effective_mode never gives a schedule "ask".
         # Kept so that if it ever becomes reachable the owner is told the

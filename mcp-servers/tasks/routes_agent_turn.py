@@ -362,7 +362,11 @@ async def _resume_turn(user_email: str, agent_id: str, conversation: list[dict],
             # cap by looking a skill up first.
             answer = "\n".join(notes)
             notes = []
-        return {"answer": answer, "notes": notes}
+        # This path returns straight to the approval handler without passing
+        # through _turn_for, and it is where "Done, I added the page" style
+        # replies come from, so it scrubs the same way.
+        return {"answer": agent_routing.scrub_long_dashes(answer),
+                "notes": notes}
     except agent_access.ApprovalRequired as err:
         outcome = STATUS_WAITING
         return _pending_payload(user_email, agent_id, err)
@@ -655,6 +659,69 @@ def _role_of(agent: dict) -> str:
     return role[0].lower() + role[1:]
 
 
+#: What each tool reaches, in the words the owner would use. Kept here rather
+#: than imported from routes_agents, which imports this module.
+_TOOL_WORDS = {
+    "gmail": "email",
+    "calendar": "the calendar",
+    "gdrive": "Drive",
+    "code": "the apps they build",
+    "schedules": "their schedules",
+    "remember": "saved notes",
+    "documents": "making documents",
+    "excel_creator": "making spreadsheets",
+    "executive_dashboard": "making dashboards",
+    "account": "their account and connections",
+    "server:mcp-proxy": "their connected apps and the web",
+    "agents": "the other assistants",
+}
+
+
+def _own_tools(agent: dict):
+    """This agent's own tools when it is narrowed, or None when it reaches
+    everything. The same rule tools_for_agent applies, so the brief and the
+    tools actually attached can never describe different agents."""
+    meta = agent.get("meta") if isinstance(agent.get("meta"), dict) else {}
+    own = [t for t in (meta.get("toolIds") or []) if isinstance(t, str)]
+    if meta.get("toolScope") == TOOL_SCOPE_PICKED and own:
+        return own
+    return None
+
+
+def _reaches(agent: dict, tool_id: str) -> bool:
+    own = _own_tools(agent)
+    return own is None or tool_id in own
+
+
+def _join_words(words: list) -> str:
+    if len(words) <= 1:
+        return "".join(words)
+    return ", ".join(words[:-1]) + " and " + words[-1]
+
+
+def _tools_sentence(agent: dict) -> str:
+    """What this agent can reach, and what to do about the rest.
+
+    It used to say the same thing to every agent: that it had tools for
+    mail, files, apps, connections, schedules and saved notes. True of an
+    agent with everything, false of every narrowed one, so Mia, Nora and Iris
+    each offered to bug-hunt an app none of them can open.
+    """
+    base = ("When they ask about their own things, use a tool and answer "
+            "from what it returns. Never state a number or a name you have "
+            "not looked up. Never describe what you could do instead of "
+            "doing it: if you can check, check, then say what you found.")
+    own = _own_tools(agent)
+    if own is None:
+        return "You have tools that read this person's real account. " + base
+    reach = [_TOOL_WORDS.get(t, t) for t in own if t != "skills"]
+    if not reach:
+        return base
+    return ("Your tools reach %s, and nothing else. %s Anything that needs "
+            "another tool is not yours to do: say so or pass, and never "
+            "offer to do it." % (_join_words(reach), base))
+
+
 def _identity_line(agent: dict, names) -> dict:
     """Who the agent is and how it is expected to work, as one system line.
 
@@ -687,15 +754,11 @@ def _identity_line(agent: dict, names) -> dict:
             "not this person's colleagues: when they say team or everyone "
             "they mean you and the other assistants, so answer for yourself "
             "rather than suggesting they go and ask somebody. Never answer "
-            "for them or invent what they said." % ", ".join(others))
+            "for them or invent what they said. Earlier replies here came "
+            "from several of you, so never say you changed or checked "
+            "something unless you did it in this reply." % ", ".join(others))
 
-    said.append(
-        "You have tools that read this person's real account: their mail, "
-        "files, apps, connections, schedules and saved notes. When they ask "
-        "anything about their own things, use a tool and answer from what it "
-        "returns. Never state a number or a name you have not looked up. "
-        "Never describe what you could do instead of doing it: if you can "
-        "check, check, then say what you found.")
+    said.append(_tools_sentence(agent))
 
     said.append(
         "Asked what you do or what you are working on, answer from your own "
@@ -723,15 +786,20 @@ def _identity_line(agent: dict, names) -> dict:
         "Answer the question they actually asked. Running your usual job and "
         "reporting the result is not an answer to a different question.")
 
-    said.append(
-        "You have a tool for remembering things. When they tell you something "
-        "worth keeping, a preference, a decision, a name, save it, so the "
-        "next conversation starts where this one ended.")
+    if _reaches(agent, "remember"):
+        said.append(
+            "You have a tool for remembering things. When they tell you "
+            "something worth keeping, a preference, a decision, a name, save "
+            "it, so the next conversation starts where this one ended.")
 
-    said.append(
-        "Before doing a job you have no instructions for, call find_skills "
-        "with what they asked in their own words. If one fits, use_skill and "
-        "follow it. If none does, do the job and say so.")
+    # A narrowed agent without the skills tool still gets its assigned skills
+    # through brief_for below; telling it to call find_skills only spends a
+    # round on "not available".
+    if _reaches(agent, "skills"):
+        said.append(
+            "Before doing a job you have no instructions for, call find_skills "
+            "with what they asked in their own words. If one fits, use_skill "
+            "and follow it. If none does, do the job and say so.")
 
     said.append(
         "Answer, then stop. Do not close with an offer of further help or an "
@@ -784,7 +852,10 @@ async def _turn_for(user_email: str, agent: dict, messages: list[dict],
             out = {"answer": _turn_failed_sentence(agent.get("name")),
                    "notes": []}
     out = dict(out)  # Defensive copy: caller must never get a shared dict modified
-    out["answer"] = agent_routing.strip_leading_labels(out.get("answer"), names)
+    # Scrubbed, not requested: the brief forbids long dashes and the model
+    # used one in 25 of 36 replies anyway.
+    out["answer"] = agent_routing.scrub_long_dashes(
+        agent_routing.strip_leading_labels(out.get("answer"), names))
     out["agent"] = {"id": agent["id"], "name": agent.get("name") or agent["id"]}
     return out
 
