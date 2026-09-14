@@ -138,13 +138,22 @@ async def _list_agents(token: str) -> tuple[list[dict], bool]:
 
 
 #: What Open WebUI says when its in-memory model list is behind the database.
-#: A derived model whose base changed is still routed as whatever its base was
-#: when the cache was built, so it goes looking for a pipe function by the new
-#: base's name and does not find one. Seen live on 2026-09-08 as
-#: "Function not found: gpt-4o-mini" after two agents were moved between
-#: models: every turn 400ed until somebody opened the site in a browser, which
-#: calls /api/models and rebuilds it.
-_STALE_MODEL_DETAIL = "Function not found"
+#: It says it two different ways, and only one of them was handled here.
+#:
+#: "Function not found" is the DERIVED model case: an agent whose base model
+#: changed is still routed as whatever its base was when the cache was built,
+#: so it looks for a pipe function by the new base's name. Seen live
+#: 2026-09-08 as "Function not found: gpt-4o-mini" after two agents were
+#: moved between models.
+#:
+#: "Model not found" is the NEW model case, and it is the more common one: a
+#: model row created since the cache was built is not in it at all. Seen live
+#: 2026-09-14, the first time an agent was created through the API rather than
+#: the browser: five new agents, every turn 400ing, while the retry that
+#: exists for exactly this sat there matching the other string.
+#:
+#: Both heal the same way, by calling /api/models, which is why one list.
+_STALE_MODEL_DETAILS = ("Function not found", "Model not found")
 
 
 def _is_stale_model_cache(response) -> bool:
@@ -163,7 +172,7 @@ def _is_stale_model_cache(response) -> bool:
         # Not everything that answers this URL is Open WebUI. A proxy or a
         # gateway failing returns HTML, and .json() raises on it.
         return False
-    return isinstance(detail, str) and _STALE_MODEL_DETAIL in detail
+    return isinstance(detail, str) and any(d in detail for d in _STALE_MODEL_DETAILS)
 
 
 async def _post_once(client, payload: dict, token: str):
