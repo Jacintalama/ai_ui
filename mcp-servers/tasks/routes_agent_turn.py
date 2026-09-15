@@ -221,6 +221,21 @@ async def tools_for_agent(user_email: str, meta: dict) -> list[str]:
     return tools
 
 
+def _last_user_text(messages: list[dict]) -> str:
+    """What the person actually typed this turn, for the reflection.
+
+    The last user message rather than the first or the whole list: by the
+    time a turn reaches here the messages carry the identity line, the
+    recall block and the earlier turns of the conversation, and reflecting
+    on all of that would write down again what was settled days ago.
+    """
+    for m in reversed(messages or []):
+        if isinstance(m, dict) and m.get("role") == "user":
+            content = m.get("content")
+            return content if isinstance(content, str) else ""
+    return ""
+
+
 def _trim_for_storage(conversation: list[dict]) -> list[dict]:
     """Cap what goes into the state store, without dropping any message.
 
@@ -287,6 +302,10 @@ async def _run_turn(user_email: str, agent_id: str,
             # cap by looking a skill up first.
             answer = "\n".join(notes)
             notes = []
+        # The subconscious: after a real answer, one detached completion
+        # writes down what was settled. Fire and forget, never awaited here.
+        agent_memory.schedule_reflection(
+            user_email, agent, token, _last_user_text(messages), answer)
         return {"answer": answer, "notes": notes}
     except agent_access.ApprovalRequired as err:
         outcome = STATUS_WAITING

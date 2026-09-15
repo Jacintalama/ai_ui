@@ -314,3 +314,98 @@ async def test_a_crowded_cache_drops_what_has_already_expired():
     assert not [k for k in am._facts_cache if k.startswith("old-")]
     assert fresh in am._facts_cache, "an entry still inside its TTL is not expired"
     assert "new@example.com" in am._facts_cache
+
+
+# ---------------------------------------------------------------------------
+# Capture: the reflection after a chat turn. The model call is a seam
+# (_complete), so nothing here needs a model, and the store is patched, so
+# nothing here needs the database.
+# ---------------------------------------------------------------------------
+
+
+def _reflecting_agent():
+    return {"id": "agent-1", "name": "Ada",
+            "base_model_id": "nvidia/nemotron-3-super-120b-a12b:free"}
+
+
+def test_schedule_reflection_skips_a_turn_not_worth_it(monkeypatch):
+    calls = []
+    monkeypatch.setattr(am, "reflect_after_turn",
+                        lambda *a, **k: calls.append(a))
+    assert am.schedule_reflection("o@example.com", _reflecting_agent(), "tok",
+                                  "hi", "Hello.") is None
+    assert calls == []
+
+
+async def test_schedule_reflection_rate_limits_per_agent(monkeypatch):
+    """Free models are free of money, not of quota: 1,000 requests a day on
+    one key, shared with everything else on the platform."""
+    ran = []
+
+    async def fake_reflect(*a, **k):
+        ran.append(a)
+
+    monkeypatch.setattr(am, "reflect_after_turn", fake_reflect)
+    am._last_reflect.clear()
+    text = "Set the digest to 7am Manila time from now on, please."
+    first = am.schedule_reflection("o@example.com", _reflecting_agent(), "tok",
+                                   text, "Done.")
+    second = am.schedule_reflection("o@example.com", _reflecting_agent(), "tok",
+                                    text, "Done.")
+    assert first is not None and second is None
+    await first
+    assert len(ran) == 1
+
+
+async def test_reflect_after_turn_stores_what_the_model_returned(monkeypatch):
+    seen = {}
+
+    async def fake_post(payload, token, timeout=None):
+        seen["payload"] = payload
+        return {"choices": [{"message": {"content":
+                 '{"notes": ["Sends the digest at 7am Manila time."], '
+                 '"facts": ["Client is called Northwind."]}'}}]}
+
+    stored = {}
+    monkeypatch.setattr(am, "_complete", fake_post)
+    monkeypatch.setattr(am, "list_notes", AsyncMock(return_value=[]))
+    monkeypatch.setattr(am, "list_facts", AsyncMock(return_value=[]))
+
+    async def add_notes(email, agent_id, notes, source="reflection"):
+        stored["notes"] = (agent_id, notes)
+        return len(notes)
+
+    async def add_facts(email, facts):
+        stored["facts"] = facts
+        return len(facts)
+
+    monkeypatch.setattr(am, "add_notes", add_notes)
+    monkeypatch.setattr(am, "add_facts", add_facts)
+
+    await am.reflect_after_turn("o@example.com", _reflecting_agent(), "tok",
+                                "Move the digest to 7am Manila, client is Northwind.",
+                                "Done.")
+    assert stored["notes"] == ("agent-1", ["Sends the digest at 7am Manila time."])
+    assert stored["facts"] == ["Client is called Northwind."]
+    assert seen["payload"]["model"] == am.REFLECT_MODEL
+    # No tools. The reflection reads one exchange and writes JSON; a
+    # summariser that could send an email is one that one day does.
+    assert "tool_ids" not in seen["payload"]
+    # The same setting the tool loop sends on a free model. Measured
+    # 2026-09-15: with reasoning on, a truncated nemotron reply leaked its
+    # thinking into the content, which here would be stored as a note.
+    assert seen["payload"]["reasoning_effort"] == "none"
+
+
+async def test_reflect_after_turn_never_raises(monkeypatch):
+    """It runs detached, so an escaping exception lands in a discarded task
+    and shows up as nothing at all. The turn it belongs to is long answered."""
+    async def boom(*a, **k):
+        raise RuntimeError("model down")
+
+    monkeypatch.setattr(am, "_complete", boom)
+    monkeypatch.setattr(am, "list_notes", AsyncMock(return_value=[]))
+    monkeypatch.setattr(am, "list_facts", AsyncMock(return_value=[]))
+    await am.reflect_after_turn("o@example.com", _reflecting_agent(), "tok",
+                                "Move the digest to 7am Manila, client is Northwind.",
+                                "Done.")

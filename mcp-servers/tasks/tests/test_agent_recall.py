@@ -8,6 +8,7 @@ block itself and is tested here as its own path.
 """
 from unittest.mock import AsyncMock
 
+import agent_access
 import agent_memory
 import agent_runner
 import routes_agent_turn as rt
@@ -270,3 +271,85 @@ async def test_resolve_agent_still_returns_three_values(monkeypatch):
     monkeypatch.setattr(rt, "tools_for_agent", AsyncMock(return_value=[]))
     out = await rt._resolve_agent("o@example.com", "agent-1")
     assert len(out) == 3
+
+
+# ---------------------------------------------------------------------------
+# Capture. A chat turn that settled something schedules one detached
+# completion to write it down. Only the chat turn: never the resume half,
+# which has no new message of its own, and never a turn that stopped to ask,
+# which has not happened yet.
+# ---------------------------------------------------------------------------
+
+
+async def test_run_turn_schedules_a_reflection_with_the_last_user_message(
+        monkeypatch):
+    seen = {}
+
+    async def fake_chat(**kwargs):
+        return "Done, 7am it is.", []
+
+    row = {"id": "agent-1", "name": "Ada", "base_model_id": "x:free",
+           "params": {"system": "Be Ada."}, "meta": {"toolIds": []}}
+    await _wire_turn(monkeypatch, row, fake_chat)
+
+    def fake_schedule(user_email, agent, token, user_text, answer):
+        seen.update(email=user_email, agent=agent["id"], text=user_text,
+                    answer=answer)
+
+    monkeypatch.setattr(agent_memory, "schedule_reflection", fake_schedule)
+    await rt._run_turn("o@example.com", "agent-1", [
+        {"role": "system", "content": "identity"},
+        {"role": "user", "content": "earlier"},
+        {"role": "assistant", "content": "earlier answer"},
+        {"role": "user", "content": "Set the digest to 7am Manila from now on."}])
+    assert seen == {"email": "o@example.com", "agent": "agent-1",
+                    "text": "Set the digest to 7am Manila from now on.",
+                    "answer": "Done, 7am it is."}
+
+
+async def test_resume_turn_schedules_no_reflection(monkeypatch):
+    """The resume half carries no new message from the person. Reflecting on
+    it would write down the same exchange twice, under the tool result
+    rather than under what was asked."""
+    called = []
+
+    async def fake_chat(**kwargs):
+        return "Sent it.", []
+
+    row = {"id": "agent-1", "name": "Ada", "base_model_id": "x:free",
+           "params": {}, "meta": {"toolIds": [], "access": "all"}}
+    await _wire_turn(monkeypatch, row, fake_chat)
+    monkeypatch.setattr(agent_memory, "schedule_reflection",
+                        lambda *a, **k: called.append(a))
+
+    await rt._resume_turn(
+        "o@example.com", "agent-1",
+        [{"role": "user",
+          "content": "Send the digest at 7am Manila from now on, please."}],
+        [], True)
+    assert called == []
+
+
+async def test_a_turn_that_stopped_to_ask_schedules_no_reflection(monkeypatch):
+    """Nothing is settled yet: the owner has not answered. Writing it down
+    here would record a thing the agent was stopped from doing as a thing it
+    did."""
+    called = []
+
+    async def fake_chat(**kwargs):
+        raise agent_access.ApprovalRequired(
+            [{"role": "assistant", "content": "", "tool_calls": []}],
+            [{"id": "c1", "function": {"name": "send_email"}}])
+
+    row = {"id": "agent-1", "name": "Ada", "base_model_id": "x:free",
+           "params": {}, "meta": {"toolIds": [], "access": "ask"}}
+    await _wire_turn(monkeypatch, row, fake_chat)
+    monkeypatch.setattr(agent_memory, "schedule_reflection",
+                        lambda *a, **k: called.append(a))
+
+    out = await rt._run_turn(
+        "o@example.com", "agent-1",
+        [{"role": "user",
+          "content": "Send the digest at 7am Manila from now on, please."}])
+    assert "pending" in out
+    assert called == []

@@ -19,6 +19,7 @@ Everything here fails open. A turn must never fail because its memory did.
 import asyncio
 import json
 import logging
+import os
 import re
 import time
 import unicodedata
@@ -515,3 +516,112 @@ async def recall_block(user_email: str, agent_id: str) -> str:
                        exc_info=True)
         return ""
     return render_recall([n["content"] for n in notes], facts)
+
+
+# --- capture: the reflection after a turn ----------------------------------
+
+#: The model the reflection runs on. The first free id in the pool unless
+#: told otherwise: it has no tools, no history and a 2,000 character input,
+#: so the cheapest thing that follows a JSON instruction is right.
+REFLECT_MODEL = os.environ.get("AGENT_REFLECT_MODEL") or (
+    [m.strip() for m in os.environ.get(
+        "AGENT_FREE_MODELS",
+        "nvidia/nemotron-3-super-120b-a12b:free").split(",") if m.strip()]
+    or ["nvidia/nemotron-3-super-120b-a12b:free"])[0]
+REFLECT_TIMEOUT_SECONDS = 45
+
+_last_reflect: dict[tuple[str, str], float] = {}
+_in_flight = asyncio.Semaphore(REFLECT_MAX_IN_FLIGHT)
+
+
+async def _complete(payload: dict, token: str, timeout: float) -> dict:
+    """One completion through Open WebUI, with the free pool fallback the
+    tool loop has. A seam, so tests stand in for it without a model.
+
+    agent_runner is imported here rather than at the top of the module
+    because agent_runner imports this one, and at module scope that is a
+    cycle: the schedule runner carries the recall block.
+    """
+    import agent_runner
+    row = {"base_model_id": payload.get("model"), "params": {}}
+    pool = await agent_runner._fallback_pool(row)
+    active = payload.get("model")
+    while True:
+        body = dict(payload, model=active)
+        try:
+            data = await agent_runner._post_chat(body, token, timeout)
+        except Exception as exc:                                # noqa: BLE001
+            if not (pool and agent_runner._provider_failed(exc)):
+                raise
+            data = None
+        if data is not None and not agent_runner._provider_failed(data):
+            return data
+        if not pool:
+            return data if isinstance(data, dict) else {}
+        active = pool.pop(0)
+
+
+async def reflect_after_turn(user_email: str, agent: dict, token: str,
+                             user_text: str, answer: str) -> None:
+    """Write down what this turn settled. Never raises."""
+    agent_id = str((agent or {}).get("id") or "")
+    try:
+        async with _in_flight:
+            notes = [n["content"] for n in await list_notes(user_email, agent_id)]
+            # list_facts rather than the cache: this is the one reader that
+            # is about to WRITE facts, and deduplicating against a block of
+            # rows up to _FACTS_TTL_SECONDS old is how the same fact gets
+            # stored twice.
+            facts = await list_facts(user_email)
+            prompt = reflection_prompt(str((agent or {}).get("name") or ""),
+                                       notes, facts, user_text, answer)
+            payload = {"model": REFLECT_MODEL, "stream": False,
+                       "messages": [{"role": "user", "content": prompt}]}
+            if agent_runner_reasoning():
+                payload["reasoning_effort"] = agent_runner_reasoning()
+            data = await _complete(payload, token, REFLECT_TIMEOUT_SECONDS)
+            choices = data.get("choices") or []
+            content = ((choices[0].get("message") or {}).get("content")
+                       if choices else "") or ""
+            new_notes, new_facts = parse_reflection(content)
+            n = await add_notes(user_email, agent_id, new_notes) if new_notes else 0
+            f = await add_facts(user_email, new_facts) if new_facts else 0
+            logger.info("reflection for %s: %d new notes, %d new facts",
+                        agent_id, n, f)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("reflection failed for %s", agent_id, exc_info=True)
+
+
+def agent_runner_reasoning() -> str:
+    """The same reasoning setting the tool loop sends, read late so a test
+    that patches agent_runner.FREE_REASONING is honoured."""
+    import agent_runner
+    return agent_runner.FREE_REASONING if _is_free_id(REFLECT_MODEL) else ""
+
+
+def _is_free_id(model_id: str) -> bool:
+    return isinstance(model_id, str) and model_id.endswith(":free")
+
+
+def schedule_reflection(user_email: str, agent: dict, token: str,
+                        user_text: str, answer: str):
+    """Run the reflection detached, or return None when the turn is not
+    worth it or this agent reflected within the last 90 seconds.
+
+    Returns the task so a test can await it. Never raises: a turn that
+    could not schedule its reflection is still a finished turn.
+    """
+    try:
+        if not should_reflect(user_text, answer):
+            return None
+        agent_id = str((agent or {}).get("id") or "")
+        key = (user_email, agent_id)
+        now = time.time()
+        if now - _last_reflect.get(key, 0.0) < REFLECT_MIN_INTERVAL_SECONDS:
+            return None
+        _last_reflect[key] = now
+        return asyncio.get_running_loop().create_task(
+            reflect_after_turn(user_email, agent, token, user_text, answer))
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not schedule a reflection", exc_info=True)
+        return None
