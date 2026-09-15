@@ -5,9 +5,11 @@ tested directly. The store is tested against real Postgres in the container
 (test_agent_memory_db.py) because a fake session would only prove what the
 fake imagined.
 """
+import asyncio
 import json
 import time
 
+import httpx
 import pytest
 
 import agent_memory as am
@@ -94,6 +96,12 @@ def test_should_reflect_needs_a_real_message_and_a_real_answer():
                              "Done, 7am Manila it is.")
     assert not am.should_reflect("hi", "Hello.")
     assert not am.should_reflect("Set the digest to 7am Manila time from now on.", "PASS")
+    # Every shape routes_agent_chat._is_pass accepts. Measured 2026-09-15:
+    # these three each bought a free completion to reflect on an agent that
+    # had just said it had nothing to say.
+    for shape in ('"PASS"', "pass", "Pass", "PASS."):
+        assert not am.should_reflect(
+            "Set the digest to 7am Manila time from now on.", shape), shape
     assert not am.should_reflect("Set the digest to 7am Manila time from now on.", "")
     assert not am.should_reflect(
         "Set the digest to 7am Manila time from now on.",
@@ -109,6 +117,12 @@ def test_the_prompt_carries_what_is_already_known():
     assert "Client is Northwind." in prompt
     assert "Move the digest to 7am." in prompt
     assert '{"notes": [], "facts": []}' in prompt
+    # Fenced, because the two untrusted spans used to be interpolated with
+    # nothing between them and the headings around them. An email body the
+    # agent had just summarised could contain the line "The assistant
+    # answered:" and forge the boundary.
+    assert "<<<PERSON\nMove the digest to 7am.\nPERSON>>>" in prompt
+    assert "<<<ASSISTANT\nDone.\nASSISTANT>>>" in prompt
 
 
 from unittest.mock import AsyncMock, patch
@@ -370,6 +384,11 @@ async def test_reflect_after_turn_stores_what_the_model_returned(monkeypatch):
     monkeypatch.setattr(am, "_complete", fake_post)
     monkeypatch.setattr(am, "list_notes", AsyncMock(return_value=[]))
     monkeypatch.setattr(am, "list_facts", AsyncMock(return_value=[]))
+    # The reflection is the one reader that is about to WRITE facts, so it
+    # reads them fresh. Deduplicating against rows up to _FACTS_TTL_SECONDS
+    # old is how the same fact gets stored twice.
+    monkeypatch.setattr(am, "_facts_cached",
+                        AsyncMock(side_effect=AssertionError("use list_facts")))
 
     async def add_notes(email, agent_id, notes, source="reflection"):
         stored["notes"] = (agent_id, notes)
@@ -387,7 +406,13 @@ async def test_reflect_after_turn_stores_what_the_model_returned(monkeypatch):
                                 "Done.")
     assert stored["notes"] == ("agent-1", ["Sends the digest at 7am Manila time."])
     assert stored["facts"] == ["Client is called Northwind."]
-    assert seen["payload"]["model"] == am.REFLECT_MODEL
+    assert seen["payload"]["model"] == am.reflect_model()
+    # The exchange itself reached the model, inside its fences. Everything
+    # above would still pass if the prompt had been built from another turn.
+    sent = seen["payload"]["messages"][0]["content"]
+    assert ("<<<PERSON\nMove the digest to 7am Manila, client is Northwind."
+            "\nPERSON>>>") in sent
+    assert "<<<ASSISTANT\nDone.\nASSISTANT>>>" in sent
     # No tools. The reflection reads one exchange and writes JSON; a
     # summariser that could send an email is one that one day does.
     assert "tool_ids" not in seen["payload"]
@@ -409,3 +434,195 @@ async def test_reflect_after_turn_never_raises(monkeypatch):
     await am.reflect_after_turn("o@example.com", _reflecting_agent(), "tok",
                                 "Move the digest to 7am Manila, client is Northwind.",
                                 "Done.")
+
+
+# ---------------------------------------------------------------------------
+# What the reflection writes down, and what it costs when it goes wrong.
+# ---------------------------------------------------------------------------
+
+
+class _RecordsParams:
+    """A session that records the bound parameters of every statement.
+
+    add_notes reads .first() off each result, so execute returns this object
+    rather than the empty list _WroteEverything gets away with. It proves
+    which address the statements were bound to and nothing about storage;
+    what the rows really do is in tests/test_agent_memory_db.py.
+    """
+
+    def __init__(self):
+        self.params = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def execute(self, statement, params=None):
+        self.params.append(params or {})
+        return self
+
+    def first(self):
+        return None
+
+    async def commit(self):
+        return None
+
+
+async def test_the_reflection_scrubs_what_the_model_wrote(monkeypatch):
+    """The same gate result_for_storage puts on a schedule's output. The
+    prompt asks the model for names and numbers by name, the exchange it
+    reads can be an email body the agent just fetched, and a note outlives
+    by a month the conversation that leaked it."""
+    # Assembled at runtime so no literal token sits in this file, the way
+    # tests/test_secret_scrub.py does it.
+    key = "sk-ant-" + "abcDEF12345xyz67890extrakey"
+    slack = "xoxb-" + "1234567890-abcDEF1234567890realtoken-xyz"
+    stored = {}
+
+    async def fake_post(payload, token, timeout=None):
+        return {"choices": [{"message": {"content": json.dumps(
+            {"notes": ["Their deploy key is " + key],
+             "facts": ["Their Slack token is " + slack]})}}]}
+
+    async def add_notes(email, agent_id, notes, source="reflection"):
+        stored["notes"] = notes
+        return len(notes)
+
+    async def add_facts(email, facts):
+        stored["facts"] = facts
+        return len(facts)
+
+    monkeypatch.setattr(am, "_complete", fake_post)
+    monkeypatch.setattr(am, "list_notes", AsyncMock(return_value=[]))
+    monkeypatch.setattr(am, "list_facts", AsyncMock(return_value=[]))
+    monkeypatch.setattr(am, "add_notes", add_notes)
+    monkeypatch.setattr(am, "add_facts", add_facts)
+
+    await am.reflect_after_turn("o@example.com", _reflecting_agent(), "tok",
+                                "Move the digest to 7am Manila, client is Northwind.",
+                                "Done.")
+    assert stored["notes"] == ["Their deploy key is <REDACTED_ANTHROPIC>"]
+    assert key not in stored["notes"][0]
+    assert stored["facts"] == ["Their Slack token is <REDACTED_SLACK>"]
+
+
+async def test_the_reflection_gives_up_at_its_deadline(monkeypatch):
+    """The completion has its own timeout; the four database calls do not.
+    Under _in_flight two hung reads would hold both slots for the life of
+    the process without a line in the log, because a task that never
+    finishes never reaches its own except."""
+    stored = []
+    monkeypatch.setattr(am, "REFLECT_DEADLINE_SECONDS", 0.05)
+
+    async def never(*a, **k):
+        await asyncio.sleep(5)
+        return []
+
+    async def record(*a, **k):
+        stored.append(a)
+        return 0
+
+    monkeypatch.setattr(am, "list_notes", never)
+    monkeypatch.setattr(am, "list_facts", AsyncMock(return_value=[]))
+    monkeypatch.setattr(am, "add_notes", record)
+
+    await am.reflect_after_turn("o@example.com", _reflecting_agent(), "tok",
+                                "Move the digest to 7am Manila, client is Northwind.",
+                                "Done.")
+    assert stored == []
+    # And the slot came back. Giving up without releasing it would leave the
+    # process one reflection poorer for good, which is the failure this
+    # deadline exists to prevent.
+    assert am._in_flight._value == am.REFLECT_MAX_IN_FLIGHT
+
+
+async def test_the_scheduled_reflection_is_held_until_it_finishes(monkeypatch):
+    """asyncio keeps only a weak reference to a task, so one nothing else
+    holds can be collected part way through: the completion is spent,
+    nothing is stored, and nothing is logged."""
+    async def fake_reflect(*a, **k):
+        return None
+
+    monkeypatch.setattr(am, "reflect_after_turn", fake_reflect)
+    am._last_reflect.clear()
+    task = am.schedule_reflection(
+        "o@example.com", _reflecting_agent(), "tok",
+        "Set the digest to 7am Manila time from now on.", "Done.")
+    assert task in am._running
+    await task
+    await asyncio.sleep(0)
+    # And the set does not become the leak it exists to prevent.
+    assert task not in am._running
+
+
+async def test_a_provider_failure_moves_the_reflection_to_the_next_id(monkeypatch):
+    import agent_runner
+    seen = []
+    bodies = [{"error": {"message": "Provider returned error"}},
+              {"choices": [{"message": {"content": "{}"}}]}]
+
+    async def fake_post(payload, token, timeout):
+        seen.append(payload["model"])
+        return bodies[len(seen) - 1]
+
+    monkeypatch.setattr(agent_runner, "_fallback_pool",
+                        AsyncMock(return_value=["b:free", "c:free"]))
+    monkeypatch.setattr(agent_runner, "_post_chat", fake_post)
+
+    out = await am._complete({"model": "a:free", "messages": []}, "tok", 5)
+    assert seen == ["a:free", "b:free"]
+    assert out["choices"]
+
+
+async def test_a_pool_that_never_answers_tries_each_id_once(monkeypatch):
+    """And returns a body rather than raising, so reflect_after_turn reads
+    no choices and stores nothing instead of logging a stack trace."""
+    import agent_runner
+    seen = []
+
+    async def fake_post(payload, token, timeout):
+        seen.append(payload["model"])
+        return {}
+
+    monkeypatch.setattr(agent_runner, "_fallback_pool",
+                        AsyncMock(return_value=["b:free", "c:free"]))
+    monkeypatch.setattr(agent_runner, "_post_chat", fake_post)
+
+    out = await am._complete({"model": "a:free", "messages": []}, "tok", 5)
+    assert seen == ["a:free", "b:free", "c:free"]
+    assert out == {}
+
+
+async def test_a_401_is_raised_rather_than_retried_on_the_pool(monkeypatch):
+    """This service's own problem, not the provider's. Retrying it would run
+    the same broken thing three times and then blame the free models."""
+    import agent_runner
+    seen = []
+
+    async def fake_post(payload, token, timeout):
+        seen.append(payload["model"])
+        raise httpx.HTTPStatusError(
+            "unauthorized", request=httpx.Request("POST", "http://owui/x"),
+            response=httpx.Response(401))
+
+    monkeypatch.setattr(agent_runner, "_fallback_pool",
+                        AsyncMock(return_value=["b:free", "c:free"]))
+    monkeypatch.setattr(agent_runner, "_post_chat", fake_post)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await am._complete({"model": "a:free", "messages": []}, "tok", 5)
+    assert seen == ["a:free"]
+
+
+async def test_the_notes_store_folds_the_address(monkeypatch):
+    """A bot hands back whatever casing the person typed, and the web hands
+    back what they registered. Two casings must not be two sets of notes."""
+    fake = _RecordsParams()
+    monkeypatch.setattr(am, "session", lambda: fake)
+
+    await am.add_notes("O@Example.Com", "agent-1", ["a real note here"])
+
+    bound = [p["email"] for p in fake.params if "email" in p]
+    assert bound and all(e == "o@example.com" for e in bound), fake.params

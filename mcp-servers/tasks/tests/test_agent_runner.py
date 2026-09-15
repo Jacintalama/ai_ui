@@ -655,4 +655,3 @@ async def test_the_router_busy_sentence_is_a_failed_run_too(wired):
 
     assert status == "failed", (status, result)
     assert result == agent_runner.ROUTER_EXHAUSTED
-
