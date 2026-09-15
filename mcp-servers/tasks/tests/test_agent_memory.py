@@ -7,6 +7,7 @@ fake imagined.
 """
 import asyncio
 import json
+import re
 import time
 
 import httpx
@@ -24,6 +25,22 @@ def _a_clean_facts_cache():
     am._facts_cache.clear()
     yield
     am._facts_cache.clear()
+
+
+def _assert_fenced(prompt: str, marker: str, body: str) -> str:
+    """The body sits between an opening and closing fence carrying the SAME
+    nonce, and returns that nonce.
+
+    Matching the two halves against each other rather than against a literal
+    is the whole point: a fence whose closing marker is a fixed string can
+    be typed by whatever is inside it, and a test that asserted the fixed
+    string would not notice.
+    """
+    found = re.search(r"<<<%s-([0-9a-f]{12})\n%s\n%s-([0-9a-f]{12})>>>"
+                      % (marker, re.escape(body), marker), prompt)
+    assert found, "%s fence missing around %r" % (marker, body)
+    assert found.group(1) == found.group(2), found.groups()
+    return found.group(1)
 
 
 def test_the_key_collapses_case_punctuation_and_whitespace():
@@ -121,8 +138,8 @@ def test_the_prompt_carries_what_is_already_known():
     # nothing between them and the headings around them. An email body the
     # agent had just summarised could contain the line "The assistant
     # answered:" and forge the boundary.
-    assert "<<<PERSON\nMove the digest to 7am.\nPERSON>>>" in prompt
-    assert "<<<ASSISTANT\nDone.\nASSISTANT>>>" in prompt
+    _assert_fenced(prompt, "PERSON", "Move the digest to 7am.")
+    _assert_fenced(prompt, "ASSISTANT", "Done.")
 
 
 from unittest.mock import AsyncMock, patch
@@ -410,9 +427,9 @@ async def test_reflect_after_turn_stores_what_the_model_returned(monkeypatch):
     # The exchange itself reached the model, inside its fences. Everything
     # above would still pass if the prompt had been built from another turn.
     sent = seen["payload"]["messages"][0]["content"]
-    assert ("<<<PERSON\nMove the digest to 7am Manila, client is Northwind."
-            "\nPERSON>>>") in sent
-    assert "<<<ASSISTANT\nDone.\nASSISTANT>>>" in sent
+    _assert_fenced(sent, "PERSON",
+                   "Move the digest to 7am Manila, client is Northwind.")
+    _assert_fenced(sent, "ASSISTANT", "Done.")
     # No tools. The reflection reads one exchange and writes JSON; a
     # summariser that could send an email is one that one day does.
     assert "tool_ids" not in seen["payload"]
@@ -444,11 +461,14 @@ async def test_reflect_after_turn_never_raises(monkeypatch):
 class _RecordsParams:
     """A session that records the bound parameters of every statement.
 
-    add_notes reads .first() off each result, so execute returns this object
-    rather than the empty list _WroteEverything gets away with. It proves
-    which address the statements were bound to and nothing about storage;
-    what the rows really do is in tests/test_agent_memory_db.py.
+    Enough of a result to satisfy all five notes-store functions: add_notes
+    reads .first(), list_notes and note_counts iterate, clear_notes and
+    delete_note read .rowcount. It proves which address the statements were
+    bound to and nothing about storage; what the rows really do is in
+    tests/test_agent_memory_db.py against real Postgres.
     """
+
+    rowcount = 0
 
     def __init__(self):
         self.params = []
@@ -465,6 +485,9 @@ class _RecordsParams:
 
     def first(self):
         return None
+
+    def __iter__(self):
+        return iter(())
 
     async def commit(self):
         return None
@@ -527,10 +550,24 @@ async def test_the_reflection_gives_up_at_its_deadline(monkeypatch):
     monkeypatch.setattr(am, "list_notes", never)
     monkeypatch.setattr(am, "list_facts", AsyncMock(return_value=[]))
     monkeypatch.setattr(am, "add_notes", record)
+    # Patched even though the deadline should fire first. Without it, a
+    # version of this code with no deadline at all reaches the real _complete
+    # and fails there on a network it cannot have, which is a pass for the
+    # wrong reason: the test would be measuring the absence of a model
+    # rather than the presence of a deadline.
+    monkeypatch.setattr(am, "_complete", AsyncMock(return_value={}))
 
+    started = time.monotonic()
     await am.reflect_after_turn("o@example.com", _reflecting_agent(), "tok",
                                 "Move the digest to 7am Manila, client is Northwind.",
                                 "Done.")
+    elapsed = time.monotonic() - started
+
+    # The assertion that actually needs the deadline. Stored-nothing passes
+    # either way, because a reflection that waited the full five seconds and
+    # then read an empty body also stores nothing; only the clock separates
+    # giving up from finishing late.
+    assert elapsed < 1.0, elapsed
     assert stored == []
     # And the slot came back. Giving up without releasing it would leave the
     # process one reflection poorer for good, which is the failure this
@@ -618,11 +655,21 @@ async def test_a_401_is_raised_rather_than_retried_on_the_pool(monkeypatch):
 
 async def test_the_notes_store_folds_the_address(monkeypatch):
     """A bot hands back whatever casing the person typed, and the web hands
-    back what they registered. Two casings must not be two sets of notes."""
+    back what they registered. Two casings must not be two sets of notes.
+
+    Every function that touches the table, not just the writer: a read that
+    did not fold would show the person an empty page while their notes sat
+    in the table under the other casing, which is the more confusing half of
+    the same bug.
+    """
     fake = _RecordsParams()
     monkeypatch.setattr(am, "session", lambda: fake)
 
     await am.add_notes("O@Example.Com", "agent-1", ["a real note here"])
+    await am.list_notes("O@Example.Com", "agent-1")
+    await am.note_counts("O@Example.Com")
+    await am.clear_notes("O@Example.Com", "agent-1")
 
     bound = [p["email"] for p in fake.params if "email" in p]
-    assert bound and all(e == "o@example.com" for e in bound), fake.params
+    assert len(bound) >= 5, bound
+    assert all(e == "o@example.com" for e in bound), fake.params
