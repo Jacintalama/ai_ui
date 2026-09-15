@@ -601,9 +601,16 @@ def test_the_token_outlives_the_whole_loop():
     timeout, so the rounds alone stopped describing the worst case the day
     the fallback was added. The token expiring mid-loop is the worst kind of
     failure here: a 401 is deliberately not a provider failure, so it ends
-    the run rather than moving to the next model."""
+    the run rather than moving to the next model.
+
+    The write-up after the tool cap is in the count as well, the `+ 1`. It
+    is the round that carries everything the run read, so it is the one most
+    worth not losing, and it is the last thing the person hears from a run
+    that spent every round. Leaving it out left the token three minutes
+    short of the loop it is supposed to outlive."""
     assert agent_runner.CHAT_TOKEN_TTL_SECONDS >= (
-        (agent_runner.MAX_TOOL_ITERATIONS + len(agent_runner.FREE_MODELS) - 1)
+        (agent_runner.MAX_TOOL_ITERATIONS + 1
+         + len(agent_runner.FREE_MODELS) - 1)
         * agent_runner.HTTP_TIMEOUT_SECONDS)
 
 

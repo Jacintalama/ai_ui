@@ -432,19 +432,23 @@ def _agent_system(agent: dict | None) -> str:
 #: The free pool is counted too, which is why this sits below it rather than
 #: beside the caps it also reads. A free agent can give up on every id in one
 #: turn, and each one it gives up on is another completion of up to the full
-#: timeout, so the rounds alone stopped describing the worst case: 8 * 240
-#: plus a minute covered 33 minutes of a loop that can now run 44. This is
+#: timeout, so the rounds alone stopped describing the worst case. This is
 #: the one deadline the fallback cannot rescue, because an expired token is a
 #: 401, a 401 is deliberately not a provider failure, and so it ends the run
 #: instead of moving it to the next model.
 #:
-#: This covers 41 of those 44 minutes. The write-up after the tool cap is the
-#: uncounted round, here and in the formula this replaces, and it is the one
-#: round that can afford to lose: it already runs inside a try/except and a
-#: failure there degrades to the note saying the run stopped early. Count it
-#: as well, with a + 1 in the multiplier, if that ever stops being true.
+#: Every completion a schedule can make, at the full timeout: 8 rounds is
+#: 1920 seconds, the 2 fallback ids the pool can spend across the turn are
+#: 480 more, and the write-up after the tool cap is another 240, so 2640
+#: seconds, forty four minutes, and this is that plus a minute of headroom.
+#: The two formulas before this one covered 33 and then 41 of those 44
+#: minutes, both by leaving the write-up out. It is the round that carries
+#: everything the run read and the last thing the person hears from a run
+#: that spent every round, so it is the worst one to lose to an expired
+#: token.
 CHAT_TOKEN_TTL_SECONDS = (
-    (MAX_TOOL_ITERATIONS + len(FREE_MODELS) - 1) * HTTP_TIMEOUT_SECONDS + 60)
+    (MAX_TOOL_ITERATIONS + 1 + len(FREE_MODELS) - 1) * HTTP_TIMEOUT_SECONDS
+    + 60)
 
 
 async def _chat(token: str, model: str, messages: list[dict],
