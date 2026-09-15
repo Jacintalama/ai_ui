@@ -246,7 +246,9 @@
     background: none; border: 0; padding: 0 0 0 8px; color: inherit;
     text-decoration: underline; cursor: pointer; font: inherit;
   }
-  .memory-list { margin-top: 6px; }
+  /* Sixty notes would otherwise stretch this card and, with it, the whole
+     grid row it sits in. */
+  .memory-list { margin-top: 6px; max-height: 240px; overflow-y: auto; }
   .memory-list .memory-note {
     display: flex; gap: 8px; align-items: flex-start; padding: 3px 0;
     border-top: 1px solid var(--border);
@@ -1139,7 +1141,8 @@
         (mine
           ? '<div class="card-memory" data-memory-for="' + esc(m.id) + '">'
             + '<span class="memory-count"></span>'
-            + '<button class="link-btn" type="button" data-act="memory">Show</button>'
+            + '<button class="link-btn" type="button" data-act="memory" '
+            + 'aria-expanded="false">Show</button>'
             + '<div class="memory-list" hidden></div>'
             + "</div>"
           : "") +
@@ -1543,7 +1546,20 @@
     // new ones while this page is sitting open.
     async function showMemory(agentId, wrap) {
       var list = wrap.querySelector(".memory-list");
-      if (!list.hidden) { list.hidden = true; return; }
+      // Re-queried from the wrap rather than passed in, so the caller can
+      // reopen the list after a forget without having to hold on to it.
+      var btn = wrap.querySelector('[data-act="memory"]');
+      if (!list.hidden) {
+        list.hidden = true;
+        btn.setAttribute("aria-expanded", "false");
+        btn.textContent = "Show";
+        return;
+      }
+      // A second click while the first read is still out would append a
+      // second copy of every note to the same list. Two fast clicks really
+      // did produce six rows for three notes.
+      if (wrap.dataset.loading === "1") return;
+      wrap.dataset.loading = "1";
       list.innerHTML = "";
       try {
         var body = await getJson("/api/tasks/agents/"
@@ -1571,14 +1587,26 @@
           list.appendChild(all);
         }
       } catch (e) {
+        // A signed out session is the one failure the person can do
+        // something about, and the row alone does not say which it was.
+        if (e && e.message === "signed out") {
+          showError("Your session expired. Sign in again.");
+        }
         // The refusal this route can answer also fires when Open WebUI
         // cannot be reached and nobody can be shown to own anything, so its
         // sentence is never repeated as written: it would tell an owner that
         // their own agent is not theirs.
         list.innerHTML =
           '<div class="memory-note"><span>Could not read the notes.</span></div>';
+      } finally {
+        // Cleared on the way out however it went. Clearing it only after a
+        // successful read would leave one failed read holding the list shut
+        // for the life of the page.
+        wrap.dataset.loading = "";
       }
       list.hidden = false;
+      btn.setAttribute("aria-expanded", "true");
+      btn.textContent = "Hide";
     }
 
     // One note, or all of them, decided by whether a note id was given.
@@ -1588,6 +1616,9 @@
       var url = "/api/tasks/agents/" + encodeURIComponent(agentId) + "/memory"
         + (noteId ? "/" + encodeURIComponent(noteId) : "");
       var r = await fetch(url, { method: "DELETE", headers: authHeaders() });
+      // Named the way getJson names it, so both callers can tell a session
+      // that has run out from a delete that failed.
+      if (r.status === 401) throw new Error("signed out");
       if (!r.ok) throw new Error("http " + r.status);
     }
 
@@ -2599,15 +2630,35 @@
           var agentId = host.getAttribute("data-agent-id");
           var noteId = btn.dataset.act === "forget"
             ? btn.getAttribute("data-note") : "";
+          // Emptying a memory is asked about first, the way deleting an
+          // agent is. A single note was read on screen before it went and is
+          // one mistake; all of them is the agent forgetting this person
+          // entirely, and nothing on this page can put any of it back.
+          if (btn.dataset.act === "forget-all"
+              && !window.confirm('Forget everything "' + agent.name
+                   + '" remembers about you? This cannot be undone.')) {
+            return;
+          }
           forgetMemory(agentId, noteId).then(function () {
             // Re-read the list rather than pull the row out by hand. A
             // delete that removed nothing, because the note had already
             // gone, must not leave a list on screen that says otherwise.
-            var wrap = host.querySelector(".card-memory");
+            //
+            // And the card is looked up again rather than captured: a
+            // re-render while the delete was out leaves the captured one
+            // detached from the page, so the notes would be painted into a
+            // node nobody is looking at.
+            var wrap = document.querySelector('[data-memory-for="'
+              + CSS.escape(agentId) + '"]');
+            if (!wrap) { loadMemoryCounts(); return; }
             wrap.querySelector(".memory-list").hidden = true;
             showMemory(agentId, wrap);
             loadMemoryCounts();
-          }).catch(function () { showError("Could not forget that."); });
+          }).catch(function (e) {
+            showError(e && e.message === "signed out"
+              ? "Your session expired. Sign in again."
+              : "Could not forget that.");
+          });
           return;
         }
         if (btn.dataset.act === "edit") openForm(agent);

@@ -47,6 +47,17 @@ def _paren_group(text, start):
     raise AssertionError("unbalanced parentheses reading a branch of card()")
 
 
+def _forget_branch(page):
+    """The forget branch of the card click handler, bounded by the branch
+    that follows it. The handler is an anonymous listener, so there is no
+    function to brace count; the next branch is the honest boundary.
+    """
+    start = page.index('if (btn.dataset.act === "forget"')
+    end = page.index('if (btn.dataset.act === "edit")', start)
+    assert start < end
+    return page[start:end]
+
+
 def test_every_owned_card_has_a_memory_line_and_a_show_control():
     page = _page()
     assert 'data-memory-for="' in page
@@ -58,7 +69,6 @@ def test_every_owned_card_has_a_memory_line_and_a_show_control():
 
 def test_the_words_are_plain():
     page = _page()
-    assert "Forget" in page
     assert "Forget all" in page
     assert "Nothing remembered yet." in page
 
@@ -91,3 +101,46 @@ def test_the_memory_line_is_only_built_for_owned_cards():
     assert re.search(r':\s*""\s*\)$', group), (
         "the branch for somebody else's card renders something other than "
         "nothing")
+
+
+def test_the_show_control_is_a_disclosure():
+    """Show and Hide are the same button, so anything reading the page out
+    loud has to be told which of the two it currently is. The page already
+    does this for its other disclosures; this one was the exception."""
+    page = _page()
+    assert 'aria-expanded="false">Show</button>' in page
+    body = _js_function(page, "showMemory")
+    assert '"aria-expanded", "true"' in body
+    assert '"aria-expanded", "false"' in body
+    assert '"Hide"' in body and '"Show"' in body
+
+
+def test_a_second_click_cannot_double_the_list():
+    """Two fast clicks on Show sent two reads, and both appended: three
+    notes came back as six rows. The second click has to find the first one
+    still out and do nothing."""
+    body = _js_function(_page(), "showMemory")
+    guard = body.find('dataset.loading === "1"')
+    assert guard != -1, "nothing stops a second read while the first is out"
+    toggle = body.find("list.hidden = true")
+    assert toggle != -1 and toggle < guard, (
+        "the guard runs before the toggle, so a click that should close the "
+        "list is swallowed instead")
+    assert body.count('dataset.loading = ""') >= 1, "the flag is never cleared"
+    assert "finally" in body, (
+        "the flag is not cleared on the failure path, so one failed read "
+        "locks the list shut for good")
+
+
+def test_forgetting_everything_asks_first():
+    """Deleting an agent asks, and that is recoverable by making another
+    one. Emptying a memory is not recoverable at all, and had no question
+    on it. One note is still forgotten on the click: it was read before it
+    went, and it is one note."""
+    branch = _forget_branch(_page())
+    assert "This cannot be undone." in branch
+    assert re.search(r'forget-all"\s*&&\s*!window\.confirm\(', branch), (
+        "the question is not gated to forget-all, or is not asked at all")
+    confirm = branch.index("window.confirm(")
+    call = branch.index("forgetMemory(")
+    assert confirm < call, "the notes are deleted before the question is put"
