@@ -62,3 +62,11 @@ def test_no_migration_adds_a_column_it_also_drops():
             if "drop column" in line:
                 dropped.add(line.split("drop column")[1].replace("if exists", "").strip().split()[0].rstrip(";"))
     assert not (added & dropped), f"added and dropped every startup: {added & dropped}"
+
+
+def test_the_agent_memory_migration_is_picked_up():
+    names = [f.name for f in _would_run()]
+    assert "049_agent_memory.sql" in names
+    sql = (MIGRATIONS / "049_agent_memory.sql").read_text(encoding="utf-8")
+    assert "CREATE TABLE IF NOT EXISTS tasks.agent_memory" in sql
+    assert "UNIQUE (agent_id, user_email, key)" in sql
