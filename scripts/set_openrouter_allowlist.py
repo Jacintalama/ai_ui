@@ -107,14 +107,48 @@ def _without_secrets(value):
     return value
 
 
+#: Shapes an admin UI uses to show a key without revealing it. If one of
+#: these comes back from the read, the value in hand is a picture of a key
+#: rather than the key, and posting it would store the picture.
+MASK_MARKS = ("...", "*")
+
+#: Below this a value cannot be a real provider key. The pipelines
+#: connection is the one honest exception: it ships the fixed pseudo-key
+#: 0p3n-w3bu!, which is ten characters and is not a secret at all.
+MIN_KEY_CHARS = 16
+
+
+def _short_key_is_normal(url: str) -> bool:
+    return "pipelines" in url or "9099" in url
+
+
+def key_shape(key) -> str:
+    """len and four characters. Four is a provider prefix, not a usable key."""
+    text = str(key or "")
+    return "len=%d prefix=%s" % (len(text), text[:4])
+
+
+def print_key_shapes(cfg):
+    """Let the operator confirm the keys are real without showing them."""
+    keys = cfg.get("OPENAI_API_KEYS")
+    if not isinstance(keys, list):
+        return
+    for i, key in enumerate(keys):
+        print("connection %d key: %s" % (i, key_shape(key)))
+
+
 def check_safe_to_write(cfg, idx):
     """Refuse to post back a config whose keys did not survive the read.
 
     /openai/config/update replaces the whole connection list, so posting a
-    keys list that is short, or blank where OpenRouter's key should be,
-    wipes the live key rather than leaving it alone. Nothing here could put
-    it back: the backup this script writes excludes keys by design, so the
-    only remaining copy would be the one in the server's .env.
+    keys list that is short, blank, or masked stores that instead of the
+    live key and every connection loses its credentials at once. Nothing
+    here could put them back: the backup this script writes excludes keys
+    by design, so the only remaining copy would be the server's .env.
+
+    A masked read is the case worth naming. An admin UI that renders a key
+    as sk-...abc is showing a picture of it; if the config endpoint ever
+    answers in that shape, the write would persist the picture.
     """
     keys = cfg.get("OPENAI_API_KEYS")
     urls = cfg.get("OPENAI_API_BASE_URLS")
@@ -127,6 +161,17 @@ def check_safe_to_write(cfg, idx):
     at = int(idx)
     if at >= len(keys) or not str(keys[at] or "").strip():
         raise Refused("the openrouter.ai connection at index %s has no key" % idx)
+    for i, key in enumerate(keys):
+        text = str(key or "")
+        mark = next((m for m in MASK_MARKS if m in text), None)
+        if mark is not None:
+            raise Refused("the key for connection %d contains %r, so the read "
+                          "returned a mask rather than the key (%s)"
+                          % (i, mark, key_shape(key)))
+        if len(text) < MIN_KEY_CHARS and not _short_key_is_normal(str(urls[i] or "")):
+            what = "empty" if not text else "only %d characters" % len(text)
+            raise Refused("the key for connection %d is %s, too short to be a "
+                          "real key (%s)" % (i, what, key_shape(key)))
 
 
 def _write_backup(cfg) -> str:
@@ -159,10 +204,15 @@ def main() -> int:
     before = (configs.get(idx) or {}).get("model_ids") or []
     print("connection", idx, "before:", json.dumps(before))
     print("after:   ", json.dumps(WANTED))
+    # The shapes print before the check, so a dry run that is about to
+    # refuse still shows the operator what the keys came back looking like.
+    dry = "--apply" not in sys.argv
+    if dry:
+        print_key_shapes(cfg)
     # Checked in both modes, not only before the write: a dry run is how an
     # operator finds out whether applying is safe.
     check_safe_to_write(cfg, idx)
-    if "--apply" not in sys.argv:
+    if dry:
         print("dry run; pass --apply to write")
         return 0
 

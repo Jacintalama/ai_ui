@@ -121,12 +121,44 @@ def list_agents():
     return agents, complete
 
 
-def write_backup(agents) -> str:
-    """Record what each agent was on before anything is written.
+def _instructions(agent) -> str:
+    """The agent's instructions as the list endpoint handed them over.
 
-    Only what is needed to put it back by hand: the id, who owns it and the
-    base model. No params, because the system prompt is the person's own
-    text and this file is left lying in a working directory.
+    /api/v1/models/list blanks params for any row the caller cannot write,
+    so this can come back empty for an agent that certainly has
+    instructions. meta.agent_instructions is not blanked, which is why the
+    agents page reads params first and falls back to it; see instructionsOf
+    in mcp-servers/tasks/static/agents.html.
+    """
+    return str((agent.get("params") or {}).get("system") or "")
+
+
+def _fallback_instructions(agent) -> str:
+    """The unblanked copy of the same text, kept beside meta.toolIds."""
+    return str((agent.get("meta") or {}).get("agent_instructions") or "")
+
+
+def _blanked(agent) -> bool:
+    """params.system is empty while meta says the agent has instructions.
+
+    An update posts params back as a whole, so writing an empty
+    params.system over a real one erases that agent's instructions for its
+    owner. An admin key should see every row in full, but this script moves
+    every agent across four people in one pass, and "should" is not worth
+    an unrecoverable wipe.
+    """
+    return not _instructions(agent).strip() and bool(_fallback_instructions(agent).strip())
+
+
+def write_backup(agents) -> str:
+    """Record what each agent was before anything is written.
+
+    The instructions text is in here on purpose, even though it is the
+    owner's own words and this file is left lying in a working directory.
+    An update posts params back wholesale, so if a run ever did go out with
+    a blanked params.system this file is the only way to type the
+    instructions back in. Treat it as agent contents: keep it off shared
+    disks and delete it once the move is verified.
 
     Mode "x" on purpose. Two runs inside the same second land on the same
     filename, and the second one must not overwrite the first with a
@@ -135,7 +167,9 @@ def write_backup(agents) -> str:
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     path = os.path.join(os.getcwd(), "agents-before-move-%s.json" % stamp)
     rows = [{"id": a.get("id"), "name": a.get("name"), "user_id": a.get("user_id"),
-             "base_model_id": a.get("base_model_id")} for a in agents]
+             "base_model_id": a.get("base_model_id"),
+             "params_system": _instructions(a),
+             "meta_agent_instructions": _fallback_instructions(a)} for a in agents]
     with open(path, "x", encoding="utf-8") as fh:
         json.dump(rows, fh, indent=2, sort_keys=True)
     return path
@@ -155,9 +189,9 @@ def update_body(agent) -> dict:
 
 
 def _own_words(agent):
-    """The agent's system prompt, so an echoed error body cannot print it."""
-    system = (agent.get("params") or {}).get("system")
-    return [system] if isinstance(system, str) and system.strip() else []
+    """The agent's instructions, so an echoed error body cannot print them."""
+    return [t for t in (_instructions(agent), _fallback_instructions(agent))
+            if t.strip()]
 
 
 def main() -> int:
@@ -166,11 +200,17 @@ def main() -> int:
         print("no agents matched" + ((" --only " + ONLY) if ONLY else ""))
         return 1 if ONLY else 0
 
-    print("%-34s %-28s -> %s" % ("agent", "base now", "base after"))
+    # The instructions column is a character count, never the text. It is
+    # here so the operator can see a blanked params.system before applying
+    # rather than after.
+    print("%-34s %-40s    %-40s %s"
+          % ("agent", "base now", "base after", "instructions"))
     for a in agents:
         base = a.get("base_model_id") or ""
         after = TARGET if base != TARGET else "(already)"
-        print("%-34s %-28s -> %s" % (a["id"], base, after))
+        print("%-34s %-40s -> %-40s instructions=%d%s"
+              % (a["id"], base, after, len(_instructions(a)),
+                 " BLANK" if _blanked(a) else ""))
     if not complete:
         # The table above is a partial picture. Writing from it would move
         # some unknown subset and report a count that means nothing.
@@ -179,6 +219,16 @@ def main() -> int:
     if not APPLY:
         print("dry run; pass --apply to write")
         return 0
+
+    # Only the agents this run would actually post. One already on the
+    # target is never written, so a blank on it cannot do harm.
+    blanked = sorted(a["id"] for a in agents
+                     if a.get("base_model_id") != TARGET and _blanked(a))
+    if blanked:
+        print("instructions came back blank for:", json.dumps(blanked))
+        print("refusing to write: posting that blank back would erase what "
+              "those agents were told to do")
+        return 1
 
     print("backup:", write_backup(agents))
     moved, failed = 0, []
