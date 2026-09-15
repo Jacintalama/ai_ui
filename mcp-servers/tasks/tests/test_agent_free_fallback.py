@@ -389,3 +389,59 @@ async def test_a_catalogue_with_no_usable_ids_is_not_probed_again_either(
     assert await _real_available_free_ids() is None
     assert await _real_available_free_ids() is None
     assert len(attempts) == 1, "an empty catalogue was probed twice in the TTL"
+
+
+async def test_a_shared_agent_keeps_its_instructions_on_the_fallback():
+    """params is blanked by Open WebUI for a row the caller cannot write.
+
+    /api/v1/models/list returns params only with write access on the row, and
+    a platform agent is read-only to everybody who is not its owner, so the
+    agents this most affects are the shared ones. The page already reads
+    meta.agent_instructions for the same reason (instructionsOf in
+    static/agents.html). On a schedule there is no identity line carrying the
+    persona separately, so a fallback that only read params would post the
+    raw base model with no instructions at all: the same agent, answering as
+    nobody.
+    """
+    posts = []
+
+    async def fake_post(payload, token, timeout=None):
+        posts.append(payload)
+        if len(posts) == 1:
+            raise _http_400()
+        return _reply("answered on the fallback")
+
+    shared = {"id": "agent-1", "name": "Ada",
+              "base_model_id": "nvidia/nemotron-3-super-120b-a12b:free",
+              "params": {},
+              "meta": {"agent_instructions": "Be Ada."}}
+
+    with patch.object(agent_runner, "_post_chat", new=fake_post):
+        answer, _notes = await agent_runner._chat(
+            token="t", model="agent-1",
+            messages=[{"role": "user", "content": "q"}],
+            tool_ids=None, user_email="o@example.com",
+            tool_mode="read_only", agent=shared)
+
+    assert answer == "answered on the fallback"
+    assert posts[1]["messages"][0] == {"role": "system", "content": "Be Ada."}
+
+
+def test_params_still_wins_when_both_are_set():
+    """params.system is what the owner edits and what Open WebUI applies for
+    the derived model. meta.agent_instructions is the copy kept for readers
+    who cannot see params, so it must never override the live one."""
+    agent = {"id": "agent-1", "params": {"system": "The live one."},
+             "meta": {"agent_instructions": "The stale copy."}}
+    assert agent_runner._agent_system(agent) == "The live one."
+
+
+def test_a_blank_params_system_falls_through_to_the_meta_copy():
+    """Blank, not just missing: Open WebUI blanks the field rather than
+    dropping the key, so a truthiness check on the key alone would read an
+    empty string as an answer and stop looking."""
+    for params in ({}, {"system": ""}, {"system": "   "}, None):
+        agent = {"id": "agent-1", "params": params,
+                 "meta": {"agent_instructions": "Be Ada."}}
+        assert agent_runner._agent_system(agent) == "Be Ada.", params
+    assert agent_runner._agent_system({"id": "a", "params": {}, "meta": {}}) == ""

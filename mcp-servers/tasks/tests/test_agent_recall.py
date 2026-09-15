@@ -353,3 +353,20 @@ async def test_a_turn_that_stopped_to_ask_schedules_no_reflection(monkeypatch):
           "content": "Send the digest at 7am Manila from now on, please."}])
     assert "pending" in out
     assert called == []
+
+
+async def test_a_broken_memory_read_costs_a_schedule_its_memory_not_its_run(
+        monkeypatch):
+    """recall_block promises never to raise, and run_agent promises never to
+    fail for its bookkeeping. The two chat sites each give the optional read
+    its own arm so a bug in it cannot spend the answer; the schedule did not,
+    and a schedule run is the one nobody is watching."""
+    seen = _wire_schedule(monkeypatch, "")
+    monkeypatch.setattr(agent_memory, "recall_block",
+                        AsyncMock(side_effect=RuntimeError("memory exploded")))
+
+    status, result, _extras = await agent_runner.run_agent(_Sched())
+
+    assert status == "completed", (status, result)
+    assert result == "report"
+    assert seen["messages"] == agent_runner._messages_for(_Sched())

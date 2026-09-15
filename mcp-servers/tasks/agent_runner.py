@@ -422,10 +422,36 @@ async def _fallback_pool(agent: dict | None) -> list[str]:
 
 
 def _agent_system(agent: dict | None) -> str:
+    """The agent's own instructions, for a post that goes to the base model.
+
+    params first, then meta.agent_instructions, because Open WebUI returns
+    params on /api/v1/models/list only to a caller with WRITE access to the
+    row, and blanks it for everybody else. A platform agent is read only to
+    every user who is not its owner, so the agents this hits are the shared
+    ones. The Agents page already reads the same pair for the same reason
+    (instructionsOf in static/agents.html), and the copy in meta is written
+    beside params precisely because it is not blanked.
+
+    It matters most on a schedule. A chat turn carries the persona again in
+    its identity line, so a fallback there loses a duplicate; a schedule has
+    no identity line, so a fallback for a shared agent would post the raw
+    base model with no instructions at all: the same agent, answering as
+    nobody, once a week, to somebody who is not watching.
+
+    Blank counts as absent, not as an answer: Open WebUI blanks the field
+    rather than dropping the key, so reading the key alone would stop here
+    with an empty string.
+    """
     params = (agent or {}).get("params")
     params = params if isinstance(params, dict) else {}
     system = params.get("system")
-    return system.strip() if isinstance(system, str) else ""
+    system = system.strip() if isinstance(system, str) else ""
+    if system:
+        return system
+    meta = (agent or {}).get("meta")
+    meta = meta if isinstance(meta, dict) else {}
+    fallback = meta.get("agent_instructions")
+    return fallback.strip() if isinstance(fallback, str) else ""
 
 
 #: The chat token has to outlive the WHOLE loop, not one completion: the loop
@@ -770,7 +796,19 @@ async def run_agent(sched) -> tuple[str, str, dict]:
         # What this agent remembers rides in front of the task, the same
         # block the chat surfaces carry. Empty when nothing is stored.
         messages = _messages_for(sched)
-        memory = await agent_memory.recall_block(sched.user_email, sched.agent_id)
+        try:
+            memory = await agent_memory.recall_block(sched.user_email,
+                                                     sched.agent_id)
+        except Exception:                                   # noqa: BLE001
+            # Optional by definition, and the same arm both chat sites give
+            # it. recall_block already fails open, so this only catches a bug
+            # in it, and a bug there must cost the memory rather than the run.
+            # Without the arm it lands in run_agent's own catch-all, which
+            # delivers "could not finish this run" and waits a week: the one
+            # surface where nobody is there to try again.
+            logger.warning("could not read agent memory for %s",
+                           getattr(sched, "agent_id", None), exc_info=True)
+            memory = ""
         if memory:
             messages = [{"role": "system", "content": memory}] + messages
 
