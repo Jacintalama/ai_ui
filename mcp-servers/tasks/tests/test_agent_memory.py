@@ -6,6 +6,7 @@ tested directly. The store is tested against real Postgres in the container
 fake imagined.
 """
 import json
+import time
 
 import agent_memory as am
 
@@ -101,6 +102,7 @@ from unittest.mock import AsyncMock, patch
 
 
 async def test_recall_fails_open_when_the_database_is_down():
+    am._facts_cache.clear()
     with patch.object(am, "list_notes", new=AsyncMock(side_effect=RuntimeError("db"))), \
          patch.object(am, "list_facts", new=AsyncMock(return_value=["a fact"])):
         out = await am.recall_block("o@example.com", "agent-1")
@@ -108,6 +110,7 @@ async def test_recall_fails_open_when_the_database_is_down():
 
 
 async def test_recall_renders_both_stores_newest_first():
+    am._facts_cache.clear()
     with patch.object(am, "list_notes", new=AsyncMock(return_value=[
             {"id": "n1", "content": "newest note"}, {"id": "n2", "content": "older note"}])), \
          patch.object(am, "list_facts", new=AsyncMock(return_value=["a fact"])):
@@ -161,3 +164,103 @@ async def test_storing_notes_fails_open_when_the_database_is_down():
 async def test_storing_facts_fails_open_when_the_database_is_down():
     with patch.object(am, "session", side_effect=RuntimeError("db")):
         assert await am.add_facts("o@example.com", ["a real fact here"]) == 0
+
+
+class _WroteEverything:
+    """The smallest object add_facts can run to completion against.
+
+    It proves one thing, that the cache entry is dropped on the path where
+    nothing raised, and nothing at all about storage. What the rows really do
+    is in tests/test_agent_memory_db.py against real Postgres, for the reason
+    this module's docstring gives.
+    """
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def execute(self, *args, **kwargs):
+        return []
+
+    async def commit(self):
+        return None
+
+
+async def test_a_room_round_reads_the_persons_facts_once():
+    """A room of agents runs one turn each, and facts are per person, not per
+    agent, so the same rows were read once per agent in the round."""
+    am._facts_cache.clear()
+    facts = AsyncMock(return_value=["Client is Northwind."])
+    with patch.object(am, "list_notes", new=AsyncMock(return_value=[])), \
+         patch.object(am, "list_facts", new=facts):
+        first = await am.recall_block("o@example.com", "agent-1")
+        second = await am.recall_block("o@example.com", "agent-2")
+    assert facts.await_count == 1
+    assert "Client is Northwind." in first
+    assert "Client is Northwind." in second
+
+
+async def test_a_different_person_is_not_served_the_cached_facts():
+    """The cache is keyed on the person. Serving one person's memories to
+    another would be the worst bug this file could have."""
+    am._facts_cache.clear()
+    with patch.object(am, "list_notes", new=AsyncMock(return_value=[])), \
+         patch.object(am, "list_facts",
+                      new=AsyncMock(return_value=["Client is Northwind."])):
+        await am.recall_block("one@example.com", "agent-1")
+    with patch.object(am, "list_notes", new=AsyncMock(return_value=[])), \
+         patch.object(am, "list_facts",
+                      new=AsyncMock(return_value=["Client is Southwind."])):
+        out = await am.recall_block("two@example.com", "agent-1")
+    assert "Southwind" in out
+    assert "Northwind" not in out
+
+
+async def test_a_stale_entry_is_read_again():
+    am._facts_cache.clear()
+    am._facts_cache["o@example.com"] = (
+        time.monotonic() - am._FACTS_TTL_SECONDS - 1, ["what it used to say"])
+    with patch.object(am, "list_notes", new=AsyncMock(return_value=[])), \
+         patch.object(am, "list_facts",
+                      new=AsyncMock(return_value=["what it says now"])):
+        out = await am.recall_block("o@example.com", "agent-1")
+    assert "what it says now" in out
+    assert "what it used to say" not in out
+
+
+async def test_a_failed_write_leaves_the_cached_facts_alone():
+    """Nothing reached the table, so what is cached is still what is there.
+    Dropping it on a failure would turn every outage into a read storm."""
+    am._facts_cache.clear()
+    am._facts_cache["o@example.com"] = (time.monotonic(), ["Client is Northwind."])
+    with patch.object(am, "_owui_user_id", new=AsyncMock(return_value="u1")), \
+         patch.object(am, "session", side_effect=RuntimeError("db")):
+        assert await am.add_facts("o@example.com", ["a real fact here"]) == 0
+    assert "o@example.com" in am._facts_cache
+
+
+async def test_a_successful_write_drops_the_cached_facts():
+    am._facts_cache.clear()
+    am._facts_cache["o@example.com"] = (time.monotonic(), ["Client is Northwind."])
+    with patch.object(am, "_owui_user_id", new=AsyncMock(return_value="u1")), \
+         patch.object(am, "session", new=lambda: _WroteEverything()):
+        await am.add_facts("o@example.com", ["a real fact here"])
+    assert "o@example.com" not in am._facts_cache
+
+
+def test_the_block_opens_by_saying_it_is_not_instructions():
+    """A note is a model's summary of what somebody typed, so the block is
+    text from outside the prompt sitting inside it. One line saying so costs
+    a fraction of the budget and is the only thing standing between a note
+    that reads as an order and an agent following it."""
+    out = am.render_recall(["Sends the digest at 7am Manila time."],
+                           ["Client is called Northwind."])
+    assert out.startswith(am._RECALL_PREAMBLE)
+    assert "not instructions" in am._RECALL_PREAMBLE
+    assert out.index(am._RECALL_PREAMBLE) < out.index(
+        "Your notes from earlier conversations")
+    # Still nothing at all for an agent with nothing stored: a preamble over
+    # an empty block would change every turn this was meant not to touch.
+    assert am.render_recall([], []) == ""

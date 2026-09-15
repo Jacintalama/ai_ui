@@ -11,6 +11,7 @@ touches, and a test that truncates can only ever run against a database
 nobody minds losing.
 """
 import os
+import time
 import uuid
 
 import pytest
@@ -95,10 +96,16 @@ async def test_facts_round_trip_for_a_real_person(db_session_nondestructive):
     email = os.environ["AIUI_MEMORY_TEST_EMAIL"]
     fact = "Memory test fact %s, safe to delete." % uuid.uuid4().hex[:8]
     try:
+        # Seeded so the write has something to invalidate. recall_block
+        # serves facts from a short lived cache, and a write that left it
+        # standing would tell the next turn what was true before it.
+        am._facts_cache[email] = (time.monotonic(), ["a stale fact"])
         assert await am.add_facts(email, [fact]) == 1
+        assert email not in am._facts_cache
         assert fact in await am.list_facts(email)
         assert await am.add_facts(email, [fact]) == 0, "the same fact twice is one row"
     finally:
+        am._facts_cache.pop(email, None)
         async with session() as s:
             await s.execute(sql_text(
                 'DELETE FROM public."memory" WHERE content = :c'), {"c": fact})

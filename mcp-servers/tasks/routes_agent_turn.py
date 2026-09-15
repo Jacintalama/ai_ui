@@ -286,7 +286,15 @@ async def turn(body: TurnIn,
                x_internal_secret: str = Header(default="")) -> dict:
     """Run one turn as this user's agent, tools and all."""
     _require_internal(x_internal_secret)
-    return await _run_turn(body.user_email, body.agent_id, body.messages)
+    # Discord, Slack and Telegram arrive here, not through _turn_for, so
+    # the recall block has to be added on this path too. A leading system
+    # message rather than an identity line, because this endpoint has
+    # neither the agent row nor the other agents' names to build one from.
+    messages = list(body.messages)
+    memory = await agent_memory.recall_block(body.user_email, body.agent_id)
+    if memory:
+        messages = [{"role": "system", "content": memory}] + messages
+    return await _run_turn(body.user_email, body.agent_id, messages)
 
 
 #: Fed back as the tool result when the owner said no, so the agent can say
@@ -843,10 +851,13 @@ async def _turn_for(user_email: str, agent: dict, messages: list[dict],
     removed, and any label it still echoes at the top of its answer is
     removed before the real one is added.
     """
-    memory = await agent_memory.recall_block(user_email, agent["id"])
-    history = ([_identity_line(agent, names, memory=memory)]
-               + agent_routing.clean_history_for_agent(messages, names))
     try:
+        # Inside the try, not above it. This function's promise is that it
+        # never raises, and a memory read that broke that promise would
+        # take down the turn it was only meant to inform.
+        memory = await agent_memory.recall_block(user_email, agent["id"])
+        history = ([_identity_line(agent, names, memory=memory)]
+                   + agent_routing.clean_history_for_agent(messages, names))
         out = await _run_turn(user_email, agent["id"], history)
     except Exception as exc:                                # noqa: BLE001
         # One failure is worth naming rather than generalising: an agent on a
