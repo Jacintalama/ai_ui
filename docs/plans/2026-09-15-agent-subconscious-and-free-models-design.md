@@ -81,8 +81,14 @@ migration; the runner re-runs them all at boot.
 Shared facts stay in `public.memory`, inserted the way the remember
 endpoint already does it, plus the same key based dedup before insert.
 
-Caps: 60 notes per agent and 100 facts per person. When a cap is reached
-the oldest by last_seen_at is pruned.
+Caps: notes are pruned to 60 per agent, dropping the oldest by
+last_seen_at, and a note the person asked for by name (source `tool`)
+outlives one a reflection wrote by itself. Facts are never pruned: they
+are read newest first, up to 100. `public.memory` is Open WebUI's own
+table and holds memories the person typed in Settings as well as ones the
+remember tool wrote, with no column that tells those from a reflection's,
+so an automatic writer must never delete there. Capping the read is all
+the recall budget needs.
 
 ### 2. Recall
 

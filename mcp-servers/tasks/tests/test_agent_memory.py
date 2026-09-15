@@ -114,3 +114,50 @@ async def test_recall_renders_both_stores_newest_first():
         out = await am.recall_block("o@example.com", "agent-1")
     assert out.index("newest note") < out.index("older note")
     assert "a fact" in out
+
+
+def test_one_oversized_note_does_not_hide_the_notes_behind_it():
+    """A single note too big for the budget used to end the loop, so every
+    shorter note after it was dropped as well."""
+    out = am.render_recall(["L" * 1500, "Sends the digest at 7am.",
+                            "Keeps Friday free."], ["Client is Northwind."])
+    assert "Sends the digest at 7am." in out
+    assert "Keeps Friday free." in out
+
+
+def test_a_full_block_ends_on_a_whole_line():
+    """The final cut to RECALL_BUDGET_CHARS must never land mid word: each
+    section has to pay for its own heading out of its own budget."""
+    notes = ["note %d %s" % (i, "n" * 100) for i in range(40)]
+    facts = ["fact %d %s" % (i, "f" * 100) for i in range(40)]
+    out = am.render_recall(notes, facts)
+    last = out.splitlines()[-1]
+    assert last.startswith("- ")
+    assert last[2:] in facts
+
+
+def test_the_key_folds_accents_so_one_note_is_one_row():
+    assert (am.memory_key("senor garcia prefers Spanish")
+            == am.memory_key("Se\xf1or Garc\xeda prefers Spanish"))
+
+
+def test_a_note_in_another_script_still_has_a_key():
+    """An ASCII only strip emptied the key, and an empty key is never
+    stored, so notes in Cyrillic, Japanese or Arabic vanished silently."""
+    assert am.memory_key("\u041a\u043b\u0438\u0435\u043d\u0442 \u0441\u0435\u0432\u0435\u0440") != ""
+
+
+async def test_a_malformed_note_id_is_a_miss_not_a_crash():
+    """Reached from a path parameter, so it must not need a database to
+    reject a string that cannot be a row."""
+    assert await am.delete_note("o@example.com", "agent-1", "not-a-uuid") is False
+
+
+async def test_storing_notes_fails_open_when_the_database_is_down():
+    with patch.object(am, "session", side_effect=RuntimeError("db")):
+        assert await am.add_notes("o@example.com", "agent-1", ["a real note here"]) == 0
+
+
+async def test_storing_facts_fails_open_when_the_database_is_down():
+    with patch.object(am, "session", side_effect=RuntimeError("db")):
+        assert await am.add_facts("o@example.com", ["a real fact here"]) == 0

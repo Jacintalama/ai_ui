@@ -21,6 +21,7 @@ import json
 import logging
 import re
 import time
+import unicodedata
 import uuid
 
 from sqlalchemy import text as sql_text
@@ -65,25 +66,48 @@ _NOT_AN_ANSWER_PREFIXES = (
     "Stopped after",
 )
 
-_KEY_STRIP_RE = re.compile(r"[^a-z0-9 ]+")
+#: The two headings of the recall block, up here because each section pays
+#: for its own heading out of its own budget.
+_NOTES_HEADING = ("Your notes from earlier conversations with this person, "
+                  "newest first. Use them; do not repeat them back unless "
+                  "asked:\n")
+_FACTS_HEADING = "Known about this person:\n"
+
+#: Unicode aware, so a note in Cyrillic, Japanese or Arabic keeps a key.
+#: An ASCII only class stripped every letter of such a note, leaving an
+#: empty key, and an empty key is never stored: the note vanished with no
+#: error anywhere.
+_KEY_STRIP_RE = re.compile(r"[^\w ]+", re.UNICODE)
 _WS_RE = re.compile(r"\s+")
 
 
 def memory_key(text: str) -> str:
-    """The note as a dedup key: lower case, letters digits and spaces only,
-    single spaces, 120 characters."""
-    out = _KEY_STRIP_RE.sub(" ", (text or "").lower())
+    """The note as a dedup key: case folded, accents dropped, letters digits
+    and spaces only, single spaces, 120 characters.
+
+    Accents are dropped by decomposing first and discarding the combining
+    marks, so "Senor Garcia" and "Senor Garcia" written with its accents are
+    one row rather than two.
+    """
+    folded = unicodedata.normalize("NFKD", text or "").casefold()
+    folded = "".join(c for c in folded if not unicodedata.combining(c))
+    out = _KEY_STRIP_RE.sub(" ", folded)
     return _WS_RE.sub(" ", out).strip()[:120]
 
 
 def _fit(items: list[str], budget: int) -> list[str]:
-    """The leading items that fit the budget, whole items only."""
+    """The leading items that fit the budget, whole items only.
+
+    One item too big for the budget skips itself rather than ending the
+    walk: stopping there hid every shorter item behind it, so one rambling
+    note could blank the whole section.
+    """
     out: list[str] = []
     spent = 0
     for item in items:
         line = "- " + item + "\n"
         if spent + len(line) > budget:
-            break
+            continue
         out.append(item)
         spent += len(line)
     return out
@@ -95,21 +119,31 @@ def render_recall(notes: list[str], facts: list[str]) -> str:
     Caller passes newest first; the budget keeps the front of each list.
     Rendered as plain lines under two headings, in the second person,
     because it sits inside the identity line that already speaks that way.
+
+    Each section's budget covers its heading, and the facts also pay for the
+    blank line between the sections, so the final cut to RECALL_BUDGET_CHARS
+    never lands in the middle of a fact.
     """
     parts = []
-    kept_notes = _fit([n for n in notes if n], NOTES_BUDGET_CHARS)
-    kept_facts = _fit([f for f in facts if f], FACTS_BUDGET_CHARS)
+    kept_notes = _fit([n for n in notes if n],
+                      NOTES_BUDGET_CHARS - len(_NOTES_HEADING))
+    kept_facts = _fit([f for f in facts if f],
+                      FACTS_BUDGET_CHARS - len(_FACTS_HEADING) - 2)
     if kept_notes:
-        parts.append("Your notes from earlier conversations with this person, "
-                     "newest first. Use them; do not repeat them back unless "
-                     "asked:\n" + "\n".join("- " + n for n in kept_notes))
+        parts.append(_NOTES_HEADING
+                     + "\n".join("- " + n for n in kept_notes))
     if kept_facts:
-        parts.append("Known about this person:\n"
+        parts.append(_FACTS_HEADING
                      + "\n".join("- " + f for f in kept_facts))
     return "\n\n".join(parts)[:RECALL_BUDGET_CHARS]
 
 
 def _clean_items(raw) -> list[str]:
+    # routes_knowledge_graph.clean_memory_content governs the same
+    # public.memory table for what a person types by hand: 500 characters,
+    # at least 3. This path is deliberately stricter, 200 and 12, because a
+    # model writes it, and a model asked for three short sentences will
+    # write ten long ones if nothing takes them away.
     out: list[str] = []
     for item in raw if isinstance(raw, list) else []:
         if not isinstance(item, str):
@@ -194,6 +228,14 @@ async def add_notes(user_email: str, agent_id: str, notes: list[str],
     try:
         async with session() as s:
             for note in notes:
+                # Normalised and capped here as well as in the reflection
+                # parser, because the remember tool and the schedule runner
+                # write through this function too, and a note nobody capped
+                # would sit in every future prompt at whatever length it
+                # arrived.
+                note = _WS_RE.sub(" ", note or "").strip()[:MAX_ITEM_CHARS]
+                if not note:
+                    continue
                 key = memory_key(note)
                 if not key:
                     continue
@@ -203,6 +245,8 @@ async def add_notes(user_email: str, agent_id: str, notes: list[str],
                     "VALUES (:id, :agent, :email, :content, :key, :source) "
                     "ON CONFLICT (agent_id, user_email, key) DO UPDATE "
                     "SET last_seen_at = now() "
+                    # xmax is zero only on a fresh insert, so one statement
+                    # tells an insert from a conflict update.
                     "RETURNING (xmax = 0) AS inserted"),
                     {"id": str(uuid.uuid4()), "agent": agent_id,
                      "email": user_email, "content": note, "key": key,
@@ -210,11 +254,17 @@ async def add_notes(user_email: str, agent_id: str, notes: list[str],
                 row = r.first()
                 if row is not None and row[0]:
                     added += 1
+            # Ordered so a note the person asked for by name (source 'tool')
+            # outlives the ones a reflection wrote by itself, and so rows
+            # written in a single call, which share last_seen_at down to the
+            # microsecond, prune in a fixed order instead of whichever one
+            # the plan happened to reach first.
             await s.execute(sql_text(
                 "DELETE FROM tasks.agent_memory WHERE id IN ("
                 " SELECT id FROM tasks.agent_memory "
                 " WHERE agent_id = :agent AND user_email = :email "
-                " ORDER BY last_seen_at DESC OFFSET :cap)"),
+                " ORDER BY (source = 'tool') DESC, last_seen_at DESC, "
+                " created_at DESC, id DESC OFFSET :cap)"),
                 {"agent": agent_id, "email": user_email,
                  "cap": MAX_NOTES_PER_AGENT})
             await s.commit()
@@ -251,6 +301,16 @@ async def note_counts(user_email: str) -> dict:
 
 
 async def delete_note(user_email: str, agent_id: str, note_id: str) -> bool:
+    """Delete one note. A note id that is not a uuid is a miss.
+
+    It arrives as a path parameter, so it is whatever the caller typed, and
+    a typo must read as "no such note" rather than as a failed cast the
+    database has to reject.
+    """
+    try:
+        note_id = str(uuid.UUID(str(note_id)))
+    except (ValueError, AttributeError, TypeError):
+        return False
     async with session() as s:
         r = await s.execute(sql_text(
             "DELETE FROM tasks.agent_memory "
@@ -273,9 +333,14 @@ async def clear_notes(user_email: str, agent_id: str) -> int:
 # --- facts about the person: public.memory ----------------------------------
 
 async def _owui_user_id(user_email: str) -> str | None:
+    # Compared on lower(email) because the only index on that column is
+    # uq_user_email_lower, on lower(email), and because an email reaching
+    # this service from a bot is not always cased the way the person
+    # registered it.
     async with session() as s:
         r = await s.execute(sql_text(
-            'SELECT id FROM public."user" WHERE email = :email LIMIT 1'),
+            'SELECT id FROM public."user" WHERE lower(email) = lower(:email) '
+            "LIMIT 1"),
             {"email": user_email})
         row = r.first()
         return str(row[0]) if row else None
@@ -283,15 +348,19 @@ async def _owui_user_id(user_email: str) -> str | None:
 
 async def list_facts(user_email: str,
                      limit: int = MAX_FACTS_PER_PERSON) -> list[str]:
-    """Newest first. Raises on failure; recall_block catches."""
-    uid = await _owui_user_id(user_email)
-    if not uid:
-        return []
+    """Newest first. Raises on failure; recall_block catches.
+
+    One query rather than a user lookup followed by a read: recall runs on
+    every turn on every surface, so one fewer connection checked out of a
+    pool of five plus five is worth a join.
+    """
     async with session() as s:
         r = await s.execute(sql_text(
-            'SELECT content FROM public."memory" WHERE user_id = :uid '
-            "ORDER BY created_at DESC LIMIT :limit"),
-            {"uid": uid, "limit": limit})
+            'SELECT m.content FROM public."memory" m '
+            'JOIN public."user" u ON u.id = m.user_id '
+            "WHERE lower(u.email) = lower(:email) "
+            "ORDER BY m.created_at DESC LIMIT :limit"),
+            {"email": user_email, "limit": limit})
         return [row[0] for row in r if row[0]]
 
 
@@ -306,8 +375,20 @@ async def add_facts(user_email: str, facts: list[str]) -> int:
         uid = await _owui_user_id(user_email)
         if not uid:
             return 0
-        existing = {memory_key(f) for f in await list_facts(user_email)}
         async with session() as s:
+            # public.memory has no unique constraint, so two reflections
+            # finishing for the same person at the same moment would both
+            # read "not there yet" and both insert. One advisory lock per
+            # person makes the read and the insert one step; it is held by
+            # the transaction and released by the commit below, so nothing
+            # has to unlock it and a failed transaction cannot leak it.
+            await s.execute(sql_text(
+                "SELECT pg_advisory_xact_lock(hashtext(:uid))"), {"uid": uid})
+            r = await s.execute(sql_text(
+                'SELECT content FROM public."memory" WHERE user_id = :uid '
+                "ORDER BY created_at DESC LIMIT :limit"),
+                {"uid": uid, "limit": MAX_FACTS_PER_PERSON})
+            existing = {memory_key(row[0]) for row in r if row[0]}
             for fact in facts:
                 key = memory_key(fact)
                 if not key or key in existing:
@@ -321,11 +402,12 @@ async def add_facts(user_email: str, facts: list[str]) -> int:
                      "content": fact, "now": now})
                 existing.add(key)
                 added += 1
-            await s.execute(sql_text(
-                'DELETE FROM public."memory" WHERE id IN ('
-                ' SELECT id FROM public."memory" WHERE user_id = :uid '
-                " ORDER BY created_at DESC OFFSET :cap)"),
-                {"uid": uid, "cap": MAX_FACTS_PER_PERSON})
+            # Nothing is pruned here on purpose. This table holds memories
+            # the person typed in Settings and ones the remember tool wrote,
+            # and no column tells those from a reflection's, so an automatic
+            # writer deleting by age would delete their work. list_facts
+            # caps the READ with LIMIT, which is all the recall budget
+            # needs.
             await s.commit()
     except Exception:                                       # noqa: BLE001
         logger.warning("could not store facts about the person", exc_info=True)
@@ -347,12 +429,19 @@ async def recall_block(user_email: str, agent_id: str) -> str:
     """
     if not user_email or not agent_id:
         return ""
+    # Scheduled as tasks rather than handed to gather as bare coroutines,
+    # because gather does not cancel the others when one child raises: the
+    # sibling query would keep holding a connection against the database
+    # that just failed, and the timeout path would leave it running past the
+    # turn it was for. Cancelling them is ours to do.
+    reads = [asyncio.ensure_future(list_notes(user_email, agent_id)),
+             asyncio.ensure_future(list_facts(user_email))]
     try:
         notes, facts = await asyncio.wait_for(
-            asyncio.gather(list_notes(user_email, agent_id),
-                           list_facts(user_email)),
-            timeout=RECALL_TIMEOUT_SECONDS)
+            asyncio.gather(*reads), timeout=RECALL_TIMEOUT_SECONDS)
     except Exception:                                       # noqa: BLE001
+        for read in reads:
+            read.cancel()
         logger.warning("could not read agent memory for %s", agent_id,
                        exc_info=True)
         return ""
