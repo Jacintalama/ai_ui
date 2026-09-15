@@ -25,6 +25,7 @@ from sqlalchemy import select
 
 import agent_access
 import agent_activity
+import agent_memory
 import agent_routing
 import agent_skills
 from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS,
@@ -722,7 +723,7 @@ def _tools_sentence(agent: dict) -> str:
             "offer to do it." % (_join_words(reach), base))
 
 
-def _identity_line(agent: dict, names) -> dict:
+def _identity_line(agent: dict, names, memory: str = "") -> dict:
     """Who the agent is and how it is expected to work, as one system line.
 
     Two faults, both seen live, both fixed here rather than on any one card.
@@ -818,6 +819,12 @@ def _identity_line(agent: dict, names) -> dict:
     chosen = agent_skills.brief_for(agent.get("meta"))
     if chosen:
         content += "\n\n" + chosen
+    # Last, after the skills. What the agent remembers is the most specific
+    # thing in the line and the thing most likely to answer the question
+    # being asked, so it sits nearest the conversation. Empty for an agent
+    # with nothing stored, which keeps every existing turn byte identical.
+    if memory:
+        content += "\n\n" + memory
     return {"role": "system", "content": content}
 
 
@@ -836,7 +843,8 @@ async def _turn_for(user_email: str, agent: dict, messages: list[dict],
     removed, and any label it still echoes at the top of its answer is
     removed before the real one is added.
     """
-    history = ([_identity_line(agent, names)]
+    memory = await agent_memory.recall_block(user_email, agent["id"])
+    history = ([_identity_line(agent, names, memory=memory)]
                + agent_routing.clean_history_for_agent(messages, names))
     try:
         out = await _run_turn(user_email, agent["id"], history)
