@@ -192,6 +192,15 @@ def page(browser, tmp_path):
         # load calls both of these.
         elif "/agents/activity" in url:
             body = {"activity": {}}
+        # The memory counts poll is infrastructure for the same reason: it
+        # runs on every render, so recording it would leave a GET in `sent`
+        # before any test has clicked anything. Matched on the exact path and
+        # on GET, so a read or a forget aimed at ONE agent still falls
+        # through to the catch-all and is recorded, because those are things
+        # the user did.
+        elif (url.rstrip("/").endswith("/api/tasks/agents/memory")
+                and r.request.method == "GET"):
+            body = {"counts": {}}
         elif "/agents/seed" in url:
             body = {"seeded": False, "created": 0}
         elif "/agents/skills" in url:
@@ -1500,3 +1509,159 @@ def test_the_tool_list_never_pushes_save_off_screen(page):
     modal = page.locator("#agent-form").bounding_box()
     assert box["y"] + box["height"] <= modal["y"] + modal["height"] + 1, (
         box, modal)
+
+
+# --- what the agent remembers ---------------------------------------------
+
+# The notes an agent writes about the person it works for. The card says how
+# many there are, Show reads them, and Forget takes one away.
+#
+# Every agent here is the owner's own, because this page never draws anybody
+# else's card. That is why "a card that is not yours has no memory line" is
+# pinned structurally in tests/test_agents_page_memory.py instead: there is no
+# way to get such a card rendered in a browser to look at.
+
+MINE = "agent-mine-a1b2"
+MEM_URL = "**/api/tasks/agents/" + MINE + "/memory"
+
+
+def _memory_counts(page, counts):
+    """Re-answer the counts poll, then make the page ask again."""
+    page.route("**/api/tasks/agents/memory",
+               lambda r: r.fulfill(status=200, content_type="application/json",
+                                   body=json.dumps({"counts": counts})))
+    page.evaluate("() => window.__aiuiAgents.render()")
+
+
+def _memory_read(page, payload, status=200):
+    """Answer this agent's own memory read, and only the read.
+
+    Forget all sends a DELETE to the very same URL. That one has to reach the
+    harness rather than this override, because the harness is what records a
+    request in `sent`, so anything that is not a GET is handed straight back.
+    """
+    def handler(r):
+        if r.request.method != "GET":
+            r.fallback()
+            return
+        r.fulfill(status=status, content_type="application/json",
+                  body=json.dumps(payload))
+
+    page.route(MEM_URL, handler)
+
+
+def _open_memory(page, payload, status=200):
+    """Open the list on the owner's card and hand back its wrapper."""
+    _memory_read(page, payload, status)
+    page.locator('[data-agent-id="%s"] [data-act="memory"]' % MINE).click()
+    page.wait_for_selector('[data-memory-for="%s"] .memory-note' % MINE)
+    return page.locator('[data-memory-for="%s"]' % MINE)
+
+
+def _wait_sent(page, match):
+    """Wait for a recorded request that matches.
+
+    `sent` is a Python list with no counterpart in the DOM, so there is
+    nothing for wait_for_function to watch. This polls it instead: bounded,
+    it returns the moment the request lands, and it says what it did see
+    when it does not.
+    """
+    for _ in range(50):
+        for rec in page.sent:
+            if match(rec):
+                return rec
+        page.wait_for_timeout(100)
+    raise AssertionError("no matching request was recorded: %r" % (page.sent,))
+
+
+def test_the_card_says_how_many_notes_the_agent_holds(page):
+    _memory_counts(page, {MINE: 2})
+    page.wait_for_function(
+        "() => { const el = document.querySelector("
+        "\"[data-memory-for='%s'] .memory-count\");"
+        " return el && el.textContent === 'Memory: 2 notes'; }" % MINE)
+    # One note is a note. The plural is the only piece of this line the page
+    # decides for itself, so it is the piece worth driving.
+    _memory_counts(page, {MINE: 1})
+    page.wait_for_function(
+        "() => { const el = document.querySelector("
+        "\"[data-memory-for='%s'] .memory-count\");"
+        " return el && el.textContent === 'Memory: 1 note'; }" % MINE)
+
+
+def test_every_card_on_this_page_carries_a_memory_line(page):
+    """The line belongs to the owner branch of card(), and every card this
+    page draws is the signed in person's own, so every one of them has it."""
+    ids = [e.get_attribute("data-agent-id")
+           for e in page.locator("#my-agents [data-agent-id]").all()]
+    assert ids
+    lines = [e.get_attribute("data-memory-for")
+             for e in page.locator("[data-memory-for]").all()]
+    assert sorted(lines) == sorted(ids)
+    assert set(lines) <= {m["id"] for m in MODELS if m["user_id"] == ME}
+
+
+def test_show_reads_the_notes_and_the_button_becomes_hide(page):
+    wrap = _open_memory(page, {"notes": [
+        {"id": "n1", "content": "Sends the digest at 7am."},
+        {"id": "n2", "content": "Client is Northwind."}]})
+    rows = wrap.locator(".memory-note")
+    assert rows.count() == 3, "two notes and the row that holds Forget all"
+    assert "Sends the digest at 7am." in rows.nth(0).inner_text()
+    assert "Client is Northwind." in rows.nth(1).inner_text()
+    assert wrap.locator('[data-act="forget"][data-note="n1"]').count() == 1
+    assert wrap.locator('[data-act="forget-all"]').count() == 1
+    btn = wrap.locator('[data-act="memory"]')
+    assert btn.inner_text() == "Hide"
+    assert btn.get_attribute("aria-expanded") == "true"
+    btn.click()
+    page.wait_for_selector('[data-memory-for="%s"] .memory-list' % MINE,
+                           state="hidden")
+    assert btn.inner_text() == "Show"
+    assert btn.get_attribute("aria-expanded") == "false"
+
+
+def test_forget_sends_the_note_it_was_asked_about(page):
+    """The id in the URL is the whole of what this button does. A forget that
+    sent the wrong one would look identical on screen."""
+    wrap = _open_memory(page, {"notes": [
+        {"id": "n1", "content": "Sends the digest at 7am."},
+        {"id": "n2", "content": "Client is Northwind."}]})
+    wrap.locator('[data-act="forget"][data-note="n1"]').click()
+    rec = _wait_sent(page, lambda s: s["method"] == "DELETE")
+    assert rec["url"].endswith("/agents/%s/memory/n1" % MINE), rec["url"]
+    assert page.sent[-1] == rec
+
+
+def test_forget_all_asks_before_it_empties_the_memory(page):
+    """Nothing on this page can put the notes back, so the question is the
+    only thing between a misclick and an agent that has forgotten you."""
+    wrap = _open_memory(page, {"notes": [
+        {"id": "n1", "content": "Sends the digest at 7am."}]})
+    page.once("dialog", lambda d: d.dismiss())
+    wrap.locator('[data-act="forget-all"]').click()
+    page.wait_for_timeout(400)
+    assert [s for s in page.sent if s["method"] == "DELETE"] == [], (
+        "it emptied the memory without asking")
+    page.once("dialog", lambda d: d.accept())
+    wrap.locator('[data-act="forget-all"]').click()
+    rec = _wait_sent(page, lambda s: s["method"] == "DELETE")
+    assert rec["url"].endswith("/agents/%s/memory" % MINE), rec["url"]
+
+
+def test_an_agent_that_remembers_nothing_says_so(page):
+    wrap = _open_memory(page, {"notes": []})
+    assert (wrap.locator(".memory-note").inner_text().strip()
+            == "Nothing remembered yet.")
+    assert wrap.locator('[data-act="forget-all"]').count() == 0, (
+        "a memory with nothing in it still offers a way to empty it")
+
+
+def test_a_refused_read_never_tells_an_owner_the_agent_is_not_theirs(page):
+    """That refusal also fires when Open WebUI cannot be reached, so the
+    sentence the server sends is never the sentence the page shows."""
+    wrap = _open_memory(
+        page, {"detail": "That is not one of your agents."}, status=403)
+    assert (wrap.locator(".memory-note").inner_text().strip()
+            == "Could not read the notes.")
+    assert "That is not one of your agents." not in page.content()

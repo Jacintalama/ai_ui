@@ -252,8 +252,11 @@ def test_the_longer_cap_still_fits_inside_the_awake_window():
 
     from agent_activity import STALE_AFTER_CHANNEL
     # The rounds, then the write-up after the cap, which has its own budget.
+    # A free agent can also spend its whole pool in one turn, and each spent
+    # id is one more failed completion of up to the round timeout.
+    extra = len(agent_runner.FREE_MODELS) - 1
     worst = timedelta(seconds=agent_runner.CHANNEL_HTTP_TIMEOUT_SECONDS
-                      * agent_runner.CHANNEL_MAX_TOOL_ITERATIONS
+                      * (agent_runner.CHANNEL_MAX_TOOL_ITERATIONS + extra)
                       + agent_runner.FINAL_ROUND_MIN_TIMEOUT_SECONDS)
     assert STALE_AFTER_CHANNEL > worst, (STALE_AFTER_CHANNEL, worst)
 
@@ -292,13 +295,17 @@ async def test_the_chat_path_shows_the_note_when_there_is_no_answer(monkeypatch)
     import routes_agent_turn as rt
 
     async def resolve(email, agent_id):
-        return "tok", ["gmail"], "ask"
+        # Four values since the agent row joined them: _run_turn hands
+        # the row to the loop, so the loop can fall back through the
+        # free pool. _resolve_agent, the three-value wrapper, is no
+        # longer on this path and patching it would seal nothing.
+        return "tok", ["gmail"], "ask", {"id": agent_id}
 
     async def chat(**kw):
         return "", ["Stopped after 5 rounds of tool use, so this answer may "
                     "be incomplete."]
 
-    monkeypatch.setattr(rt, "_resolve_agent", resolve)
+    monkeypatch.setattr(rt, "_resolve_agent_row", resolve)
     monkeypatch.setattr(rt, "_chat", chat)
     monkeypatch.setattr(rt.agent_activity, "start_run",
                         lambda *a, **k: _none())

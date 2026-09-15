@@ -448,6 +448,18 @@ services:
       # credentials before. Default matches webhook-handler/config.py and the
       # other GATEWAY_MODEL line above so both sides of the gateway agree.
       - GATEWAY_MODEL=${GATEWAY_MODEL:-auto_router.auto}
+      # Agents run on free OpenRouter models since 2026-09-15. The first id
+      # is what a new agent starts on; the tool loop moves down the list
+      # when a provider fails (agent_runner.FREE_MODELS). Every id here must
+      # also be in the OpenRouter allowlist below (OPENAI_API_CONFIGS) or
+      # Open WebUI will not route to it. Reasoning is off for free models:
+      # measured 2026-09-15, a truncated reply with it on leaked the model's
+      # thinking into the answer. AGENT_REFLECT_MODEL blank means the first
+      # pool id (agent_memory.reflect_model).
+      - AGENT_DEFAULT_MODEL=${AGENT_DEFAULT_MODEL:-nvidia/nemotron-3-super-120b-a12b:free}
+      - AGENT_FREE_MODELS=${AGENT_FREE_MODELS:-nvidia/nemotron-3-super-120b-a12b:free,nex-agi/nex-n2.5-pro:free,nex-agi/nex-n2.5-mini:free}
+      - AGENT_FREE_REASONING=${AGENT_FREE_REASONING:-none}
+      - AGENT_REFLECT_MODEL=${AGENT_REFLECT_MODEL:-}
       # tasks renders the Channels page and decides from THIS var whether to
       # offer the Terminal row. webhook-handler serves the channel and reads
       # the same name. Set on only one of them, the channel is live while the
@@ -758,18 +770,30 @@ services:
       # index 0 OpenAI, 1 pipelines, 2 OpenRouter (free models only).
       - OPENAI_API_KEYS=${OPENAI_API_KEY:-};0p3n-w3bu!;${OPENROUTER_API_KEY:-}
       - OPENAI_API_BASE_URLS=${OPENAI_API_BASE_URL:-};http://pipelines:9099;https://openrouter.ai/api/v1
-      # Curated OpenRouter allowlist (connection index 2): the free models plus
-      # THREE paid ones, added 2026-08-05 once the $25 prepaid balance was
+      # Curated OpenRouter allowlist (connection index 2): the three free
+      # models the agents run on, three more free ids kept for chat, and the
+      # three paid ones added 2026-08-05 once the $25 prepaid balance was
       # confirmed on the same account as the key. Deliberately not an open
-      # list — an unbounded dropdown lets one heavy session spend the lot.
-      # claude-haiku-4.5 is the only route to a Claude model in chat, since
-      # Open WebUI has no Anthropic connection. Ids rotate; refresh from live.
-      # NOTE: the DB (config table, key openai.api_configs) is authoritative
-      # once seeded; this line only seeds a fresh volume. Change both.
-      # Curated: only free models that actually work for chat. Dropped
-      # nemotron-3.5-content-safety (a moderation classifier, not chat) and
-      # poolside/laguna-xs-2.1 (returns empty). The live DB config is authoritative.
-      - 'OPENAI_API_CONFIGS={"2":{"enable":true,"model_ids":["cohere/north-mini-code:free","google/gemma-4-26b-a4b-it:free","nvidia/nemotron-3-nano-30b-a3b:free","nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free","nvidia/nemotron-3-super-120b-a12b:free","nvidia/nemotron-3-ultra-550b-a55b:free","nvidia/nemotron-nano-12b-v2-vl:free","nvidia/nemotron-nano-9b-v2:free","openai/gpt-oss-20b:free","poolside/laguna-m.1:free","google/gemini-2.5-flash-lite","openai/gpt-5-mini","anthropic/claude-haiku-4.5"]}}'
+      # list, because an unbounded dropdown lets one heavy session spend the
+      # lot. claude-haiku-4.5 is the only route to a Claude model in chat,
+      # since Open WebUI has no Anthropic connection.
+      # Ids rotate, so this list is swept against live. On 2026-09-15 the two
+      # nex-agi ids joined and six left: five were withdrawn upstream
+      # (nvidia/nemotron-3-nano-30b-a3b:free, nvidia/nemotron-nano-12b-v2-vl:free,
+      # nvidia/nemotron-nano-9b-v2:free, openai/gpt-oss-20b:free,
+      # poolside/laguna-m.1:free) and google/gemma-4-26b-a4b-it:free answered
+      # 429 on every call. Earlier sweeps dropped nemotron-3.5-content-safety
+      # (a moderation classifier, not chat) and poolside/laguna-xs-2.1
+      # (returns empty). The first three ids are the agent pool in order and
+      # must stay in step with AGENT_FREE_MODELS in the tasks service above.
+      # The persisted config in the database (config table, key
+      # openai.api_configs) WINS over this environment line, so editing here
+      # alone changes nothing on a running box: this is documentation plus
+      # the first-boot default for a fresh volume. To change a running
+      # server run scripts/set_openrouter_allowlist.py, which reads
+      # /openai/config and posts the same shape back. Change both, or the
+      # next fresh volume comes up with the old list.
+      - 'OPENAI_API_CONFIGS={"2":{"enable":true,"model_ids":["nvidia/nemotron-3-super-120b-a12b:free","nex-agi/nex-n2.5-pro:free","nex-agi/nex-n2.5-mini:free","cohere/north-mini-code:free","nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free","nvidia/nemotron-3-ultra-550b-a55b:free","google/gemini-2.5-flash-lite","openai/gpt-5-mini","anthropic/claude-haiku-4.5"]}}'
       # OPENROUTER_API_KEY also used by the auto-router pipe (open-webui-functions/auto_router_pipe.py).
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       # Auto (Smart) pipe escalates hard tasks to a paid OpenAI model with this.

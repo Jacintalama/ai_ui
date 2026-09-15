@@ -25,6 +25,7 @@ from sqlalchemy import select
 
 import agent_access
 import agent_activity
+import agent_memory
 import agent_routing
 import agent_skills
 from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS,
@@ -49,7 +50,8 @@ PENDING_CONTENT_CHARS = 2000
 
 #: A run that stopped to ask is neither finished nor still working. Recorded
 #: as its own status so the card does not claim the agent is awake for the
-#: next 45 minutes waiting for a reply that may never come.
+#: next 50 minutes (STALE_AFTER_SCHEDULE) waiting for a reply that may never
+#: come.
 STATUS_WAITING = "waiting"
 
 #: The shape of an agent id this service mints, and the only shape the
@@ -132,12 +134,18 @@ AGENT_ON_CALLBACK_MODEL = (
     "This agent is set to a model that cannot run an agent.")
 
 
-async def _resolve_agent(user_email: str, agent_id: str) -> tuple[str, list[str], str | None]:
-    """(token, the agent's own tool ids, its access level).
+async def _resolve_agent_row(user_email: str, agent_id: str
+                             ) -> tuple[str, list[str], str | None, dict]:
+    """(token, the agent's own tool ids, its access level, the agent row).
 
     Raises HTTPException rather than returning a sentinel: every caller here
     would have to re-raise anyway, and a sentinel that got ignored once would
     run a turn with no tools and look like a model problem.
+
+    The row is returned as well as read because the tool loop needs it. A
+    free-model agent's fallback pool and its no-reasoning payload are both
+    decided from base_model_id and params, and this function was already the
+    only place on the chat path that had them.
     """
     owner = await _owui_user_id_for(user_email)
     if not owner:
@@ -163,7 +171,13 @@ async def _resolve_agent(user_email: str, agent_id: str) -> tuple[str, list[str]
                             detail=AGENT_ON_CALLBACK_MODEL)
     meta = agent.get("meta") if isinstance(agent.get("meta"), dict) else {}
     return (token, await tools_for_agent(user_email, meta),
-            agent_access.level_of(meta))
+            agent_access.level_of(meta), agent)
+
+
+async def _resolve_agent(user_email: str, agent_id: str) -> tuple[str, list[str], str | None]:
+    """The three values every older caller reads. See _resolve_agent_row."""
+    token, tools, level, _agent = await _resolve_agent_row(user_email, agent_id)
+    return token, tools, level
 
 
 async def tools_for_agent(user_email: str, meta: dict) -> list[str]:
@@ -207,6 +221,21 @@ async def tools_for_agent(user_email: str, meta: dict) -> list[str]:
     return tools
 
 
+def _last_user_text(messages: list[dict]) -> str:
+    """What the person actually typed this turn, for the reflection.
+
+    The last user message rather than the first or the whole list: by the
+    time a turn reaches here the messages carry the identity line, the
+    recall block and the earlier turns of the conversation, and reflecting
+    on all of that would write down again what was settled days ago.
+    """
+    for m in reversed(messages or []):
+        if isinstance(m, dict) and m.get("role") == "user":
+            content = m.get("content")
+            return content if isinstance(content, str) else ""
+    return ""
+
+
 def _trim_for_storage(conversation: list[dict]) -> list[dict]:
     """Cap what goes into the state store, without dropping any message.
 
@@ -246,7 +275,7 @@ async def _run_turn(user_email: str, agent_id: str,
     Split out of the endpoint so /agents/chat can reuse it without going back
     out over HTTP to ourselves. Returns the same two shapes the endpoint does.
     """
-    token, tools, level = await _resolve_agent(user_email, agent_id)
+    token, tools, level, agent = await _resolve_agent_row(user_email, agent_id)
     mode = agent_access.effective_mode(level, None, agent_access.SURFACE_CHANNEL)
 
     run_id = await agent_activity.start_run(
@@ -255,6 +284,7 @@ async def _run_turn(user_email: str, agent_id: str,
     try:
         answer, notes = await _chat(
             token=token, model=agent_id, messages=messages,
+            agent=agent,
             tool_ids=tools or None, user_email=user_email,
             tool_mode=mode,
             refusal_reason=agent_access.refusal_reason(
@@ -272,6 +302,10 @@ async def _run_turn(user_email: str, agent_id: str,
             # cap by looking a skill up first.
             answer = "\n".join(notes)
             notes = []
+        # The subconscious: after a real answer, one detached completion
+        # writes down what was settled. Fire and forget, never awaited here.
+        agent_memory.schedule_reflection(
+            user_email, agent, token, _last_user_text(messages), answer)
         return {"answer": answer, "notes": notes}
     except agent_access.ApprovalRequired as err:
         outcome = STATUS_WAITING
@@ -285,7 +319,24 @@ async def turn(body: TurnIn,
                x_internal_secret: str = Header(default="")) -> dict:
     """Run one turn as this user's agent, tools and all."""
     _require_internal(x_internal_secret)
-    return await _run_turn(body.user_email, body.agent_id, body.messages)
+    # Discord, Slack and Telegram arrive here, not through _turn_for, so
+    # the recall block has to be added on this path too. A leading system
+    # message rather than an identity line, because this endpoint has
+    # neither the agent row nor the other agents' names to build one from.
+    messages = list(body.messages)
+    try:
+        memory = await agent_memory.recall_block(body.user_email,
+                                                 body.agent_id)
+    except Exception:                                   # noqa: BLE001
+        # Optional by definition. recall_block already fails open, so this
+        # only catches a bug in it, and a bug there must cost the memory,
+        # not the bot's answer.
+        logger.warning("could not read agent memory for %s", body.agent_id,
+                       exc_info=True)
+        memory = ""
+    if memory:
+        messages = [{"role": "system", "content": memory}] + messages
+    return await _run_turn(body.user_email, body.agent_id, messages)
 
 
 #: Fed back as the tool result when the owner said no, so the agent can say
@@ -311,7 +362,7 @@ async def _resume_turn(user_email: str, agent_id: str, conversation: list[dict],
     can be edited or deleted, and somebody who has second thoughts and turns
     an agent down to read only has turned it down.
     """
-    token, tools, level = await _resolve_agent(user_email, agent_id)
+    token, tools, level, agent = await _resolve_agent_row(user_email, agent_id)
     mode = agent_access.effective_mode(level, None, agent_access.SURFACE_CHANNEL)
     if mode not in _RESUMABLE:
         return {"answer": "This agent is set to read only now, so I did not "
@@ -345,6 +396,7 @@ async def _resume_turn(user_email: str, agent_id: str, conversation: list[dict],
     try:
         answer, notes = await _chat(
             token=token, model=agent_id, messages=convo,
+            agent=agent,
             tool_ids=tools or None, user_email=user_email,
             tool_mode=mode,
             refusal_reason=agent_access.refusal_reason(
@@ -722,7 +774,7 @@ def _tools_sentence(agent: dict) -> str:
             "offer to do it." % (_join_words(reach), base))
 
 
-def _identity_line(agent: dict, names) -> dict:
+def _identity_line(agent: dict, names, memory: str = "") -> dict:
     """Who the agent is and how it is expected to work, as one system line.
 
     Two faults, both seen live, both fixed here rather than on any one card.
@@ -818,6 +870,12 @@ def _identity_line(agent: dict, names) -> dict:
     chosen = agent_skills.brief_for(agent.get("meta"))
     if chosen:
         content += "\n\n" + chosen
+    # Last, after the skills. What the agent remembers is the most specific
+    # thing in the line and the thing most likely to answer the question
+    # being asked, so it sits nearest the conversation. Empty for an agent
+    # with nothing stored, which keeps every existing turn byte identical.
+    if memory:
+        content += "\n\n" + memory
     return {"role": "system", "content": content}
 
 
@@ -836,9 +894,18 @@ async def _turn_for(user_email: str, agent: dict, messages: list[dict],
     removed, and any label it still echoes at the top of its answer is
     removed before the real one is added.
     """
-    history = ([_identity_line(agent, names)]
-               + agent_routing.clean_history_for_agent(messages, names))
     try:
+        memory = await agent_memory.recall_block(user_email, agent["id"])
+    except Exception:                                       # noqa: BLE001
+        # Its own arm, not the one below. Sharing that one would answer a
+        # broken memory read with the sentence that says the turn failed,
+        # spending the whole answer on the one part of it that is optional.
+        logger.warning("could not read agent memory for %s", agent.get("id"),
+                       exc_info=True)
+        memory = ""
+    try:
+        history = ([_identity_line(agent, names, memory=memory)]
+                   + agent_routing.clean_history_for_agent(messages, names))
         out = await _run_turn(user_email, agent["id"], history)
     except Exception as exc:                                # noqa: BLE001
         # One failure is worth naming rather than generalising: an agent on a

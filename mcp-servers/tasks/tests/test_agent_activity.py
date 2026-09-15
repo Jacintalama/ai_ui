@@ -114,12 +114,18 @@ def test_a_slow_but_healthy_run_is_still_working(source, cut_off):
 
 def test_a_chat_run_gives_up_sooner_than_a_scheduled_one():
     """Somebody is watching the card while a chat turn runs, and an agent
-    still claiming to work ten minutes after they asked it something is not
-    working. Nobody watches a schedule in real time."""
+    still claiming to work long after they asked it something is not
+    working. Nobody watches a schedule in real time.
+
+    Read off the constant rather than hardcoded. This said eleven minutes
+    and would have failed on the deliberate move to twelve, which is a test
+    breaking on a decision rather than catching a defect."""
     assert STALE_AFTER_CHANNEL < STALE_AFTER_SCHEDULE
-    at_eleven = NOW - timedelta(minutes=11)
-    assert _shape(_row(at_eleven, source="channel"), NOW)["state"] == "failed"
-    assert _shape(_row(at_eleven, source="schedule"), NOW)["state"] == "working"
+    past_the_chat_window = NOW - STALE_AFTER_CHANNEL - timedelta(minutes=1)
+    assert _shape(_row(past_the_chat_window, source="channel"),
+                  NOW)["state"] == "failed"
+    assert _shape(_row(past_the_chat_window, source="schedule"),
+                  NOW)["state"] == "working"
 
 
 def test_each_cut_off_clears_the_worst_case_of_its_own_path():
@@ -127,25 +133,47 @@ def test_each_cut_off_clears_the_worst_case_of_its_own_path():
     twenty minutes of model time before a tool has run, while a chat turn is
     bounded at about three."""
     from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS,
-                              CHANNEL_MAX_TOOL_ITERATIONS,
+                              CHANNEL_MAX_TOOL_ITERATIONS, FREE_MODELS,
                               FINAL_ROUND_MIN_TIMEOUT_SECONDS,
                               HTTP_TIMEOUT_SECONDS, MAX_TOOL_ITERATIONS)
+    # An agent on a free model can spend the whole pool in one turn, and
+    # each spent id costs one more failed completion of up to the full
+    # timeout. The pool is consumed across the turn, not per round, so this
+    # is an addition and not a multiplication.
+    extra = len(FREE_MODELS) - 1
     # Each includes the write-up after the tool cap.
     worst_schedule = timedelta(
-        seconds=HTTP_TIMEOUT_SECONDS * (MAX_TOOL_ITERATIONS + 1))
+        seconds=HTTP_TIMEOUT_SECONDS * (MAX_TOOL_ITERATIONS + 1 + extra))
     worst_channel = timedelta(
-        seconds=CHANNEL_HTTP_TIMEOUT_SECONDS * CHANNEL_MAX_TOOL_ITERATIONS
+        seconds=CHANNEL_HTTP_TIMEOUT_SECONDS
+        * (CHANNEL_MAX_TOOL_ITERATIONS + extra)
         + FINAL_ROUND_MIN_TIMEOUT_SECONDS)
-    assert STALE_AFTER_SCHEDULE > worst_schedule, (
+    # One round of headroom, not one second. Neither worst case counts tool
+    # time between completions, so a window that clears the model time by
+    # less than a round is not clearing anything. This is what the move from
+    # forty five minutes to fifty bought: forty five cleared 2640 seconds by
+    # sixty, which is a quarter of one round.
+    assert STALE_AFTER_SCHEDULE > worst_schedule + timedelta(
+        seconds=HTTP_TIMEOUT_SECONDS), (
         "a healthy long schedule would be reported as failed")
-    assert STALE_AFTER_CHANNEL > worst_channel, (
+    # The channel clears its worst case by exactly one round and not a
+    # second more: 660 plus 60 is 720, which is the twelve minute window. So
+    # this one is >= where the schedule's is >, and that is deliberate.
+    # Somebody is sitting at a keyboard here, and the only way to buy more
+    # headroom is to make them wait longer for a turn that has already gone
+    # wrong. Raising CHANNEL_MAX_TOOL_ITERATIONS or the pool means raising
+    # the window with it; this assertion is what says so.
+    assert STALE_AFTER_CHANNEL >= worst_channel + timedelta(
+        seconds=CHANNEL_HTTP_TIMEOUT_SECONDS), (
         "a healthy long chat turn would be reported as failed")
 
 
 def test_an_unknown_source_is_treated_as_a_chat_run():
     """The shorter cut-off is the safer default for anything watched, and a
-    source this module does not recognise is not a schedule."""
-    out = _shape(_row(NOW - timedelta(minutes=11), source="something-new"), NOW)
+    source this module does not recognise is not a schedule. Measured off
+    the channel constant, so moving that window does not move this test."""
+    out = _shape(_row(NOW - STALE_AFTER_CHANNEL - timedelta(minutes=1),
+                      source="something-new"), NOW)
     assert out["state"] == "failed"
 
 

@@ -18,11 +18,13 @@ _finalize_run stores and delivers it without knowing which kind of run it was.
 """
 import logging
 import os
+import time
 
 import httpx
 
 import agent_access
 import agent_activity
+import agent_memory
 from agent_tools import (arguments_of, execute_tool_call,
                          is_write_call, is_write_tool)
 from owui_token import mint_owui_token
@@ -95,9 +97,11 @@ MAX_TOOL_ITERATIONS = 8
 #: it annoys rather than deceives.
 #:
 #: Seven is what the abandon window allows, not a round number: at 60 seconds
-#: each the worst case is seven minutes, and STALE_AFTER_CHANNEL is ten, which
-#: a test asserts. Nine would leave one minute of margin for tool time on top
-#: of model time, which is not margin.
+#: each the worst case is seven minutes, and STALE_AFTER_CHANNEL is twelve,
+#: which a test asserts. Nine rounds would leave no margin at all now that a
+#: free agent can also spend two fallback ids at 60 seconds each inside the
+#: same turn: 9 + 2 rounds plus the 120 second write-up is 780 seconds
+#: against a 720 second window.
 CHANNEL_MAX_TOOL_ITERATIONS = 7
 CHANNEL_HTTP_TIMEOUT_SECONDS = 60
 
@@ -105,16 +109,9 @@ CHANNEL_HTTP_TIMEOUT_SECONDS = 60
 #: gathered, so it is the slowest completion of the run. Measured 2026-09-14:
 #: gpt-5-mini took 22s for a plain turn with the brief, and Kai's write-up
 #: after seven rounds of app files hit the 60s timeout and he said nothing.
-#: Seven rounds at 60 plus this is nine minutes, inside STALE_AFTER_CHANNEL.
+#: Seven rounds at 60 plus this is nine minutes, and eleven once a free
+#: agent's two fallback ids are counted, inside STALE_AFTER_CHANNEL at twelve.
 FINAL_ROUND_MIN_TIMEOUT_SECONDS = 120
-
-#: The chat token has to outlive the WHOLE loop, not one completion: the loop
-#: can make up to MAX_TOOL_ITERATIONS sequential calls of up to
-#: HTTP_TIMEOUT_SECONDS each, plus tool time in between. A token sized for a
-#: single call expires partway through a run that needs two or more slow
-#: iterations, which surfaces as the agent refusing rather than as the auth
-#: failure it actually is.
-CHAT_TOKEN_TTL_SECONDS = MAX_TOOL_ITERATIONS * HTTP_TIMEOUT_SECONDS + 60
 
 
 def _base_url() -> str:
@@ -286,12 +283,213 @@ def _router_gave_up(content) -> bool:
     return _ROUTER_PREFIX in content and _ROUTER_GAVE_UP in content
 
 
+# --- free models ------------------------------------------------------------
+#
+# An agent's base model may be a free OpenRouter id. Free means no money and
+# a shared quota, and free providers fall over, so two things follow. The
+# payload asks for no reasoning, because measured 2026-09-15 a truncated
+# reply from nemotron with reasoning on leaked its thinking into the answer,
+# and with it off the same model answered in 1.1s with 0 reasoning tokens.
+# And when a completion fails the way a provider fails, the same request is
+# tried on the next id in the pool, posting the base model directly.
+
+#: The pool, in order. The first entry is what new agents start on. Every
+#: id was measured to answer a tool call on 2026-09-15: 1.3s, 3.0s, 7.2s.
+FREE_MODELS = [m.strip() for m in os.environ.get(
+    "AGENT_FREE_MODELS",
+    "nvidia/nemotron-3-super-120b-a12b:free,"
+    "nex-agi/nex-n2.5-pro:free,"
+    "nex-agi/nex-n2.5-mini:free").split(",") if m.strip()]
+
+#: Sent as reasoning_effort on every free completion. Open WebUI passes it
+#: through untouched for a base model, and for a derived model whose own
+#: params leave it unset.
+FREE_REASONING = os.environ.get("AGENT_FREE_REASONING", "none")
+
+#: What the person sees when every free model in the pool failed.
+FREE_POOL_EXHAUSTED = (
+    "The free models are all busy right now, so this agent could not "
+    "answer. Try again in a few minutes.")
+
+#: Open WebUI's one sentence for any upstream failure, 429 included.
+_PROVIDER_ERROR_DETAIL = "Provider returned error"
+
+_MODELS_URL = "https://openrouter.ai/api/v1/models"
+_AVAILABLE_TTL_SECONDS = 900
+_available_ids: set | None = None
+_available_at = 0.0
+
+
+def _is_free(model_id) -> bool:
+    return isinstance(model_id, str) and model_id.endswith(":free")
+
+
+def _provider_failed(exc_or_body) -> bool:
+    """True when this looks like the provider, not the request, failing.
+
+    Three shapes, all measured on production: an HTTPStatusError whose body
+    is Open WebUI's "Provider returned error" or whose status is 402, 408,
+    429 or 5xx; a 200 whose body carries an `error` object instead of
+    choices; a 200 with no choices at all. The last two are one test below,
+    because what makes both a failure is the missing choices and not the
+    error key. A 401 or 403 is this service's own problem and is not retried
+    anywhere.
+    """
+    if isinstance(exc_or_body, httpx.TimeoutException):
+        return True
+    if isinstance(exc_or_body, httpx.HTTPStatusError):
+        status = exc_or_body.response.status_code
+        if status in (401, 403):
+            return False
+        if status in (402, 408, 429) or status >= 500:
+            return True
+        try:
+            detail = (exc_or_body.response.json() or {}).get("detail")
+        except Exception:                                   # noqa: BLE001
+            detail = exc_or_body.response.text
+        return isinstance(detail, str) and _PROVIDER_ERROR_DETAIL in detail
+    if isinstance(exc_or_body, dict):
+        # Choices decide it, and an `error` key on its own does not. A body
+        # that carries a completion AND a note about an upstream that was
+        # retried is an answer, and reading it as a failure would throw the
+        # answer away and spend a pool id to ask the question again.
+        return not exc_or_body.get("choices")
+    if isinstance(exc_or_body, BaseException):
+        # Raised, but not by a provider: a bug in this file, or httpx
+        # refusing to build the request. Falling back would run the same
+        # broken thing three times and then blame the free models for it.
+        return False
+    # A 2xx carrying anything but an object: unreachable in theory, and in
+    # practice it is what a proxy in the middle returns. Calling it a failure
+    # moves the turn to the next id; calling it an answer reaches data.get
+    # and takes the whole run down with an AttributeError.
+    return True
+
+
+async def _available_free_ids() -> set | None:
+    """Free ids OpenRouter serves right now, cached a quarter hour, or None
+    when the catalogue could not be read. None means "do not filter": a
+    router that refuses every id because it could not read a list is worse
+    than one that tries an id that turns out to be gone. A failed read is
+    cached for that same quarter hour, so an unreachable catalogue costs one
+    probe rather than one per turn. Same reasoning and the same endpoint as
+    the Auto (Free) pipe. No key needed."""
+    global _available_ids, _available_at
+    now = time.time()
+    # The stamp, not the contents, decides whether to probe. A failed read
+    # leaves the contents empty, so keying on them would probe again on the
+    # very next turn, which is exactly the case this cache exists for.
+    if _available_at and now - _available_at < _AVAILABLE_TTL_SECONDS:
+        return _available_ids
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(_MODELS_URL)
+            r.raise_for_status()
+            ids = {m.get("id") for m in (r.json().get("data") or []) if m.get("id")}
+    except Exception:                                       # noqa: BLE001
+        # Stamped on the way out, so an unreachable catalogue is probed once
+        # a quarter hour rather than once a turn. This sits in front of the
+        # person's first token and the client waits up to 10 seconds, so the
+        # unstamped version charged every turn 10 seconds for a list that is
+        # only used to skip withdrawn ids. Logged, because a silent return
+        # of None looks identical to a catalogue that lists everything.
+        logger.warning("could not read the OpenRouter free catalogue",
+                       exc_info=True)
+        _available_at = now
+        return _available_ids
+    if ids:
+        _available_ids = ids
+    # Stamped whether or not anything usable came back. A catalogue that
+    # answers 200 with no ids in it has still answered, and _fallback_pool
+    # skips an empty set anyway, so probing it again on the next free turn
+    # would buy nothing and cost the same 10 seconds. An empty read also
+    # leaves the last good list in place rather than clearing it.
+    _available_at = now
+    return _available_ids
+
+
+async def _fallback_pool(agent: dict | None) -> list[str]:
+    """The free ids to try after the agent's own base, in order, or [] for
+    an agent that is not on a free model (or no agent at all)."""
+    base = (agent or {}).get("base_model_id")
+    if not _is_free(base):
+        return []
+    available = await _available_free_ids()
+    pool = [m for m in FREE_MODELS if m != base]
+    if available:
+        pool = [m for m in pool if m in available]
+    return pool
+
+
+def _agent_system(agent: dict | None) -> str:
+    """The agent's own instructions, for a post that goes to the base model.
+
+    params first, then meta.agent_instructions, because Open WebUI returns
+    params on /api/v1/models/list only to a caller with WRITE access to the
+    row, and blanks it for everybody else. A platform agent is read only to
+    every user who is not its owner, so the agents this hits are the shared
+    ones. The Agents page already reads the same pair for the same reason
+    (instructionsOf in static/agents.html), and the copy in meta is written
+    beside params precisely because it is not blanked.
+
+    It matters most on a schedule. A chat turn carries the persona again in
+    its identity line, so a fallback there loses a duplicate; a schedule has
+    no identity line, so a fallback for a shared agent would post the raw
+    base model with no instructions at all: the same agent, answering as
+    nobody, once a week, to somebody who is not watching.
+
+    Blank counts as absent, not as an answer: Open WebUI blanks the field
+    rather than dropping the key, so reading the key alone would stop here
+    with an empty string.
+    """
+    params = (agent or {}).get("params")
+    params = params if isinstance(params, dict) else {}
+    system = params.get("system")
+    system = system.strip() if isinstance(system, str) else ""
+    if system:
+        return system
+    meta = (agent or {}).get("meta")
+    meta = meta if isinstance(meta, dict) else {}
+    fallback = meta.get("agent_instructions")
+    return fallback.strip() if isinstance(fallback, str) else ""
+
+
+#: The chat token has to outlive the WHOLE loop, not one completion: the loop
+#: can make up to MAX_TOOL_ITERATIONS sequential calls of up to
+#: HTTP_TIMEOUT_SECONDS each, plus tool time in between. A token sized for a
+#: single call expires partway through a run that needs two or more slow
+#: iterations, which surfaces as the agent refusing rather than as the auth
+#: failure it actually is.
+#:
+#: The free pool is counted too, which is why this sits below it rather than
+#: beside the caps it also reads. A free agent can give up on every id in one
+#: turn, and each one it gives up on is another completion of up to the full
+#: timeout, so the rounds alone stopped describing the worst case. This is
+#: the one deadline the fallback cannot rescue, because an expired token is a
+#: 401, a 401 is deliberately not a provider failure, and so it ends the run
+#: instead of moving it to the next model.
+#:
+#: Every completion a schedule can make, at the full timeout: 8 rounds is
+#: 1920 seconds, the 2 fallback ids the pool can spend across the turn are
+#: 480 more, and the write-up after the tool cap is another 240, so 2640
+#: seconds, forty four minutes, and this is that plus a minute of headroom.
+#: The two formulas before this one covered 33 and then 41 of those 44
+#: minutes, both by leaving the write-up out. It is the round that carries
+#: everything the run read and the last thing the person hears from a run
+#: that spent every round, so it is the worst one to lose to an expired
+#: token.
+CHAT_TOKEN_TTL_SECONDS = (
+    (MAX_TOOL_ITERATIONS + 1 + len(FREE_MODELS) - 1) * HTTP_TIMEOUT_SECONDS
+    + 60)
+
+
 async def _chat(token: str, model: str, messages: list[dict],
                 tool_ids: list[str] | None, user_email: str,
                 tool_mode: str | None,
                 refusal_reason: str = "this schedule is set to read only",
                 max_iterations: int = MAX_TOOL_ITERATIONS,
-                timeout: float = HTTP_TIMEOUT_SECONDS) -> tuple[str, list[str]]:
+                timeout: float = HTTP_TIMEOUT_SECONDS,
+                agent: dict | None = None) -> tuple[str, list[str]]:
     """Talk to the agent, running any tools it asks for, until it answers.
 
     Open WebUI injects the tool specs and returns the model's tool_calls, but
@@ -312,6 +510,11 @@ async def _chat(token: str, model: str, messages: list[dict],
     a parameter rather than a constant because this loop serves both a
     schedule and a chat window, and "this schedule is set to read only" is
     false in a Discord DM.
+
+    `agent` is the agent's own row (base_model_id, params.system). With it,
+    an agent on a free model sends reasoning_effort and falls back through
+    FREE_MODELS when the provider fails; without it the loop behaves exactly
+    as it did before this parameter existed.
     """
     convo = list(messages)
     notes: list[str] = []
@@ -321,14 +524,71 @@ async def _chat(token: str, model: str, messages: list[dict],
     # something defined to return, instead of an UnboundLocalError.
     content = ""
 
+    free = _is_free((agent or {}).get("base_model_id"))
+    pool = await _fallback_pool(agent) if free else []
+    active = model            # the model id posted; the agent id until a fallback
+    instructions = _agent_system(agent)
+
+    async def complete(convo_now: list[dict], with_tools: bool,
+                       timeout_now: float) -> dict:
+        """One completion on the active model, moving down the pool on a
+        provider failure. Raises the last failure for a paid agent, and
+        returns a body with no choices only when the pool is spent."""
+        nonlocal active
+        while True:
+            msgs = convo_now
+            if active != model and instructions:
+                # Posting the base model directly, so Open WebUI will not
+                # apply the agent's own instructions. They go first, where
+                # the derived model would have put them.
+                msgs = [{"role": "system", "content": instructions}] + convo_now
+            payload: dict = {"model": active, "messages": msgs, "stream": False}
+            if with_tools and tool_ids:
+                payload["tool_ids"] = tool_ids
+            if free and FREE_REASONING:
+                payload["reasoning_effort"] = FREE_REASONING
+            try:
+                data = await _post_chat(payload, token, timeout_now)
+            except Exception as exc:                            # noqa: BLE001
+                # A paid agent keeps exactly the behaviour it had before
+                # there was a pool: the failure is the caller's to see. For
+                # a free agent a provider falling over is not news, so it
+                # becomes the next id, and once there is no next id it
+                # becomes the busy sentence below rather than a stack trace.
+                # Anything that is not the provider failing, a 401 say, is
+                # raised on either kind of agent.
+                if not (free and _provider_failed(exc)):
+                    raise
+                data = None
+            if data is not None and not _provider_failed(data):
+                return data
+            if not pool:
+                # Nothing left to try. The caller reads a body with no
+                # choices as the busy sentence for a free agent, and raises
+                # its own "no answer" for a paid one, as it always did.
+                if free:
+                    # The only trace this turn leaves. The busy sentence
+                    # reads like an answer, and _post_chat logs nothing at
+                    # all when the failure was a timeout rather than a
+                    # status, so without this line a turn that reached
+                    # nobody is invisible in the log.
+                    logger.warning("free pool spent for %s, last model %s",
+                                   model, active)
+                # Only a dict survives: the caller reads choices off this,
+                # and a failed body that is not one would raise there.
+                return data if isinstance(data, dict) else {}
+            nxt = pool.pop(0)
+            logger.warning("free model %s failed for %s, trying %s",
+                           active, model, nxt)
+            active = nxt
+
     for _ in range(max_iterations):
-        payload: dict = {"model": model, "messages": convo, "stream": False}
-        if tool_ids:
-            payload["tool_ids"] = tool_ids
-        data = await _post_chat(payload, token, timeout)
+        data = await complete(convo, True, timeout)
 
         choices = data.get("choices") or []
         if not choices:
+            if free:
+                return FREE_POOL_EXHAUSTED, notes
             raise RuntimeError("the model returned no answer")
         message = choices[0].get("message") or {}
         calls = message.get("tool_calls") or []
@@ -415,9 +675,8 @@ async def _chat(token: str, model: str, messages: list[dict],
     if max_iterations > 0:
         convo.append({"role": "user", "content": FINAL_ROUND_PROMPT})
         try:
-            data = await _post_chat(
-                {"model": model, "messages": convo, "stream": False},
-                token, max(timeout, FINAL_ROUND_MIN_TIMEOUT_SECONDS))
+            data = await complete(convo, False,
+                                  max(timeout, FINAL_ROUND_MIN_TIMEOUT_SECONDS))
             choices = data.get("choices") or []
             message = (choices[0].get("message") or {}) if choices else {}
             final = (message.get("content") or "").strip()
@@ -534,11 +793,31 @@ async def run_agent(sched) -> tuple[str, str, dict]:
             level, getattr(sched, "tool_mode", None),
             agent_access.SURFACE_SCHEDULE)
 
+        # What this agent remembers rides in front of the task, the same
+        # block the chat surfaces carry. Empty when nothing is stored.
+        messages = _messages_for(sched)
+        try:
+            memory = await agent_memory.recall_block(sched.user_email,
+                                                     sched.agent_id)
+        except Exception:                                   # noqa: BLE001
+            # Optional by definition, and the same arm both chat sites give
+            # it. recall_block already fails open, so this only catches a bug
+            # in it, and a bug there must cost the memory rather than the run.
+            # Without the arm it lands in run_agent's own catch-all, which
+            # delivers "could not finish this run" and waits a week: the one
+            # surface where nobody is there to try again.
+            logger.warning("could not read agent memory for %s",
+                           getattr(sched, "agent_id", None), exc_info=True)
+            memory = ""
+        if memory:
+            messages = [{"role": "system", "content": memory}] + messages
+
         # Keyword arguments on purpose: the tests assert on them by name, and
         # a positional call here would silently drift from those assertions.
         answer, notes = await _chat(
             token=chat_token, model=sched.agent_id,
-            messages=_messages_for(sched), tool_ids=tools or None,
+            agent=agent,
+            messages=messages, tool_ids=tools or None,
             user_email=sched.user_email,
             tool_mode=mode,
             refusal_reason=agent_access.refusal_reason(
@@ -557,6 +836,16 @@ async def run_agent(sched) -> tuple[str, str, dict]:
             return ("failed",
                     "The agent ran out of tool rounds before it could answer. "
                     "Nothing was delivered for this run.", {})
+        # The busy sentence is not a report. Delivered as "completed" it goes
+        # out as the week's output, and _messages_for only carries
+        # last_result forward from a completed run, so it also comes back as
+        # "this is what you produced on the previous run" and the agent
+        # repeats it. That is the poisoning _messages_for's docstring
+        # describes. Same reasoning as the out-of-rounds check above. This
+        # also changes ROUTER_EXHAUSTED, which shipped as completed before.
+        if answer in (FREE_POOL_EXHAUSTED, ROUTER_EXHAUSTED):
+            outcome = "failed"
+            return ("failed", answer, {})
         if notes:
             # Say what was refused or stopped early, even when the model's
             # own final content is empty. A run that quietly skipped part of

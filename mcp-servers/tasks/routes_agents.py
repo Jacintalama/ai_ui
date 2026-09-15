@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text as sql_text
 
 import agent_activity
+import agent_memory
 import agent_skills
 from agent_runner import _owui_user_id_for
 from agent_templates import TEMPLATES
@@ -76,9 +77,12 @@ def _database_url() -> str:
 def _default_model() -> str:
     """The platform default, read at call time so tests can monkeypatch it.
 
-    Falls back to gpt-4o-mini, which is what both live agents already use.
+    Falls back to the first free model in the pool (see
+    agent_runner.FREE_MODELS). It was gpt-4o-mini until 2026-09-15, when
+    every agent moved to free models.
     """
-    return os.environ.get("AGENT_DEFAULT_MODEL", "gpt-4o-mini")
+    return os.environ.get("AGENT_DEFAULT_MODEL",
+                          "nvidia/nemotron-3-super-120b-a12b:free")
 
 
 async def _already_seeded(email: str) -> bool:
@@ -413,6 +417,135 @@ async def activity(user: CurrentUser = Depends(current_user)) -> dict:
     not another person's agent working.
     """
     return {"activity": await agent_activity.activity_for(user.email)}
+
+
+# ---------------------------------------------------------------------------
+# What an agent remembers, and how a person forgets it.
+#
+# The public paths, so the page author does not have to guess. This router
+# carries the prefix /agents and main.py mounts it twice: bare for operators
+# on the backend network, and under /api/tasks for the web. The browser calls
+# the second set.
+#
+#   GET    /api/tasks/agents/memory
+#   GET    /api/tasks/agents/{agent_id}/memory
+#   DELETE /api/tasks/agents/{agent_id}/memory/{note_id}
+#   DELETE /api/tasks/agents/{agent_id}/memory
+#
+# Every per-agent route is owner only, with no admin path. An admin's model
+# listing carries every user's agents, and notes an agent wrote about one
+# person's work are that person's business.
+#
+# For the page: walk the agent list and look each id up in the counts, do
+# not iterate the counts. Notes outlive the agent they were written for,
+# because deleting a model in Open WebUI leaves tasks.agent_memory alone, so
+# the counts can carry an id that is no longer on the list and iterating
+# them would draw a card for an agent that is gone.
+#
+# A store that cannot be reached answers 503 here, never an empty result. A
+# card reading "0 notes" beside a Forget button is a lie somebody acts on.
+# ---------------------------------------------------------------------------
+
+#: Only the store call goes inside the try in each route below. HTTPException
+#: is an Exception, so a 403 raised by the ownership check would otherwise be
+#: swallowed and returned as "the database is down", which reads as our fault
+#: rather than as a refusal.
+MEMORY_READ_FAILED = "Could not read memory just now."
+MEMORY_FORGET_FAILED = "Could not forget that just now."
+
+
+async def _own_agent_or_403(user_email: str, agent_id: str) -> None:
+    """The same rule /speak uses: not one of yours is not yours to read."""
+    agents = await _agents_for(user_email)
+    if not any(a.get("id") == agent_id for a in agents):
+        raise HTTPException(status_code=403, detail="That is not one of your agents.")
+
+
+@router.get("/memory")
+async def memory_counts(user: CurrentUser = Depends(current_user)) -> dict:
+    """How many notes each of the caller's agents holds, for the cards.
+
+    No ownership check to make here: note_counts is asked for one address
+    and groups only that person's rows, so it cannot answer for anybody
+    else. Declared ahead of the parameterised routes below out of habit
+    rather than to fix a collision: /agents/memory is one segment and
+    /agents/{agent_id}/memory is two, so they cannot match the same request
+    today, and a literal declared first stays safe if a shorter
+    parameterised route is ever added.
+
+    A failed read is a 503 and not an empty set of counts. Nothing else in
+    this module fails this way round, because everywhere else the emptiest
+    honest answer is the safe one; here it would tell the person their agent
+    has forgotten them while the notes are still in the table.
+    """
+    try:
+        counts = await agent_memory.note_counts(user.email)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not read memory", exc_info=True)
+        raise HTTPException(status_code=503, detail=MEMORY_READ_FAILED)
+    return {"counts": counts}
+
+
+@router.get("/{agent_id}/memory")
+async def memory_list(agent_id: str,
+                      user: CurrentUser = Depends(current_user)) -> dict:
+    """This agent's notes, newest first. Owner only.
+
+    list_notes raises on a database failure by design, because recall_block
+    is the caller that decides what a failed read means there. Here it means
+    503: an empty list would read as an agent that remembers nothing.
+    """
+    await _own_agent_or_403(user.email, agent_id)
+    try:
+        notes = await agent_memory.list_notes(user.email, agent_id)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not read memory", exc_info=True)
+        raise HTTPException(status_code=503, detail=MEMORY_READ_FAILED)
+    return {"notes": notes}
+
+
+@router.delete("/{agent_id}/memory/{note_id}")
+async def memory_forget(agent_id: str, note_id: str,
+                        user: CurrentUser = Depends(current_user)) -> dict:
+    """Forget one note. Owner only, and checked before anything is deleted:
+    a note removed and then refused is still removed.
+
+    A note that was not there is not an error. delete_note returns False for
+    a miss and for an id that is not a uuid, and both mean the same thing to
+    the person who asked, which is that it is gone. The row is theirs twice
+    over, because delete_note scopes by email as well as by agent.
+
+    Answers a count rather than that boolean, so both delete routes have one
+    shape and the page reads one key the same way from either. A delete that
+    could not run is a 503, never a zero: zero here means the note was not
+    there, and the person must not be told that about a note that is.
+    """
+    await _own_agent_or_403(user.email, agent_id)
+    try:
+        forgotten = await agent_memory.delete_note(user.email, agent_id, note_id)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not forget a note", exc_info=True)
+        raise HTTPException(status_code=503, detail=MEMORY_FORGET_FAILED)
+    return {"forgotten": 1 if forgotten else 0}
+
+
+@router.delete("/{agent_id}/memory")
+async def memory_forget_all(agent_id: str,
+                            user: CurrentUser = Depends(current_user)) -> dict:
+    """Forget everything this agent remembers about the caller. Owner only.
+
+    Returns how many notes went rather than a bare acknowledgement, so the
+    page can say what happened, and an agent with nothing to forget answers
+    zero rather than failing. A delete that could not run answers 503, so
+    that zero keeps meaning there was nothing to forget.
+    """
+    await _own_agent_or_403(user.email, agent_id)
+    try:
+        forgotten = await agent_memory.clear_notes(user.email, agent_id)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not forget an agent's notes", exc_info=True)
+        raise HTTPException(status_code=503, detail=MEMORY_FORGET_FAILED)
+    return {"forgotten": forgotten}
 
 
 @router.get("/skills")

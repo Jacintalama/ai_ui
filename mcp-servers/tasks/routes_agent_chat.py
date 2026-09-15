@@ -22,7 +22,8 @@ import agent_chat_store as store
 from auth import CurrentUser, current_user
 import agent_access
 import agent_routing
-from agent_runner import CHANNEL_HTTP_TIMEOUT_SECONDS, ROUTER_EXHAUSTED, _chat
+from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS, FREE_POOL_EXHAUSTED,
+                          ROUTER_EXHAUSTED, _chat)
 from routes_agent_turn import (AGENT_ON_CALLBACK_MODEL, _agents_for,
                                _resolve_agent, _resume_turn,
                                _turn_failed_sentence, _turn_for)
@@ -275,8 +276,9 @@ async def _summarise(email: str, agent: dict, turns: list[dict]) -> str:
 
     Runs with tools off and a single iteration: this is a reading job, and a
     summariser that could send an email is a summariser that one day does.
-    Never raises. A conversation that cannot be summarised is one that gets
-    trimmed instead, which is worse but not broken.
+    Never raises, and returns "" rather than anything it is unsure of. A
+    conversation that cannot be summarised is one that gets trimmed instead,
+    which is worse but not broken.
     """
     if not turns:
         return ""
@@ -284,6 +286,7 @@ async def _summarise(email: str, agent: dict, turns: list[dict]) -> str:
         token, _tools, _level = await _resolve_agent(email, agent["id"])
         answer, _notes = await _chat(
             token=token, model=agent["id"],
+            agent=agent,
             messages=list(turns) + [{"role": "user",
                                      "content": SUMMARY_INSTRUCTION}],
             tool_ids=None, user_email=email,
@@ -291,10 +294,25 @@ async def _summarise(email: str, agent: dict, turns: list[dict]) -> str:
             refusal_reason="summarising does not run tools",
             max_iterations=1, timeout=CHANNEL_HTTP_TIMEOUT_SECONDS)
     except Exception:                                       # noqa: BLE001
-        logger.warning("agent chat: could not summarise the older turns",
-                       exc_info=True)
+        # `log`, not `logger`: this module has only ever defined the first,
+        # so the one path the "never raises" promise exists for raised a
+        # NameError instead and took the round down with it. Pre-existing,
+        # from a3eddc093, and only reachable once something in the try arm
+        # failed, which is why it went unnoticed.
+        log.warning("agent chat: could not summarise the older turns",
+                    exc_info=True)
         return ""
-    return (answer or "").strip()[:SUMMARY_BUDGET_CHARS]
+    # The busy sentences are content, not exceptions: the free pool and the
+    # free router both report giving up by answering. Stored here they would
+    # become the room's permanent notes and ride in front of every later
+    # round, because _keep_within_budget only replaces the summary and never
+    # expires one. Returning "" leaves the previous notes standing, which is
+    # exactly what a summariser that could not run should do.
+    answer = (answer or "").strip()
+    if answer in (FREE_POOL_EXHAUSTED, ROUTER_EXHAUSTED):
+        log.warning("agent chat: the summariser could not reach a model")
+        return ""
+    return answer[:SUMMARY_BUDGET_CHARS]
 
 
 async def _keep_within_budget(email: str, s: store.RoomSession,

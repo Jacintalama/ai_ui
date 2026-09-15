@@ -9,6 +9,8 @@ import importlib
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import agent_runner
+
 EMAIL = "panel-owner@example.com"
 ADA = {"id": "agent-a", "name": "Ada"}
 MIA = {"id": "agent-m", "name": "Mia"}
@@ -304,3 +306,79 @@ def test_passing_is_still_only_offered_when_nobody_was_named():
     everyone, may_pass = routes_agent_chat._speakers_for("hey everyone", agents)
     assert len(everyone) == 2
     assert may_pass is True
+
+
+# ---------------------------------------------------------------------------
+# The summariser writes the one string every later round reads. It runs on the
+# agent's own model now, which means it can come back with the free pool's
+# busy sentence as ordinary content rather than raising, and the busy sentence
+# stored here is permanent: the room prepends it to every round after it.
+# ---------------------------------------------------------------------------
+
+
+def _long_room(mod, summary="we agreed on blue"):
+    """A session over the history budget, so _keep_within_budget summarises."""
+    s = mod.store.RoomSession()
+    s.summary = summary
+    s.messages = [{"role": "user", "content": "x" * 9000},
+                  {"role": "assistant", "content": "y" * 9000},
+                  {"role": "user", "content": "z" * 9000},
+                  {"role": "user", "content": "the newest question"}]
+    return s
+
+
+async def _busy_budget_round(monkeypatch, answer):
+    """Run _keep_within_budget with _chat answering `answer`. Returns the
+    session, so the caller can say what its summary should be."""
+    import routes_agent_chat as mod
+
+    async def fake_resolve(email, agent_id):
+        return "tok", [], "all"
+
+    async def fake_chat(**kwargs):
+        return answer, []
+
+    monkeypatch.setattr(mod, "_resolve_agent", fake_resolve)
+    monkeypatch.setattr(mod, "_chat", fake_chat)
+    s = _long_room(mod)
+    await mod._keep_within_budget(EMAIL, s, [ADA])
+    return s
+
+
+async def test_a_busy_free_pool_does_not_become_the_rooms_notes(monkeypatch):
+    """_chat returns the busy sentence as content, so without a check it is
+    stored as the summary and read back as "notes so far" for good."""
+    s = await _busy_budget_round(monkeypatch, agent_runner.FREE_POOL_EXHAUSTED)
+    assert s.summary == "we agreed on blue"
+
+
+async def test_the_routers_busy_sentence_is_not_the_rooms_notes_either(
+        monkeypatch):
+    s = await _busy_budget_round(monkeypatch, agent_runner.ROUTER_EXHAUSTED)
+    assert s.summary == "we agreed on blue"
+
+
+async def test_a_real_summary_still_replaces_the_notes(monkeypatch):
+    """The opposite mistake would be worse: a room whose notes never move on
+    because something about the busy check was too broad."""
+    s = await _busy_budget_round(monkeypatch, "They settled on green.")
+    assert s.summary == "They settled on green."
+
+
+async def test_a_summariser_that_raises_leaves_the_notes_alone(monkeypatch):
+    """_summarise's docstring says it never raises. Its except arm reached
+    for a logger this module does not define, so the one path that promise
+    exists for was the one that took the round down with it."""
+    import routes_agent_chat as mod
+
+    async def fake_resolve(email, agent_id):
+        return "tok", [], "all"
+
+    async def boom(**kwargs):
+        raise RuntimeError("model down")
+
+    monkeypatch.setattr(mod, "_resolve_agent", fake_resolve)
+    monkeypatch.setattr(mod, "_chat", boom)
+    s = _long_room(mod)
+    await mod._keep_within_budget(EMAIL, s, [ADA])
+    assert s.summary == "we agreed on blue"

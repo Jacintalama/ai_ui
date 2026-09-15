@@ -11,6 +11,7 @@ import pytest
 from fastapi import HTTPException
 
 import agent_access
+import agent_memory
 import routes_agent_turn as rt
 
 
@@ -40,6 +41,11 @@ def _wire(monkeypatch):
     monkeypatch.setattr(rt.agent_activity, "start_run",
                         AsyncMock(return_value="run-1"))
     monkeypatch.setattr(rt.agent_activity, "finish_run", AsyncMock())
+    # The endpoint reads the recall block now. It fails open, so this is
+    # for speed and for keeping the fixture honest about what it seals:
+    # unpatched, every test here waits on a database this machine has not
+    # got.
+    monkeypatch.setattr(agent_memory, "recall_block", AsyncMock(return_value=""))
 
 
 async def test_the_endpoint_resolves_the_agents_own_tools(monkeypatch):

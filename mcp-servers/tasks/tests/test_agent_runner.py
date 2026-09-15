@@ -12,6 +12,7 @@ import httpx
 import pytest
 import respx
 
+import agent_memory
 import agent_runner
 
 # Captured before the autouse `wired` fixture below replaces agent_runner._chat
@@ -43,7 +44,17 @@ OTHER_AGENT_ROW = {"id": "agent-decoy-0099", "name": "Decoy",
 
 @pytest.fixture(autouse=True)
 def wired(monkeypatch):
-    """Replace every network seam. Nothing here touches a socket."""
+    """Replace the seams run_agent reaches for, so no test here calls out.
+
+    recall_block joined that list when scheduled runs started carrying
+    agent memory. It fails open, so patched or not the answer is the
+    same, but unpatched every test in this file waits on a database
+    this machine does not have: measured at about two seconds a test.
+
+    The run bookkeeping in agent_activity opens its own session and is
+    still unpatched, so some of that cost remains. Nothing here asserts
+    on it.
+    """
     owui_user_id_for = AsyncMock(return_value="owui-owner-1")
     monkeypatch.setattr(agent_runner, "_owui_user_id_for", owui_user_id_for)
     monkeypatch.setattr(agent_runner, "mint_owui_token",
@@ -54,6 +65,7 @@ def wired(monkeypatch):
                         AsyncMock(return_value=([OTHER_AGENT_ROW, AGENT_ROW], False)))
     chat = AsyncMock(return_value=("Two need a reply today.", []))
     monkeypatch.setattr(agent_runner, "_chat", chat)
+    monkeypatch.setattr(agent_memory, "recall_block", AsyncMock(return_value=""))
     return SimpleNamespace(chat=chat, owui_user_id_for=owui_user_id_for)
 
 
@@ -582,9 +594,24 @@ def test_the_schedule_gets_more_rounds_than_a_chat_window():
 
 def test_the_token_outlives_the_whole_loop():
     """Derived, not hardcoded. Raising the cap without raising the token gives
-    an agent that dies partway through and reports it as a refusal."""
+    an agent that dies partway through and reports it as a refusal.
+
+    The free pool counts too. An agent on a free model can spend every id in
+    one turn, and each spent id is one more completion of up to the full
+    timeout, so the rounds alone stopped describing the worst case the day
+    the fallback was added. The token expiring mid-loop is the worst kind of
+    failure here: a 401 is deliberately not a provider failure, so it ends
+    the run rather than moving to the next model.
+
+    The write-up after the tool cap is in the count as well, the `+ 1`. It
+    is the round that carries everything the run read, so it is the one most
+    worth not losing, and it is the last thing the person hears from a run
+    that spent every round. Leaving it out left the token three minutes
+    short of the loop it is supposed to outlive."""
     assert agent_runner.CHAT_TOKEN_TTL_SECONDS >= (
-        agent_runner.MAX_TOOL_ITERATIONS * agent_runner.HTTP_TIMEOUT_SECONDS)
+        (agent_runner.MAX_TOOL_ITERATIONS + 1
+         + len(agent_runner.FREE_MODELS) - 1)
+        * agent_runner.HTTP_TIMEOUT_SECONDS)
 
 
 async def test_a_scheduled_report_carries_no_long_dashes(wired):
@@ -599,3 +626,32 @@ async def test_a_scheduled_report_carries_no_long_dashes(wired):
     assert status == "completed", (status, result)
     assert "\u2014" not in result and "\u2013" not in result, result
     assert "Sep 7-11" in result
+
+
+# ---------------------------------------------------------------------------
+# The busy sentence is not a report. It reaches run_agent as ordinary content,
+# because that is how the free pool and the free router both report giving up,
+# and nothing downstream can tell it from an answer.
+# ---------------------------------------------------------------------------
+
+
+async def test_a_busy_free_pool_is_a_failed_run_not_a_report(wired):
+    """Delivered as completed, the busy sentence goes out as the week's
+    output, and _messages_for then hands it back next run as "what you
+    produced last time", which is the poisoning its docstring describes."""
+    wired.chat.return_value = (agent_runner.FREE_POOL_EXHAUSTED, [])
+
+    status, result, _ = await agent_runner.run_agent(_sched())
+
+    assert status == "failed", (status, result)
+    assert result == agent_runner.FREE_POOL_EXHAUSTED
+
+
+async def test_the_router_busy_sentence_is_a_failed_run_too(wired):
+    """Auto (Free) says it differently and shipped as completed until now."""
+    wired.chat.return_value = (agent_runner.ROUTER_EXHAUSTED, [])
+
+    status, result, _ = await agent_runner.run_agent(_sched())
+
+    assert status == "failed", (status, result)
+    assert result == agent_runner.ROUTER_EXHAUSTED
