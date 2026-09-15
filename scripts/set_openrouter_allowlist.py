@@ -7,7 +7,29 @@ Run on the server:
 Reads /openai/config as an admin, replaces model_ids on the connection whose
 URL is openrouter.ai, and posts the whole config back. Open WebUI's persisted
 config wins over the compose environment, so editing the compose line alone
-changes nothing on a running box; this is what changes it. Keys are read
+changes nothing on a running box; this is what changes it.
+
+Allowing an id is not enough for it to answer. Open WebUI's
+check_model_access needs a public.model row and a public.access_grant read
+row for every base model (admin bypass is off on this box), and this script
+cannot write the database from the host. After a run that names ids under
+"no model row yet", create both rows, idempotently, in the openwebui
+database, then GET /api/models?refresh=true, then prove one completion with
+a non-admin token:
+
+  INSERT INTO public.model (id, user_id, base_model_id, name, meta, params,
+      created_at, updated_at, is_active)
+  VALUES ('<model id>', '<an admin user id>', NULL, '<model id>', '{}', '{}',
+      extract(epoch from now())::bigint, extract(epoch from now())::bigint, TRUE)
+  ON CONFLICT (id) DO NOTHING;
+  INSERT INTO public.access_grant (id, resource_type, resource_id,
+      principal_type, principal_id, permission, created_at)
+  SELECT gen_random_uuid()::text, 'model', '<model id>', 'user', '*', 'read',
+      extract(epoch from now())::bigint
+  WHERE NOT EXISTS (SELECT 1 FROM public.access_grant WHERE resource_type = 'model'
+      AND resource_id = '<model id>' AND principal_id = '*' AND permission = 'read');
+
+Keys are read
 and sent back untouched and are never printed.
 
 --apply writes a backup of the current connection settings, with every key
@@ -226,8 +248,9 @@ def main() -> int:
     # /api/models is not only the check: reading it is what rebuilds Open
     # WebUI's in-memory model cache, which otherwise keeps answering
     # "Model not found" for an id that is now allowed.
-    models = call("/api/models")
-    ids = {m.get("id") for m in (models.get("data") or [])}
+    models = call("/api/models?refresh=true")
+    entries = {m.get("id"): m for m in (models.get("data") or []) if isinstance(m, dict)}
+    ids = set(entries)
     # A connection with a prefix_id set publishes its models as
     # "<prefix_id>.<model id>", so the bare ids would all look missing.
     # Empty on this server today, which is the only case proven here.
@@ -236,7 +259,19 @@ def main() -> int:
     missing = [m for m in expected if m not in ids]
     print("visible in /api/models:",
           "all" if not missing else "MISSING " + json.dumps(missing))
-    return 1 if (missing or now != WANTED) else 0
+    # Listed is not routable. Measured 2026-09-15: two freshly allowed ids
+    # showed up here for every token and still answered 400 "Model not
+    # found" on every completion, because check_model_access needs a
+    # public.model row and a public.access_grant read row for each base
+    # model now that admin bypass is off. An entry with no "info" key is
+    # exactly an id with no row. The rows are made by hand (see the module
+    # docstring), so this only names them.
+    no_row = [m for m in expected if m in entries and not entries[m].get("info")]
+    if no_row:
+        print("no model row yet, completions will answer Model not found "
+              "until public.model and access_grant rows exist for:",
+              json.dumps(no_row))
+    return 1 if (missing or no_row or now != WANTED) else 0
 
 
 if __name__ == "__main__":
