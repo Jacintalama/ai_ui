@@ -148,9 +148,23 @@ def test_each_cut_off_clears_the_worst_case_of_its_own_path():
         seconds=CHANNEL_HTTP_TIMEOUT_SECONDS
         * (CHANNEL_MAX_TOOL_ITERATIONS + extra)
         + FINAL_ROUND_MIN_TIMEOUT_SECONDS)
-    assert STALE_AFTER_SCHEDULE > worst_schedule, (
+    # One round of headroom, not one second. Neither worst case counts tool
+    # time between completions, so a window that clears the model time by
+    # less than a round is not clearing anything. This is what the move from
+    # forty five minutes to fifty bought: forty five cleared 2640 seconds by
+    # sixty, which is a quarter of one round.
+    assert STALE_AFTER_SCHEDULE > worst_schedule + timedelta(
+        seconds=HTTP_TIMEOUT_SECONDS), (
         "a healthy long schedule would be reported as failed")
-    assert STALE_AFTER_CHANNEL > worst_channel, (
+    # The channel clears its worst case by exactly one round and not a
+    # second more: 660 plus 60 is 720, which is the twelve minute window. So
+    # this one is >= where the schedule's is >, and that is deliberate.
+    # Somebody is sitting at a keyboard here, and the only way to buy more
+    # headroom is to make them wait longer for a turn that has already gone
+    # wrong. Raising CHANNEL_MAX_TOOL_ITERATIONS or the pool means raising
+    # the window with it; this assertion is what says so.
+    assert STALE_AFTER_CHANNEL >= worst_channel + timedelta(
+        seconds=CHANNEL_HTTP_TIMEOUT_SECONDS), (
         "a healthy long chat turn would be reported as failed")
 
 

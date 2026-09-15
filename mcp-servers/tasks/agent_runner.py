@@ -113,6 +113,7 @@ CHANNEL_HTTP_TIMEOUT_SECONDS = 60
 #: agent's two fallback ids are counted, inside STALE_AFTER_CHANNEL at twelve.
 FINAL_ROUND_MIN_TIMEOUT_SECONDS = 120
 
+
 def _base_url() -> str:
     return os.environ.get("OPENWEBUI_URL", "http://open-webui:8080").rstrip("/")
 
@@ -398,7 +399,12 @@ async def _available_free_ids() -> set | None:
         return _available_ids
     if ids:
         _available_ids = ids
-        _available_at = now
+    # Stamped whether or not anything usable came back. A catalogue that
+    # answers 200 with no ids in it has still answered, and _fallback_pool
+    # skips an empty set anyway, so probing it again on the next free turn
+    # would buy nothing and cost the same 10 seconds. An empty read also
+    # leaves the last good list in place rather than clearing it.
+    _available_at = now
     return _available_ids
 
 

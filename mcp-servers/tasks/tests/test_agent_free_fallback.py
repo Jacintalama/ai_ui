@@ -359,3 +359,33 @@ async def test_an_unreachable_catalogue_is_not_probed_again_this_quarter_hour(
 
     assert first is None and second is None, "a failed read must not filter"
     assert len(attempts) == 1, "the catalogue was probed twice inside the TTL"
+
+
+async def test_a_catalogue_with_no_usable_ids_is_not_probed_again_either(
+        monkeypatch):
+    """A 200 that lists nothing usable is still an answer. _fallback_pool
+    skips an empty set anyway, so re-reading it on every free turn buys
+    nothing and costs the same 10 second probe in front of the person."""
+    attempts = []
+
+    class _Empty:
+        def __init__(self, *a, **k):
+            attempts.append(1)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url):
+            return httpx.Response(200, json={"data": []},
+                                  request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(agent_runner.httpx, "AsyncClient", _Empty)
+    monkeypatch.setattr(agent_runner, "_available_ids", None)
+    monkeypatch.setattr(agent_runner, "_available_at", 0.0)
+
+    assert await _real_available_free_ids() is None
+    assert await _real_available_free_ids() is None
+    assert len(attempts) == 1, "an empty catalogue was probed twice in the TTL"
