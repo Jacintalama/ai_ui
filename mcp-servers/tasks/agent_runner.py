@@ -23,6 +23,7 @@ import httpx
 
 import agent_access
 import agent_activity
+import agent_memory
 from agent_tools import (arguments_of, execute_tool_call,
                          is_write_call, is_write_tool)
 from owui_token import mint_owui_token
@@ -534,11 +535,18 @@ async def run_agent(sched) -> tuple[str, str, dict]:
             level, getattr(sched, "tool_mode", None),
             agent_access.SURFACE_SCHEDULE)
 
+        # What this agent remembers rides in front of the task, the same
+        # block the chat surfaces carry. Empty when nothing is stored.
+        messages = _messages_for(sched)
+        memory = await agent_memory.recall_block(sched.user_email, sched.agent_id)
+        if memory:
+            messages = [{"role": "system", "content": memory}] + messages
+
         # Keyword arguments on purpose: the tests assert on them by name, and
         # a positional call here would silently drift from those assertions.
         answer, notes = await _chat(
             token=chat_token, model=sched.agent_id,
-            messages=_messages_for(sched), tool_ids=tools or None,
+            messages=messages, tool_ids=tools or None,
             user_email=sched.user_email,
             tool_mode=mode,
             refusal_reason=agent_access.refusal_reason(
