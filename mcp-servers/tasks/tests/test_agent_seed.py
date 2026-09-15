@@ -134,3 +134,8 @@ async def test_an_unknown_user_is_not_seeded():
         out = await routes_agents.seed_for_email("ghost@example.com")
     create.assert_not_awaited()
     assert out["created"] == 0
+
+
+def test_new_agents_start_on_the_free_model_by_default(monkeypatch):
+    monkeypatch.delenv("AGENT_DEFAULT_MODEL", raising=False)
+    assert routes_agents._default_model() == "nvidia/nemotron-3-super-120b-a12b:free"

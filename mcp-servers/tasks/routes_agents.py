@@ -77,9 +77,12 @@ def _database_url() -> str:
 def _default_model() -> str:
     """The platform default, read at call time so tests can monkeypatch it.
 
-    Falls back to gpt-4o-mini, which is what both live agents already use.
+    Falls back to the first free model in the pool (see
+    agent_runner.FREE_MODELS). It was gpt-4o-mini until 2026-09-15, when
+    every agent moved to free models.
     """
-    return os.environ.get("AGENT_DEFAULT_MODEL", "gpt-4o-mini")
+    return os.environ.get("AGENT_DEFAULT_MODEL",
+                          "nvidia/nemotron-3-super-120b-a12b:free")
 
 
 async def _already_seeded(email: str) -> bool:
