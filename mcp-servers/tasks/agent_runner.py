@@ -18,6 +18,7 @@ _finalize_run stores and delivers it without knowing which kind of run it was.
 """
 import logging
 import os
+import time
 
 import httpx
 
@@ -287,12 +288,126 @@ def _router_gave_up(content) -> bool:
     return _ROUTER_PREFIX in content and _ROUTER_GAVE_UP in content
 
 
+# --- free models ------------------------------------------------------------
+#
+# An agent's base model may be a free OpenRouter id. Free means no money and
+# a shared quota, and free providers fall over, so two things follow. The
+# payload asks for no reasoning, because measured 2026-09-15 a truncated
+# reply from nemotron with reasoning on leaked its thinking into the answer,
+# and with it off the same model answered in 1.1s with 0 reasoning tokens.
+# And when a completion fails the way a provider fails, the same request is
+# tried on the next id in the pool, posting the base model directly.
+
+#: The pool, in order. The first entry is what new agents start on. Every
+#: id was measured to answer a tool call on 2026-09-15: 1.3s, 3.0s, 7.2s.
+FREE_MODELS = [m.strip() for m in os.environ.get(
+    "AGENT_FREE_MODELS",
+    "nvidia/nemotron-3-super-120b-a12b:free,"
+    "nex-agi/nex-n2.5-pro:free,"
+    "nex-agi/nex-n2.5-mini:free").split(",") if m.strip()]
+
+#: Sent as reasoning_effort on every free completion. Open WebUI passes it
+#: through untouched for a base model, and for a derived model whose own
+#: params leave it unset.
+FREE_REASONING = os.environ.get("AGENT_FREE_REASONING", "none")
+
+#: What the person sees when every free model in the pool failed.
+FREE_POOL_EXHAUSTED = (
+    "The free models are all busy right now, so this agent could not "
+    "answer. Try again in a few minutes.")
+
+#: Open WebUI's one sentence for any upstream failure, 429 included.
+_PROVIDER_ERROR_DETAIL = "Provider returned error"
+
+_MODELS_URL = "https://openrouter.ai/api/v1/models"
+_AVAILABLE_TTL_SECONDS = 900
+_available_ids: set | None = None
+_available_at = 0.0
+
+
+def _is_free(model_id) -> bool:
+    return isinstance(model_id, str) and model_id.endswith(":free")
+
+
+def _provider_failed(exc_or_body) -> bool:
+    """True when this looks like the provider, not the request, failing.
+
+    Three shapes, all measured on production: an HTTPStatusError whose body
+    is Open WebUI's "Provider returned error" or whose status is 402, 408,
+    429 or 5xx; a 200 whose body carries an `error` object; a 200 with no
+    choices at all. A 401 or 403 is this service's own problem and is not
+    retried anywhere.
+    """
+    if isinstance(exc_or_body, httpx.TimeoutException):
+        return True
+    if isinstance(exc_or_body, httpx.HTTPStatusError):
+        status = exc_or_body.response.status_code
+        if status in (401, 403):
+            return False
+        if status in (402, 408, 429) or status >= 500:
+            return True
+        try:
+            detail = (exc_or_body.response.json() or {}).get("detail")
+        except Exception:                                   # noqa: BLE001
+            detail = exc_or_body.response.text
+        return isinstance(detail, str) and _PROVIDER_ERROR_DETAIL in detail
+    if isinstance(exc_or_body, dict):
+        if exc_or_body.get("error"):
+            return True
+        return not exc_or_body.get("choices")
+    return False
+
+
+async def _available_free_ids() -> set | None:
+    """Free ids OpenRouter serves right now, cached a quarter hour, or None
+    when the catalogue could not be read. None means "do not filter": a
+    router that refuses every id because it could not read a list is worse
+    than one that tries an id that turns out to be gone. Same reasoning and
+    the same endpoint as the Auto (Free) pipe. No key needed."""
+    global _available_ids, _available_at
+    now = time.time()
+    if _available_ids is not None and now - _available_at < _AVAILABLE_TTL_SECONDS:
+        return _available_ids
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(_MODELS_URL)
+            r.raise_for_status()
+            ids = {m.get("id") for m in (r.json().get("data") or []) if m.get("id")}
+    except Exception:                                       # noqa: BLE001
+        return _available_ids
+    if ids:
+        _available_ids = ids
+        _available_at = now
+    return _available_ids
+
+
+async def _fallback_pool(agent: dict | None) -> list[str]:
+    """The free ids to try after the agent's own base, in order, or [] for
+    an agent that is not on a free model (or no agent at all)."""
+    base = (agent or {}).get("base_model_id")
+    if not _is_free(base):
+        return []
+    available = await _available_free_ids()
+    pool = [m for m in FREE_MODELS if m != base]
+    if available:
+        pool = [m for m in pool if m in available]
+    return pool
+
+
+def _agent_system(agent: dict | None) -> str:
+    params = (agent or {}).get("params")
+    params = params if isinstance(params, dict) else {}
+    system = params.get("system")
+    return system.strip() if isinstance(system, str) else ""
+
+
 async def _chat(token: str, model: str, messages: list[dict],
                 tool_ids: list[str] | None, user_email: str,
                 tool_mode: str | None,
                 refusal_reason: str = "this schedule is set to read only",
                 max_iterations: int = MAX_TOOL_ITERATIONS,
-                timeout: float = HTTP_TIMEOUT_SECONDS) -> tuple[str, list[str]]:
+                timeout: float = HTTP_TIMEOUT_SECONDS,
+                agent: dict | None = None) -> tuple[str, list[str]]:
     """Talk to the agent, running any tools it asks for, until it answers.
 
     Open WebUI injects the tool specs and returns the model's tool_calls, but
@@ -313,6 +428,11 @@ async def _chat(token: str, model: str, messages: list[dict],
     a parameter rather than a constant because this loop serves both a
     schedule and a chat window, and "this schedule is set to read only" is
     false in a Discord DM.
+
+    `agent` is the agent's own row (base_model_id, params.system). With it,
+    an agent on a free model sends reasoning_effort and falls back through
+    FREE_MODELS when the provider fails; without it the loop behaves exactly
+    as it did before this parameter existed.
     """
     convo = list(messages)
     notes: list[str] = []
@@ -322,14 +442,61 @@ async def _chat(token: str, model: str, messages: list[dict],
     # something defined to return, instead of an UnboundLocalError.
     content = ""
 
+    free = _is_free((agent or {}).get("base_model_id"))
+    pool = await _fallback_pool(agent) if free else []
+    active = model            # the model id posted; the agent id until a fallback
+    instructions = _agent_system(agent)
+
+    async def complete(convo_now: list[dict], with_tools: bool,
+                       timeout_now: float) -> dict:
+        """One completion on the active model, moving down the pool on a
+        provider failure. Raises the last failure for a paid agent, and
+        returns a body with no choices only when the pool is spent."""
+        nonlocal active
+        while True:
+            msgs = convo_now
+            if active != model and instructions:
+                # Posting the base model directly, so Open WebUI will not
+                # apply the agent's own instructions. They go first, where
+                # the derived model would have put them.
+                msgs = [{"role": "system", "content": instructions}] + convo_now
+            payload: dict = {"model": active, "messages": msgs, "stream": False}
+            if with_tools and tool_ids:
+                payload["tool_ids"] = tool_ids
+            if free and FREE_REASONING:
+                payload["reasoning_effort"] = FREE_REASONING
+            try:
+                data = await _post_chat(payload, token, timeout_now)
+            except Exception as exc:                            # noqa: BLE001
+                # A paid agent keeps exactly the behaviour it had before
+                # there was a pool: the failure is the caller's to see. For
+                # a free agent a provider falling over is not news, so it
+                # becomes the next id, and once there is no next id it
+                # becomes the busy sentence below rather than a stack trace.
+                # Anything that is not the provider failing, a 401 say, is
+                # raised on either kind of agent.
+                if not (free and _provider_failed(exc)):
+                    raise
+                data = None
+            if data is not None and not _provider_failed(data):
+                return data
+            if not pool:
+                # Nothing left to try. The caller reads a body with no
+                # choices as the busy sentence for a free agent, and raises
+                # its own "no answer" for a paid one, as it always did.
+                return data if data is not None else {}
+            nxt = pool.pop(0)
+            logger.warning("free model %s failed for %s, trying %s",
+                           active, model, nxt)
+            active = nxt
+
     for _ in range(max_iterations):
-        payload: dict = {"model": model, "messages": convo, "stream": False}
-        if tool_ids:
-            payload["tool_ids"] = tool_ids
-        data = await _post_chat(payload, token, timeout)
+        data = await complete(convo, True, timeout)
 
         choices = data.get("choices") or []
         if not choices:
+            if free:
+                return FREE_POOL_EXHAUSTED, notes
             raise RuntimeError("the model returned no answer")
         message = choices[0].get("message") or {}
         calls = message.get("tool_calls") or []
@@ -416,9 +583,8 @@ async def _chat(token: str, model: str, messages: list[dict],
     if max_iterations > 0:
         convo.append({"role": "user", "content": FINAL_ROUND_PROMPT})
         try:
-            data = await _post_chat(
-                {"model": model, "messages": convo, "stream": False},
-                token, max(timeout, FINAL_ROUND_MIN_TIMEOUT_SECONDS))
+            data = await complete(convo, False,
+                                  max(timeout, FINAL_ROUND_MIN_TIMEOUT_SECONDS))
             choices = data.get("choices") or []
             message = (choices[0].get("message") or {}) if choices else {}
             final = (message.get("content") or "").strip()
