@@ -95,3 +95,22 @@ def test_the_prompt_carries_what_is_already_known():
     assert "Client is Northwind." in prompt
     assert "Move the digest to 7am." in prompt
     assert '{"notes": [], "facts": []}' in prompt
+
+
+from unittest.mock import AsyncMock, patch
+
+
+async def test_recall_fails_open_when_the_database_is_down():
+    with patch.object(am, "list_notes", new=AsyncMock(side_effect=RuntimeError("db"))), \
+         patch.object(am, "list_facts", new=AsyncMock(return_value=["a fact"])):
+        out = await am.recall_block("o@example.com", "agent-1")
+    assert out == ""
+
+
+async def test_recall_renders_both_stores_newest_first():
+    with patch.object(am, "list_notes", new=AsyncMock(return_value=[
+            {"id": "n1", "content": "newest note"}, {"id": "n2", "content": "older note"}])), \
+         patch.object(am, "list_facts", new=AsyncMock(return_value=["a fact"])):
+        out = await am.recall_block("o@example.com", "agent-1")
+    assert out.index("newest note") < out.index("older note")
+    assert "a fact" in out

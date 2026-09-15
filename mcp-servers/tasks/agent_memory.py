@@ -179,3 +179,181 @@ def reflection_prompt(agent_name: str, notes: list[str], facts: list[str],
         "{\"notes\": [], \"facts\": []}."
         % (agent_name or "this assistant", known, facts_block,
            (user_text or "")[:2000], (answer or "")[:2000]))
+
+
+# --- the agent's own notes: tasks.agent_memory ------------------------------
+
+async def add_notes(user_email: str, agent_id: str, notes: list[str],
+                    source: str = "reflection") -> int:
+    """Store notes, one row each, deduplicated by key. Returns how many were
+    new. A repeat touches last_seen_at so pruning keeps what keeps coming
+    up. Prunes to the cap afterwards. Never raises."""
+    if not user_email or not agent_id:
+        return 0
+    added = 0
+    try:
+        async with session() as s:
+            for note in notes:
+                key = memory_key(note)
+                if not key:
+                    continue
+                r = await s.execute(sql_text(
+                    "INSERT INTO tasks.agent_memory "
+                    "(id, agent_id, user_email, content, key, source) "
+                    "VALUES (:id, :agent, :email, :content, :key, :source) "
+                    "ON CONFLICT (agent_id, user_email, key) DO UPDATE "
+                    "SET last_seen_at = now() "
+                    "RETURNING (xmax = 0) AS inserted"),
+                    {"id": str(uuid.uuid4()), "agent": agent_id,
+                     "email": user_email, "content": note, "key": key,
+                     "source": source})
+                row = r.first()
+                if row is not None and row[0]:
+                    added += 1
+            await s.execute(sql_text(
+                "DELETE FROM tasks.agent_memory WHERE id IN ("
+                " SELECT id FROM tasks.agent_memory "
+                " WHERE agent_id = :agent AND user_email = :email "
+                " ORDER BY last_seen_at DESC OFFSET :cap)"),
+                {"agent": agent_id, "email": user_email,
+                 "cap": MAX_NOTES_PER_AGENT})
+            await s.commit()
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not store agent notes", exc_info=True)
+    return added
+
+
+async def list_notes(user_email: str, agent_id: str,
+                     limit: int = MAX_NOTES_PER_AGENT) -> list[dict]:
+    """Newest first. Raises on a database failure; recall_block catches."""
+    async with session() as s:
+        r = await s.execute(sql_text(
+            "SELECT id, content, source, created_at, last_seen_at "
+            "FROM tasks.agent_memory "
+            "WHERE user_email = :email AND agent_id = :agent "
+            "ORDER BY last_seen_at DESC LIMIT :limit"),
+            {"email": user_email, "agent": agent_id, "limit": limit})
+        return [{"id": str(row.id), "content": row.content,
+                 "source": row.source,
+                 "created_at": row.created_at.isoformat(),
+                 "last_seen_at": row.last_seen_at.isoformat()}
+                for row in r]
+
+
+async def note_counts(user_email: str) -> dict:
+    """{agent_id: notes} for one person, for the cards."""
+    async with session() as s:
+        r = await s.execute(sql_text(
+            "SELECT agent_id, count(*) AS n FROM tasks.agent_memory "
+            "WHERE user_email = :email GROUP BY agent_id"),
+            {"email": user_email})
+        return {row.agent_id: int(row.n) for row in r}
+
+
+async def delete_note(user_email: str, agent_id: str, note_id: str) -> bool:
+    async with session() as s:
+        r = await s.execute(sql_text(
+            "DELETE FROM tasks.agent_memory "
+            "WHERE user_email = :email AND agent_id = :agent AND id = CAST(:id AS uuid)"),
+            {"email": user_email, "agent": agent_id, "id": note_id})
+        await s.commit()
+        return r.rowcount > 0
+
+
+async def clear_notes(user_email: str, agent_id: str) -> int:
+    async with session() as s:
+        r = await s.execute(sql_text(
+            "DELETE FROM tasks.agent_memory "
+            "WHERE user_email = :email AND agent_id = :agent"),
+            {"email": user_email, "agent": agent_id})
+        await s.commit()
+        return r.rowcount
+
+
+# --- facts about the person: public.memory ----------------------------------
+
+async def _owui_user_id(user_email: str) -> str | None:
+    async with session() as s:
+        r = await s.execute(sql_text(
+            'SELECT id FROM public."user" WHERE email = :email LIMIT 1'),
+            {"email": user_email})
+        row = r.first()
+        return str(row[0]) if row else None
+
+
+async def list_facts(user_email: str,
+                     limit: int = MAX_FACTS_PER_PERSON) -> list[str]:
+    """Newest first. Raises on failure; recall_block catches."""
+    uid = await _owui_user_id(user_email)
+    if not uid:
+        return []
+    async with session() as s:
+        r = await s.execute(sql_text(
+            'SELECT content FROM public."memory" WHERE user_id = :uid '
+            "ORDER BY created_at DESC LIMIT :limit"),
+            {"uid": uid, "limit": limit})
+        return [row[0] for row in r if row[0]]
+
+
+async def add_facts(user_email: str, facts: list[str]) -> int:
+    """Store facts about the person as Open WebUI memories, deduplicated by
+    key against what is already there. Returns how many were new. Never
+    raises."""
+    if not user_email or not facts:
+        return 0
+    added = 0
+    try:
+        uid = await _owui_user_id(user_email)
+        if not uid:
+            return 0
+        existing = {memory_key(f) for f in await list_facts(user_email)}
+        async with session() as s:
+            for fact in facts:
+                key = memory_key(fact)
+                if not key or key in existing:
+                    continue
+                now = int(time.time())
+                await s.execute(sql_text(
+                    'INSERT INTO public."memory" '
+                    "(id, user_id, content, created_at, updated_at) "
+                    "VALUES (:id, :uid, :content, :now, :now)"),
+                    {"id": str(uuid.uuid4()), "uid": uid,
+                     "content": fact, "now": now})
+                existing.add(key)
+                added += 1
+            await s.execute(sql_text(
+                'DELETE FROM public."memory" WHERE id IN ('
+                ' SELECT id FROM public."memory" WHERE user_id = :uid '
+                " ORDER BY created_at DESC OFFSET :cap)"),
+                {"uid": uid, "cap": MAX_FACTS_PER_PERSON})
+            await s.commit()
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not store facts about the person", exc_info=True)
+    return added
+
+
+# --- recall -----------------------------------------------------------------
+
+#: Reading memory must never hold a turn hostage.
+RECALL_TIMEOUT_SECONDS = 3.0
+
+
+async def recall_block(user_email: str, agent_id: str) -> str:
+    """Everything this agent should start the turn knowing, or "".
+
+    Both reads race one timeout. Any failure, including the timeout, is an
+    empty block and one log line: a turn without memory is a turn, a turn
+    that waits on memory is an outage.
+    """
+    if not user_email or not agent_id:
+        return ""
+    try:
+        notes, facts = await asyncio.wait_for(
+            asyncio.gather(list_notes(user_email, agent_id),
+                           list_facts(user_email)),
+            timeout=RECALL_TIMEOUT_SECONDS)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not read agent memory for %s", agent_id,
+                       exc_info=True)
+        return ""
+    return render_recall([n["content"] for n in notes], facts)
