@@ -594,9 +594,17 @@ def test_the_schedule_gets_more_rounds_than_a_chat_window():
 
 def test_the_token_outlives_the_whole_loop():
     """Derived, not hardcoded. Raising the cap without raising the token gives
-    an agent that dies partway through and reports it as a refusal."""
+    an agent that dies partway through and reports it as a refusal.
+
+    The free pool counts too. An agent on a free model can spend every id in
+    one turn, and each spent id is one more completion of up to the full
+    timeout, so the rounds alone stopped describing the worst case the day
+    the fallback was added. The token expiring mid-loop is the worst kind of
+    failure here: a 401 is deliberately not a provider failure, so it ends
+    the run rather than moving to the next model."""
     assert agent_runner.CHAT_TOKEN_TTL_SECONDS >= (
-        agent_runner.MAX_TOOL_ITERATIONS * agent_runner.HTTP_TIMEOUT_SECONDS)
+        (agent_runner.MAX_TOOL_ITERATIONS + len(agent_runner.FREE_MODELS) - 1)
+        * agent_runner.HTTP_TIMEOUT_SECONDS)
 
 
 async def test_a_scheduled_report_carries_no_long_dashes(wired):

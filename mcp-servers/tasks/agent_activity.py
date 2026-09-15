@@ -33,10 +33,18 @@ logger = logging.getLogger(__name__)
 #:
 #: A chat turn is bounded by CHANNEL_MAX_TOOL_ITERATIONS (7) completions of
 #: up to CHANNEL_HTTP_TIMEOUT_SECONDS (60) each, so roughly seven minutes of
-#: model time plus tool time. Ten minutes is room over that, and
-#: it is what somebody watching the card actually wants: an agent that says
-#: it is working ten minutes after they asked it something is not working.
-STALE_AFTER_CHANNEL = timedelta(minutes=10)
+#: model time plus tool time, and then the write-up after the cap, which gets
+#: FINAL_ROUND_MIN_TIMEOUT_SECONDS (120). That was nine minutes and ten was
+#: room over it.
+#:
+#: Twelve, not ten, since agents moved to free models. A free agent that
+#: keeps hitting a failing provider spends its whole pool over the turn, and
+#: each id it gives up on is one more 60 second completion on this path: two
+#: fallback ids is 120 seconds on top, so the worst case is 420 + 120 + 120,
+#: eleven minutes. Ten would have reported a turn that was still going as
+#: failed, and it is the last turn of a bad day that gets called dead, not a
+#: healthy one. A test derives both numbers from the runner's constants.
+STALE_AFTER_CHANNEL = timedelta(minutes=12)
 
 #: A scheduled run uses MAX_TOOL_ITERATIONS (8) and HTTP_TIMEOUT_SECONDS
 #: (240), so twenty minutes of model time alone is healthy before a single
@@ -44,7 +52,13 @@ STALE_AFTER_CHANNEL = timedelta(minutes=10)
 #: while it was still going, which is this constant's own failure mode in
 #: the other direction. Nobody is watching a schedule in real time, so the
 #: cost of waiting is nothing.
-STALE_AFTER_SCHEDULE = timedelta(minutes=45)
+#:
+#: Fifty, not forty five, for the same free-model reason: each fallback id
+#: costs one more 240 second completion here, so 1920 for the rounds plus
+#: 480 for two fallbacks plus 240 for the write-up is 2640 seconds, forty
+#: four minutes. Forty five cleared that by sixty seconds, which is not
+#: margin when tool time is not counted in it at all.
+STALE_AFTER_SCHEDULE = timedelta(minutes=50)
 
 SOURCE_SCHEDULE = "schedule"
 SOURCE_CHANNEL = "channel"

@@ -97,9 +97,11 @@ MAX_TOOL_ITERATIONS = 8
 #: it annoys rather than deceives.
 #:
 #: Seven is what the abandon window allows, not a round number: at 60 seconds
-#: each the worst case is seven minutes, and STALE_AFTER_CHANNEL is ten, which
-#: a test asserts. Nine would leave one minute of margin for tool time on top
-#: of model time, which is not margin.
+#: each the worst case is seven minutes, and STALE_AFTER_CHANNEL is twelve,
+#: which a test asserts. Nine rounds would leave no margin at all now that a
+#: free agent can also spend two fallback ids at 60 seconds each inside the
+#: same turn: 9 + 2 rounds plus the 120 second write-up is 780 seconds
+#: against a 720 second window.
 CHANNEL_MAX_TOOL_ITERATIONS = 7
 CHANNEL_HTTP_TIMEOUT_SECONDS = 60
 
@@ -107,17 +109,9 @@ CHANNEL_HTTP_TIMEOUT_SECONDS = 60
 #: gathered, so it is the slowest completion of the run. Measured 2026-09-14:
 #: gpt-5-mini took 22s for a plain turn with the brief, and Kai's write-up
 #: after seven rounds of app files hit the 60s timeout and he said nothing.
-#: Seven rounds at 60 plus this is nine minutes, inside STALE_AFTER_CHANNEL.
+#: Seven rounds at 60 plus this is nine minutes, and eleven once a free
+#: agent's two fallback ids are counted, inside STALE_AFTER_CHANNEL at twelve.
 FINAL_ROUND_MIN_TIMEOUT_SECONDS = 120
-
-#: The chat token has to outlive the WHOLE loop, not one completion: the loop
-#: can make up to MAX_TOOL_ITERATIONS sequential calls of up to
-#: HTTP_TIMEOUT_SECONDS each, plus tool time in between. A token sized for a
-#: single call expires partway through a run that needs two or more slow
-#: iterations, which surfaces as the agent refusing rather than as the auth
-#: failure it actually is.
-CHAT_TOKEN_TTL_SECONDS = MAX_TOOL_ITERATIONS * HTTP_TIMEOUT_SECONDS + 60
-
 
 def _base_url() -> str:
     return os.environ.get("OPENWEBUI_URL", "http://open-webui:8080").rstrip("/")
@@ -334,9 +328,11 @@ def _provider_failed(exc_or_body) -> bool:
 
     Three shapes, all measured on production: an HTTPStatusError whose body
     is Open WebUI's "Provider returned error" or whose status is 402, 408,
-    429 or 5xx; a 200 whose body carries an `error` object; a 200 with no
-    choices at all. A 401 or 403 is this service's own problem and is not
-    retried anywhere.
+    429 or 5xx; a 200 whose body carries an `error` object instead of
+    choices; a 200 with no choices at all. The last two are one test below,
+    because what makes both a failure is the missing choices and not the
+    error key. A 401 or 403 is this service's own problem and is not retried
+    anywhere.
     """
     if isinstance(exc_or_body, httpx.TimeoutException):
         return True
@@ -352,21 +348,37 @@ def _provider_failed(exc_or_body) -> bool:
             detail = exc_or_body.response.text
         return isinstance(detail, str) and _PROVIDER_ERROR_DETAIL in detail
     if isinstance(exc_or_body, dict):
-        if exc_or_body.get("error"):
-            return True
+        # Choices decide it, and an `error` key on its own does not. A body
+        # that carries a completion AND a note about an upstream that was
+        # retried is an answer, and reading it as a failure would throw the
+        # answer away and spend a pool id to ask the question again.
         return not exc_or_body.get("choices")
-    return False
+    if isinstance(exc_or_body, BaseException):
+        # Raised, but not by a provider: a bug in this file, or httpx
+        # refusing to build the request. Falling back would run the same
+        # broken thing three times and then blame the free models for it.
+        return False
+    # A 2xx carrying anything but an object: unreachable in theory, and in
+    # practice it is what a proxy in the middle returns. Calling it a failure
+    # moves the turn to the next id; calling it an answer reaches data.get
+    # and takes the whole run down with an AttributeError.
+    return True
 
 
 async def _available_free_ids() -> set | None:
     """Free ids OpenRouter serves right now, cached a quarter hour, or None
     when the catalogue could not be read. None means "do not filter": a
     router that refuses every id because it could not read a list is worse
-    than one that tries an id that turns out to be gone. Same reasoning and
-    the same endpoint as the Auto (Free) pipe. No key needed."""
+    than one that tries an id that turns out to be gone. A failed read is
+    cached for that same quarter hour, so an unreachable catalogue costs one
+    probe rather than one per turn. Same reasoning and the same endpoint as
+    the Auto (Free) pipe. No key needed."""
     global _available_ids, _available_at
     now = time.time()
-    if _available_ids is not None and now - _available_at < _AVAILABLE_TTL_SECONDS:
+    # The stamp, not the contents, decides whether to probe. A failed read
+    # leaves the contents empty, so keying on them would probe again on the
+    # very next turn, which is exactly the case this cache exists for.
+    if _available_at and now - _available_at < _AVAILABLE_TTL_SECONDS:
         return _available_ids
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -374,6 +386,15 @@ async def _available_free_ids() -> set | None:
             r.raise_for_status()
             ids = {m.get("id") for m in (r.json().get("data") or []) if m.get("id")}
     except Exception:                                       # noqa: BLE001
+        # Stamped on the way out, so an unreachable catalogue is probed once
+        # a quarter hour rather than once a turn. This sits in front of the
+        # person's first token and the client waits up to 10 seconds, so the
+        # unstamped version charged every turn 10 seconds for a list that is
+        # only used to skip withdrawn ids. Logged, because a silent return
+        # of None looks identical to a catalogue that lists everything.
+        logger.warning("could not read the OpenRouter free catalogue",
+                       exc_info=True)
+        _available_at = now
         return _available_ids
     if ids:
         _available_ids = ids
@@ -399,6 +420,31 @@ def _agent_system(agent: dict | None) -> str:
     params = params if isinstance(params, dict) else {}
     system = params.get("system")
     return system.strip() if isinstance(system, str) else ""
+
+
+#: The chat token has to outlive the WHOLE loop, not one completion: the loop
+#: can make up to MAX_TOOL_ITERATIONS sequential calls of up to
+#: HTTP_TIMEOUT_SECONDS each, plus tool time in between. A token sized for a
+#: single call expires partway through a run that needs two or more slow
+#: iterations, which surfaces as the agent refusing rather than as the auth
+#: failure it actually is.
+#:
+#: The free pool is counted too, which is why this sits below it rather than
+#: beside the caps it also reads. A free agent can give up on every id in one
+#: turn, and each one it gives up on is another completion of up to the full
+#: timeout, so the rounds alone stopped describing the worst case: 8 * 240
+#: plus a minute covered 33 minutes of a loop that can now run 44. This is
+#: the one deadline the fallback cannot rescue, because an expired token is a
+#: 401, a 401 is deliberately not a provider failure, and so it ends the run
+#: instead of moving it to the next model.
+#:
+#: This covers 41 of those 44 minutes. The write-up after the tool cap is the
+#: uncounted round, here and in the formula this replaces, and it is the one
+#: round that can afford to lose: it already runs inside a try/except and a
+#: failure there degrades to the note saying the run stopped early. Count it
+#: as well, with a + 1 in the multiplier, if that ever stops being true.
+CHAT_TOKEN_TTL_SECONDS = (
+    (MAX_TOOL_ITERATIONS + len(FREE_MODELS) - 1) * HTTP_TIMEOUT_SECONDS + 60)
 
 
 async def _chat(token: str, model: str, messages: list[dict],
@@ -484,7 +530,17 @@ async def _chat(token: str, model: str, messages: list[dict],
                 # Nothing left to try. The caller reads a body with no
                 # choices as the busy sentence for a free agent, and raises
                 # its own "no answer" for a paid one, as it always did.
-                return data if data is not None else {}
+                if free:
+                    # The only trace this turn leaves. The busy sentence
+                    # reads like an answer, and _post_chat logs nothing at
+                    # all when the failure was a timeout rather than a
+                    # status, so without this line a turn that reached
+                    # nobody is invisible in the log.
+                    logger.warning("free pool spent for %s, last model %s",
+                                   model, active)
+                # Only a dict survives: the caller reads choices off this,
+                # and a failed body that is not one would raise there.
+                return data if isinstance(data, dict) else {}
             nxt = pool.pop(0)
             logger.warning("free model %s failed for %s, trying %s",
                            active, model, nxt)

@@ -252,8 +252,11 @@ def test_the_longer_cap_still_fits_inside_the_awake_window():
 
     from agent_activity import STALE_AFTER_CHANNEL
     # The rounds, then the write-up after the cap, which has its own budget.
+    # A free agent can also spend its whole pool in one turn, and each spent
+    # id is one more failed completion of up to the round timeout.
+    extra = len(agent_runner.FREE_MODELS) - 1
     worst = timedelta(seconds=agent_runner.CHANNEL_HTTP_TIMEOUT_SECONDS
-                      * agent_runner.CHANNEL_MAX_TOOL_ITERATIONS
+                      * (agent_runner.CHANNEL_MAX_TOOL_ITERATIONS + extra)
                       + agent_runner.FINAL_ROUND_MIN_TIMEOUT_SECONDS)
     assert STALE_AFTER_CHANNEL > worst, (STALE_AFTER_CHANNEL, worst)
 
