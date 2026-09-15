@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text as sql_text
 
 import agent_activity
+import agent_memory
 import agent_skills
 from agent_runner import _owui_user_id_for
 from agent_templates import TEMPLATES
@@ -413,6 +414,82 @@ async def activity(user: CurrentUser = Depends(current_user)) -> dict:
     not another person's agent working.
     """
     return {"activity": await agent_activity.activity_for(user.email)}
+
+
+# ---------------------------------------------------------------------------
+# What an agent remembers, and how a person forgets it.
+#
+# The public paths, so the page author does not have to guess. This router
+# carries the prefix /agents and main.py mounts it twice: bare for operators
+# on the backend network, and under /api/tasks for the web. The browser calls
+# the second set.
+#
+#   GET    /api/tasks/agents/memory
+#   GET    /api/tasks/agents/{agent_id}/memory
+#   DELETE /api/tasks/agents/{agent_id}/memory/{note_id}
+#   DELETE /api/tasks/agents/{agent_id}/memory
+#
+# Every per-agent route is owner only, with no admin path. An admin's model
+# listing carries every user's agents, and notes an agent wrote about one
+# person's work are that person's business.
+# ---------------------------------------------------------------------------
+
+async def _own_agent_or_403(user_email: str, agent_id: str) -> None:
+    """The same rule /speak uses: not one of yours is not yours to read."""
+    agents = await _agents_for(user_email)
+    if not any(a.get("id") == agent_id for a in agents):
+        raise HTTPException(status_code=403, detail="That is not one of your agents.")
+
+
+@router.get("/memory")
+async def memory_counts(user: CurrentUser = Depends(current_user)) -> dict:
+    """How many notes each of the caller's agents holds, for the cards.
+
+    No ownership check to make here: note_counts is asked for one address
+    and groups only that person's rows, so it cannot answer for anybody
+    else. Declared ahead of the parameterised routes below out of habit
+    rather than to fix a collision: /agents/memory is one segment and
+    /agents/{agent_id}/memory is two, so they cannot match the same request
+    today, and a literal declared first stays safe if a shorter
+    parameterised route is ever added.
+    """
+    return {"counts": await agent_memory.note_counts(user.email)}
+
+
+@router.get("/{agent_id}/memory")
+async def memory_list(agent_id: str,
+                      user: CurrentUser = Depends(current_user)) -> dict:
+    """This agent's notes, newest first. Owner only."""
+    await _own_agent_or_403(user.email, agent_id)
+    return {"notes": await agent_memory.list_notes(user.email, agent_id)}
+
+
+@router.delete("/{agent_id}/memory/{note_id}")
+async def memory_forget(agent_id: str, note_id: str,
+                        user: CurrentUser = Depends(current_user)) -> dict:
+    """Forget one note. Owner only, and checked before anything is deleted:
+    a note removed and then refused is still removed.
+
+    A note that was not there is not an error. delete_note returns False for
+    a miss and for an id that is not a uuid, and both mean the same thing to
+    the person who asked, which is that it is gone. The row is theirs twice
+    over, because delete_note scopes by email as well as by agent.
+    """
+    await _own_agent_or_403(user.email, agent_id)
+    return {"forgotten": await agent_memory.delete_note(user.email, agent_id, note_id)}
+
+
+@router.delete("/{agent_id}/memory")
+async def memory_forget_all(agent_id: str,
+                            user: CurrentUser = Depends(current_user)) -> dict:
+    """Forget everything this agent remembers about the caller. Owner only.
+
+    Returns how many notes went rather than a bare acknowledgement, so the
+    page can say what happened, and an agent with nothing to forget answers
+    zero rather than failing.
+    """
+    await _own_agent_or_403(user.email, agent_id)
+    return {"forgotten": await agent_memory.clear_notes(user.email, agent_id)}
 
 
 @router.get("/skills")
