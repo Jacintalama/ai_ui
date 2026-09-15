@@ -71,10 +71,10 @@ async def test_turn_for_reads_memory_and_hands_it_to_the_line(monkeypatch):
     assert recall.await_args.args == ("o@example.com", "agent-1")
 
 
-async def test_a_failed_memory_read_does_not_take_the_turn_down(monkeypatch):
+async def test_a_failed_memory_read_costs_the_memory_not_the_answer(monkeypatch):
     """recall_block promises never to raise, and _turn_for promises never to
-    raise. The read has to sit inside the try that keeps the second promise,
-    or the first one is the only thing holding the turn up."""
+    raise. A bug in the first must not spend the second: the person still
+    gets their answer, it just arrives without the block."""
     monkeypatch.setattr(rt, "_run_turn",
                         AsyncMock(return_value={"answer": "ok", "notes": []}))
     monkeypatch.setattr(agent_memory, "recall_block",
@@ -84,7 +84,9 @@ async def test_a_failed_memory_read_does_not_take_the_turn_down(monkeypatch):
                              [{"role": "user", "content": "hello there"}], ["Ada"])
 
     assert out["agent"]["id"] == "agent-1"
-    assert isinstance(out["answer"], str) and out["answer"]
+    # The real answer, not the failure sentence: the optional read gets its
+    # own try arm, so a broken read never reaches the turn's failure path.
+    assert out["answer"] == "ok"
 
 
 async def test_the_turn_endpoint_prepends_the_block_for_the_bots(monkeypatch):
@@ -124,6 +126,19 @@ async def test_the_turn_endpoint_sends_the_messages_untouched_when_nothing_is_st
     await rt.turn(_body(sent), x_internal_secret="s")
 
     assert seen["messages"] == sent
+
+
+async def test_a_failed_memory_read_still_answers_the_bots(monkeypatch):
+    """The same guarantee on the endpoint the bots actually call."""
+    monkeypatch.setattr(rt, "_require_internal", lambda secret: None)
+    monkeypatch.setattr(rt, "_run_turn",
+                        AsyncMock(return_value={"answer": "ok", "notes": []}))
+    monkeypatch.setattr(agent_memory, "recall_block",
+                        AsyncMock(side_effect=RuntimeError("memory exploded")))
+
+    out = await rt.turn(_body(), x_internal_secret="s")
+
+    assert out == {"answer": "ok", "notes": []}
 
 
 class _Sched:

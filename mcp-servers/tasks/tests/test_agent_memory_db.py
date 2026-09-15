@@ -98,14 +98,17 @@ async def test_facts_round_trip_for_a_real_person(db_session_nondestructive):
     try:
         # Seeded so the write has something to invalidate. recall_block
         # serves facts from a short lived cache, and a write that left it
-        # standing would tell the next turn what was true before it.
-        am._facts_cache[email] = (time.monotonic(), ["a stale fact"])
+        # standing would tell the next turn what was true before it. The
+        # key is folded because the cache folds it: this address comes
+        # from an environment variable and may be typed any way.
+        cache_key = email.lower()
+        am._facts_cache[cache_key] = (time.monotonic(), ["a stale fact"])
         assert await am.add_facts(email, [fact]) == 1
-        assert email not in am._facts_cache
+        assert cache_key not in am._facts_cache
         assert fact in await am.list_facts(email)
         assert await am.add_facts(email, [fact]) == 0, "the same fact twice is one row"
     finally:
-        am._facts_cache.pop(email, None)
+        am._facts_cache.pop(email.lower(), None)
         async with session() as s:
             await s.execute(sql_text(
                 'DELETE FROM public."memory" WHERE content = :c'), {"c": fact})

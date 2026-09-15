@@ -291,7 +291,16 @@ async def turn(body: TurnIn,
     # message rather than an identity line, because this endpoint has
     # neither the agent row nor the other agents' names to build one from.
     messages = list(body.messages)
-    memory = await agent_memory.recall_block(body.user_email, body.agent_id)
+    try:
+        memory = await agent_memory.recall_block(body.user_email,
+                                                 body.agent_id)
+    except Exception:                                   # noqa: BLE001
+        # Optional by definition. recall_block already fails open, so this
+        # only catches a bug in it, and a bug there must cost the memory,
+        # not the bot's answer.
+        logger.warning("could not read agent memory for %s", body.agent_id,
+                       exc_info=True)
+        memory = ""
     if memory:
         messages = [{"role": "system", "content": memory}] + messages
     return await _run_turn(body.user_email, body.agent_id, messages)
@@ -852,10 +861,15 @@ async def _turn_for(user_email: str, agent: dict, messages: list[dict],
     removed before the real one is added.
     """
     try:
-        # Inside the try, not above it. This function's promise is that it
-        # never raises, and a memory read that broke that promise would
-        # take down the turn it was only meant to inform.
         memory = await agent_memory.recall_block(user_email, agent["id"])
+    except Exception:                                       # noqa: BLE001
+        # Its own arm, not the one below. Sharing that one would answer a
+        # broken memory read with the sentence that says the turn failed,
+        # spending the whole answer on the one part of it that is optional.
+        logger.warning("could not read agent memory for %s", agent.get("id"),
+                       exc_info=True)
+        memory = ""
+    try:
         history = ([_identity_line(agent, names, memory=memory)]
                    + agent_routing.clean_history_for_agent(messages, names))
         out = await _run_turn(user_email, agent["id"], history)
