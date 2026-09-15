@@ -12,6 +12,7 @@ import httpx
 import pytest
 import respx
 
+import agent_memory
 import agent_runner
 
 # Captured before the autouse `wired` fixture below replaces agent_runner._chat
@@ -43,7 +44,17 @@ OTHER_AGENT_ROW = {"id": "agent-decoy-0099", "name": "Decoy",
 
 @pytest.fixture(autouse=True)
 def wired(monkeypatch):
-    """Replace every network seam. Nothing here touches a socket."""
+    """Replace the seams run_agent reaches for, so no test here calls out.
+
+    recall_block joined that list when scheduled runs started carrying
+    agent memory. It fails open, so patched or not the answer is the
+    same, but unpatched every test in this file waits on a database
+    this machine does not have: measured at about two seconds a test.
+
+    The run bookkeeping in agent_activity opens its own session and is
+    still unpatched, so some of that cost remains. Nothing here asserts
+    on it.
+    """
     owui_user_id_for = AsyncMock(return_value="owui-owner-1")
     monkeypatch.setattr(agent_runner, "_owui_user_id_for", owui_user_id_for)
     monkeypatch.setattr(agent_runner, "mint_owui_token",
@@ -54,6 +65,7 @@ def wired(monkeypatch):
                         AsyncMock(return_value=([OTHER_AGENT_ROW, AGENT_ROW], False)))
     chat = AsyncMock(return_value=("Two need a reply today.", []))
     monkeypatch.setattr(agent_runner, "_chat", chat)
+    monkeypatch.setattr(agent_memory, "recall_block", AsyncMock(return_value=""))
     return SimpleNamespace(chat=chat, owui_user_id_for=owui_user_id_for)
 
 
