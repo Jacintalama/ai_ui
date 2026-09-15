@@ -626,3 +626,33 @@ async def test_a_scheduled_report_carries_no_long_dashes(wired):
     assert status == "completed", (status, result)
     assert "\u2014" not in result and "\u2013" not in result, result
     assert "Sep 7-11" in result
+
+
+# ---------------------------------------------------------------------------
+# The busy sentence is not a report. It reaches run_agent as ordinary content,
+# because that is how the free pool and the free router both report giving up,
+# and nothing downstream can tell it from an answer.
+# ---------------------------------------------------------------------------
+
+
+async def test_a_busy_free_pool_is_a_failed_run_not_a_report(wired):
+    """Delivered as completed, the busy sentence goes out as the week's
+    output, and _messages_for then hands it back next run as "what you
+    produced last time", which is the poisoning its docstring describes."""
+    wired.chat.return_value = (agent_runner.FREE_POOL_EXHAUSTED, [])
+
+    status, result, _ = await agent_runner.run_agent(_sched())
+
+    assert status == "failed", (status, result)
+    assert result == agent_runner.FREE_POOL_EXHAUSTED
+
+
+async def test_the_router_busy_sentence_is_a_failed_run_too(wired):
+    """Auto (Free) says it differently and shipped as completed until now."""
+    wired.chat.return_value = (agent_runner.ROUTER_EXHAUSTED, [])
+
+    status, result, _ = await agent_runner.run_agent(_sched())
+
+    assert status == "failed", (status, result)
+    assert result == agent_runner.ROUTER_EXHAUSTED
+

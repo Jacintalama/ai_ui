@@ -134,12 +134,18 @@ AGENT_ON_CALLBACK_MODEL = (
     "This agent is set to a model that cannot run an agent.")
 
 
-async def _resolve_agent(user_email: str, agent_id: str) -> tuple[str, list[str], str | None]:
-    """(token, the agent's own tool ids, its access level).
+async def _resolve_agent_row(user_email: str, agent_id: str
+                             ) -> tuple[str, list[str], str | None, dict]:
+    """(token, the agent's own tool ids, its access level, the agent row).
 
     Raises HTTPException rather than returning a sentinel: every caller here
     would have to re-raise anyway, and a sentinel that got ignored once would
     run a turn with no tools and look like a model problem.
+
+    The row is returned as well as read because the tool loop needs it. A
+    free-model agent's fallback pool and its no-reasoning payload are both
+    decided from base_model_id and params, and this function was already the
+    only place on the chat path that had them.
     """
     owner = await _owui_user_id_for(user_email)
     if not owner:
@@ -165,7 +171,13 @@ async def _resolve_agent(user_email: str, agent_id: str) -> tuple[str, list[str]
                             detail=AGENT_ON_CALLBACK_MODEL)
     meta = agent.get("meta") if isinstance(agent.get("meta"), dict) else {}
     return (token, await tools_for_agent(user_email, meta),
-            agent_access.level_of(meta))
+            agent_access.level_of(meta), agent)
+
+
+async def _resolve_agent(user_email: str, agent_id: str) -> tuple[str, list[str], str | None]:
+    """The three values every older caller reads. See _resolve_agent_row."""
+    token, tools, level, _agent = await _resolve_agent_row(user_email, agent_id)
+    return token, tools, level
 
 
 async def tools_for_agent(user_email: str, meta: dict) -> list[str]:
@@ -248,7 +260,7 @@ async def _run_turn(user_email: str, agent_id: str,
     Split out of the endpoint so /agents/chat can reuse it without going back
     out over HTTP to ourselves. Returns the same two shapes the endpoint does.
     """
-    token, tools, level = await _resolve_agent(user_email, agent_id)
+    token, tools, level, agent = await _resolve_agent_row(user_email, agent_id)
     mode = agent_access.effective_mode(level, None, agent_access.SURFACE_CHANNEL)
 
     run_id = await agent_activity.start_run(
@@ -257,6 +269,7 @@ async def _run_turn(user_email: str, agent_id: str,
     try:
         answer, notes = await _chat(
             token=token, model=agent_id, messages=messages,
+            agent=agent,
             tool_ids=tools or None, user_email=user_email,
             tool_mode=mode,
             refusal_reason=agent_access.refusal_reason(
@@ -330,7 +343,7 @@ async def _resume_turn(user_email: str, agent_id: str, conversation: list[dict],
     can be edited or deleted, and somebody who has second thoughts and turns
     an agent down to read only has turned it down.
     """
-    token, tools, level = await _resolve_agent(user_email, agent_id)
+    token, tools, level, agent = await _resolve_agent_row(user_email, agent_id)
     mode = agent_access.effective_mode(level, None, agent_access.SURFACE_CHANNEL)
     if mode not in _RESUMABLE:
         return {"answer": "This agent is set to read only now, so I did not "
@@ -364,6 +377,7 @@ async def _resume_turn(user_email: str, agent_id: str, conversation: list[dict],
     try:
         answer, notes = await _chat(
             token=token, model=agent_id, messages=convo,
+            agent=agent,
             tool_ids=tools or None, user_email=user_email,
             tool_mode=mode,
             refusal_reason=agent_access.refusal_reason(

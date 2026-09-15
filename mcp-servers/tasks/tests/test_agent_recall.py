@@ -193,3 +193,80 @@ async def test_a_schedule_run_with_nothing_stored_sends_the_task_unchanged(monke
     status, _result, _extras = await agent_runner.run_agent(_Sched())
     assert status == "completed"
     assert seen["messages"] == agent_runner._messages_for(_Sched())
+
+
+# ---------------------------------------------------------------------------
+# The agent ROW, not just its id. The free-model fallback and the no-reasoning
+# payload both read base_model_id and params off the row, so a caller that
+# hands the loop only a model id gets an agent that cannot fall back and that
+# leaks its thinking into the answer. run_agent already passed it; the three
+# chat callers did not, which is every turn a person actually types.
+# ---------------------------------------------------------------------------
+
+
+async def _wire_turn(monkeypatch, row, chat):
+    """Every seam _run_turn and _resume_turn reach for, with `chat` as _chat."""
+    monkeypatch.setattr(rt, "_owui_user_id_for", AsyncMock(return_value="u1"))
+    monkeypatch.setattr(rt, "mint_owui_token", lambda *a, **k: "tok")
+    monkeypatch.setattr(rt, "_list_agents", AsyncMock(return_value=([row], False)))
+    monkeypatch.setattr(rt, "tools_for_agent", AsyncMock(return_value=[]))
+    monkeypatch.setattr(rt, "_chat", chat)
+    monkeypatch.setattr(rt.agent_activity, "start_run", AsyncMock(return_value=None))
+    monkeypatch.setattr(rt.agent_activity, "finish_run", AsyncMock())
+    # Task 8 adds this; patched with raising=False so this file is valid on
+    # both sides of it, and so no test here opens a database it has not got.
+    monkeypatch.setattr(agent_memory, "schedule_reflection",
+                        lambda *a, **k: None, raising=False)
+
+
+async def test_run_turn_hands_the_agent_row_to_the_loop(monkeypatch):
+    seen = {}
+
+    async def fake_chat(**kwargs):
+        seen.update(kwargs)
+        return "done", []
+
+    row = {"id": "agent-1", "name": "Ada", "base_model_id": "x:free",
+           "params": {"system": "Be Ada."}, "meta": {"toolIds": []}}
+    await _wire_turn(monkeypatch, row, fake_chat)
+
+    await rt._run_turn("o@example.com", "agent-1", [{"role": "user", "content": "q"}])
+    assert seen["agent"]["base_model_id"] == "x:free"
+    assert seen["agent"]["params"]["system"] == "Be Ada."
+
+
+async def test_resume_turn_hands_the_agent_row_to_the_loop(monkeypatch):
+    """The held half of a turn runs on the same model as the first half."""
+    seen = {}
+
+    async def fake_chat(**kwargs):
+        seen.update(kwargs)
+        return "done", []
+
+    row = {"id": "agent-1", "name": "Ada", "base_model_id": "x:free",
+           "params": {"system": "Be Ada."},
+           "meta": {"toolIds": [], "access": "all"}}
+    await _wire_turn(monkeypatch, row, fake_chat)
+
+    await rt._resume_turn("o@example.com", "agent-1",
+                          [{"role": "user", "content": "q"}], [], True)
+    assert seen["agent"]["base_model_id"] == "x:free"
+
+
+async def test_a_schedule_run_hands_the_agent_row_to_the_loop(monkeypatch):
+    seen = _wire_schedule(monkeypatch, "")
+
+    status, _result, _extras = await agent_runner.run_agent(_Sched())
+    assert status == "completed"
+    assert seen["agent"]["id"] == "agent-1"
+
+
+async def test_resolve_agent_still_returns_three_values(monkeypatch):
+    """Callers and tests predating the row read a 3-tuple."""
+    row = {"id": "agent-1", "name": "Ada", "meta": {"toolIds": []}}
+    monkeypatch.setattr(rt, "_owui_user_id_for", AsyncMock(return_value="u1"))
+    monkeypatch.setattr(rt, "mint_owui_token", lambda *a, **k: "tok")
+    monkeypatch.setattr(rt, "_list_agents", AsyncMock(return_value=([row], False)))
+    monkeypatch.setattr(rt, "tools_for_agent", AsyncMock(return_value=[]))
+    out = await rt._resolve_agent("o@example.com", "agent-1")
+    assert len(out) == 3

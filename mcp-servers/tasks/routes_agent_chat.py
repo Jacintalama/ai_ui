@@ -284,6 +284,7 @@ async def _summarise(email: str, agent: dict, turns: list[dict]) -> str:
         token, _tools, _level = await _resolve_agent(email, agent["id"])
         answer, _notes = await _chat(
             token=token, model=agent["id"],
+            agent=agent,
             messages=list(turns) + [{"role": "user",
                                      "content": SUMMARY_INSTRUCTION}],
             tool_ids=None, user_email=email,

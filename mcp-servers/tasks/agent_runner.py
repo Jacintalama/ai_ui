@@ -778,6 +778,7 @@ async def run_agent(sched) -> tuple[str, str, dict]:
         # a positional call here would silently drift from those assertions.
         answer, notes = await _chat(
             token=chat_token, model=sched.agent_id,
+            agent=agent,
             messages=messages, tool_ids=tools or None,
             user_email=sched.user_email,
             tool_mode=mode,
@@ -797,6 +798,16 @@ async def run_agent(sched) -> tuple[str, str, dict]:
             return ("failed",
                     "The agent ran out of tool rounds before it could answer. "
                     "Nothing was delivered for this run.", {})
+        # The busy sentence is not a report. Delivered as "completed" it goes
+        # out as the week's output, and _messages_for only carries
+        # last_result forward from a completed run, so it also comes back as
+        # "this is what you produced on the previous run" and the agent
+        # repeats it. That is the poisoning _messages_for's docstring
+        # describes. Same reasoning as the out-of-rounds check above. This
+        # also changes ROUTER_EXHAUSTED, which shipped as completed before.
+        if answer in (FREE_POOL_EXHAUSTED, ROUTER_EXHAUSTED):
+            outcome = "failed"
+            return ("failed", answer, {})
         if notes:
             # Say what was refused or stopped early, even when the model's
             # own final content is empty. A run that quietly skipped part of
