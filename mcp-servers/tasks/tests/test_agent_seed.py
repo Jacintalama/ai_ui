@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+import agent_runner
 import routes_agents
 
 
@@ -139,3 +140,23 @@ async def test_an_unknown_user_is_not_seeded():
 def test_new_agents_start_on_the_free_model_by_default(monkeypatch):
     monkeypatch.delenv("AGENT_DEFAULT_MODEL", raising=False)
     assert routes_agents._default_model() == "nvidia/nemotron-3-super-120b-a12b:free"
+
+
+def test_the_default_is_the_head_of_the_free_pool(monkeypatch):
+    """The fallback and the pool must not drift apart.
+
+    FREE_MODELS is built at import, so deleting the variable here cannot
+    change it; that is the point. The assertion is that the literal
+    _default_model falls back to IS the id the tool loop starts on, so a new
+    agent never begins on a model the loop does not know how to fall back
+    from.
+    """
+    monkeypatch.delenv("AGENT_DEFAULT_MODEL", raising=False)
+    monkeypatch.delenv("AGENT_FREE_MODELS", raising=False)
+    assert agent_runner.FREE_MODELS[0] == "nvidia/nemotron-3-super-120b-a12b:free"
+    assert routes_agents._default_model() == agent_runner.FREE_MODELS[0]
+
+
+def test_an_explicit_default_model_wins_over_the_free_pool(monkeypatch):
+    monkeypatch.setenv("AGENT_DEFAULT_MODEL", "x")
+    assert routes_agents._default_model() == "x"

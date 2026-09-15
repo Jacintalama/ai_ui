@@ -159,9 +159,13 @@ written first, the way `openai.api_configs.bak_20260805` was.
 
 `scripts/move_agents_to_free_model.py` lists every `agent-*` model through
 the admin API, prints a before and after table, and with `--apply` updates
-`base_model_id` through `/api/v1/models/id/{id}/update` (admins may update
-any user's model in Open WebUI 0.11) and then calls `/api/models` so the
-cache is rebuilt. `--only <id>` limits it to one agent.
+`base_model_id` through `/api/v1/models/model/update?id=<id>` (admins may
+update any user's model in Open WebUI 0.11) and then calls `/api/models` so
+the cache is rebuilt. `--only <id>` limits it to one agent. There is no
+`/api/v1/models/id/{id}/update` route in this version: the id rides in the
+query string, and `access_grants` must always be sent as a list, because the
+route revalidates the payload as a `ModelForm` where it defaults to None and
+a missing one fails validation as a bare 500.
 
 ### 6. Error handling
 

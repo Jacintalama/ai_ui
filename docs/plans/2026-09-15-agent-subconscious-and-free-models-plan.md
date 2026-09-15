@@ -2226,7 +2226,7 @@ for a in agents:
             "meta": a.get("meta") or {}, "params": a.get("params") or {},
             "access_grants": a.get("access_grants") or [],
             "is_active": a.get("is_active", True)}
-    call(f"/api/v1/models/id/{a['id']}/update", body)
+    call("/api/v1/models/model/update?id=" + a["id"], body)
     moved += 1
 print("moved:", moved)
 call("/api/models")

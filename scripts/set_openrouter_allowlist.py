@@ -55,6 +55,10 @@ class HttpFailure(Exception):
     """An HTTP call that did not return a usable body."""
 
 
+class Refused(Exception):
+    """The config we read is not safe to post back."""
+
+
 def _scrub(text: str) -> str:
     """Take every known secret back out of text before it is printed.
 
@@ -80,13 +84,13 @@ def call(path, payload=None):
             body = r.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")
-        raise HttpFailure(f"{path}: HTTP {e.code} {_scrub(detail)[:200]}")
+        raise HttpFailure("%s: HTTP %s %s" % (path, e.code, _scrub(detail)[:200]))
     except urllib.error.URLError as e:
-        raise HttpFailure(f"{path}: {e.reason}")
+        raise HttpFailure("%s: %s" % (path, _scrub(str(e.reason))))
     try:
         return json.loads(body)
     except ValueError:
-        raise HttpFailure(f"{path}: reply was not JSON: {_scrub(body)[:200]}")
+        raise HttpFailure("%s: reply was not JSON: %s" % (path, _scrub(body)[:200]))
 
 
 def _without_secrets(value):
@@ -103,14 +107,38 @@ def _without_secrets(value):
     return value
 
 
+def check_safe_to_write(cfg, idx):
+    """Refuse to post back a config whose keys did not survive the read.
+
+    /openai/config/update replaces the whole connection list, so posting a
+    keys list that is short, or blank where OpenRouter's key should be,
+    wipes the live key rather than leaving it alone. Nothing here could put
+    it back: the backup this script writes excludes keys by design, so the
+    only remaining copy would be the one in the server's .env.
+    """
+    keys = cfg.get("OPENAI_API_KEYS")
+    urls = cfg.get("OPENAI_API_BASE_URLS")
+    if not isinstance(keys, list) or not isinstance(urls, list):
+        raise Refused("OPENAI_API_KEYS and OPENAI_API_BASE_URLS must both be lists")
+    if len(keys) != len(urls):
+        # Lengths only. The values are never printed.
+        raise Refused("OPENAI_API_KEYS has %d entries and OPENAI_API_BASE_URLS has %d"
+                      % (len(keys), len(urls)))
+    at = int(idx)
+    if at >= len(keys) or not str(keys[at] or "").strip():
+        raise Refused("the openrouter.ai connection at index %s has no key" % idx)
+
+
 def _write_backup(cfg) -> str:
+    """Mode "x" on purpose: two runs inside the same second land on the same
+    filename, and the second must not overwrite the first."""
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    path = os.path.join(os.getcwd(), f"openrouter-allowlist-backup-{stamp}.json")
+    path = os.path.join(os.getcwd(), "openrouter-allowlist-backup-%s.json" % stamp)
     payload = {
         "OPENAI_API_BASE_URLS": _without_secrets(cfg.get("OPENAI_API_BASE_URLS") or []),
         "OPENAI_API_CONFIGS": _without_secrets(cfg.get("OPENAI_API_CONFIGS") or {}),
     }
-    with open(path, "w", encoding="utf-8") as fh:
+    with open(path, "x", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=2, sort_keys=True)
     return path
 
@@ -131,6 +159,9 @@ def main() -> int:
     before = (configs.get(idx) or {}).get("model_ids") or []
     print("connection", idx, "before:", json.dumps(before))
     print("after:   ", json.dumps(WANTED))
+    # Checked in both modes, not only before the write: a dry run is how an
+    # operator finds out whether applying is safe.
+    check_safe_to_write(cfg, idx)
     if "--apply" not in sys.argv:
         print("dry run; pass --apply to write")
         return 0
@@ -139,14 +170,20 @@ def main() -> int:
     configs[idx] = dict(configs.get(idx) or {}, enable=True, model_ids=WANTED)
     cfg["OPENAI_API_CONFIGS"] = configs
     out = call("/openai/config/update", cfg)
-    now = ((out.get("OPENAI_API_CONFIGS") or {}).get(idx) or {}).get("model_ids")
+    written = (out.get("OPENAI_API_CONFIGS") or {}).get(idx) or {}
+    now = written.get("model_ids")
     print("written:", json.dumps(now))
     # /api/models is not only the check: reading it is what rebuilds Open
     # WebUI's in-memory model cache, which otherwise keeps answering
     # "Model not found" for an id that is now allowed.
     models = call("/api/models")
     ids = {m.get("id") for m in (models.get("data") or [])}
-    missing = [m for m in WANTED if m not in ids]
+    # A connection with a prefix_id set publishes its models as
+    # "<prefix_id>.<model id>", so the bare ids would all look missing.
+    # Empty on this server today, which is the only case proven here.
+    prefix = str(written.get("prefix_id") or configs[idx].get("prefix_id") or "").strip()
+    expected = [prefix + "." + m for m in WANTED] if prefix else list(WANTED)
+    missing = [m for m in expected if m not in ids]
     print("visible in /api/models:",
           "all" if not missing else "MISSING " + json.dumps(missing))
     return 1 if (missing or now != WANTED) else 0
@@ -157,4 +194,10 @@ if __name__ == "__main__":
         sys.exit(main())
     except HttpFailure as exc:
         print("failed:", exc)
+        sys.exit(1)
+    except Refused as exc:
+        print("refusing to write:", exc)
+        sys.exit(1)
+    except FileExistsError as exc:
+        print("backup file already exists, refusing to overwrite:", exc.filename)
         sys.exit(1)
