@@ -24,10 +24,11 @@ from pydantic import BaseModel, Field
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-#: Only the pipe places a marker. This finds one shaped comment anywhere in
-#: an agent's own words, so it can be stripped before a real marker is
-#: appended, and the page never parses one the agent wrote by accident or by
-#: prompt injection.
+#: Taking turns is off: no pipe appends one of these. The PAGE still parses
+#: them, in integrations-ui.js, so a marker reaching a stored message would
+#: start a turn flow nothing asked for. An agent can produce this shape by
+#: accident or because somebody told it to, which makes it text from a model
+#: and not ours to trust. Strip on the way out, append never.
 AIUI_TURNS_STRIP_RE = re.compile(r"<!--\s*aiui:turns\b[^>]*-->")
 
 # ---------------------------------------------------------------------------
@@ -242,7 +243,7 @@ class Pipe:
                     headers={"X-Internal-Secret": self.valves.INTERNAL_SECRET},
                     json={"user_email": user_email, "chat_id": chat_id,
                           "messages": body.get("messages") or [],
-                          "route_only": True, "first_only": True})
+                          "route_only": True})
                 if r.status_code != 200:
                     return None
                 data = r.json()
@@ -256,14 +257,7 @@ class Pipe:
         rendered = data.get("rendered")
         if not (isinstance(rendered, str) and rendered.strip()):
             return None
-        marker = data.get("marker")
-        # Only the pipe places a marker. Anything marker shaped that arrived
-        # inside an agent's own words is stripped first, so the page never
-        # parses one the agent wrote rather than the one the service issued.
-        rendered = AIUI_TURNS_STRIP_RE.sub("", rendered).rstrip()
-        if isinstance(marker, str) and marker.strip():
-            rendered = rendered.rstrip() + "\n\n" + marker.strip()
-        return rendered
+        return AIUI_TURNS_STRIP_RE.sub("", rendered).rstrip()
 
     def pipes(self) -> list[dict]:
         return [{"id": "auto", "name": "Auto (Free)"}]
@@ -402,3 +396,5 @@ class Pipe:
         await self._emit(emitter, "All free models were busy", done=True)
         yield ("\n\n[auto-router] every free model was rate-limited or failed. "
                f"Last: {last_err}. Try again in a moment.")
+
+

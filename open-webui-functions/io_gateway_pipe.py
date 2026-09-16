@@ -26,16 +26,17 @@ from pydantic import BaseModel, Field
 TASKS_URL = os.environ.get("TASKS_URL", "http://tasks:8210")
 INTERNAL_SECRET = os.environ.get("INTERNAL_CALLBACK_SECRET", "")
 
-#: Only the pipe places a marker. This finds one shaped comment anywhere in
-#: an agent's own words, so it can be stripped before a real marker is
-#: appended, and the page never parses one the agent wrote by accident or by
-#: prompt injection.
-AIUI_TURNS_STRIP_RE = re.compile(r"<!--\s*aiui:turns\b[^>]*-->")
-
 #: Long enough for three rounds of tool use plus the tool calls themselves,
 #: matching the channel budget in agent_runner. A timeout here reads to the
 #: person as the model ignoring them.
 TIMEOUT_SECONDS = 420.0
+
+#: Taking turns is off: this pipe appends none of these. The PAGE still parses
+#: them, in integrations-ui.js, so a marker landing in a stored message would
+#: start a turn flow nobody asked for. An agent can write this shape by
+#: accident or because somebody told it to, which makes it text from a model
+#: and not ours to trust. Strip on the way out, append never.
+AIUI_TURNS_STRIP_RE = re.compile(r"<!--\s*aiui:turns\b[^>]*-->")
 
 NO_USER = ("I could not tell whose account this is, so I did not run anything. "
            "Sign out and back in, and try again.")
@@ -76,7 +77,7 @@ class Pipe:
                 self.valves.TASKS_URL.rstrip("/") + "/agents/chat",
                 headers={"X-Internal-Secret": self.valves.INTERNAL_SECRET},
                 json={"user_email": user_email, "chat_id": chat_id,
-                      "messages": messages, "first_only": True})
+                      "messages": messages})
             r.raise_for_status()
             return r.json()
 
@@ -180,19 +181,9 @@ class Pipe:
             return TASKS_DOWN
 
         try:
-            text = self._render(out)
+            return AIUI_TURNS_STRIP_RE.sub("", self._render(out)).rstrip()
         except Exception:                               # noqa: BLE001
             # Never let a shape we did not expect turn into a framework error
             # in somebody's chat window.
             return TASKS_DOWN
-        # The page takes turns from here: the marker names every agent that
-        # answers, and the page fetches the rest one at a time as separate
-        # messages. An HTML comment renders as nothing.
-        marker = out.get("marker") if isinstance(out, dict) else None
-        # Only the pipe places a marker. Anything marker shaped that arrived
-        # inside an agent's own words is stripped first, so the page never
-        # parses one the agent wrote rather than the one the service issued.
-        text = AIUI_TURNS_STRIP_RE.sub("", text).rstrip()
-        if isinstance(marker, str) and marker.strip():
-            text = text.rstrip() + "\n\n" + marker.strip()
-        return text
+

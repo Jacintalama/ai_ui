@@ -279,9 +279,20 @@ async def test_a_malformed_turns_value_returns_a_readable_sentence(mod):
         assert out == mod.EMPTY
 
 
-async def test_the_pipe_asks_for_one_agent_at_a_time(mod, monkeypatch):
-    """The page takes turns. The pipe must say so, or the service runs
-    everybody and the page finds nothing left to fetch."""
+# ---------------------------------------------------------------------------
+# Agents take turns is OFF, and these say so. Shipped 2026-09-04, rolled back
+# the same night: Open WebUI renders message.output, not message.content, so
+# the page never split the reply and the marker stayed visible in saved chats.
+# The pipe row in the database was reverted; this repo copy was not, until
+# 2026-09-16. Inverted rather than deleted, so the next re-import trips a test
+# instead of switching the broken feature back on.
+# See docs/decisions/2026-09-16-pipes-match-production.md.
+# ---------------------------------------------------------------------------
+
+
+async def test_the_pipe_does_not_ask_for_one_agent_at_a_time(mod, monkeypatch):
+    """first_only left the other agents for a page that no longer fetches
+    them, so asking for it would drop every reply but the first."""
     p = mod.Pipe()
     seen = {}
 
@@ -299,10 +310,13 @@ async def test_the_pipe_asks_for_one_agent_at_a_time(mod, monkeypatch):
 
     monkeypatch.setattr(mod.httpx, "AsyncClient", C)
     await p._ask_tasks("o@example.com", "chat-1", [{"role": "user", "content": "hi team"}])
-    assert seen.get("first_only") is True
+    assert "first_only" not in seen
 
 
-async def test_the_marker_rides_at_the_end_of_the_reply(mod, monkeypatch):
+async def test_the_marker_offered_by_the_service_is_ignored(mod, monkeypatch):
+    """The service still offers one, because the turn machinery behind it is
+    intact and only the page half was withdrawn. Appending it would leave a
+    comment nothing reads sitting in somebody's saved chat forever."""
     p = mod.Pipe()
     monkeypatch.setattr(p, "_ask_tasks", AsyncMock(return_value={
         "turns": [{"agent": {"id": "agent-a", "name": "Ada"}, "answer": "Hello.", "notes": []}],
@@ -310,9 +324,8 @@ async def test_the_marker_rides_at_the_end_of_the_reply(mod, monkeypatch):
         "marker": "<!-- aiui:turns agent-a,agent-m -->"}))
     out = await p.pipe({"messages": [{"role": "user", "content": "hi team"}], "stream": False},
                        __user__={"email": "o@example.com"})
-    assert out.endswith("<!-- aiui:turns agent-a,agent-m -->")
     assert "Hello." in out
-    assert out.count("aiui:turns") == 1
+    assert "aiui:turns" not in out
 
 
 async def test_no_marker_means_nothing_is_appended(mod, monkeypatch):
@@ -337,9 +350,12 @@ async def test_a_marker_of_the_wrong_type_is_ignored(mod, monkeypatch):
     assert "Hi." in out and "not" not in out
 
 
-async def test_a_marker_inside_an_agents_words_is_stripped_first(mod, monkeypatch):
-    """Only the pipe places a marker. One that arrived inside the answer
-    must not survive to be the first match the page finds."""
+async def test_a_marker_an_agent_wrote_is_stripped(mod, monkeypatch):
+    """An agent can produce marker shaped text, by accident or because someone
+    asked it to. The page in integrations-ui.js still parses this shape, so one
+    that reached a stored message would start a turn flow nobody asked for.
+    Nothing appends markers now, which means any that appears came from a
+    model, and text from a model is not ours to trust."""
     p = mod.Pipe()
     monkeypatch.setattr(p, "_ask_tasks", AsyncMock(return_value={
         "turns": [{"agent": {"id": "agent-a", "name": "Ada"},
@@ -348,5 +364,5 @@ async def test_a_marker_inside_an_agents_words_is_stripped_first(mod, monkeypatc
         "marker": "<!-- aiui:turns agent-a,agent-m -->"}))
     out = await p.pipe({"messages": [{"role": "user", "content": "hi team"}], "stream": False},
                        __user__={"email": "o@example.com"})
-    assert out.count("aiui:turns") == 1
-    assert out.endswith("<!-- aiui:turns agent-a,agent-m -->")
+    assert "aiui:turns" not in out
+    assert "agent-a,agent-m" not in out, "the pipe appended a marker of its own"

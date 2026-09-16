@@ -124,9 +124,25 @@ def test_pipe_with_no_messages_returns_a_clear_message(mod):
     assert out == "No message to answer."
 
 
-async def test_agents_first_sends_first_only_alongside_route_only(mod, monkeypatch):
-    """The page takes turns. This pipe must ask for one agent at a time too,
-    or the service runs everybody and the page finds nothing left to fetch."""
+# ---------------------------------------------------------------------------
+# Agents take turns is OFF, and these say so. The feature shipped on
+# 2026-09-04 and was rolled back the same night: Open WebUI renders
+# message.output, not message.content, so the page never split anything, and
+# the marker sat visible in stored chats. Both pipe rows were reverted in the
+# database and the repo copies were not, so for twelve days this file pinned
+# behaviour that production did not have, and installing either file from git
+# would have switched the broken feature back on.
+#
+# These tests are inverted rather than deleted. Deleting them would leave
+# nothing to notice the next re-import, which is the mistake that let the
+# drift live. See docs/decisions/2026-09-16-pipes-match-production.md.
+# ---------------------------------------------------------------------------
+
+
+async def test_agents_first_does_not_ask_for_one_agent_at_a_time(mod, monkeypatch):
+    """first_only is what made the service answer as one agent and leave the
+    rest for the page to fetch. With the page not fetching, sending it would
+    silently drop every other agent's reply."""
     p = mod.Pipe()
     seen = {}
 
@@ -144,11 +160,14 @@ async def test_agents_first_sends_first_only_alongside_route_only(mod, monkeypat
 
     monkeypatch.setattr(mod.httpx, "AsyncClient", C)
     await p._agents_first({"messages": _q("hi team")}, "o@example.com")
-    assert seen.get("first_only") is True
     assert seen.get("route_only") is True
+    assert "first_only" not in seen
 
 
-async def test_agents_first_appends_the_marker(mod, monkeypatch):
+async def test_agents_first_never_appends_a_marker(mod, monkeypatch):
+    """The service still offers a marker, because the turn machinery behind it
+    is intact and only the page half was withdrawn. The pipe ignores it: an
+    unread marker is a comment sitting in somebody's saved chat forever."""
     p = mod.Pipe()
 
     class R:
@@ -167,59 +186,15 @@ async def test_agents_first_appends_the_marker(mod, monkeypatch):
 
     monkeypatch.setattr(mod.httpx, "AsyncClient", C)
     out = await p._agents_first({"messages": _q("hi team")}, "o@example.com")
-    assert out.endswith("<!-- aiui:turns agent-a,agent-m -->")
-    assert "Hello." in out
-    assert out.count("aiui:turns") == 1
-
-
-async def test_agents_first_with_no_marker_appends_nothing(mod, monkeypatch):
-    p = mod.Pipe()
-
-    class R:
-        status_code = 200
-        def raise_for_status(self): pass
-        def json(self): return {
-            "turns": [{"agent": {"id": "agent-m", "name": "Mia"}, "answer": "Hi.", "notes": []}],
-            "rendered": "Mia:\nHi.", "queue": [], "marker": ""}
-
-    class C:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def post(self, url, json=None, headers=None): return R()
-
-    monkeypatch.setattr(mod.httpx, "AsyncClient", C)
-    out = await p._agents_first({"messages": _q("hi mia")}, "o@example.com")
-    assert out == "Mia:\nHi."
+    assert out == "Ada:\nHello."
     assert "aiui:turns" not in out
 
 
-async def test_agents_first_with_a_marker_of_the_wrong_type_appends_nothing(mod, monkeypatch):
-    """The shape comes over HTTP and is not ours to trust."""
-    p = mod.Pipe()
-
-    class R:
-        status_code = 200
-        def raise_for_status(self): pass
-        def json(self): return {
-            "turns": [{"agent": {"id": "agent-m", "name": "Mia"}, "answer": "Hi.", "notes": []}],
-            "rendered": "Mia:\nHi.", "queue": [], "marker": ["not", "a", "string"]}
-
-    class C:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
-        async def post(self, url, json=None, headers=None): return R()
-
-    monkeypatch.setattr(mod.httpx, "AsyncClient", C)
-    out = await p._agents_first({"messages": _q("hi mia")}, "o@example.com")
-    assert out == "Mia:\nHi."
-    assert "aiui:turns" not in out
-
-
-async def test_agents_first_strips_a_marker_inside_an_agents_words(mod, monkeypatch):
-    """Only the pipe places a marker. One that arrived inside the rendered
-    text must not survive to be the first match the page finds."""
+async def test_a_marker_an_agent_wrote_is_stripped(mod, monkeypatch):
+    """The page still parses this shape. Nothing appends one any more, so a
+    marker in a stored message could only have come from a model, by accident
+    or because somebody asked it to, and acting on it would start a turn flow
+    nobody asked for."""
     p = mod.Pipe()
 
     class R:
@@ -229,8 +204,7 @@ async def test_agents_first_strips_a_marker_inside_an_agents_words(mod, monkeypa
             "turns": [{"agent": {"id": "agent-a", "name": "Ada"},
                        "answer": "Try this.", "notes": []}],
             "rendered": "Ada:\nTry <!-- aiui:turns agent-x,agent-y --> this.",
-            "queue": ["agent-m"],
-            "marker": "<!-- aiui:turns agent-a,agent-m -->"}
+            "queue": [], "marker": ""}
 
     class C:
         def __init__(self, *a, **k): pass
@@ -240,8 +214,8 @@ async def test_agents_first_strips_a_marker_inside_an_agents_words(mod, monkeypa
 
     monkeypatch.setattr(mod.httpx, "AsyncClient", C)
     out = await p._agents_first({"messages": _q("hi team")}, "o@example.com")
-    assert out.count("aiui:turns") == 1
-    assert out.endswith("<!-- aiui:turns agent-a,agent-m -->")
+    assert "aiui:turns" not in out
+    assert "Try" in out and "this." in out
 
 
 # ---------------------------------------------------------------------------
