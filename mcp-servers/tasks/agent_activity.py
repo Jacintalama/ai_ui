@@ -54,6 +54,13 @@ logger = logging.getLogger(__name__)
 #: write-up that spends all three free ids at 120 each. Twenty one minutes
 #: is that plus one paid round. Seventeen, the first figure, left out the
 #: failed paid write-up and priced the fallback ids at the round timeout.
+#:
+#: Both windows here are fixed numbers, not computed. The token lifetime is
+#: computed from worst_turn_seconds at import, so it follows
+#: AGENT_FREE_MODELS, AGENT_PAID_TIMEOUT_SECONDS and AGENT_PAID_EXTRA_ROUNDS;
+#: these do not. The cut-off test in test_agent_activity reads those settings
+#: from wherever it runs, so run it where the settings differ before trusting
+#: these numbers there.
 STALE_AFTER_CHANNEL = timedelta(minutes=21)
 
 #: A scheduled run uses MAX_TOOL_ITERATIONS (8) and HTTP_TIMEOUT_SECONDS

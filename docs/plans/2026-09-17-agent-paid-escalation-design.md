@@ -142,7 +142,15 @@ yet) is discarded and asked again on paid. A named agent moves at once.
 
 A paid completion gets at least `AGENT_PAID_TIMEOUT_SECONDS` (90). The worst
 turn grows, so the windows that call a run dead and the token lifetime grow
-with it, all derived by `agent_runner.worst_turn_seconds`:
+with it. `agent_runner.worst_turn_seconds` counts the worst turn. The token
+lifetime is computed from it when the service starts, so it follows
+`AGENT_FREE_MODELS`, `AGENT_PAID_TIMEOUT_SECONDS` and
+`AGENT_PAID_EXTRA_ROUNDS`. The two windows are fixed numbers in
+`agent_activity`, checked against it by a test (the cut-off test in
+`test_agent_activity.py`) with the settings of wherever the test runs. A
+longer free pool or a larger paid timeout or extra round count set by env
+raises the token but not the windows; the windows then have to be raised in
+code, and that test says by how much. The numbers with the default settings:
 
 1. Chat: 1,170 seconds. Moving at the start is one free answer at 60 and
    seven paid rounds at 90; moving at the round cap is seven free rounds at
