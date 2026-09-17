@@ -205,6 +205,10 @@ _CODE = re.compile(
     r"|\bfix\b[^.?!\n]{0,30}?\b(?:bugs?|errors?|code|build|tests?|"
     r"crash(?:es)?|issues?|page|app|site|feature)\b"
     r"|\badd\b[^.?!\n]{0,30}?\b(?:feature|endpoint|component|function)\b"
+    # "class" is left out: "change my yoga class to Friday" is a calendar
+    # request, and the heavy_tool move still catches a class being changed.
+    r"|\b(?:change|modify|edit|update|rewrite)\b[^.?!\n]{0,30}?\b(?:code|"
+    r"function|script|component|css|html|endpoint)\b"
     r"|\bapp builder\b")
 
 _ERROR = re.compile(
