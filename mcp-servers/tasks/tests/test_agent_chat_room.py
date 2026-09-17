@@ -149,6 +149,54 @@ def test_a_pass_is_recognised_however_it_is_punctuated():
         assert not mod._is_pass(said), said
 
 
+# Copied from tasks.agent_chats on production, 2026-09-17, not written by
+# hand. An agent on Auto (Smart) passes, and the pipe appends its route
+# footer (open-webui-functions/auto_smart_pipe.py _footer), so the reply was
+# drawn as a bubble reading PASS, and it counted as an answer, which kept
+# the everybody-passed fallback from ever running.
+STORED_SMART_PASS = ("PASS\n\n*Auto (Smart): routed to the paid general "
+                     "model `gpt-5.5`.*")
+# Also stored, from Kai. It starts with PASS and then says what the agent
+# did, so it is an answer, and it stays one.
+STORED_PASS_THEN_ANSWER = (
+    "PASS\n\n(create-me-a-shoe-website-fe02: I inspected the files. I read "
+    "public/index.html and the root index.html, but both read results were "
+    "shortened by the tool.)")
+
+
+def test_a_pass_with_a_router_footer_is_still_a_pass():
+    import routes_agent_chat as mod
+    assert mod._is_pass(STORED_SMART_PASS)
+    # The same shape with punctuation, and the Auto (Free) router's footer
+    # (auto_router_pipe.py _footer), which has the same form.
+    assert mod._is_pass("PASS.\n\n*Auto (Smart): routed to the free code "
+                        "model `qwen/qwen3-coder:free`.*")
+    assert mod._is_pass("PASS\n\n*Auto-routed to the free general model "
+                        "`meta-llama/llama-3.3-70b-instruct:free`.*")
+
+
+def test_a_footer_does_not_turn_an_answer_into_a_pass():
+    import routes_agent_chat as mod
+    assert not mod._is_pass(STORED_PASS_THEN_ANSWER)
+    assert not mod._is_pass("Here is the plan.\n\n*Auto (Smart): routed to "
+                            "the paid general model `gpt-5.5`.*")
+    assert not mod._is_pass("PASS on the blue one, take the red.\n\n*Auto "
+                            "(Smart): routed to the paid general model "
+                            "`gpt-5.5`.*")
+    # A footer alone is not a pass either: there is nothing it is declining.
+    assert not mod._is_pass("\n\n*Auto (Smart): routed to the paid general "
+                            "model `gpt-5.5`.*")
+
+
+def test_a_footered_pass_draws_nothing_and_lets_the_fallback_run(monkeypatch):
+    app, mod, seen, _ = _app(monkeypatch, answers={
+        "Ada": STORED_SMART_PASS, "Mia": STORED_SMART_PASS})
+    _, body = _ask(app, "just thinking out loud")
+    assert "PASS" not in body, "a pass was drawn as a message"
+    assert len(seen) == 3, "the everybody-passed fallback never ran"
+    assert seen[-1]["may_pass"] is False
+
+
 def test_if_everybody_passes_one_of_them_still_answers(monkeypatch):
     app, mod, seen, _ = _app(monkeypatch, answers={"Ada": "PASS", "Mia": "PASS"})
     _, body = _ask(app, "just thinking out loud")
