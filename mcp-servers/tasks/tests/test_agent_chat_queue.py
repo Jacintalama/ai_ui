@@ -283,6 +283,189 @@ async def _agents_stub():
     return [{"id": "agent-a", "name": "Ada"}]
 
 
+# --- a round the browser walked away from ------------------------------------
+#
+# Production, 2026-09-16 13:39:23 UTC: the person opened App Builder mid round,
+# which closes the EventSource. sse-starlette cancels the generator through an
+# anyio task group, and anyio cancellation is level triggered: every await
+# inside the cancelled scope is cancelled again, the save in the finally block
+# included. CancelledError is not an Exception, so the finally aborted before
+# it cleared s.streaming, and the five messages sent after that were all
+# queued behind a round that no longer existed. Nothing answered them.
+#
+# These drive the real EventSourceResponse, the way production does, rather
+# than cancelling a bare task once: a single task.cancel() is edge triggered
+# and lets the await in the finally complete, which is exactly the case that
+# does not happen on the server.
+
+async def _walk_away_mid_round(monkeypatch, s, saved, during=None):
+    """Run one stream whose agent never answers, and disconnect the client
+    while it is thinking. Returns once the response has fully unwound.
+
+    `during`, if given, runs while the agent is thinking: whatever else the
+    person does while the round is still in flight."""
+    import asyncio
+
+    async def hangs(email, agent, history, names=()):
+        if during is not None:
+            await during()
+        await asyncio.Event().wait()
+
+    async def slow_save(email, sess):
+        # A real UPDATE takes a round trip, which is the await that used to
+        # be cancelled out from under the release.
+        await asyncio.sleep(0.05)
+        saved.append([dict(m) for m in sess.messages])
+
+    monkeypatch.setattr(chat, "_turn_for", hangs)
+    monkeypatch.setattr(chat, "_agents_for", lambda e: _agents_stub())
+    monkeypatch.setattr(chat, "_keep_within_budget",
+                        lambda e, sess, a: _nothing())
+    monkeypatch.setattr(store, "save_chat", slow_save)
+
+    resp = await chat.agent_chat_stream(request=_Req(), user=_User())
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    async def receive():
+        # Long enough for the round to reach the agent, then the browser
+        # navigates away.
+        await asyncio.sleep(0.2)
+        return {"type": "http.disconnect"}
+
+    scope = {"type": "http", "asgi": {"spec_version": "2.3"}, "headers": []}
+    try:
+        await asyncio.wait_for(resp(scope, receive, send), timeout=10)
+    except BaseException as exc:                     # noqa: BLE001
+        if isinstance(exc, asyncio.TimeoutError):
+            raise
+    # The save is shielded from the cancel, so it may still be finishing.
+    for _ in range(100):
+        if saved:
+            break
+        await asyncio.sleep(0.01)
+
+
+def _no_db(monkeypatch):
+    async def created(email, title, sess):
+        return "chat-1"
+
+    async def newest(email):
+        return None
+
+    monkeypatch.setattr(store, "create_chat", created)
+    monkeypatch.setattr(store, "newest_chat", newest)
+
+
+async def test_a_round_the_browser_left_releases_the_room(monkeypatch):
+    _no_db(monkeypatch)
+    s = store.get_session(_User.email)
+    await _send("build me a shoe shop")
+    assert s.streaming is True
+    saved = []
+    await _walk_away_mid_round(monkeypatch, s, saved)
+
+    assert s.streaming is False, (
+        "a cancelled round kept the room, so every later message is queued "
+        "behind nothing and never answered")
+    out = await _send("are you still there?")
+    body = out.body.decode()
+    assert s.queued == [], "the next message was queued behind a dead round"
+    assert "sse" in body.lower(), "the next message did not open its stream"
+
+
+async def test_a_round_the_browser_left_still_saves_the_conversation(
+        monkeypatch):
+    """Releasing the room must not come at the cost of the save: the question
+    was asked, and a reload should still show it."""
+    _no_db(monkeypatch)
+    s = store.get_session(_User.email)
+    await _send("build me a shoe shop")
+    saved = []
+    await _walk_away_mid_round(monkeypatch, s, saved)
+    assert saved, "the save never ran"
+    assert any(m.get("content") == "build me a shoe shop"
+               for m in saved[-1]), saved
+
+
+async def test_messages_queued_behind_a_cancelled_round_are_kept(monkeypatch):
+    """The drain that would have answered them died with the round. Left in
+    s.queued they are invisible on reload, lost on restart, and answered out
+    of order after whatever the person sends next, under turn ids from a page
+    that is gone. So they move into the conversation as unanswered turns,
+    under the ids the page already drew, and the next round's agents read
+    them as history."""
+    _no_db(monkeypatch)
+    s = store.get_session(_User.email)
+    await _send("build me a shoe shop")
+    await _send("and make it blue")         # queued, the round is running
+    assert s.queued == ["and make it blue"]
+    queued_tid = s.queued_turn_ids[0]
+    saved = []
+    await _walk_away_mid_round(monkeypatch, s, saved)
+
+    assert s.queued == [] and s.queued_turn_ids == []
+    kept = [m for m in s.messages
+            if m.get("role") == "user" and m.get("content") == "and make it blue"]
+    assert len(kept) == 1, s.messages
+    assert kept[0]["turn_id"] == queued_tid
+    assert any(m.get("content") == "and make it blue" for m in saved[-1]), \
+        "kept in memory but not in the row, so a restart still loses it"
+    # Unanswered, but the tail must still not read as "user": a reconnecting
+    # EventSource would take that as a round nobody has run and run one
+    # without holding the room.
+    assert s.messages[-1].get("role") != "user", s.messages
+    assert "and make it blue" in chat.render.thread(s.messages)
+
+
+async def test_a_cancelled_round_leaves_a_cleared_rooms_new_round_alone(
+        monkeypatch):
+    """The generation guard, on the cancel path. The person clears the room
+    while the old round is thinking, sends again (a new round owns the room)
+    and queues a message behind that one. When the old round is cancelled it
+    must neither release the new round's claim nor take the new round's
+    queue for itself."""
+    _no_db(monkeypatch)
+    s = store.get_session(_User.email)
+    await _send("belongs to the old room")
+
+    async def clear_and_carry_on():
+        await chat.agent_chat_clear(user=_User())
+        await _send("first in the new room")
+        await _send("queued in the new room")
+
+    await _walk_away_mid_round(monkeypatch, s, [], during=clear_and_carry_on)
+
+    assert s.streaming is True, "the old round released the new round's claim"
+    assert s.queued == ["queued in the new room"], s.queued
+    assert len(s.queued_turn_ids) == 1
+    assert not any(m.get("content") == "queued in the new room"
+                   for m in s.messages), s.messages
+
+
+async def test_a_reconnect_after_a_cancelled_round_does_not_run_one(
+        monkeypatch):
+    _no_db(monkeypatch)
+    s = store.get_session(_User.email)
+    await _send("build me a shoe shop")
+    await _send("and make it blue")
+    await _walk_away_mid_round(monkeypatch, s, [])
+
+    ran = []
+
+    async def must_not_run(email, sess, agents, request=None, quote=False):
+        ran.append(1)
+        yield {"event": "message", "data": "x"}
+
+    monkeypatch.setattr(chat, "_run_round", must_not_run)
+    resp = await chat.agent_chat_stream(request=_Req(), user=_User())
+    async for _event in resp.body_iterator:
+        pass
+    assert ran == [], "a reconnect ran a round nobody asked for"
+
+
 # --- a failed turn renders as a failure, not a bubble ------------------------
 #
 # _turn_for never raises: one agent blowing up must not cost the others their

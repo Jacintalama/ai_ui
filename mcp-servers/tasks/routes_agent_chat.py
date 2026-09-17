@@ -10,6 +10,7 @@ HTMX, a per-user in-memory working session over a durable row, and one SSE
 stream per turn. All routes sit under /tasks, already routed to this service
 end to end, so nothing outside this service changes.
 """
+import asyncio
 import logging
 import uuid
 
@@ -521,6 +522,35 @@ def _take_queued_turn_id(s: store.RoomSession) -> str:
            else render.new_turn_id())
 
 
+#: Saves still running after the round that started them was cancelled. The
+#: event loop only holds tasks weakly, so a shielded save nobody else refers
+#: to could be collected half way through its UPDATE.
+_SAVES: set[asyncio.Task] = set()
+
+
+async def _save_logged(email: str, s: store.RoomSession) -> None:
+    try:
+        await store.save_chat(email, s)
+    except Exception:                                       # noqa: BLE001
+        log.exception("agent chat: could not save conversation %s", s.chat_id)
+
+
+async def _save_despite_cancel(email: str, s: store.RoomSession) -> None:
+    """Save the conversation, and finish saving even if the caller is
+    cancelled while waiting.
+
+    The stream generator calls this from its finally block, which is exactly
+    where a browser leaving mid round lands. Shielded, so the cancel stops
+    the wait and not the write: the question the person asked still reaches
+    the row. A cancelled caller still gets its CancelledError, which is what
+    lets the response unwind.
+    """
+    task = asyncio.ensure_future(_save_logged(email, s))
+    _SAVES.add(task)
+    task.add_done_callback(_SAVES.discard)
+    await asyncio.shield(task)
+
+
 async def _hydrate(email: str, s: store.RoomSession) -> None:
     """Load this person's one conversation into a session that has none.
 
@@ -661,26 +691,66 @@ async def agent_chat_stream(request: Request,
                 # No bubble is emitted: the send that queued this already
                 # returned one and the browser has drawn it.
         finally:
+            # Everything up to the release below is synchronous, and has to
+            # stay that way. When the browser leaves mid round (opening App
+            # Builder closes the EventSource), sse-starlette cancels this
+            # generator through an anyio task group, and anyio cancellation
+            # is level triggered: any await in here is cancelled again, and
+            # CancelledError is not an Exception, so nothing after that await
+            # runs. The save used to sit in front of the release, so a
+            # cancelled round kept s.streaming set for good and every later
+            # message queued behind a round that no longer existed. Seen in
+            # production 2026-09-16 13:39:23 UTC: five sends, no answers.
             still_ours = (s.generation == my_generation
                           and any(m is claim for m in s.messages))
             if still_ours:
+                # Normally the drain above leaves nothing queued: it only
+                # stops on an empty queue, and nothing can be queued between
+                # that and the release because nothing awaits in between. So
+                # anything still here was queued behind a round that ended
+                # early (cancelled, disconnected, or failed), and no drain is
+                # coming for it. Left in s.queued it would be invisible on a
+                # reload, gone on a restart, and answered out of order after
+                # whatever the person sends next, under a turn id from a page
+                # that may be gone. So it moves into the conversation as an
+                # unanswered turn, under the id the page already drew, and is
+                # saved with the rest. It is not answered by itself: the next
+                # message the person sends starts a round, and that round's
+                # agents read it as history.
+                left = []
+                while True:
+                    nxt = _take_queued(s)
+                    if nxt is None:
+                        break
+                    left.append({"role": "user", "content": nxt,
+                                 "turn_id": _take_queued_turn_id(s)})
+                if left:
+                    # Above the claim, not after it, for the same reason the
+                    # drain moves it: a "user" tail is what a reconnecting
+                    # EventSource reads as a round nobody has run.
+                    _drop(s.messages, claim)
+                    s.messages.extend(left)
+                    s.messages.append(claim)
                 # An answer now holds the tail, so the bookkeeping marker has
                 # done its job. If nothing answered, it stays: the tail must
                 # not fall back to "user" or a reconnect re-runs the round.
                 if s.messages[-1] is not claim:
                     _drop(s.messages, claim)
-                try:
-                    await store.save_chat(user.email, s)
-                except Exception:                           # noqa: BLE001
-                    log.exception("agent chat: could not save conversation %s",
-                                  s.chat_id)
             # Only clear the flag if this round still owns this generation.
             # New chat can bump s.generation and let a fresh send re-claim
             # streaming while this round is still unwinding; clearing it
             # unconditionally would drop that newer claim's double-submit
             # guard and let a third send run a round concurrently with it.
+            #
+            # Released before the save rather than after it, so that neither
+            # a cancel nor a hung database can keep the room. A send that
+            # lands while the save is in flight now starts its own round
+            # instead of queueing behind one that has already stopped
+            # draining, and its round saves again when it finishes.
             if s.generation == my_generation:
                 s.streaming = False
+            if still_ours:
+                await _save_despite_cancel(user.email, s)
             yield {"event": "close", "data": ""}
 
     return EventSourceResponse(gen())
