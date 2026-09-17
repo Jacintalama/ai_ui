@@ -82,7 +82,11 @@ async def test_todays_paid_turns_are_counted_per_person_from_utc_midnight(db):
     sql, params = log[0]
     assert "lower(user_email) = lower(:email)" in sql
     assert "escalation IS NOT NULL" in sql
-    assert "date_trunc('day', now() AT TIME ZONE 'UTC')" in sql
+    # The whole bound, converted back as well. Without the outer AT TIME ZONE
+    # a TIMESTAMPTZ column is compared with a plain timestamp read in the
+    # session's time zone, and the cap's day moves with that setting.
+    assert ("started_at >= (date_trunc('day', now() AT TIME ZONE 'UTC') "
+            "AT TIME ZONE 'UTC')") in sql
     assert params == {"email": "Ada@Example.com"}
 
 
