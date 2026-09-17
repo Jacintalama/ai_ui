@@ -513,13 +513,89 @@ CHAT_TOKEN_TTL_SECONDS = int(
     worst_turn_seconds(MAX_TOOL_ITERATIONS, HTTP_TIMEOUT_SECONDS)) + 60
 
 
+def _paid_failed(exc) -> bool:
+    """True when the paid model failed in a way worth going back to the free
+    model for. Wider than _provider_failed on purpose: a paid id this box
+    cannot route, or a parameter it rejects, is a 400 that says nothing about
+    the provider, and the person should still get the free answer. A 401 or
+    403 is this service's own token and ends the turn as it always did."""
+    if isinstance(exc, (httpx.TimeoutException, httpx.TransportError)):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code not in (401, 403)
+    return False
+
+
+class _Escalation:
+    """One turn's move to the paid model. At most once a turn: asked once,
+    whatever the answer, so a capped or uncountable day costs one query and a
+    paid model that failed is not tried again."""
+
+    def __init__(self, *, enabled: bool, user_email: str, agent_id: str,
+                 usage: "agent_escalation.TurnUsage"):
+        self.enabled = enabled
+        self.user_email = user_email
+        self.agent_id = agent_id
+        self.usage = usage
+        self.tried = False
+        self.on_paid = False
+        self.capped = False
+        self.left_from: str | None = None
+
+    @property
+    def can_try(self) -> bool:
+        return self.enabled and not self.tried
+
+    async def switch(self, reason: str, active: str) -> bool:
+        if not self.can_try:
+            return False
+        self.tried = True
+        count = await agent_activity.paid_turns_today(self.user_email)
+        if count is None:
+            logger.warning("could not count paid turns today, %s stays on "
+                           "the free model (%s)", self.agent_id, reason)
+            return False
+        if count >= agent_escalation.DAILY_CAP:
+            self.capped = True
+            logger.info("paid turn cap reached, %s stays on the free model "
+                        "(%s)", self.agent_id, reason)
+            return False
+        self.on_paid = True
+        # A spent pool has nothing to go back to; anything else goes back to
+        # the free model it was on.
+        self.left_from = None if reason == agent_escalation.REASON_POOL_SPENT else active
+        self.usage.escalation = reason
+        agent_escalation.mark_paid(self.user_email, self.agent_id)
+        await agent_activity.mark_escalated(self.usage.run_id, reason)
+        logger.warning("agent %s moved to the paid model %s (%s)",
+                       self.agent_id, agent_escalation.PAID_MODEL, reason)
+        return True
+
+    def fall_back(self) -> str | None:
+        self.on_paid = False
+        return self.left_from
+
+    def with_note(self, content: str) -> str:
+        """The answer, with the cap note once a day when the turn wanted the
+        paid model and could not have it. In the answer, not in notes: the
+        room draws the answer and drops the notes."""
+        if (not self.capped or not content
+                or agent_escalation.looks_like_pass(content)):
+            return content
+        note = agent_escalation.take_cap_note(self.user_email)
+        return (content + "\n\n" + note) if note else content
+
+
 async def _chat(token: str, model: str, messages: list[dict],
                 tool_ids: list[str] | None, user_email: str,
                 tool_mode: str | None,
                 refusal_reason: str = "this schedule is set to read only",
                 max_iterations: int = MAX_TOOL_ITERATIONS,
                 timeout: float = HTTP_TIMEOUT_SECONDS,
-                agent: dict | None = None) -> tuple[str, list[str]]:
+                agent: dict | None = None,
+                intent: "agent_escalation.Intent | None" = None,
+                usage: "agent_escalation.TurnUsage | None" = None
+                ) -> tuple[str, list[str]]:
     """Talk to the agent, running any tools it asks for, until it answers.
 
     Open WebUI injects the tool specs and returns the model's tool_calls, but
@@ -545,6 +621,15 @@ async def _chat(token: str, model: str, messages: list[dict],
     an agent on a free model sends reasoning_effort and falls back through
     FREE_MODELS when the provider fails; without it the loop behaves exactly
     as it did before this parameter existed.
+
+    `intent` (agent_escalation.Intent) is who is asking and how. With it, an
+    agent on a free model may move to the paid model for the rest of the
+    turn: at the start when the request is the kind free models do badly,
+    or partway when the free model reaches for an app change tool, answers
+    with nothing, spends its pool or its rounds. Without it the turn never
+    leaves the free models, which is what the room summariser relies on.
+    `usage` collects which model answered, why it moved and what it cost,
+    for the caller to write with the run.
     """
     convo = list(messages)
     notes: list[str] = []
@@ -554,16 +639,31 @@ async def _chat(token: str, model: str, messages: list[dict],
     # something defined to return, instead of an UnboundLocalError.
     content = ""
 
-    free = _is_free((agent or {}).get("base_model_id"))
+    base = (agent or {}).get("base_model_id")
+    free = _is_free(base)
     pool = await _fallback_pool(agent) if free else []
     active = model            # the model id posted; the agent id until a fallback
     instructions = _agent_system(agent)
+    usage = usage if usage is not None else agent_escalation.TurnUsage()
+    # Only a free agent moves, and only when its caller said who is asking.
+    # An agent somebody put on a paid model stays exactly where they put it.
+    esc = _Escalation(
+        enabled=bool(free and intent is not None and agent_escalation.enabled()),
+        user_email=user_email, agent_id=model, usage=usage)
+
+    def billed(active_id: str) -> str:
+        # Posting the agent id reaches its base model; that is what answered.
+        if active_id == model and isinstance(base, str) and base:
+            return base
+        return active_id
 
     async def complete(convo_now: list[dict], with_tools: bool,
                        timeout_now: float) -> dict:
         """One completion on the active model, moving down the pool on a
-        provider failure. Raises the last failure for a paid agent, and
-        returns a body with no choices only when the pool is spent."""
+        provider failure, onto the paid model when the pool is spent and the
+        turn may move, and back off the paid model when it fails. Raises the
+        last failure for a paid agent, and returns a body with no choices
+        only when there is nothing left to try."""
         nonlocal active
         while True:
             msgs = convo_now
@@ -575,10 +675,18 @@ async def _chat(token: str, model: str, messages: list[dict],
             payload: dict = {"model": active, "messages": msgs, "stream": False}
             if with_tools and tool_ids:
                 payload["tool_ids"] = tool_ids
-            if free and FREE_REASONING:
-                payload["reasoning_effort"] = FREE_REASONING
+            # Decided per post, not once: the same turn can post a free id
+            # and then the paid one, and "none" is a free model's setting.
+            if esc.on_paid:
+                if agent_escalation.PAID_REASONING:
+                    payload["reasoning_effort"] = agent_escalation.PAID_REASONING
+                this_timeout = agent_escalation.paid_timeout(timeout_now)
+            else:
+                if free and FREE_REASONING:
+                    payload["reasoning_effort"] = FREE_REASONING
+                this_timeout = timeout_now
             try:
-                data = await _post_chat(payload, token, timeout_now)
+                data = await _post_chat(payload, token, this_timeout)
             except Exception as exc:                            # noqa: BLE001
                 # A paid agent keeps exactly the behaviour it had before
                 # there was a pool: the failure is the caller's to see. For
@@ -587,12 +695,33 @@ async def _chat(token: str, model: str, messages: list[dict],
                 # becomes the busy sentence below rather than a stack trace.
                 # Anything that is not the provider failing, a 401 say, is
                 # raised on either kind of agent.
-                if not (free and _provider_failed(exc)):
+                if not (free and (_provider_failed(exc)
+                                  or (esc.on_paid and _paid_failed(exc)))):
                     raise
                 data = None
             if data is not None and not _provider_failed(data):
+                usage.add(billed(active), data.get("usage"))
+                if esc.on_paid:
+                    agent_escalation.mark_paid(user_email, model)
+                    tokens = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+                    logger.info("paid completion for %s on %s: %s prompt "
+                                "tokens, %s completion tokens", model, active,
+                                tokens.get("prompt_tokens"),
+                                tokens.get("completion_tokens"))
                 return data
+            if esc.on_paid:
+                back = esc.fall_back()
+                logger.warning("the paid model %s failed for %s, back to %s",
+                               active, model, back or "no free model")
+                if back is None:
+                    return data if isinstance(data, dict) else {}
+                active = back
+                continue
             if not pool:
+                if esc.can_try and await esc.switch(
+                        agent_escalation.REASON_POOL_SPENT, active):
+                    active = agent_escalation.PAID_MODEL
+                    continue
                 # Nothing left to try. The caller reads a body with no
                 # choices as the busy sentence for a free agent, and raises
                 # its own "no answer" for a paid one, as it always did.
@@ -612,85 +741,132 @@ async def _chat(token: str, model: str, messages: list[dict],
                            active, model, nxt)
             active = nxt
 
-    for _ in range(max_iterations):
-        data = await complete(convo, True, timeout)
+    # Before the first completion: the person's own words, and whether this
+    # agent is already mid job for them. An agent in the room that was not
+    # named is let decide on the free model first, so a room of seven that
+    # hears "build me an app" does not pay seven times to hear six PASSes.
+    probe_reason = None
+    if esc.enabled:
+        reason = agent_escalation.decide(
+            intent, agent_escalation.in_window(user_email, model))
+        if reason and intent.may_pass:
+            probe_reason = reason
+        elif reason and await esc.switch(reason, active):
+            active = agent_escalation.PAID_MODEL
 
-        choices = data.get("choices") or []
-        if not choices:
-            if free:
-                return FREE_POOL_EXHAUSTED, notes
-            raise RuntimeError("the model returned no answer")
-        message = choices[0].get("message") or {}
-        calls = message.get("tool_calls") or []
-        content = (message.get("content") or "").strip()
+    rounds = 0
+    limit = max_iterations
+    while True:
+        while rounds < limit:
+            deciding = bool(intent is not None and intent.may_pass and rounds == 0)
+            if (not deciding and esc.can_try and agent_escalation.too_long(convo)
+                    and await esc.switch(
+                        agent_escalation.REASON_LONG_CONVERSATION, active)):
+                active = agent_escalation.PAID_MODEL
+            data = await complete(convo, True, timeout)
 
-        if not calls:
-            if _router_gave_up(content):
-                # A 200 carrying a failure. Said in words the owner can act
-                # on, rather than passing through a model name they never
-                # chose and an HTTP status code.
-                return ROUTER_EXHAUSTED, notes
-            return content, notes
+            choices = data.get("choices") or []
+            if not choices:
+                if free:
+                    return FREE_POOL_EXHAUSTED, notes
+                raise RuntimeError("the model returned no answer")
+            message = choices[0].get("message") or {}
+            calls = message.get("tool_calls") or []
+            content = (message.get("content") or "").strip()
 
-        convo.append({"role": "assistant", "content": content,
-                      "tool_calls": calls})
-        pending: list[dict] = []
-        for call in calls:
-            # A tool call comes straight from a model, so its shape cannot be
-            # trusted: `call` itself, its "function" object, or "name" inside
-            # that can each be something other than what they should be. The
-            # same nine shapes are already guarded one layer down in
-            # execute_tool_call; guard them here too, before .strip() or
-            # .get() can raise and take the whole run down with it. A call
-            # that cannot be named degrades to a refused/unnamed call rather
-            # than a fatal error.
-            call = call if isinstance(call, dict) else {}
-            fn = call.get("function")
-            fn = fn if isinstance(fn, dict) else {}
-            raw_name = fn.get("name")
-            name = raw_name.strip() if isinstance(raw_name, str) else ""
-            label = name or "an unnamed tool call"
-            # Arguments included, because call_tool's own name says nothing
-            # about what it runs: searching the web and creating a ClickUp
-            # task arrive here under the same name.
-            probe = arguments_of(call)
-            if is_write_call(name, probe) and not write_allowed:
-                if mode == agent_access.MODE_ASK:
-                    # Held back, not refused. The turn ends below and picks
-                    # up again once the owner answers.
-                    pending.append(call)
-                    continue
-                notes.append(
-                    "Declined to run " + label + ", because "
-                    + refusal_reason + ".")
-                result = ("Refused: " + refusal_reason + ", so "
-                          + label + " was not run.")
-            else:
-                # tool_ids scopes which native tools this agent is even
-                # allowed to run, not only which ones the model was told
-                # about -- see execute_tool_call.
-                #
-                # `model` IS the agent id on every caller of this function
-                # (a schedule passes sched.agent_id, the chat panel and the
-                # turn endpoint pass agent_id), so it is what a tool acting
-                # as the agent has to be handed. Without it __model__ is
-                # always empty and a schedule an agent makes cannot run as
-                # that agent.
-                result = await execute_tool_call(call, user_email, tool_ids,
-                                                 model)
-            if isinstance(result, str) and len(result) > TOOL_RESULT_EXCERPT_CHARS:
-                result = (
-                    result[:TOOL_RESULT_EXCERPT_CHARS]
-                    + "\n\n[This tool result was shortened. It was longer "
-                    "than " + str(TOOL_RESULT_EXCERPT_CHARS) + " characters.]")
-            convo.append({"role": "tool", "tool_call_id": call.get("id"),
-                          "name": name, "content": result})
+            reason = None
+            if probe_reason and not (not calls
+                                     and agent_escalation.looks_like_pass(content)):
+                reason = probe_reason
+            elif not calls and not content:
+                reason = agent_escalation.REASON_EMPTY
+            elif calls and agent_escalation.names_heavy_tool(calls):
+                reason = agent_escalation.REASON_HEAVY_TOOL
+            probe_reason = None
+            if reason and esc.can_try and await esc.switch(reason, active):
+                # Nothing in this reply has run, so asking again on the paid
+                # model repeats no tool and does not use up a round.
+                active = agent_escalation.PAID_MODEL
+                continue
 
-        if pending:
-            # Raised after the whole batch so the reads above are already
-            # done and carried. Every held call still needs a tool message
-            # before the next completion, which is what the resume writes.
-            raise agent_access.ApprovalRequired(convo, pending)
+            if not calls:
+                if _router_gave_up(content):
+                    # A 200 carrying a failure. Said in words the owner can act
+                    # on, rather than passing through a model name they never
+                    # chose and an HTTP status code.
+                    return ROUTER_EXHAUSTED, notes
+                return esc.with_note(content), notes
+
+            rounds += 1
+            convo.append({"role": "assistant", "content": content,
+                          "tool_calls": calls})
+            pending: list[dict] = []
+            for call in calls:
+                # A tool call comes straight from a model, so its shape cannot be
+                # trusted: `call` itself, its "function" object, or "name" inside
+                # that can each be something other than what they should be. The
+                # same nine shapes are already guarded one layer down in
+                # execute_tool_call; guard them here too, before .strip() or
+                # .get() can raise and take the whole run down with it. A call
+                # that cannot be named degrades to a refused/unnamed call rather
+                # than a fatal error.
+                call = call if isinstance(call, dict) else {}
+                fn = call.get("function")
+                fn = fn if isinstance(fn, dict) else {}
+                raw_name = fn.get("name")
+                name = raw_name.strip() if isinstance(raw_name, str) else ""
+                label = name or "an unnamed tool call"
+                # Arguments included, because call_tool's own name says nothing
+                # about what it runs: searching the web and creating a ClickUp
+                # task arrive here under the same name.
+                probe = arguments_of(call)
+                if is_write_call(name, probe) and not write_allowed:
+                    if mode == agent_access.MODE_ASK:
+                        # Held back, not refused. The turn ends below and picks
+                        # up again once the owner answers.
+                        pending.append(call)
+                        continue
+                    notes.append(
+                        "Declined to run " + label + ", because "
+                        + refusal_reason + ".")
+                    result = ("Refused: " + refusal_reason + ", so "
+                              + label + " was not run.")
+                else:
+                    # tool_ids scopes which native tools this agent is even
+                    # allowed to run, not only which ones the model was told
+                    # about -- see execute_tool_call.
+                    #
+                    # `model` IS the agent id on every caller of this function
+                    # (a schedule passes sched.agent_id, the chat panel and the
+                    # turn endpoint pass agent_id), so it is what a tool acting
+                    # as the agent has to be handed. Without it __model__ is
+                    # always empty and a schedule an agent makes cannot run as
+                    # that agent.
+                    result = await execute_tool_call(call, user_email, tool_ids,
+                                                     model)
+                if isinstance(result, str) and len(result) > TOOL_RESULT_EXCERPT_CHARS:
+                    result = (
+                        result[:TOOL_RESULT_EXCERPT_CHARS]
+                        + "\n\n[This tool result was shortened. It was longer "
+                        "than " + str(TOOL_RESULT_EXCERPT_CHARS) + " characters.]")
+                convo.append({"role": "tool", "tool_call_id": call.get("id"),
+                              "name": name, "content": result})
+
+            if pending:
+                # Raised after the whole batch so the reads above are already
+                # done and carried. Every held call still needs a tool message
+                # before the next completion, which is what the resume writes.
+                raise agent_access.ApprovalRequired(convo, pending)
+
+        # The rounds are spent on the free models and the work is not done.
+        # The paid model picks up the carried conversation, every tool result
+        # included, with a few rounds of its own before the write-up.
+        if limit > 0 and esc.can_try and await esc.switch(
+                agent_escalation.REASON_ROUNDS_CAP, active):
+            active = agent_escalation.PAID_MODEL
+            limit += agent_escalation.PAID_EXTRA_ROUNDS
+            continue
+        break
 
     # The rounds are spent but the reading is not wasted. One more completion
     # with no tools attached makes the model write up what it gathered,
@@ -716,8 +892,8 @@ async def _chat(token: str, model: str, messages: list[dict],
             final = ""
         if final and _router_gave_up(final):
             return ROUTER_EXHAUSTED, notes
-    notes.append(RAN_OUT_OF_ROUNDS % max_iterations)
-    return (final or content), notes
+    notes.append(RAN_OUT_OF_ROUNDS % limit)
+    return esc.with_note(final or content), notes
 
 
 def _messages_for(sched) -> list[dict]:
