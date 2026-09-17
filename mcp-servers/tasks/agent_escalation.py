@@ -165,3 +165,108 @@ class TurnUsage:
             self.cost_usd = None
         else:
             self.cost_usd += cost
+
+
+# --- the rules --------------------------------------------------------------
+
+_BUILD = re.compile(
+    r"\b(?:build|create|make(?!\s+sure)|generate|scaffold|develop|code up|"
+    r"spin up|set up)\b[^.?!\n]{0,40}?\b(?:apps?|application|web ?sites?|"
+    r"sites?|web ?pages?|landing pages?|pages?|dashboards?|games?|api|"
+    r"backend|frontend|extension|bot|plugin|portal|store|shop)\b")
+
+_CODE = re.compile(
+    r"\b(?:refactor|debug|debugging|implement)\b"
+    r"|\bwrite\s+(?:me\s+)?(?:a\s+|an\s+|the\s+|some\s+)?(?:code|script|"
+    r"function|class|query|regex|tests?|component|endpoint|migration|"
+    r"program)\b"
+    r"|\bfix\b[^.?!\n]{0,30}?\b(?:bugs?|errors?|code|build|tests?|"
+    r"crash(?:es)?|issues?|page|app|site|feature)\b"
+    r"|\badd\b[^.?!\n]{0,30}?\b(?:feature|endpoint|component|function)\b"
+    r"|\bapp builder\b")
+
+_ERROR = re.compile(
+    r"traceback \(most recent call last\)"
+    r"|\bstack ?trace\b"
+    r"|\b[a-z]*(?:error|exception):\s"
+    r"|^\s*at \S+ \(\S+:\d+:\d+\)",
+    re.MULTILINE)
+
+
+def rule_reason(text) -> str | None:
+    """Why this message needs the paid model, or None. Read from what the
+    person typed, never from an instruction this service added."""
+    raw = text if isinstance(text, str) else ""
+    if not raw.strip():
+        return None
+    low = raw.lower()
+    if "```" in raw:
+        return REASON_CODE
+    if _ERROR.search(low):
+        return REASON_ERROR
+    if _BUILD.search(low):
+        return REASON_BUILD
+    if _CODE.search(low):
+        return REASON_CODE
+    if len(raw) > MESSAGE_CHARS:
+        return REASON_LONG_MESSAGE
+    return None
+
+
+_QUESTION_START = re.compile(
+    r"^\s*(?:what|what's|whats|when|where|who|whom|whose|which|why|how)\b")
+_REQUEST_START = re.compile(
+    r"^\s*(?:please|can you|could you|would you|will you|can we|could we|"
+    r"let's|lets)\b")
+_TASK_WORDS = re.compile(
+    r"\b(?:apps?|site|website|pages?|build|builds|code|files?|bugs?|errors?|"
+    r"fail(?:s|ed|ing)?|broken|deploy(?:ed)?|change|changes|fix|feature|"
+    r"buttons?|style|colou?rs?|layout|design|preview|tests?|component|"
+    r"header|footer|logo|font|images?|database|login|form)\b")
+
+
+def is_plain_question(text) -> bool:
+    """A question about something other than the work in hand.
+
+    "What is on my calendar tomorrow?" goes back to the free model even while
+    an agent is mid build. "Can you make it blue?" is a request in a question's
+    clothes, and "why did the build fail?" is about the work, so neither is.
+    """
+    low = (text if isinstance(text, str) else "").strip().lower()
+    if not low or _REQUEST_START.search(low):
+        return False
+    if not (low.endswith("?") or _QUESTION_START.search(low)):
+        return False
+    return not _TASK_WORDS.search(low)
+
+
+def looks_like_pass(content) -> bool:
+    """The room's PASS, in the shapes models send it."""
+    text = content if isinstance(content, str) else ""
+    return text.strip().strip('."\'').upper() == "PASS"
+
+
+def names_heavy_tool(calls) -> bool:
+    for call in calls if isinstance(calls, list) else []:
+        fn = call.get("function") if isinstance(call, dict) else None
+        name = fn.get("name") if isinstance(fn, dict) else None
+        if isinstance(name, str) and name.strip() in HEAVY_TOOLS:
+            return True
+    return False
+
+
+def conversation_chars(messages) -> int:
+    total = 0
+    for m in messages if isinstance(messages, list) else []:
+        content = m.get("content") if isinstance(m, dict) else None
+        if isinstance(content, str):
+            total += len(content)
+        elif isinstance(content, list):
+            total += sum(len(p.get("text") or "") for p in content
+                         if isinstance(p, dict)
+                         and isinstance(p.get("text"), str))
+    return total
+
+
+def too_long(messages) -> bool:
+    return conversation_chars(messages) > CONVERSATION_CHARS
