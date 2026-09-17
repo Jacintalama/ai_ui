@@ -81,3 +81,4 @@ def test_the_agent_run_cost_migration_is_picked_up_and_its_rollback_is_not():
         assert "ADD COLUMN IF NOT EXISTS " + column in sql
     assert "DROP" not in sql.upper()
     assert (MIGRATIONS / "rollbacks" / "050_agent_run_model_and_cost.down.sql").exists()
+    assert "050_agent_run_model_and_cost.down.sql" not in names
