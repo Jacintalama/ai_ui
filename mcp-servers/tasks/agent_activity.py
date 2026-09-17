@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text as sql_text
 
+import agent_escalation
 from db import session
 
 logger = logging.getLogger(__name__)
@@ -110,7 +111,8 @@ async def start_run(agent_id: str, user_email: str, source: str) -> str | None:
         return None
 
 
-async def finish_run(run_id: str | None, status: str, usage=None) -> None:
+async def finish_run(run_id: str | None, status: str,
+                     usage: agent_escalation.TurnUsage | None = None) -> None:
     """Close a run out. Safe to call with None, which is what start_run
     returns when it could not write.
 
