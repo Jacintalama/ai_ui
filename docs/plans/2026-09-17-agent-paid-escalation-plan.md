@@ -2850,7 +2850,7 @@ If the log shows `the paid model gpt-5.5 failed` with a 400 about `reasoning_eff
 
 **Step 9: The window, then a plain question inside it.** Within 15 minutes of Step 8, repeat Step 7's question. The row must be free again (`escalation` NULL): a plain question inside the window goes back to free.
 
-**Step 10: Report, verified versus inferred.** The two or three rows (model, reason, tokens, cost, seconds), the log lines, the actual dollars spent, and anything that did not behave as this plan says. Note for the owner that Ada's window for alamajacintg04 stays open for 15 minutes after Step 8, so a non-question message to Ada in that time goes to GPT-5.5.
+**Step 10: Report, verified versus inferred.** The two or three rows (model, reason, tokens, cost, seconds), the log lines, the actual dollars spent, and anything that did not behave as this plan says. Put the measured gpt-5.5 latency of Step 8 (whole turn, and per paid completion from the log timestamps) next to the callers that give up sooner than a paid turn can take, from the design's Known risks: `agents_tool` 60 seconds, a browser POST to `/agents/speak` probably 100 (Cloudflare, inferred), `auto_router_pipe` 120, and the gateway's 420, and say which of them the measured turn would have hit. Note for the owner that Ada's window for alamajacintg04 stays open for 15 minutes after Step 8, so a non-question message to Ada in that time goes to GPT-5.5.
 
 **Step 11: Update memory.** Update `project_agent_subconscious_and_free_models.md` (or add a new project memory) with what shipped, the measured cost and latency, and the knobs (`AGENT_PAID_DAILY_CAP=0` switches it off).
 

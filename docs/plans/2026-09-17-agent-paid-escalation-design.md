@@ -232,6 +232,21 @@ not blank, is the off switch). Code defaults only, overridable by env:
 1. The Discord, Slack and Telegram gateway waits 420 seconds for
    `/agents/turn` (webhook-handler `AGENT_TURN_TIMEOUT_SECONDS`). A worst
    case paid turn is 1,170 seconds. The free worst case was already 780.
+   Three other callers give up sooner, and all three reach a turn that can
+   move (added after review, 2026-09-18):
+   1. `open-webui-functions/auto_router_pipe.py` posts `/agents/chat` with
+      `TIMEOUT_SECONDS` 120 (its valve default).
+   2. `open-webui-functions/agents_tool.py` posts `/agents/chat` with
+      `timeout_seconds` 60, less than one paid completion's own 90.
+   3. The browser's `aiuiSpeak` in `mcp-servers/gdrive/integrations-ui.js`
+      posts `/api/tasks/agents/speak` with no timeout of its own, so the
+      limit is probably Cloudflare's 100 seconds on a proxied request
+      (inferred, not measured). One paid completion alone may take its
+      full 90 seconds, and every free round before a move adds up to 60.
+   What the tasks service does with a turn whose caller has gone is not
+   checked here. Task 11 records the measured gpt-5.5 latency of its paid
+   turns next to these four numbers (60, 100, 120, 420), which says whether
+   any of them is hit in practice.
 2. The window and the once a day note live in process memory, so a restart
    forgets them. The cap does not: it is counted from the table.
 3. The rules are keyword rules. They will miss some real work and catch
