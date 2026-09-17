@@ -65,6 +65,20 @@ def test_a_paid_reply_with_no_usable_token_counts_is_unknown_not_free(usage):
     assert (u.prompt_tokens, u.completion_tokens, u.cost_usd) == (0, 0, None)
 
 
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -float("inf"), -5])
+def test_a_count_that_is_not_a_finite_number_of_tokens_is_junk_not_a_crash(bad):
+    # json.loads accepts NaN, Infinity and 1e999, and int() raises on the
+    # first two, which would fail the whole agent turn over one number.
+    u = esc.TurnUsage()
+    u.add("gpt-5.5", {"prompt_tokens": bad, "completion_tokens": bad})
+    assert (u.prompt_tokens, u.completion_tokens, u.cost_usd) == (0, 0, None)
+
+
+def test_a_price_that_is_not_a_finite_amount_of_dollars_is_skipped():
+    assert esc.parse_prices("gpt-5.5=nan:30,a=5:inf,b=-5:30,c=5:-1,d=0:0") == {
+        "d": (0.0, 0.0)}
+
+
 def test_one_usable_count_is_enough_to_price_a_paid_reply():
     u = esc.TurnUsage()
     u.add("gpt-5.5", {"prompt_tokens": 1000, "completion_tokens": None})

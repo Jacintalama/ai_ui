@@ -15,6 +15,7 @@ Design: docs/plans/2026-09-17-agent-paid-escalation-design.md.
 """
 import contextlib
 import contextvars
+import math
 import os
 import re
 import time
@@ -102,9 +103,13 @@ def parse_prices(raw: str) -> dict:
             continue
         given_in, _sep, given_out = value.partition(":")
         try:
-            out[name.strip()] = (float(given_in), float(given_out))
+            price = (float(given_in), float(given_out))
         except ValueError:
             continue
+        # float() reads "nan", "inf" and "-5" happily, and any of them would
+        # be written to cost_usd as if it were a price.
+        if all(math.isfinite(p) and p >= 0 for p in price):
+            out[name.strip()] = price
     return out
 
 
@@ -128,14 +133,17 @@ def cost_of(model: str, prompt_tokens: int, completion_tokens: int):
 
 
 def _is_count(value) -> bool:
-    """A token count a reply actually gave, as opposed to junk or nothing."""
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """A token count a reply actually gave, as opposed to junk or nothing.
+
+    json.loads accepts NaN, Infinity and 1e999, and int() raises on the first
+    two, so a finite check keeps one bad number from failing the turn.
+    """
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(value) and value >= 0)
 
 
 def _count(value) -> int:
-    if not _is_count(value):
-        return 0
-    return max(int(value), 0)
+    return int(value) if _is_count(value) else 0
 
 
 @dataclass
