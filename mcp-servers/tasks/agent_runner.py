@@ -24,6 +24,7 @@ import httpx
 
 import agent_access
 import agent_activity
+import agent_escalation
 import agent_memory
 from agent_tools import (arguments_of, execute_tool_call,
                          is_write_call, is_write_tool)
@@ -102,6 +103,8 @@ MAX_TOOL_ITERATIONS = 8
 #: free agent can also spend two fallback ids at 60 seconds each inside the
 #: same turn: 9 + 2 rounds plus the 120 second write-up is 780 seconds
 #: against a 720 second window.
+#: Since 2026-09-17 the move to the paid model adds rounds too; see
+#: worst_turn_seconds, which the seventeen minute window follows.
 CHANNEL_MAX_TOOL_ITERATIONS = 7
 CHANNEL_HTTP_TIMEOUT_SECONDS = 60
 
@@ -110,7 +113,8 @@ CHANNEL_HTTP_TIMEOUT_SECONDS = 60
 #: gpt-5-mini took 22s for a plain turn with the brief, and Kai's write-up
 #: after seven rounds of app files hit the 60s timeout and he said nothing.
 #: Seven rounds at 60 plus this is nine minutes, and eleven once a free
-#: agent's two fallback ids are counted, inside STALE_AFTER_CHANNEL at twelve.
+#: agent's two fallback ids are counted, inside STALE_AFTER_CHANNEL
+#: (seventeen since the paid model can take over a turn).
 FINAL_ROUND_MIN_TIMEOUT_SECONDS = 120
 
 
@@ -454,6 +458,27 @@ def _agent_system(agent: dict | None) -> str:
     return fallback.strip() if isinstance(fallback, str) else ""
 
 
+def worst_turn_seconds(max_iterations: int, timeout: float) -> float:
+    """Every completion one turn can make, each at its full timeout, now
+    that a free agent can move to the paid model partway through.
+
+    Two shapes, and the worse one counts. Moving at the start: the free
+    attempts that decided it (the agent's own model and every fallback id),
+    then every round on the paid model, then the write-up. Moving at the
+    round cap: every round on the free models, every fallback id, then the
+    paid model's extra rounds and the write-up. A paid model that fails
+    sends the turn back to the free one it left, which costs less than
+    either shape, because the paid timeout is never shorter than the free.
+    """
+    extra_free = max(len(FREE_MODELS) - 1, 0)
+    paid = agent_escalation.paid_timeout(timeout)
+    write_up = max(paid, FINAL_ROUND_MIN_TIMEOUT_SECONDS)
+    up_front = (1 + extra_free) * timeout + max_iterations * paid + write_up
+    at_cap = ((max_iterations + extra_free) * timeout
+              + agent_escalation.PAID_EXTRA_ROUNDS * paid + write_up)
+    return max(up_front, at_cap)
+
+
 #: The chat token has to outlive the WHOLE loop, not one completion: the loop
 #: can make up to MAX_TOOL_ITERATIONS sequential calls of up to
 #: HTTP_TIMEOUT_SECONDS each, plus tool time in between. A token sized for a
@@ -461,26 +486,16 @@ def _agent_system(agent: dict | None) -> str:
 #: iterations, which surfaces as the agent refusing rather than as the auth
 #: failure it actually is.
 #:
-#: The free pool is counted too, which is why this sits below it rather than
-#: beside the caps it also reads. A free agent can give up on every id in one
-#: turn, and each one it gives up on is another completion of up to the full
-#: timeout, so the rounds alone stopped describing the worst case. This is
-#: the one deadline the fallback cannot rescue, because an expired token is a
-#: 401, a 401 is deliberately not a provider failure, and so it ends the run
-#: instead of moving it to the next model.
+#: The free pool is counted, and since 2026-09-17 so is the move to the paid
+#: model, which is why this is worst_turn_seconds and not a product of two
+#: caps. An expired token is a 401, a 401 is deliberately not a provider
+#: failure, and so it ends the run instead of moving it anywhere.
 #:
-#: Every completion a schedule can make, at the full timeout: 8 rounds is
-#: 1920 seconds, the 2 fallback ids the pool can spend across the turn are
-#: 480 more, and the write-up after the tool cap is another 240, so 2640
-#: seconds, forty four minutes, and this is that plus a minute of headroom.
-#: The two formulas before this one covered 33 and then 41 of those 44
-#: minutes, both by leaving the write-up out. It is the round that carries
-#: everything the run read and the last thing the person hears from a run
-#: that spent every round, so it is the worst one to lose to an expired
-#: token.
-CHAT_TOKEN_TTL_SECONDS = (
-    (MAX_TOOL_ITERATIONS + 1 + len(FREE_MODELS) - 1) * HTTP_TIMEOUT_SECONDS
-    + 60)
+#: On a schedule that is 8 free rounds and 2 fallback ids at 240 seconds,
+#: 3 paid rounds at 240 and a 240 second write-up: 3360 seconds, and this is
+#: that plus a minute.
+CHAT_TOKEN_TTL_SECONDS = int(
+    worst_turn_seconds(MAX_TOOL_ITERATIONS, HTTP_TIMEOUT_SECONDS)) + 60
 
 
 async def _chat(token: str, model: str, messages: list[dict],

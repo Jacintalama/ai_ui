@@ -612,6 +612,23 @@ def test_the_token_outlives_the_whole_loop():
         (agent_runner.MAX_TOOL_ITERATIONS + 1
          + len(agent_runner.FREE_MODELS) - 1)
         * agent_runner.HTTP_TIMEOUT_SECONDS)
+    # And the move to the paid model, which can add rounds after the free
+    # ones are spent (2026-09-17).
+    assert agent_runner.CHAT_TOKEN_TTL_SECONDS >= agent_runner.worst_turn_seconds(
+        agent_runner.MAX_TOOL_ITERATIONS, agent_runner.HTTP_TIMEOUT_SECONDS)
+
+
+def test_the_worst_turn_counts_the_move_to_the_paid_model(monkeypatch):
+    """Pinned with numbers, so a formula that quietly drops a term fails."""
+    import agent_escalation
+    monkeypatch.setattr(agent_runner, "FREE_MODELS", ["a:free", "b:free", "c:free"])
+    monkeypatch.setattr(agent_escalation, "PAID_TIMEOUT_SECONDS", 90)
+    monkeypatch.setattr(agent_escalation, "PAID_EXTRA_ROUNDS", 3)
+    # Chat: 3 free attempts at 60 + 7 paid rounds at 90 + 120 write-up = 930,
+    # and 9 free completions at 60 + 3 paid at 90 + 120 = 930.
+    assert agent_runner.worst_turn_seconds(7, 60) == 930
+    # Schedule: 10 free at 240 + 3 paid at 240 + 240 write-up = 3360.
+    assert agent_runner.worst_turn_seconds(8, 240) == 3360
 
 
 async def test_a_scheduled_report_carries_no_long_dashes(wired):

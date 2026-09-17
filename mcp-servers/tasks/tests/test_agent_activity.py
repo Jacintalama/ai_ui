@@ -132,6 +132,7 @@ def test_each_cut_off_clears_the_worst_case_of_its_own_path():
     """One number cannot be honest about both paths: a scheduled run may take
     twenty minutes of model time before a tool has run, while a chat turn is
     bounded at about three."""
+    import agent_escalation
     from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS,
                               CHANNEL_MAX_TOOL_ITERATIONS, FREE_MODELS,
                               FINAL_ROUND_MIN_TIMEOUT_SECONDS,
@@ -141,20 +142,31 @@ def test_each_cut_off_clears_the_worst_case_of_its_own_path():
     # timeout. The pool is consumed across the turn, not per round, so this
     # is an addition and not a multiplication.
     extra = len(FREE_MODELS) - 1
-    # Each includes the write-up after the tool cap.
-    worst_schedule = timedelta(
-        seconds=HTTP_TIMEOUT_SECONDS * (MAX_TOOL_ITERATIONS + 1 + extra))
-    worst_channel = timedelta(
-        seconds=CHANNEL_HTTP_TIMEOUT_SECONDS
-        * (CHANNEL_MAX_TOOL_ITERATIONS + extra)
-        + FINAL_ROUND_MIN_TIMEOUT_SECONDS)
+
+    def worst(rounds, timeout):
+        # Written out here rather than read from worst_turn_seconds, so this
+        # test cannot agree with a wrong formula by calling it. The two
+        # shapes are moving to the paid model at the start (the free
+        # attempts that decided it, then every round on paid) and moving at
+        # the round cap (every free round and fallback id, then the paid
+        # model's extra rounds). Both end in the write-up.
+        paid = max(timeout, agent_escalation.PAID_TIMEOUT_SECONDS)
+        write_up = max(paid, FINAL_ROUND_MIN_TIMEOUT_SECONDS)
+        up_front = (1 + extra) * timeout + rounds * paid + write_up
+        at_cap = ((rounds + extra) * timeout
+                  + agent_escalation.PAID_EXTRA_ROUNDS * paid + write_up)
+        return timedelta(seconds=max(up_front, at_cap)), timedelta(seconds=paid)
+
+    worst_schedule, schedule_round = worst(MAX_TOOL_ITERATIONS,
+                                           HTTP_TIMEOUT_SECONDS)
+    worst_channel, channel_round = worst(CHANNEL_MAX_TOOL_ITERATIONS,
+                                         CHANNEL_HTTP_TIMEOUT_SECONDS)
     # One round of headroom, not one second. Neither worst case counts tool
     # time between completions, so a window that clears the model time by
     # less than a round is not clearing anything. This is what the move from
     # forty five minutes to fifty bought: forty five cleared 2640 seconds by
     # sixty, which is a quarter of one round.
-    assert STALE_AFTER_SCHEDULE > worst_schedule + timedelta(
-        seconds=HTTP_TIMEOUT_SECONDS), (
+    assert STALE_AFTER_SCHEDULE > worst_schedule + schedule_round, (
         "a healthy long schedule would be reported as failed")
     # The channel clears its worst case by exactly one round and not a
     # second more: 660 plus 60 is 720, which is the twelve minute window. So
@@ -163,8 +175,7 @@ def test_each_cut_off_clears_the_worst_case_of_its_own_path():
     # headroom is to make them wait longer for a turn that has already gone
     # wrong. Raising CHANNEL_MAX_TOOL_ITERATIONS or the pool means raising
     # the window with it; this assertion is what says so.
-    assert STALE_AFTER_CHANNEL >= worst_channel + timedelta(
-        seconds=CHANNEL_HTTP_TIMEOUT_SECONDS), (
+    assert STALE_AFTER_CHANNEL >= worst_channel + channel_round, (
         "a healthy long chat turn would be reported as failed")
 
 

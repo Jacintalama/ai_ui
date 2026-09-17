@@ -44,7 +44,14 @@ logger = logging.getLogger(__name__)
 #: eleven minutes. Ten would have reported a turn that was still going as
 #: failed, and it is the last turn of a bad day that gets called dead, not a
 #: healthy one. A test derives both numbers from the runner's constants.
-STALE_AFTER_CHANNEL = timedelta(minutes=12)
+#:
+#: Seventeen, not twelve, since a free agent can move to the paid model
+#: partway through a turn (2026-09-17). The worst turn is now 930 seconds
+#: (agent_runner.worst_turn_seconds with 7 rounds at 60): three free attempts,
+#: seven paid rounds at 90 and the 120 second write-up, or seven free rounds,
+#: two fallback ids, three paid rounds and the write-up, which comes to the
+#: same. Seventeen minutes is that plus one paid round.
+STALE_AFTER_CHANNEL = timedelta(minutes=17)
 
 #: A scheduled run uses MAX_TOOL_ITERATIONS (8) and HTTP_TIMEOUT_SECONDS
 #: (240), so twenty minutes of model time alone is healthy before a single
@@ -58,7 +65,11 @@ STALE_AFTER_CHANNEL = timedelta(minutes=12)
 #: 480 for two fallbacks plus 240 for the write-up is 2640 seconds, forty
 #: four minutes. Forty five cleared that by sixty seconds, which is not
 #: margin when tool time is not counted in it at all.
-STALE_AFTER_SCHEDULE = timedelta(minutes=50)
+#:
+#: Sixty five, not fifty, for the move to the paid model: eight free rounds,
+#: two fallback ids, three paid rounds and the write-up, all at 240 seconds,
+#: is 3360 seconds, fifty six minutes, and a round of headroom is sixty.
+STALE_AFTER_SCHEDULE = timedelta(minutes=65)
 
 SOURCE_SCHEDULE = "schedule"
 SOURCE_CHANNEL = "channel"
