@@ -179,7 +179,8 @@ code, and that test says by how much. The numbers with the default settings:
 
 ### Settings (compose, tasks service)
 
-`AGENT_PAID_MODEL=gpt-5.5`, `AGENT_PAID_REASONING=low`,
+`AGENT_PAID_MODEL=gpt-5.5`, `AGENT_PAID_REASONING=none` (was `low`; see
+Not verified item 1 for the measured 400),
 `AGENT_PAID_TIMEOUT_SECONDS=90`, `AGENT_PAID_DAILY_CAP=40`,
 `AGENT_PAID_PRICES=gpt-5.5=5:30`. `AGENT_PAID_MODEL` and
 `AGENT_PAID_REASONING` are declared `${VAR-default}` (no colon), so a value
@@ -208,10 +209,13 @@ not blank, is the off switch). Code defaults only, overridable by env:
 
 ## Not verified before building, checked in the live task
 
-1. That gpt-5.5 through Open WebUI accepts `reasoning_effort: low`. If it
-   does not, the paid call fails, the turn goes back to free and logs it;
-   set `AGENT_PAID_REASONING=` blank in `.env` (it passes through compose
-   blank, see Settings) and no `reasoning_effort` is sent.
+1. That gpt-5.5 through Open WebUI accepts `reasoning_effort: low`.
+   **Measured 2026-09-17 17:13 UTC: it does not.** The first live paid turn
+   got HTTP 400 from api.openai.com: "Function tools with reasoning_effort
+   are not supported for gpt-5.5 in /v1/chat/completions. To use function
+   tools, use /v1/responses or set reasoning_effort to 'none'." The turn
+   went back to free as designed and cost nothing. The default is now
+   `none`, the value the error names.
 2. That Open WebUI passes `usage` through for a gpt-5.5 non-stream reply.
 3. That gpt-5.5 answers an agent turn with tool specs inside 90 seconds.
 4. That tool calling works when the base id gpt-5.5 is posted with

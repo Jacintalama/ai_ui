@@ -473,8 +473,12 @@ services:
       # blank sends no reasoning_effort. Those two use ${VAR-default}, no
       # colon, on purpose: ${VAR:-default} replaces a blank value with the
       # default, so blank could never reach the container.
+      # Reasoning is none, not low: gpt-5.5 on /v1/chat/completions answers
+      # 400 "Function tools with reasoning_effort are not supported ... set
+      # reasoning_effort to 'none'" (measured 2026-09-17), and agent turns
+      # always carry tools.
       - AGENT_PAID_MODEL=${AGENT_PAID_MODEL-gpt-5.5}
-      - AGENT_PAID_REASONING=${AGENT_PAID_REASONING-low}
+      - AGENT_PAID_REASONING=${AGENT_PAID_REASONING-none}
       - AGENT_PAID_TIMEOUT_SECONDS=${AGENT_PAID_TIMEOUT_SECONDS:-90}
       - AGENT_PAID_DAILY_CAP=${AGENT_PAID_DAILY_CAP:-40}
       - AGENT_PAID_PRICES=${AGENT_PAID_PRICES:-gpt-5.5=5:30}

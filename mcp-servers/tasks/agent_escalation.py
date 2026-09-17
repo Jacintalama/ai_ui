@@ -46,8 +46,11 @@ PAID_MODEL = os.environ.get("AGENT_PAID_MODEL", "gpt-5.5").strip()
 
 #: Sent as reasoning_effort on paid completions. AGENT_PAID_REASONING= set
 #: blank in .env sends nothing, declared with no colon in compose for the
-#: same reason.
-PAID_REASONING = os.environ.get("AGENT_PAID_REASONING", "low").strip()
+#: same reason. none, not low: gpt-5.5 on /v1/chat/completions refuses
+#: function tools with low (HTTP 400, measured 2026-09-17) and names none as
+#: the value that works. Blank would leave it to OpenAI's default, which was
+#: not measured.
+PAID_REASONING = os.environ.get("AGENT_PAID_REASONING", "none").strip()
 
 #: The least a paid completion is allowed. A caller's own timeout wins when
 #: it is longer (a schedule's 240 seconds).

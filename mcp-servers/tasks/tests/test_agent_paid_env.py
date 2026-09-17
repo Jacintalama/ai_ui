@@ -55,7 +55,11 @@ def _reaches_container(name: str, env: dict[str, str]) -> str:
 
 @pytest.mark.parametrize("name,expected", [
     ("AGENT_PAID_MODEL", "gpt-5.5"),
-    ("AGENT_PAID_REASONING", "low"),
+    # none, not low: measured live 2026-09-17 17:13 UTC, OpenAI answered 400
+    # "Function tools with reasoning_effort are not supported for gpt-5.5 in
+    # /v1/chat/completions ... set reasoning_effort to 'none'", and every
+    # agent turn carries tools.
+    ("AGENT_PAID_REASONING", "none"),
     ("AGENT_PAID_TIMEOUT_SECONDS", "90"),
     ("AGENT_PAID_DAILY_CAP", "40"),
     ("AGENT_PAID_PRICES", "gpt-5.5=5:30"),
