@@ -23,6 +23,7 @@ import agent_chat_render as render
 import agent_chat_store as store
 from auth import CurrentUser, current_user
 import agent_access
+import agent_escalation
 import agent_routing
 from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS, FREE_POOL_EXHAUSTED,
                           ROUTER_EXHAUSTED, _chat)
@@ -363,7 +364,10 @@ async def _summarise(email: str, agent: dict, turns: list[dict]) -> str:
             tool_ids=None, user_email=email,
             tool_mode=agent_access.MODE_READ_ONLY,
             refusal_reason="summarising does not run tools",
-            max_iterations=1, timeout=CHANNEL_HTTP_TIMEOUT_SECONDS)
+            max_iterations=1, timeout=CHANNEL_HTTP_TIMEOUT_SECONDS,
+            # Notes for the room are housekeeping and never worth the paid
+            # model. No intent means this turn cannot leave the free ones.
+            intent=None)
     except Exception:                                       # noqa: BLE001
         # `log`, not `logger`: this module has only ever defined the first,
         # so the one path the "never raises" promise exists for raised a
@@ -467,7 +471,12 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
         if may_pass:
             turn_history = history + [{"role": "user",
                                        "content": PASS_INSTRUCTION}]
-        out = await _turn_for(email, agent, turn_history, names)
+        # The person's own words, not PASS_INSTRUCTION, which is the last
+        # user message this agent reads. Carried rather than passed because
+        # _turn_for and _run_turn sit in between.
+        with agent_escalation.asking(agent_escalation.Intent(
+                person_text=asked, may_pass=may_pass)):
+            out = await _turn_for(email, agent, turn_history, names)
         answer = out.get("answer") or ""
 
         fr = _failure_reason(name, answer)
@@ -508,7 +517,9 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
         name = str(fallback.get("name") or fallback.get("id") or "")
         yield {"event": "working",
               "data": render.turn_status(tid, render.working(name))}
-        out = await _turn_for(email, fallback, history, names)
+        with agent_escalation.asking(agent_escalation.Intent(
+                person_text=asked, may_pass=False)):
+            out = await _turn_for(email, fallback, history, names)
         answer = out.get("answer") or ""
         fr = _failure_reason(name, answer)
         # Asked for before the pass check, as in the loop above: a turn that

@@ -954,6 +954,7 @@ async def run_agent(sched) -> tuple[str, str, dict]:
     run_id = await agent_activity.start_run(
         getattr(sched, "agent_id", None), getattr(sched, "user_email", None),
         agent_activity.SOURCE_SCHEDULE)
+    usage = agent_escalation.TurnUsage(run_id=run_id)
     outcome = "failed"
     try:
         owner = await _owui_user_id_for(sched.user_email)
@@ -1046,7 +1047,12 @@ async def run_agent(sched) -> tuple[str, str, dict]:
             tool_mode=mode,
             refusal_reason=agent_access.refusal_reason(
                 level, getattr(sched, "tool_mode", None),
-                agent_access.SURFACE_SCHEDULE))
+                agent_access.SURFACE_SCHEDULE),
+            # The schedule's own prompt is what its owner asked for. The
+            # reminder of the last run in front of it is ours, not theirs.
+            intent=agent_escalation.Intent(
+                person_text=getattr(sched, "prompt", "") or ""),
+            usage=usage)
         if not answer and not notes:
             outcome = "failed"
             return ("failed", "The agent returned an empty answer.", {})
@@ -1105,4 +1111,4 @@ async def run_agent(sched) -> tuple[str, str, dict]:
                 "The agent could not finish this run. It will try again at the "
                 "next scheduled time.", {})
     finally:
-        await agent_activity.finish_run(run_id, outcome)
+        await agent_activity.finish_run(run_id, outcome, usage=usage)

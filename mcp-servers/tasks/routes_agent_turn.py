@@ -25,6 +25,7 @@ from sqlalchemy import select
 
 import agent_access
 import agent_activity
+import agent_escalation
 import agent_memory
 import agent_routing
 import agent_skills
@@ -280,6 +281,13 @@ async def _run_turn(user_email: str, agent_id: str,
 
     run_id = await agent_activity.start_run(
         agent_id, user_email, agent_activity.SOURCE_CHANNEL)
+    # Who is asking. The room says so through agent_escalation.asking,
+    # because only it can tell the person's words from its own PASS
+    # instruction; every other chat surface hands this the person's own
+    # messages, so the last user message is what they typed.
+    intent = (agent_escalation.current_intent()
+              or agent_escalation.Intent(person_text=_last_user_text(messages)))
+    usage = agent_escalation.TurnUsage(run_id=run_id)
     outcome = "failed"
     try:
         answer, notes = await _chat(
@@ -290,7 +298,8 @@ async def _run_turn(user_email: str, agent_id: str,
             refusal_reason=agent_access.refusal_reason(
                 level, None, agent_access.SURFACE_CHANNEL),
             max_iterations=CHANNEL_MAX_TOOL_ITERATIONS,
-            timeout=CHANNEL_HTTP_TIMEOUT_SECONDS)
+            timeout=CHANNEL_HTTP_TIMEOUT_SECONDS,
+            intent=intent, usage=usage)
         outcome = "completed"
         if not answer and notes:
             # The loop writes a note when it stops at the iteration cap or
@@ -311,7 +320,7 @@ async def _run_turn(user_email: str, agent_id: str,
         outcome = STATUS_WAITING
         return _pending_payload(user_email, agent_id, err)
     finally:
-        await agent_activity.finish_run(run_id, outcome)
+        await agent_activity.finish_run(run_id, outcome, usage=usage)
 
 
 @router.post("/turn")
@@ -392,6 +401,9 @@ async def _resume_turn(user_email: str, agent_id: str, conversation: list[dict],
 
     run_id = await agent_activity.start_run(
         agent_id, user_email, agent_activity.SOURCE_CHANNEL)
+    # An approval is the same job carrying on, so it stays on whichever
+    # model this agent was on for this person, for as long as that lasts.
+    usage = agent_escalation.TurnUsage(run_id=run_id)
     outcome = "failed"
     try:
         answer, notes = await _chat(
@@ -402,7 +414,8 @@ async def _resume_turn(user_email: str, agent_id: str, conversation: list[dict],
             refusal_reason=agent_access.refusal_reason(
                 level, None, agent_access.SURFACE_CHANNEL),
             max_iterations=CHANNEL_MAX_TOOL_ITERATIONS,
-            timeout=CHANNEL_HTTP_TIMEOUT_SECONDS)
+            timeout=CHANNEL_HTTP_TIMEOUT_SECONDS,
+            intent=agent_escalation.Intent(follow_up=True), usage=usage)
         outcome = "completed"
         if not answer and notes:
             # The loop writes a note when it stops at the iteration cap or
@@ -423,7 +436,7 @@ async def _resume_turn(user_email: str, agent_id: str, conversation: list[dict],
         outcome = STATUS_WAITING
         return _pending_payload(user_email, agent_id, err)
     finally:
-        await agent_activity.finish_run(run_id, outcome)
+        await agent_activity.finish_run(run_id, outcome, usage=usage)
 
 
 @router.post("/turn/resume")
