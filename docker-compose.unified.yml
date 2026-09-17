@@ -460,6 +460,20 @@ services:
       - AGENT_FREE_MODELS=${AGENT_FREE_MODELS:-nvidia/nemotron-3-super-120b-a12b:free,nex-agi/nex-n2.5-pro:free,nex-agi/nex-n2.5-mini:free}
       - AGENT_FREE_REASONING=${AGENT_FREE_REASONING:-none}
       - AGENT_REFLECT_MODEL=${AGENT_REFLECT_MODEL:-}
+      # A free agent moves to the paid model on its own for app builds,
+      # code, pasted errors, very long conversations, and when the free
+      # models fail or run out of rounds (agent_escalation.py, design in
+      # docs/plans/2026-09-17-agent-paid-escalation-design.md). The model
+      # needs a public.model row and a read grant in Open WebUI, which
+      # gpt-5.5 has. Prices are dollars per million tokens, input:output,
+      # read 2026-09-17 from developers.openai.com/api/docs/pricing.
+      # AGENT_PAID_DAILY_CAP is paid turns per person per UTC day; 0 turns
+      # the whole feature off without a code change.
+      - AGENT_PAID_MODEL=${AGENT_PAID_MODEL:-gpt-5.5}
+      - AGENT_PAID_REASONING=${AGENT_PAID_REASONING:-low}
+      - AGENT_PAID_TIMEOUT_SECONDS=${AGENT_PAID_TIMEOUT_SECONDS:-90}
+      - AGENT_PAID_DAILY_CAP=${AGENT_PAID_DAILY_CAP:-40}
+      - AGENT_PAID_PRICES=${AGENT_PAID_PRICES:-gpt-5.5=5:30}
       # tasks renders the Channels page and decides from THIS var whether to
       # offer the Terminal row. webhook-handler serves the channel and reads
       # the same name. Set on only one of them, the channel is live while the
