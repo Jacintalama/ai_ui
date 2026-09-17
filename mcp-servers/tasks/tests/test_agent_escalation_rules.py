@@ -32,6 +32,32 @@ def _limits(monkeypatch):
     ("I get TypeError: Cannot read properties of undefined", esc.REASON_ERROR),
     ("Traceback (most recent call last):\n  File \"a.py\"", esc.REASON_ERROR),
     ("it crashed\n    at Object.<anonymous> (/app/x.js:10:5)", esc.REASON_ERROR),
+    # Kept or gained while the rules were tightened, 2026-09-18.
+    ("build a website for my bakery", esc.REASON_BUILD),
+    ("create a web app that tracks my workouts", esc.REASON_BUILD),
+    ("set up a backend with an API for my orders", esc.REASON_BUILD),
+    ("create a chrome extension that blocks ads", esc.REASON_BUILD),
+    ("build an online store for my candles", esc.REASON_BUILD),
+    ("make a simple snake game", esc.REASON_BUILD),
+    ("create a discord bot that posts the weather", esc.REASON_BUILD),
+    ("fix the login issue in the app", esc.REASON_CODE),
+    ("fix the issue where the page crashes on submit", esc.REASON_CODE),
+    ("implement dark mode on the settings page", esc.REASON_CODE),
+    ("generate a python script to parse this csv", esc.REASON_CODE),
+    ("write a program that sorts my contacts", esc.REASON_CODE),
+    # Not a bar code, and an analytics snippet is code.
+    ("change the navbar code so the menu collapses", esc.REASON_CODE),
+    ("update the tracking code on my site", esc.REASON_CODE),
+    ("the deploy fails with ModuleNotFoundError: No module named 'httpx'",
+     esc.REASON_ERROR),
+    ("typeerror: x is not a function", esc.REASON_ERROR),
+    ("Error: ENOENT: no such file or directory, open '/app/data.json'",
+     esc.REASON_ERROR),
+    ("main.c:3:5: error: expected ';' before 'return'", esc.REASON_ERROR),
+    ("java.lang.NullPointerException\n\tat com.foo.Bar.run(Bar.java:12)",
+     esc.REASON_ERROR),
+    ("GET /api/orders returns 500 Internal Server Error", esc.REASON_ERROR),
+    ("the checkout page shows 502 on /api/pay", esc.REASON_ERROR),
 ])
 def test_work_the_free_model_does_badly_moves_to_paid(text, reason):
     assert esc.rule_reason(text) == reason
@@ -49,6 +75,33 @@ def test_work_the_free_model_does_badly_moves_to_paid(text, reason):
     "update me on the launch plan",
     "edit the meeting invite so it starts at 3",
     "change the meeting to 3pm and send the notes, then share the code",
+    # Each of these went to the paid model before review, 2026-09-18: a
+    # store, a game, an API key or an event is not software being built, a
+    # zip code is not code, an issue with an invite is not a bug, and the
+    # word error in a sentence is not a stack trace.
+    "set up a meeting with the store manager tomorrow",
+    "make dinner plans after the game on Friday",
+    "create an API key for stripe",
+    "create a calendar event for the site visit",
+    "update the zip code on my shipping address",
+    "fix the issue with my calendar invite",
+    "Reply to Tom: there was an error: the invoice is wrong",
+    # Found by running the rules over everyday messages the same day.
+    "update my discount code on the order to WINTER10",
+    "update the door code for the office",
+    "fix the error in my expense report",
+    "fix the typo on page 3 of the contract",
+    "Error: payment declined on my card, remind me to call the bank",
+    "One exception: the store is closed on Monday",
+    "make the game on Friday a priority on my calendar",
+    "set up my account on the benefits portal",
+    "create a job application for the receptionist role",
+    "implement the new expense policy starting Monday",
+    "write a program for the charity gala",
+    "edit the script for my youtube video",
+    "add a feature story to the newsletter",
+    "create a new event: team lunch at noon",
+    "set up a weekly standup every Monday at 10",
     "",
     None,
 ])

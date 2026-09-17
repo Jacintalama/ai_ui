@@ -201,32 +201,114 @@ class TurnUsage:
 
 # --- the rules --------------------------------------------------------------
 
-_BUILD = re.compile(
-    r"\b(?:build|create|make(?!\s+sure)|generate|scaffold|develop|code up|"
-    r"spin up|set up)\b[^.?!\n]{0,40}?\b(?:apps?|application|web ?sites?|"
-    r"sites?|web ?pages?|landing pages?|pages?|dashboards?|games?|api|"
-    r"backend|frontend|extension|bot|plugin|portal|store|shop)\b")
+# Tightened after review on 2026-09-18, when "set up a meeting with the store
+# manager", "create an API key for stripe", "update the zip code on my
+# shipping address", "fix the issue with my calendar invite" and "there was
+# an error: the invoice is wrong" all went to the paid model. The cases are
+# pinned in tests/test_agent_escalation_rules.py.
+
+#: The thing being built has to be software, and it has to be what the verb
+#: makes: the head of the phrase after it, not a word forty characters on.
+#: "make dinner plans after the game" reaches "after" before it reaches
+#: "game", and a word in _NOT_A_MODIFIER ends the phrase.
+_BUILD_VERB = (r"\b(?:build|create|make(?!\s+sure)|generate|scaffold|develop|"
+               r"code up|spin up|set up)\s+(?:(?:me|us)\s+)?")
+_DETERMINER = r"(?:(?:a|an|the|my|our|this|that|some|another)\s+)?"
+_NOT_A_MODIFIER = (r"(?:a|an|the|my|our|your|his|her|their|this|that|for|with|"
+                   r"after|before|about|to|from|on|in|at|of|by|and|or|but|"
+                   r"which|where|who|when|so|if|job|visa|loan|grant|rental|"
+                   r"permit|passport|credit|mortgage|insurance|expense|tax)")
+_MODIFIERS = r"(?:(?!%s\b)[a-z0-9][\w'-]{0,30}\s+){0,3}" % _NOT_A_MODIFIER
+#: No store, shop, api key, meeting, plans or event. A site is not a site
+#: visit, and an application is software only when it says so.
+_SOFTWARE = (
+    r"(?:apps?|web ?apps?|(?:web|mobile|desktop|ios|android) applications?|"
+    r"web ?sites?|sites?(?!\s+(?:visits?|surveys?|inspections?|meetings?|"
+    r"managers?|plans?|walks?|tours?))|web ?pages?|landing pages?|"
+    r"dashboards?|backend|back-end|frontend|front-end|"
+    r"apis?(?!\s+(?:keys?|tokens?|secrets?|credentials?|access|accounts?))|"
+    r"(?:browser|chrome|firefox|vs ?code) extensions?|bots?|plugins?|"
+    r"online (?:store|shop)|web ?shop|e-?commerce (?:store|shop|site))\b")
+#: "make a snake game" is a build; "make the game on Friday" is a calendar.
+_GAME = (r"(?:a|an)\s+" + _MODIFIERS
+         + r"games?\b(?!\s+(?:plans?|nights?|days?|shows?))")
+_BUILD = re.compile(_BUILD_VERB + r"(?:" + _DETERMINER + _MODIFIERS
+                    + _SOFTWARE + r"|" + _GAME + r")")
+
+#: Codes that are not source code: a zip code, a promo code, a door code.
+#: Whole words, so "navbar code" is still code. Left out on purpose because
+#: they are as often source: order, ticket, tracking (an analytics snippet),
+#: color (a hex value in css).
+_NOT_SOURCE = "".join(r"(?<!\b%s )" % w for w in (
+    "zip", "postal", "post", "promo", "promotional", "discount", "coupon",
+    "voucher", "gift", "verification", "confirmation", "access", "security",
+    "door", "gate", "alarm", "dress", "area", "country", "tax", "booking",
+    "reference", "referral", "qr", "bar", "activation", "pin", "sort",
+    "swift", "billing", "building", "morse", "parking", "wifi", "invite",
+    "2fa", "otp", "one-time", "reservation", "voting", "fire"))
+_SOURCE_CODE = _NOT_SOURCE + r"code\b(?!\s+of\s+conduct)"
+#: A script is a video's or a speech's as often as a program's.
+_SCRIPT = (r"script(?![^.?!\n]{0,30}\b(?:video|youtube|speech|podcast|film|"
+           r"movie|play|presentation|commercial|reel|tiktok|toast|episode|"
+           r"scene|voiceover|webinar)\b)")
+_LANGUAGE = (r"(?:(?:python|bash|shell|powershell|node|javascript|js|"
+             r"typescript|sql|php|ruby|go)\s+)?")
+#: What makes "fix the issue" about software: one of these later in the
+#: same sentence.
+_CODE_NEARBY = (r"(?:apps?|page|site(?!\s+visit)|website|web ?app|%s|feature|"
+                r"button|login|signup|sign-up|checkout|css|html|component|"
+                r"endpoint|api|server|database|deploy(?:ment)?|script|"
+                r"function|build|frontend|backend)\b" % _SOURCE_CODE)
 
 _CODE = re.compile(
-    r"\b(?:refactor|debug|debugging|implement)\b"
-    r"|\bwrite\s+(?:me\s+)?(?:a\s+|an\s+|the\s+|some\s+)?(?:code|script|"
-    r"function|class|query|regex|tests?|component|endpoint|migration|"
-    r"program)\b"
-    r"|\bfix\b[^.?!\n]{0,30}?\b(?:bugs?|errors?|code|build|tests?|"
-    r"crash(?:es)?|issues?|page|app|site|feature)\b"
-    r"|\badd\b[^.?!\n]{0,30}?\b(?:feature|endpoint|component|function)\b"
+    r"\b(?:refactor|debug|debugging)\b"
+    # "implement the new expense policy" is not software.
+    r"|\bimplement\b(?![^.?!\n]{0,30}\b(?:polic(?:y|ies)|plans?|"
+    r"process(?:es)?|strateg(?:y|ies)|procedures?|rules?|guidelines?|"
+    r"recommendations?|training|budget)\b)"
+    r"|\b(?:write|generate)\s+(?:me\s+)?(?:a\s+|an\s+|the\s+|some\s+)?"
+    + _LANGUAGE + r"(?:" + _SOURCE_CODE + r"|" + _SCRIPT + r"|function|"
+    r"class|query|regex|tests?|component|endpoint|migration|"
+    r"program(?=\s+(?:that|which|to|in)\b))\b"
+    r"|\bfix\b[^.?!\n]{0,30}?\b(?:bugs?|" + _SOURCE_CODE + r"|build|tests?|"
+    r"crash(?:es)?|page(?!\s+\d)|app|site(?!\s+visit)|website|feature)\b"
+    # An error or an issue on its own is as often an invite or an invoice.
+    r"|\bfix\b(?=[^.?!\n]{0,80}?\b" + _CODE_NEARBY + r")[^.?!\n]{0,30}?"
+    r"\b(?:errors?|issues?|problems?)\b"
+    r"|\badd\b[^.?!\n]{0,30}?\b(?:feature(?!\s+(?:story|stories|article|"
+    r"piece|image|photo))|endpoint|component|function)\b"
     # "class" is left out: "change my yoga class to Friday" is a calendar
     # request, and the heavy_tool move still catches a class being changed.
-    r"|\b(?:change|modify|edit|update|rewrite)\b[^.?!\n]{0,30}?\b(?:code|"
-    r"function|script|component|css|html|endpoint)\b"
+    r"|\b(?:change|modify|edit|update|rewrite)\b[^.?!\n]{0,30}?\b(?:"
+    + _SOURCE_CODE + r"|function|" + _SCRIPT + r"|component|css|html|"
+    r"endpoint)\b"
     r"|\bapp builder\b")
 
+#: The shape of an error, not the word: a traceback, a named error or
+#: exception, a bare "Error:" only with something code shaped on its line, a
+#: file:line or a stack frame, or a 5xx next to a path. Searched in the text
+#: as typed, because an errno like ENOENT is told from a word by its case.
 _ERROR = re.compile(
     r"traceback \(most recent call last\)"
     r"|\bstack ?trace\b"
-    r"|\b[a-z]*(?:error|exception):\s"
-    r"|^\s*at \S+ \(\S+:\d+:\d+\)",
-    re.MULTILINE)
+    # TypeError:, KeyError:, java.io.IOException:. Terror is a word.
+    r"|\b(?!terror\b)[a-z_][\w.$]{0,120}(?:error|exception)\b:"
+    r"|\b(?:error|exception|fatal):[^\n]{0,200}?(?:(?-i:\bE[A-Z]{3,}\b)|"
+    r"module '|'[\w-]{0,80}[./_@:][\w./@:-]{0,120}'|"
+    r"\"[\w-]{0,80}[./_@:][\w./@:-]{0,120}\"|"
+    r"\b\w{1,80}\(\)|\w\.(?:py|js|mjs|cjs|ts|tsx|jsx|json|java|go|rb|php|"
+    r"cs|cpp|rs|html|css|sql|ya?ml)\b|\b0x[0-9a-f]+\b|\bundefined\b|"
+    r"\bnull\b|\bnonetype\b)"
+    r"|^[ \t]*at \S{1,200} \(\S{1,300}:\d+(?::\d+)?\)"
+    r"|^[ \t]*at [\w.$<>]{1,300}\([\w.]{1,200}:\d+\)"
+    # Only the name.ext:line end of a path: matching the whole path let
+    # "a.a.a.a" try every dot, a second of CPU on a 50,000 character paste.
+    r"|\w\.(?:py|js|mjs|cjs|ts|tsx|jsx|java|go|rb|php|cs|c|cpp|h|rs|kt|"
+    r"swift|vue|svelte):\d+"
+    r"|\bfile \"[^\"\n]{1,300}\", line \d+"
+    r"|(?:^|\s)/[\w-][\w./-]{0,200}[^\n]{0,40}?\b5\d\d\b"
+    r"|\b5\d\d\b[^\n]{0,40}?(?:^|\s)/[\w-]",
+    re.MULTILINE | re.IGNORECASE)
 
 
 def rule_reason(text: object) -> str | None:
@@ -238,7 +320,7 @@ def rule_reason(text: object) -> str | None:
     low = raw.lower()
     if "```" in raw:
         return REASON_CODE
-    if _ERROR.search(low):
+    if _ERROR.search(raw):
         return REASON_ERROR
     if _BUILD.search(low):
         return REASON_BUILD
