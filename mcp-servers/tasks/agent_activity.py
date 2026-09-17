@@ -96,23 +96,92 @@ async def start_run(agent_id: str, user_email: str, source: str) -> str | None:
         return None
 
 
-async def finish_run(run_id: str | None, status: str) -> None:
+async def finish_run(run_id: str | None, status: str, usage=None) -> None:
     """Close a run out. Safe to call with None, which is what start_run
-    returns when it could not write."""
+    returns when it could not write.
+
+    `usage` is the turn's agent_escalation.TurnUsage when the caller has one:
+    which model answered, why the turn moved to the paid model, and the
+    tokens and dollars it spent. Written in the same statement as the finish,
+    so a row that says it finished also says what it cost."""
     if not run_id:
         return
     try:
         async with session() as s:
-            await s.execute(
-                sql_text(
-                    "UPDATE tasks.agent_run "
-                    "SET finished_at = now(), status = :status "
-                    "WHERE id = :id"),
-                {"id": run_id, "status": status})
+            if usage is None:
+                await s.execute(
+                    sql_text(
+                        "UPDATE tasks.agent_run "
+                        "SET finished_at = now(), status = :status "
+                        "WHERE id = :id"),
+                    {"id": run_id, "status": status})
+            else:
+                await s.execute(
+                    sql_text(
+                        "UPDATE tasks.agent_run "
+                        "SET finished_at = now(), status = :status, "
+                        "model = :model, "
+                        "escalation = COALESCE(:escalation, escalation), "
+                        "prompt_tokens = :prompt_tokens, "
+                        "completion_tokens = :completion_tokens, "
+                        "cost_usd = :cost_usd "
+                        "WHERE id = :id"),
+                    {"id": run_id, "status": status,
+                     "model": usage.model,
+                     "escalation": usage.escalation,
+                     "prompt_tokens": usage.prompt_tokens,
+                     "completion_tokens": usage.completion_tokens,
+                     "cost_usd": usage.cost_usd})
             await s.commit()
     except Exception:                                       # noqa: BLE001
         logger.warning("could not record the end of an agent run",
                        exc_info=True)
+
+
+async def mark_escalated(run_id: str | None, reason: str | None) -> None:
+    """Say a run moved to the paid model, the moment it moves.
+
+    Not left to finish_run: the daily cap counts these rows, and a room round
+    of several agents would otherwise count none of the moves still in flight.
+    Never raises, like everything here."""
+    if not run_id or not reason:
+        return
+    try:
+        async with session() as s:
+            await s.execute(
+                sql_text("UPDATE tasks.agent_run SET escalation = :reason "
+                         "WHERE id = :id"),
+                {"id": run_id, "reason": reason})
+            await s.commit()
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not record a move to the paid model",
+                       exc_info=True)
+
+
+async def paid_turns_today(user_email: str) -> int | None:
+    """How many of this person's runs moved to the paid model since midnight
+    UTC, or None when it could not be counted.
+
+    None, not 0: the caller treats an uncounted day as a day at its cap and
+    stays on the free model. Spending money because the count broke is the
+    wrong way round."""
+    if not user_email:
+        return None
+    try:
+        async with session() as s:
+            n = (await s.execute(
+                sql_text(
+                    "SELECT count(*) FROM tasks.agent_run "
+                    "WHERE lower(user_email) = lower(:email) "
+                    "AND escalation IS NOT NULL "
+                    "AND started_at >= (date_trunc('day', now() AT TIME ZONE 'UTC') "
+                    "AT TIME ZONE 'UTC')"),
+                {"email": user_email})).scalar()
+        return int(n or 0)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not count today's paid agent turns",
+                       exc_info=True)
+        return None
 
 
 def _shape(row, now: datetime) -> dict:
