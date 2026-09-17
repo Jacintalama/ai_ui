@@ -798,6 +798,15 @@ async def _chat(token: str, model: str, messages: list[dict],
                 active = agent_escalation.PAID_MODEL
                 continue
 
+            if calls and rounds >= max_iterations and not esc.on_paid:
+                # Past max_iterations only on rounds added at the round cap,
+                # and those are the paid model's. It failed and the turn went
+                # back to the free model, which spent its own rounds already,
+                # so these calls are not run and it writes up what it has
+                # (review, 2026-09-17).
+                limit = rounds
+                break
+
             if not calls:
                 if _router_gave_up(content):
                     # A 200 carrying a failure. Said in words the owner can act

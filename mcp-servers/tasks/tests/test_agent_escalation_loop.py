@@ -399,6 +399,37 @@ async def test_out_of_rounds_on_paid_too_says_how_many_rounds_in_total(wired):
     assert notes == [agent_runner.RAN_OUT_OF_ROUNDS % 5]
 
 
+async def test_a_paid_model_that_fails_in_its_extra_rounds_gives_the_free_model_none(wired):
+    """The rounds added at the round cap are the paid model's. When it fails
+    and the turn goes back to the free model, that model has spent its own
+    rounds already, so its tool calls are not run and it writes up what it
+    has (review of Task 7, 2026-09-17)."""
+    posts = []
+    ran = []
+
+    async def fake_post(payload, token, timeout=None):
+        writing_up = payload.get("tool_ids") is None
+        posts.append(("write-up on " if writing_up else "") + payload["model"])
+        if payload["model"] == "gpt-5.5":
+            raise _http(500)
+        if writing_up:
+            return _reply("wrote it up")
+        return _reply("", calls=[_call("list_my_apps", "c%d" % len(posts))])
+
+    async def tool(call, *a, **k):
+        ran.append(call["id"])
+        return "[]"
+
+    answer, notes, usage = await _run(fake_post, "check my apps",
+                                      max_iterations=2, tool=tool)
+    assert answer == "wrote it up"
+    assert posts == ["agent-1", "agent-1", "gpt-5.5", "agent-1",
+                     "write-up on agent-1"]
+    assert ran == ["c1", "c2"]
+    assert notes == [agent_runner.RAN_OUT_OF_ROUNDS % 2]
+    assert usage.escalation == "rounds_cap"
+
+
 async def test_a_failing_paid_model_goes_back_to_the_free_model_it_left(wired):
     posts = []
 
