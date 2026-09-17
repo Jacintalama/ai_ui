@@ -37,6 +37,22 @@ def test_usage_sums_every_completion_and_prices_it():
     assert u.model == "gpt-5.5"
 
 
+def test_once_a_paid_completion_answered_the_model_stays_the_paid_one():
+    u = esc.TurnUsage()
+    u.add("nvidia/nemotron-3-super-120b-a12b:free", {"prompt_tokens": 900})
+    assert u.model == "nvidia/nemotron-3-super-120b-a12b:free"
+    u.add("gpt-5.5", {"prompt_tokens": 1000, "completion_tokens": 100})
+    u.add("nex-agi/nex-n2.5-pro:free", {"prompt_tokens": 1200, "completion_tokens": 50})
+    assert u.model == "gpt-5.5"
+    assert (u.prompt_tokens, u.completion_tokens) == (3100, 150)
+    assert u.cost_usd == pytest.approx((1000 * 5 + 100 * 30) / 1_000_000)
+    # A turn that only ever used free ids still records the last of them.
+    v = esc.TurnUsage()
+    v.add("nvidia/nemotron-3-super-120b-a12b:free", None)
+    v.add("nex-agi/nex-n2.5-pro:free", None)
+    assert v.model == "nex-agi/nex-n2.5-pro:free"
+
+
 def test_a_paid_reply_without_usage_makes_the_cost_unknown_not_zero():
     u = esc.TurnUsage()
     u.add("gpt-5.5", None)

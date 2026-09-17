@@ -619,6 +619,33 @@ async def test_usage_is_summed_over_every_completion_in_the_turn(wired):
     assert usage.cost_usd == pytest.approx((2500 * 5 + 300 * 30) / 1_000_000)
 
 
+async def test_a_turn_on_free_and_paid_records_the_paid_model_and_prices_only_paid(wired):
+    """Free decides, paid answers once, paid fails, free writes the answer.
+    The row said the free id, because it answered last, beside a cost that
+    only the paid completion can have run up (review, 2026-09-18). The
+    tokens stay totals of every completion; the cost is the paid ones."""
+    posts = []
+    free_use = {"prompt_tokens": 900, "completion_tokens": 20}
+    paid_use = {"prompt_tokens": 1000, "completion_tokens": 100}
+
+    async def fake_post(payload, token, timeout=None):
+        posts.append(payload["model"])
+        if len(posts) == 1:
+            return _reply("", calls=[_call("list_my_apps", "c1")], usage=free_use)
+        if len(posts) == 2:
+            return _reply("", calls=[_call("list_my_apps", "c2")], usage=paid_use)
+        if len(posts) == 3:
+            raise _http(500)
+        return _reply("done", usage={"prompt_tokens": 1200, "completion_tokens": 50})
+
+    answer, _, usage = await _run(fake_post, "build me a todo app", may_pass=True)
+    assert answer == "done"
+    assert posts == ["agent-1", "gpt-5.5", "gpt-5.5", "agent-1"]
+    assert usage.model == "gpt-5.5"
+    assert (usage.prompt_tokens, usage.completion_tokens) == (3100, 170)
+    assert usage.cost_usd == pytest.approx((1000 * 5 + 100 * 30) / 1_000_000)
+
+
 # --- how long a turn can take -----------------------------------------------
 
 async def _timeouts_of_a_turn_whose_write_up_fails(text, **kw):

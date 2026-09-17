@@ -163,6 +163,15 @@ class TurnUsage:
     Filled in by agent_runner._chat as it goes and written with the run by
     agent_activity.finish_run, so a turn that stops to ask still records
     what it spent before it stopped.
+
+    One turn can use a free id and the paid model (free decides and then
+    moves, or paid fails and free writes up), and the row has one model and
+    one pair of token counts. So: model is the paid model once any paid
+    completion answered, otherwise the last free id; prompt_tokens and
+    completion_tokens are totals over every completion, free included; and
+    cost_usd prices only the paid completions, because free ids cost 0.
+    Checking a cost therefore means the paid completions' own counts, which
+    agent_runner logs one line each ("paid completion for ...").
     """
     run_id: str | None = None
     model: str | None = None
@@ -172,8 +181,11 @@ class TurnUsage:
     cost_usd: float | None = 0.0
 
     def add(self, model: str, usage: object) -> None:
-        self.model = model
         free = isinstance(model, str) and model.endswith(":free")
+        paid_answered = (isinstance(self.model, str)
+                         and not self.model.endswith(":free"))
+        if not (free and paid_answered):
+            self.model = model
         if not isinstance(usage, dict):
             # No usage on a paid reply means the cost is unknown, not zero.
             if not free:

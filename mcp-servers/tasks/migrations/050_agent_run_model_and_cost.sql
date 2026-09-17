@@ -17,6 +17,16 @@
 -- reply that carried no usage), never 0, so a row cannot claim a paid run
 -- was free.
 --
+-- A run can use a free id and the paid model in the same turn. Then model
+-- is the paid model (once any paid completion answered), prompt_tokens and
+-- completion_tokens are totals over every completion, free ones included,
+-- and cost_usd prices only the paid completions. So cost_usd is not
+-- prompt_tokens and completion_tokens times the price on a mixed run; check
+-- it against the paid completions' counts, which the tasks log carries one
+-- line each ("paid completion for <agent> on <model>: N prompt tokens, M
+-- completion tokens"). No separate paid token columns: that would be two
+-- more columns for a check the log already answers.
+--
 -- Idempotent: db.py re-runs every migration on every startup. ADD COLUMN IF
 -- NOT EXISTS only; the rollback lives in rollbacks/ and is applied by hand.
 ALTER TABLE tasks.agent_run ADD COLUMN IF NOT EXISTS model TEXT;
