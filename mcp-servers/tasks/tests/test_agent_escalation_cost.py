@@ -1,0 +1,79 @@
+"""What a turn on the paid model costs, and the settings that switch the move
+to the paid model on and off. No model, no database."""
+import pytest
+
+import agent_escalation as esc
+
+
+@pytest.fixture(autouse=True)
+def _settings(monkeypatch):
+    monkeypatch.setattr(esc, "PAID_MODEL", "gpt-5.5")
+    monkeypatch.setattr(esc, "DAILY_CAP", 40)
+    monkeypatch.setattr(esc, "PRICES", {"gpt-5.5": (5.0, 30.0)})
+
+
+def test_prices_parse_and_a_malformed_entry_is_skipped():
+    assert esc.parse_prices("gpt-5.5=5:30, gpt-5-mini=0.25:2,broken=x:1,=1:2,nocolon=5") == {
+        "gpt-5.5": (5.0, 30.0), "gpt-5-mini": (0.25, 2.0)}
+
+
+def test_the_shipped_default_prices_gpt_5_5_at_5_and_30():
+    assert esc.parse_prices("gpt-5.5=5:30") == {"gpt-5.5": (5.0, 30.0)}
+
+
+def test_a_free_model_costs_nothing_and_an_unpriced_one_is_unknown():
+    assert esc.cost_of("nvidia/nemotron-3-super-120b-a12b:free", 9000, 900) == 0.0
+    assert esc.cost_of("gpt-4o-mini", 1000, 100) is None
+    assert esc.cost_of("gpt-5.5", 1_000_000, 0) == pytest.approx(5.0)
+    assert esc.cost_of("gpt-5.5", 0, 1_000_000) == pytest.approx(30.0)
+
+
+def test_usage_sums_every_completion_and_prices_it():
+    u = esc.TurnUsage(run_id="r1")
+    u.add("gpt-5.5", {"prompt_tokens": 1000, "completion_tokens": 100})
+    u.add("gpt-5.5", {"prompt_tokens": 1000, "completion_tokens": 100})
+    assert (u.prompt_tokens, u.completion_tokens) == (2000, 200)
+    assert u.cost_usd == pytest.approx((2000 * 5 + 200 * 30) / 1_000_000)
+    assert u.model == "gpt-5.5"
+
+
+def test_a_paid_reply_without_usage_makes_the_cost_unknown_not_zero():
+    u = esc.TurnUsage()
+    u.add("gpt-5.5", None)
+    assert u.cost_usd is None
+
+
+def test_a_free_reply_without_usage_still_costs_nothing():
+    u = esc.TurnUsage()
+    u.add("nex-agi/nex-n2.5-pro:free", None)
+    assert u.cost_usd == 0.0
+
+
+def test_junk_token_counts_count_as_zero():
+    u = esc.TurnUsage()
+    u.add("gpt-5.5", {"prompt_tokens": "lots", "completion_tokens": True})
+    assert (u.prompt_tokens, u.completion_tokens, u.cost_usd) == (0, 0, 0.0)
+
+
+def test_blank_model_or_zero_cap_switches_it_off(monkeypatch):
+    assert esc.enabled()
+    monkeypatch.setattr(esc, "DAILY_CAP", 0)
+    assert not esc.enabled()
+    monkeypatch.setattr(esc, "DAILY_CAP", 40)
+    monkeypatch.setattr(esc, "PAID_MODEL", "")
+    assert not esc.enabled()
+
+
+def test_a_paid_completion_gets_at_least_the_paid_timeout(monkeypatch):
+    monkeypatch.setattr(esc, "PAID_TIMEOUT_SECONDS", 90)
+    assert esc.paid_timeout(60) == 90
+    assert esc.paid_timeout(240) == 240
+
+
+def test_a_bad_number_in_the_environment_falls_back_to_the_default(monkeypatch):
+    monkeypatch.setenv("AGENT_PAID_DAILY_CAP", "forty")
+    assert esc._int_env("AGENT_PAID_DAILY_CAP", 40) == 40
+    monkeypatch.setenv("AGENT_PAID_DAILY_CAP", "")
+    assert esc._int_env("AGENT_PAID_DAILY_CAP", 40) == 40
+    monkeypatch.setenv("AGENT_PAID_DAILY_CAP", "7")
+    assert esc._int_env("AGENT_PAID_DAILY_CAP", 40) == 7
