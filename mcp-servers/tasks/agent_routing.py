@@ -205,6 +205,60 @@ def strip_leading_labels(text, names) -> str:
     return "\n".join(lines[i:]).strip()
 
 
+#: What an agent says when it has nothing to add.
+PASS_TOKEN = "PASS"
+
+#: The line a routing pipe appends to whatever the model it picked said:
+#: "*Auto (Smart): routed to the {tier} {category} model `{model}`.*"
+#: (open-webui-functions/auto_smart_pipe.py _footer) and "*Auto-routed to the
+#: free {category} model `{model}`.*" (auto_router_pipe.py _footer). Only
+#: ever the last line, and only on its own line. An agent cannot run on
+#: Auto (Free) today (it is a callback model, see AGENT_ON_CALLBACK_MODEL),
+#: so that shape is here because it is the same footer and costs nothing,
+#: not because it has been seen in the room.
+ROUTE_FOOTER = re.compile(
+    r"\n[ \t]*\*(?:Auto \(Smart\): routed|Auto-routed) to the [^*\n]+ "
+    r"model `[^`\n]*`\.\*\s*\Z")
+
+#: A line that is only a speaker label: an optional **, one name, an
+#: optional ** and an optional colon. Any one word name rather than a known
+#: one (a name is one word, see the module docstring), because the paid move
+#: in agent_runner reads a PASS too and does not know the room's names.
+_ANY_LABEL_LINE = re.compile(
+    r"^[ \t]*(?:\*\*)?[ \t]*[^\W_][\w.'-]*[ \t]*(?:\*\*)?[ \t]*:?[ \t]*"
+    r"(?:\*\*)?[ \t]*$")
+
+
+def is_pass(answer: object) -> bool:
+    """An agent declining to speak. The one definition the room and the paid
+    move both use: when they disagreed, an unnamed agent whose free answer
+    was "Ada:" over PASS was re-asked on the paid model, and at the day's cap
+    the cap sentence was added to a PASS and drawn (review, 2026-09-18).
+
+    Generous about the shape because models are: a bare PASS, a PASS with a
+    full stop, a PASS in quotes. Anything longer is an answer that happens to
+    contain the word.
+
+    Two additions that are not the word itself. Label lines in front of it,
+    "Ada:" or "**Ada**" on their own line, which a model echoes from the
+    rendered history. And a routing pipe's footer after it: an agent on Auto
+    (Smart) that passes comes back as PASS plus "*Auto (Smart): routed to
+    the paid general model `gpt-5.5`.*", stored exactly like that on
+    production, and read as an answer it was drawn as a bubble saying PASS
+    and stopped the everybody-passed fallback from running. Nothing else is
+    taken off: Kai's stored "PASS" followed by a paragraph about the files it
+    read is still an answer, because it says something.
+    """
+    if not isinstance(answer, str):
+        return False
+    body = ROUTE_FOOTER.sub("", "\n" + answer)
+    lines = [line for line in body.splitlines() if line.strip()]
+    while len(lines) > 1 and _ANY_LABEL_LINE.match(lines[0]):
+        del lines[0]
+    return (len(lines) == 1
+            and lines[0].strip().strip('."\'').upper() == PASS_TOKEN)
+
+
 def clean_history_for_agent(messages, names) -> list:
     """The conversation as one agent should see it: every assistant turn
     with the speaker labels removed. User turns are untouched, since a

@@ -12,7 +12,6 @@ end to end, so nothing outside this service changes.
 """
 import asyncio
 import logging
-import re
 import uuid
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -48,7 +47,7 @@ SUMMARY_BUDGET_CHARS = 4000
 
 #: What an agent says when it has nothing to add. A pass costs one model call
 #: and produces no bubble, which is the price of everybody listening.
-PASS_TOKEN = "PASS"
+PASS_TOKEN = agent_routing.PASS_TOKEN
 
 #: Given to an agent nobody named. Everyone hears every message; only the ones
 #: with something worth saying answer.
@@ -180,39 +179,10 @@ def _name_for(agent_id: str, agents: list[dict]) -> str:
     return agent_id
 
 
-#: The line a routing pipe appends to whatever the model it picked said:
-#: "*Auto (Smart): routed to the {tier} {category} model `{model}`.*"
-#: (open-webui-functions/auto_smart_pipe.py _footer) and "*Auto-routed to the
-#: free {category} model `{model}`.*" (auto_router_pipe.py _footer). Only
-#: ever the last line, and only on its own line. An agent cannot run on
-#: Auto (Free) today (it is a callback model, see AGENT_ON_CALLBACK_MODEL),
-#: so that shape is here because it is the same footer and costs nothing,
-#: not because it has been seen in the room.
-_ROUTE_FOOTER = re.compile(
-    r"\n[ \t]*\*(?:Auto \(Smart\): routed|Auto-routed) to the [^*\n]+ "
-    r"model `[^`\n]*`\.\*\s*\Z")
-
-
 def _is_pass(answer: str) -> bool:
-    """An agent declining to speak.
-
-    Generous about the shape because models are: a bare PASS, a PASS with a
-    full stop, a PASS in quotes. Anything longer is an answer that happens to
-    contain the word.
-
-    The one addition that is not the model's doing is a routing pipe's
-    footer. An agent on Auto (Smart) that passes comes back as PASS plus
-    "*Auto (Smart): routed to the paid general model `gpt-5.5`.*", stored
-    exactly like that on production, and read as an answer it was drawn as a
-    bubble saying PASS and stopped the everybody-passed fallback from running.
-    So the footer is taken off before comparing, and nothing else is: Kai's
-    stored "PASS" followed by a paragraph about the files it read is still an
-    answer, because it says something.
-    """
-    body = "\n" + (answer or "")
-    body = _ROUTE_FOOTER.sub("", body)
-    stripped = body.strip().strip('."\'').upper()
-    return stripped == PASS_TOKEN
+    """An agent declining to speak. agent_routing.is_pass says what counts,
+    so the room and agent_runner's paid move can never disagree again."""
+    return agent_routing.is_pass(answer)
 
 
 def _failure_reason(name: str, answer: str) -> tuple[str, str] | None:

@@ -26,6 +26,7 @@ import agent_access
 import agent_activity
 import agent_escalation
 import agent_memory
+import agent_routing
 from agent_tools import (arguments_of, execute_tool_call,
                          is_write_call, is_write_tool)
 from owui_token import mint_owui_token
@@ -589,7 +590,7 @@ class _Escalation:
         paid model and could not have it. In the answer, not in notes: the
         room draws the answer and drops the notes."""
         if (not self.capped or not content
-                or agent_escalation.looks_like_pass(content)):
+                or agent_routing.is_pass(content)):
             return content
         note = agent_escalation.take_cap_note(self.user_email)
         return (content + "\n\n" + note) if note else content
@@ -785,7 +786,7 @@ async def _chat(token: str, model: str, messages: list[dict],
 
             reason = None
             if probe_reason and not (not calls
-                                     and agent_escalation.looks_like_pass(content)):
+                                     and agent_routing.is_pass(content)):
                 reason = probe_reason
             elif not calls and not content:
                 reason = agent_escalation.REASON_EMPTY

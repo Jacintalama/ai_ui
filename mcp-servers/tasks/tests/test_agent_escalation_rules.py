@@ -75,12 +75,28 @@ def test_a_plain_question_is_one_about_something_else(text, plain):
     assert esc.is_plain_question(text) is plain
 
 
+SMART_FOOTER = "\n\n*Auto (Smart): routed to the paid general model `gpt-5.5`.*"
+
+
 @pytest.mark.parametrize("content,passed", [
     ("PASS", True), (" pass. ", True), ('"PASS"', True),
+    # A model that echoes its own name first. The room strips that line
+    # before it checks, so the loop has to as well, or it pays to re-ask an
+    # agent the room was about to drop (review, 2026-09-18).
+    ("Ada:\n\nPASS", True), ("**Ada**\n\nPASS", True), ("**Ada:**\nPASS.", True),
+    ("Ada\r\n\r\nPASS", True), ("Ada:\n\nPASS" + SMART_FOOTER, True),
+    ("PASS" + SMART_FOOTER, True),
     ("PASS\n\nI checked the files", False), ("", False), (None, False),
+    ("Ada:\n\nPASS\n\nI read the files and the build is broken.", False),
+    ("Ada:", False), ("Ada: PASS on the blue one", False),
+    ("Here is the plan.\n\nPASS", False), (SMART_FOOTER, False),
 ])
-def test_pass_shapes(content, passed):
-    assert esc.looks_like_pass(content) is passed
+def test_the_loop_and_the_room_read_a_pass_the_same_way(content, passed):
+    import agent_runner  # noqa: F401  (the loop's module must import cleanly)
+    import agent_routing
+    import routes_agent_chat
+    assert agent_routing.is_pass(content) is passed
+    assert routes_agent_chat._is_pass(content) is passed
 
 
 def test_heavy_tools_are_the_app_change_tools_and_junk_is_not():

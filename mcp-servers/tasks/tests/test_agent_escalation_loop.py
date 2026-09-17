@@ -227,6 +227,70 @@ async def test_the_cap_note_is_never_added_to_a_pass_and_is_kept_for_an_answer(w
     assert wired["count"].await_count == 2
 
 
+#: A PASS in the shapes the room drops without drawing: a name label line in
+#: front, bold or with a colon, and a routing pipe's footer after it.
+LABELLED_PASSES = [
+    "Ada:\n\nPASS",
+    "**Ada**\n\nPASS",
+    "PASS\n\n*Auto (Smart): routed to the paid general model `gpt-5.5`.*",
+]
+
+
+@pytest.mark.parametrize("said", LABELLED_PASSES)
+async def test_a_labelled_pass_ends_the_turn_on_the_free_model(wired, said):
+    """The room strips a leading "Ada:" before its PASS check. The loop
+    did not, so this was re-asked on the paid model, spent a paid turn and
+    opened the sticky window for an agent that said nothing (review,
+    2026-09-18)."""
+    posts = []
+
+    async def fake_post(payload, token, timeout=None):
+        posts.append(payload)
+        return _reply(said)
+
+    answer, _, usage = await _run(fake_post, "build me a todo app", may_pass=True)
+    assert answer == said
+    assert [p["model"] for p in posts] == ["agent-1"]
+    assert usage.escalation is None
+    wired["count"].assert_not_awaited()
+    assert not agent_escalation.in_window("ada@example.com", "agent-1")
+
+
+@pytest.mark.parametrize("said", LABELLED_PASSES)
+async def test_at_the_cap_a_labelled_pass_comes_back_without_the_cap_note(wired, said):
+    wired["count"].return_value = 40
+    replies = [_reply(said),
+               _reply("", calls=[_call("list_my_apps")]), _reply(said)]
+
+    async def fake_post(payload, token, timeout=None):
+        return replies.pop(0)
+
+    # Passing on the first reply, and passing after a refused move.
+    first, _, _ = await _run(fake_post, "build me a todo app", may_pass=True)
+    # The note is said once a day; forget it so the second run could say it.
+    agent_escalation._noted.clear()
+    after_refusal, _, _ = await _run(fake_post, "build me a todo app", may_pass=True)
+
+    assert first == said
+    assert after_refusal == said
+    assert "Today's limit" not in first + after_refusal
+
+
+async def test_a_labelled_pass_followed_by_an_answer_is_still_an_answer(wired):
+    posts = []
+
+    async def fake_post(payload, token, timeout=None):
+        posts.append(payload)
+        if len(posts) == 1:
+            return _reply("Ada:\n\nPASS\n\nI read the files, I will build it.")
+        return _reply("built it")
+
+    answer, _, usage = await _run(fake_post, "build me a todo app", may_pass=True)
+    assert answer == "built it"
+    assert [p["model"] for p in posts] == ["agent-1", "gpt-5.5"]
+    assert usage.escalation == "build"
+
+
 # --- the room: decide on free first -----------------------------------------
 
 async def test_an_unnamed_agent_that_passes_costs_nothing_paid(wired):

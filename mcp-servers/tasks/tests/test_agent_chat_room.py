@@ -188,6 +188,17 @@ def test_a_footer_does_not_turn_an_answer_into_a_pass():
                             "model `gpt-5.5`.*")
 
 
+def test_a_pass_under_a_name_label_is_a_pass_and_an_answer_under_one_is_not():
+    """Any one word name, not only this room's: the paid move reads a PASS
+    with this same function, and it does not know the room's names."""
+    import routes_agent_chat as mod
+    for said in ("Ada:\n\nPASS", "**Ada**\n\nPASS", "**Nova:**\nPASS.",
+                 "Ada:\n\n" + STORED_SMART_PASS):
+        assert mod._is_pass(said), said
+    for said in ("Ada:\n\n" + STORED_PASS_THEN_ANSWER, "Ada:", "Ada: PASS"):
+        assert not mod._is_pass(said), said
+
+
 def test_a_footered_pass_draws_nothing_and_lets_the_fallback_run(monkeypatch):
     app, mod, seen, _ = _app(monkeypatch, answers={
         "Ada": STORED_SMART_PASS, "Mia": STORED_SMART_PASS})

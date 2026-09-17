@@ -269,12 +269,6 @@ def is_plain_question(text: object) -> bool:
     return not _TASK_WORDS.search(low)
 
 
-def looks_like_pass(content: object) -> bool:
-    """The room's PASS, in the shapes models send it."""
-    text = content if isinstance(content, str) else ""
-    return text.strip().strip('."\'').upper() == "PASS"
-
-
 def names_heavy_tool(calls: object) -> bool:
     for call in calls if isinstance(calls, list) else []:
         fn = call.get("function") if isinstance(call, dict) else None
