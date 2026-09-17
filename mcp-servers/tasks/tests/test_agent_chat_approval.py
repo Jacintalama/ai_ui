@@ -292,3 +292,71 @@ def test_the_first_question_can_still_be_answered_afterwards(monkeypatch):
     assert resumed[1]["approved"] is False
     assert "did not run that" in r.text
     assert mod.store.get_session(EMAIL).pending == {}
+
+
+# --- a question from the everybody-passed fallback ------------------------
+# Every agent passes, so the round asks one of them again without the option
+# to pass. That agent can decide the answer needs a tool and stop to ask, and
+# a turn that stops to ask comes back with a pending payload and no answer at
+# all (routes_agent_turn._pending_payload). The fallback only read the answer,
+# found it empty, and said "Nobody had anything to add to that." while the
+# question was thrown away. Production 2026-09-16 13:37:56 UTC: Rex's run sat
+# at waiting and nobody was ever asked.
+
+def _passes_then_asks(answer=""):
+    """Passes whenever passing is on offer, and stops to ask when it is not,
+    which is exactly the shape _turn_for hands back for a held turn."""
+    async def turn(email, agent, messages, names=()):
+        offered = any("reply with exactly PASS" in (m.get("content") or "")
+                      for m in messages)
+        who = {"id": agent["id"], "name": agent["name"]}
+        if offered:
+            return {"answer": "PASS", "notes": [], "agent": who}
+        return {"answer": answer, "agent": who,
+                "pending": {"agent_id": agent["id"], "user_email": EMAIL,
+                            "calls": CALLS, "conversation": HELD}}
+    return turn
+
+
+def test_a_question_from_the_fallback_reaches_the_page(monkeypatch):
+    app, mod, _ = _app(monkeypatch, _passes_then_asks())
+    _, body = _ask(app, message="sort out the invoices")
+    assert "send_email" in body, "the question never reached the page"
+    assert ">Yes<" in body and ">No<" in body
+    assert "Nobody had anything to add" not in body, (
+        "an agent that stopped to ask was reported as having nothing to say")
+
+    s = mod.store.get_session(EMAIL)
+    ids = _questions(mod)
+    assert len(ids) == 1, s.pending
+    # The raw payload is what the resume needs, held server side as it is for
+    # a question asked in the ordinary loop.
+    assert s.pending[ids[0]]["conversation"] == HELD
+    asked = [m for m in s.messages if isinstance(m.get("awaiting"), dict)]
+    assert len(asked) == 1, s.messages
+    assert asked[0]["awaiting"]["ask_id"] == ids[0]
+    assert asked[0]["agent_id"] == "agent-a"
+    assert not any(m.get("role") == "note" for m in s.messages), s.messages
+    # A reload offers the same Yes and No.
+    assert ">Yes<" in mod.render.thread(s.messages)
+
+
+def test_a_question_from_the_fallback_can_be_answered(monkeypatch):
+    app, mod, resumed = _app(monkeypatch, _passes_then_asks())
+    c, _ = _ask(app, message="sort out the invoices")
+    r = c.post("/tasks/agents/chat/approve",
+               data={"ask_id": _questions(mod)[0], "approved": "yes"},
+               headers=_hdr())
+    assert len(resumed) == 1
+    assert resumed[0]["agent_id"] == "agent-a"
+    assert resumed[0]["conversation"] == HELD
+    assert "Sent it." in r.text
+
+
+def test_the_fallback_shows_what_was_said_before_the_question(monkeypatch):
+    """Same as the ordinary loop: words before the question get a bubble of
+    their own, then the buttons."""
+    app, mod, _ = _app(monkeypatch, _passes_then_asks("May I send this?"))
+    _, body = _ask(app, message="sort out the invoices")
+    assert "May I send this?" in body
+    assert body.index("May I send this?") < body.index(">Yes<")

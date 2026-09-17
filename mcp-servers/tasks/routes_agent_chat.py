@@ -233,6 +233,50 @@ def _failure_fragment(messages: list[dict], tid: str, name: str, answer: str,
     return render.into_turn(tid, render.failure(name, reason, fix))
 
 
+def _question_events(messages: list[dict], pending: dict, tid: str,
+                     agent_id: str, name: str, answer: str, answering,
+                     raw_pending) -> list[dict] | None:
+    """Records an agent that stopped to ask, and returns what to stream for
+    it, or None when this turn did not ask anything.
+
+    Shared by the per-agent loop and the everybody-passed fallback, for the
+    same reason _failure_fragment is: a turn that stops to ask comes back
+    with a pending payload and, usually, no answer at all
+    (routes_agent_turn._pending_payload), and a caller that only reads the
+    answer throws the question away. The fallback did exactly that and told
+    the person nobody had anything to add, while Rex's run sat at waiting
+    (production, 2026-09-16 13:37:56 UTC).
+    """
+    page_pending = (_pending_for_page(raw_pending)
+                    if isinstance(raw_pending, dict) else None)
+    if not page_pending:
+        return None
+    # Hold the full payload server side: it carries the held conversation and
+    # the owner's email, neither of which belongs in a browser. The browser
+    # gets the calls only.
+    #
+    # Keyed by the question, not by the agent. One agent can be waiting on
+    # two answers at once, and keying by the agent would have the second
+    # question quietly replace the first.
+    ask_id = _ask_id()
+    pending[ask_id] = raw_pending
+    awaiting = dict(page_pending)
+    awaiting["ask_id"] = ask_id
+    messages.append({"role": "assistant", "agent_id": agent_id,
+                     "agent_name": name, "content": answer,
+                     "replying_to": answering,
+                     "awaiting": awaiting})
+    events = []
+    if answer:
+        events.append({"event": "message",
+                       "data": render.into_turn(tid, render.agent_bubble(
+                           name, answer, answering))})
+    events.append({"event": "message",
+                   "data": render.into_turn(tid, render.approval_bubble(
+                       name, ask_id, page_pending["calls"]))})
+    return events
+
+
 def _speakers_for(text: str, agents: list[dict]) -> tuple[list[dict], bool]:
     """Who answers this message, and whether they are allowed to pass.
 
@@ -414,32 +458,11 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
             passed += 1
             continue
 
-        raw_pending = out.get("pending")
-        page_pending = (_pending_for_page(raw_pending)
-                        if isinstance(raw_pending, dict) else None)
-        if page_pending:
-            # Hold the full payload server side: it carries the held
-            # conversation and the owner's email, neither of which belongs in
-            # a browser. The browser gets the calls only.
-            #
-            # Keyed by the question, not by the agent. One agent can be
-            # waiting on two answers at once, and keying by the agent would
-            # have the second question quietly replace the first.
-            ask_id = _ask_id()
-            pending[ask_id] = raw_pending
-            awaiting = dict(page_pending)
-            awaiting["ask_id"] = ask_id
-            messages.append({"role": "assistant", "agent_id": agent_id,
-                             "agent_name": name, "content": answer,
-                             "replying_to": answering,
-                             "awaiting": awaiting})
-            if answer:
-                yield {"event": "message",
-                       "data": render.into_turn(tid, render.agent_bubble(
-                           name, answer, answering))}
-            yield {"event": "message",
-                   "data": render.into_turn(tid, render.approval_bubble(
-                       name, ask_id, page_pending["calls"]))}
+        question = _question_events(messages, pending, tid, agent_id, name,
+                                    answer, answering, out.get("pending"))
+        if question is not None:
+            for event in question:
+                yield event
             # And on to the next agent. Pausing the one that asked is the
             # point; silently losing everybody else is not.
             continue
@@ -462,6 +485,12 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
         out = await _turn_for(email, fallback, history, names)
         answer = out.get("answer") or ""
         fr = _failure_reason(name, answer)
+        # Asked for before the pass check, as in the loop above: a turn that
+        # stops to ask has no answer to check, and an empty answer is exactly
+        # what used to send a real question into the note below.
+        question = (None if fr is not None else _question_events(
+            messages, pending, tid, str(fallback.get("id") or ""), name,
+            answer, answering, out.get("pending")))
         if fr is not None:
             # This extra call can fail exactly like any other: a transient
             # error, or the router running dry between the first round of
@@ -472,6 +501,9 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
             yield {"event": "message",
                    "data": _failure_fragment(messages, tid, name, answer,
                                              reason, fix)}
+        elif question is not None:
+            for event in question:
+                yield event
         elif answer and not _is_pass(answer):
             messages.append({"role": "assistant",
                              "agent_id": str(fallback.get("id") or ""),
