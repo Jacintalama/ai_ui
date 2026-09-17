@@ -49,9 +49,9 @@ router = APIRouter(prefix="/agents")
 PENDING_CONTENT_CHARS = 2000
 
 #: A run that stopped to ask is neither finished nor still working. Recorded
-#: as its own status so the card does not claim the agent is awake for the
-#: next 50 minutes (STALE_AFTER_SCHEDULE) waiting for a reply that may never
-#: come.
+#: as its own status so the card does not claim the agent is working until
+#: agent_activity's stale window calls the run dead, waiting for a reply that
+#: may never come.
 STATUS_WAITING = "waiting"
 
 #: The shape of an agent id this service mints, and the only shape the

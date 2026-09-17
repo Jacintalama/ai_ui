@@ -251,13 +251,16 @@ def test_the_longer_cap_still_fits_inside_the_awake_window():
     from datetime import timedelta
 
     from agent_activity import STALE_AFTER_CHANNEL
-    # The rounds, then the write-up after the cap, which has its own budget.
-    # A free agent can also spend its whole pool in one turn, and each spent
-    # id is one more failed completion of up to the round timeout.
-    extra = len(agent_runner.FREE_MODELS) - 1
-    worst = timedelta(seconds=agent_runner.CHANNEL_HTTP_TIMEOUT_SECONDS
-                      * (agent_runner.CHANNEL_MAX_TOOL_ITERATIONS + extra)
-                      + agent_runner.FINAL_ROUND_MIN_TIMEOUT_SECONDS)
+    # The rounds, the write-up after the cap, the free pool and the move to
+    # the paid model are counted in one place, worst_turn_seconds. The count
+    # that used to be written out here priced the fallback ids at the round
+    # timeout and knew nothing of the paid model, so it said 660 seconds for
+    # a turn that could take 780 before the paid model, and 1170 after it.
+    # test_agent_activity writes the full count out by hand, so the two
+    # cannot agree on a wrong formula.
+    worst = timedelta(seconds=agent_runner.worst_turn_seconds(
+        agent_runner.CHANNEL_MAX_TOOL_ITERATIONS,
+        agent_runner.CHANNEL_HTTP_TIMEOUT_SECONDS))
     assert STALE_AFTER_CHANNEL > worst, (STALE_AFTER_CHANNEL, worst)
 
 
