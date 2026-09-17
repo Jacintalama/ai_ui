@@ -624,11 +624,18 @@ def test_the_worst_turn_counts_the_move_to_the_paid_model(monkeypatch):
     monkeypatch.setattr(agent_runner, "FREE_MODELS", ["a:free", "b:free", "c:free"])
     monkeypatch.setattr(agent_escalation, "PAID_TIMEOUT_SECONDS", 90)
     monkeypatch.setattr(agent_escalation, "PAID_EXTRA_ROUNDS", 3)
-    # Chat: 3 free attempts at 60 + 7 paid rounds at 90 + 120 write-up = 930,
-    # and 9 free completions at 60 + 3 paid at 90 + 120 = 930.
-    assert agent_runner.worst_turn_seconds(7, 60) == 930
-    # Schedule: 10 free at 240 + 3 paid at 240 + 240 write-up = 3360.
-    assert agent_runner.worst_turn_seconds(8, 240) == 3360
+    # Both shapes can end the same slow way: the paid write-up times out, the
+    # turn goes back to the free model it left, and that write-up spends all
+    # three free ids at the write-up timeout. The first version of this count
+    # stopped at a write-up that answered and said 930 and 3360 (review,
+    # 2026-09-17).
+    # Chat, moving at the start: 1 free answer at 60 + 7 paid rounds at 90
+    # + a 120 paid write-up + 3 free write-ups at 120 = 1170. Moving at the
+    # round cap: 7 free rounds at 60 + 3 paid at 90 + 120 + 360 = 1170.
+    assert agent_runner.worst_turn_seconds(7, 60) == 1170
+    # Schedule, at the round cap: 8 free rounds + 3 paid rounds + a paid
+    # write-up + 3 free write-ups, all at 240 = 3600.
+    assert agent_runner.worst_turn_seconds(8, 240) == 3600
 
 
 async def test_a_scheduled_report_carries_no_long_dashes(wired):

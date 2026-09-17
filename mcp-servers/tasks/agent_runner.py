@@ -97,14 +97,13 @@ MAX_TOOL_ITERATIONS = 8
 #: of per week. Unlike that one it fails visibly, saying it stopped early, so
 #: it annoys rather than deceives.
 #:
-#: Seven is what the abandon window allows, not a round number: at 60 seconds
-#: each the worst case is seven minutes, and STALE_AFTER_CHANNEL is twelve,
-#: which a test asserts. Nine rounds would leave no margin at all now that a
-#: free agent can also spend two fallback ids at 60 seconds each inside the
-#: same turn: 9 + 2 rounds plus the 120 second write-up is 780 seconds
-#: against a 720 second window.
-#: Since 2026-09-17 the move to the paid model adds rounds too; see
-#: worst_turn_seconds, which the seventeen minute window follows.
+#: Seven is what the abandon window allowed when it was set, not a round
+#: number: at 60 seconds each the rounds are seven minutes. The window is
+#: not a count of rounds alone, though. A free agent can spend its fallback
+#: ids inside the same turn, and since 2026-09-17 it can move to the paid
+#: model, which adds paid rounds and a paid write-up. worst_turn_seconds
+#: counts all of it, STALE_AFTER_CHANNEL is sized from that, and a test
+#: asserts it, so raising this means raising the window with it.
 CHANNEL_MAX_TOOL_ITERATIONS = 7
 CHANNEL_HTTP_TIMEOUT_SECONDS = 60
 
@@ -112,9 +111,10 @@ CHANNEL_HTTP_TIMEOUT_SECONDS = 60
 #: gathered, so it is the slowest completion of the run. Measured 2026-09-14:
 #: gpt-5-mini took 22s for a plain turn with the brief, and Kai's write-up
 #: after seven rounds of app files hit the 60s timeout and he said nothing.
-#: Seven rounds at 60 plus this is nine minutes, and eleven once a free
-#: agent's two fallback ids are counted, inside STALE_AFTER_CHANNEL
-#: (seventeen since the paid model can take over a turn).
+#: Seven rounds at 60 plus this is nine minutes. A write-up can cost more
+#: than one of these: a free agent can spend its fallback ids in it, and
+#: since 2026-09-17 a paid write-up can time out before them, each at this
+#: timeout. worst_turn_seconds counts that, and STALE_AFTER_CHANNEL follows.
 FINAL_ROUND_MIN_TIMEOUT_SECONDS = 120
 
 
@@ -462,19 +462,34 @@ def worst_turn_seconds(max_iterations: int, timeout: float) -> float:
     """Every completion one turn can make, each at its full timeout, now
     that a free agent can move to the paid model partway through.
 
-    Two shapes, and the worse one counts. Moving at the start: the free
-    attempts that decided it (the agent's own model and every fallback id),
-    then every round on the paid model, then the write-up. Moving at the
-    round cap: every round on the free models, every fallback id, then the
-    paid model's extra rounds and the write-up. A paid model that fails
-    sends the turn back to the free one it left, which costs less than
-    either shape, because the paid timeout is never shorter than the free.
+    Two shapes, and the worse one counts. Moving at the start: the one free
+    answer that decided it, then every round on the paid model. Moving at
+    the round cap: every round on the free model, then the paid model's
+    extra rounds.
+
+    Both end in the same slowest write-up. The paid write-up times out, the
+    turn goes back to the free model it left, and that write-up spends every
+    free id, each at the write-up timeout. That is where both failures cost
+    most: a write-up is never given less time than a round, and a paid
+    failure there comes after every paid round instead of replacing one.
+    Spending the fallback ids in the rounds costs less for the same reason.
+
+    Found by review on 2026-09-17, and checked the same day on a copy with
+    the plan's Task 7 loop, by searching the runs of timeouts and tool calls
+    through it with each post at its full timeout: 1170 seconds for a chat
+    turn and 3600 for a schedule, which is what this returns. The first
+    version stopped at a paid write-up that answered and said 930 and 3360.
+
+    Assumes the agent's own base model is one of FREE_MODELS. An agent on a
+    free id outside the pool has one more fallback id to spend.
     """
     extra_free = max(len(FREE_MODELS) - 1, 0)
     paid = agent_escalation.paid_timeout(timeout)
-    write_up = max(paid, FINAL_ROUND_MIN_TIMEOUT_SECONDS)
-    up_front = (1 + extra_free) * timeout + max_iterations * paid + write_up
-    at_cap = ((max_iterations + extra_free) * timeout
+    free_write_up = max(timeout, FINAL_ROUND_MIN_TIMEOUT_SECONDS)
+    paid_write_up = agent_escalation.paid_timeout(free_write_up)
+    write_up = paid_write_up + (1 + extra_free) * free_write_up
+    up_front = timeout + max_iterations * paid + write_up
+    at_cap = (max_iterations * timeout
               + agent_escalation.PAID_EXTRA_ROUNDS * paid + write_up)
     return max(up_front, at_cap)
 
@@ -491,9 +506,9 @@ def worst_turn_seconds(max_iterations: int, timeout: float) -> float:
 #: caps. An expired token is a 401, a 401 is deliberately not a provider
 #: failure, and so it ends the run instead of moving it anywhere.
 #:
-#: On a schedule that is 8 free rounds and 2 fallback ids at 240 seconds,
-#: 3 paid rounds at 240 and a 240 second write-up: 3360 seconds, and this is
-#: that plus a minute.
+#: On a schedule that is 8 free rounds and 3 paid rounds at 240 seconds, a
+#: paid write-up that times out at 240, and a free write-up that spends all
+#: three free ids at 240: 3600 seconds, and this is that plus a minute.
 CHAT_TOKEN_TTL_SECONDS = int(
     worst_turn_seconds(MAX_TOOL_ITERATIONS, HTTP_TIMEOUT_SECONDS)) + 60
 

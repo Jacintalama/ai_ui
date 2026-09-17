@@ -22,7 +22,8 @@ before this plan was written (2026-09-17, local Python 3.13.5, sse-starlette
    was checked red before its task and green after it (cost 10, rules 39,
    decide 12).
 2. `tests/test_agent_run_cost.py` 6 passed; with `tests/test_agent_activity.py` 30.
-3. `tests/test_agent_escalation_loop.py` 21 passed.
+3. `tests/test_agent_escalation_loop.py` 21 passed. Three timing tests were
+   added after review on 2026-09-17 (24 in the file now); see Task 7.
 4. `tests/test_agent_escalation_surfaces.py` 8 passed.
 5. `tests/test_agent_paid_env.py` 6 passed; `tests/test_migrations_runner.py` 7 passed.
 6. The existing loop suites (`test_agent_free_fallback`, `test_agent_tool_loop`,
@@ -1093,6 +1094,17 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 A paid continuation must not outlive the minted token or be called dead by
 the Agents page while it is still working.
 
+**Corrected after review, 2026-09-17, in the commit after 8c317c510.** The
+formula in this task left out a paid write-up that times out, and priced the
+fallback ids spent in the write-up at the round timeout instead of the
+write-up timeout. With this task's code and Task 7's loop, a chat turn can
+post for 1170 seconds and a schedule for 3600. The code now counts both:
+`worst_turn_seconds(7, 60)` is 1170, `STALE_AFTER_CHANNEL` 21 minutes,
+`worst_turn_seconds(8, 240)` is 3600, `CHAT_TOKEN_TTL_SECONDS` 3660, and
+`STALE_AFTER_SCHEDULE` stays 65 minutes. The blocks below are what was first
+committed, kept as the record; the code in the branch is what counts. Task 7
+gains three tests that walk those paths.
+
 **Files:**
 - Modify: `mcp-servers/tasks/agent_runner.py` (import; the `CHAT_TOKEN_TTL_SECONDS` block; two comments)
 - Modify: `mcp-servers/tasks/agent_activity.py` (`STALE_AFTER_CHANNEL`, `STALE_AFTER_SCHEDULE`)
@@ -1744,12 +1756,69 @@ async def test_usage_is_summed_over_every_completion_in_the_turn(wired):
     _, _, usage = await _run(fake_post, "build me a todo app")
     assert (usage.prompt_tokens, usage.completion_tokens) == (2500, 300)
     assert usage.cost_usd == pytest.approx((2500 * 5 + 300 * 30) / 1_000_000)
+
+
+# --- how long a turn can take -----------------------------------------------
+
+async def _timeouts_of_a_turn_whose_write_up_fails(text, **kw):
+    """Every post of one turn with the timeout it was given. Every round asks
+    for a tool, so the turn spends all its rounds, and every write-up post
+    times out, the paid one and each free id after it."""
+    posts = []
+
+    async def fake_post(payload, token, timeout=None):
+        posts.append((payload["model"], timeout))
+        if payload.get("tool_ids") is None:
+            raise httpx.ReadTimeout("slow")
+        return _reply("", calls=[_call("list_my_apps", "c%d" % len(posts))])
+
+    await _run(fake_post, text, **kw)
+    return posts
+
+
+@pytest.mark.parametrize("rounds, timeout", [(7, 60), (8, 240)])
+async def test_a_turn_that_moves_at_the_round_cap_fits_inside_the_worst_turn(
+        wired, rounds, timeout):
+    """Walked post by post, each at its full timeout: every free round, the
+    paid model's extra rounds, a paid write-up that times out, and the free
+    write-up spending the whole pool. worst_turn_seconds sizes the token and
+    the stale windows, so a path it leaves out is a working turn called dead
+    or a token that expires under it. Its first version stopped at a paid
+    write-up that answered (review, 2026-09-17)."""
+    posts = await _timeouts_of_a_turn_whose_write_up_fails(
+        "check my apps", max_iterations=rounds, timeout=timeout)
+
+    write_up = max(timeout, agent_runner.FINAL_ROUND_MIN_TIMEOUT_SECONDS)
+    assert posts == ([("agent-1", timeout)] * rounds
+                     + [("gpt-5.5", max(timeout, 90))] * 3
+                     + [("gpt-5.5", max(write_up, 90)), ("agent-1", write_up)]
+                     + [(m, write_up) for m in POOL[1:]])
+    assert sum(t for _, t in posts) <= agent_runner.worst_turn_seconds(
+        rounds, timeout)
+
+
+async def test_a_turn_that_moves_at_the_start_fits_inside_the_worst_turn(wired):
+    """The other shape: an unnamed agent's free answer is set aside, every
+    round goes to the paid model, and the write-up fails the same way."""
+    posts = await _timeouts_of_a_turn_whose_write_up_fails(
+        "build me a todo app", may_pass=True)
+
+    assert posts == ([("agent-1", 60)] + [("gpt-5.5", 90)] * 7
+                     + [("gpt-5.5", 120), ("agent-1", 120)]
+                     + [(m, 120) for m in POOL[1:]])
+    assert sum(t for _, t in posts) <= agent_runner.worst_turn_seconds(7, 60)
 ```
+
+The last three tests were added after review on 2026-09-17. They were
+checked on a scratch copy of 8c317c510 with this task's `_chat`: 3 failed
+against the first `worst_turn_seconds` (`assert 1170.0 <= 930.0` and
+`assert 3600.0 <= 3360.0`, with the post sequences matching), and 24 passed
+once the corrected `worst_turn_seconds` was in place.
 
 **Step 2: Run, expect failure.**
 
 Run: `python -m pytest tests/test_agent_escalation_loop.py -q -p no:cacheprovider`
-Expected: 21 failed, `TypeError: _chat() got an unexpected keyword argument 'intent'`.
+Expected: 24 failed, `TypeError: _chat() got an unexpected keyword argument 'intent'`.
 
 **Step 3: Implement.** In `agent_runner.py`, replace everything from the line `async def _chat(token: str, model: str, messages: list[dict],` down to, but not including, the line `def _messages_for(sched) -> list[dict]:` with the following. It adds `_paid_failed` and `_Escalation` above a new `_chat`; every comment of the old `_chat` that still applies is kept.
 
@@ -2140,7 +2209,7 @@ async def _chat(token: str, model: str, messages: list[dict],
 **Step 4: Run the new tests and every existing loop suite.**
 
 Run: `python -m pytest tests/test_agent_escalation_loop.py tests/test_agent_free_fallback.py tests/test_agent_tool_loop.py tests/test_agent_runner.py tests/test_agent_stale_model.py -q -p no:cacheprovider`
-Expected: all pass (21 new; the existing 116 unchanged, which is the proof that a caller passing no intent gets exactly the old loop). These suites are slow locally, about four minutes, because agent_activity tries a database that is not there.
+Expected: all pass (24 new; the existing 116 unchanged, which is the proof that a caller passing no intent gets exactly the old loop). These suites are slow locally, about four minutes, because agent_activity tries a database that is not there.
 
 **Step 5: Commit.**
 
@@ -2767,7 +2836,7 @@ Costs money: one real GPT-5.5 agent turn with tools. Estimate $0.05 to $0.40 (li
 
 **Step 3: Copy and rebuild.** One `scp` per changed file into the same path under `/root/proxy-server/` (new files: `agent_escalation.py`, the migration, the rollback, the seven new test files). Run `sed -i 's/\r$//'` on each copied file on the server. Then `cd /root/proxy-server && docker compose -f docker-compose.unified.yml up -d --build tasks`. The tasks image bakes the code in, so nothing reaches the container without the rebuild. Write `.deploy-state` as JSON (`{"sha": ..., "deployed_at": ..., "deployed_by": ...}`) with the merge commit.
 
-**Step 4: Smoke.** `curl -fsS https://ai-ui.coolestdomain.win/tasks/healthz`. `docker exec tasks printenv AGENT_PAID_MODEL AGENT_PAID_DAILY_CAP AGENT_PAID_PRICES` shows `gpt-5.5`, `40`, `gpt-5.5=5:30`. `docker exec tasks sh -lc 'cd /app && python -c "import agent_runner, agent_activity; print(agent_runner.CHAT_TOKEN_TTL_SECONDS, agent_activity.STALE_AFTER_CHANNEL)"'` shows `3420 0:17:00`.
+**Step 4: Smoke.** `curl -fsS https://ai-ui.coolestdomain.win/tasks/healthz`. `docker exec tasks printenv AGENT_PAID_MODEL AGENT_PAID_DAILY_CAP AGENT_PAID_PRICES` shows `gpt-5.5`, `40`, `gpt-5.5=5:30`. `docker exec tasks sh -lc 'cd /app && python -c "import agent_runner, agent_activity; print(agent_runner.CHAT_TOKEN_TTL_SECONDS, agent_activity.STALE_AFTER_CHANNEL)"'` shows `3660 0:21:00`.
 
 **Step 5: The migration ran.** In the postgres container (find the user with `docker exec postgres printenv POSTGRES_USER`, never print the password): `\d tasks.agent_run` lists `model`, `escalation`, `prompt_tokens`, `completion_tokens`, `cost_usd`, and `agent_run_paid_today_idx`. Run the cap's count SQL by hand for `alamajacintg04@gmail.com` and confirm it returns a number, which proves the `date_trunc(...) AT TIME ZONE` expression parses.
 
@@ -2790,7 +2859,7 @@ If the log shows `the paid model gpt-5.5 failed` with a 400 about `reasoning_eff
 ## Open questions and assumptions
 
 1. `reasoning_effort: low` on gpt-5.5 through Open WebUI, `usage` passthrough, latency inside 90 seconds, and tool calls on a posted `gpt-5.5` base id are unverified until Task 11. The loop fails open to the free model on a paid failure, so none of these can make a turn worse than today.
-2. The Discord, Slack and Telegram gateway waits 420 seconds for a turn; a worst case paid turn is 930. Not changed here.
+2. The Discord, Slack and Telegram gateway waits 420 seconds for a turn; a worst case paid turn is 1170 seconds. Not changed here.
 3. The sticky window and the once a day note are process memory. The tasks service runs one uvicorn worker (Dockerfile CMD has no `--workers`), so they are consistent while it runs and forgotten on restart. The cap is counted from the table and survives.
 4. The cap counts runs that moved, including a paid attempt that failed and fell back. It is checked once per turn, so a room round of several agents can pass the cap by at most the number of agents still in that round.
 5. Cached input is charged at the full input price, so the recorded cost errs high.

@@ -144,11 +144,22 @@ A paid completion gets at least `AGENT_PAID_TIMEOUT_SECONDS` (90). The worst
 turn grows, so the windows that call a run dead and the token lifetime grow
 with it, all derived by `agent_runner.worst_turn_seconds`:
 
-1. Chat: 930 seconds (three free attempts at 60, seven paid rounds at 90,
-   the 120 second write-up; the at-cap shape is also 930).
-   `STALE_AFTER_CHANNEL` 12 to 17 minutes.
-2. Schedule: 3,360 seconds. `STALE_AFTER_SCHEDULE` 50 to 65 minutes.
-   `CHAT_TOKEN_TTL_SECONDS` 2,700 to 3,420.
+1. Chat: 1,170 seconds. Moving at the start is one free answer at 60 and
+   seven paid rounds at 90; moving at the round cap is seven free rounds at
+   60 and three paid rounds at 90. Either can end with a paid write-up that
+   times out at 120 and a free write-up that spends all three free ids at
+   120 each. `STALE_AFTER_CHANNEL` 12 to 21 minutes.
+2. Schedule: 3,600 seconds (eight free rounds, three paid rounds, the
+   failed paid write-up and three free write-ups, all at 240).
+   `STALE_AFTER_SCHEDULE` 50 to 65 minutes. `CHAT_TOKEN_TTL_SECONDS` 2,700
+   to 3,660.
+3. Corrected after review on 2026-09-17, and not yet confirmed by the
+   owner. The approved figures were 930 seconds, 17 minutes and a 3,420
+   second token. They left out a paid write-up that fails, and priced the
+   fallback ids spent in the write-up at the round timeout. The new figures
+   were checked on a scratch copy with the plan's Task 7 loop, by searching
+   its paths with every post at its full timeout. The free loop before this change was already 780
+   seconds for a chat turn, not the 660 its comments said.
 
 ### Settings (compose, tasks service)
 
@@ -203,7 +214,7 @@ with it, all derived by `agent_runner.worst_turn_seconds`:
 
 1. The Discord, Slack and Telegram gateway waits 420 seconds for
    `/agents/turn` (webhook-handler `AGENT_TURN_TIMEOUT_SECONDS`). A worst
-   case paid turn is 930 seconds. The free worst case was already 660.
+   case paid turn is 1,170 seconds. The free worst case was already 780.
 2. The window and the once a day note live in process memory, so a restart
    forgets them. The cap does not: it is counted from the table.
 3. The rules are keyword rules. They will miss some real work and catch

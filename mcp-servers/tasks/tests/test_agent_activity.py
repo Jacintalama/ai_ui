@@ -130,8 +130,8 @@ def test_a_chat_run_gives_up_sooner_than_a_scheduled_one():
 
 def test_each_cut_off_clears_the_worst_case_of_its_own_path():
     """One number cannot be honest about both paths: a scheduled run may take
-    twenty minutes of model time before a tool has run, while a chat turn is
-    bounded at about three."""
+    an hour of model time before a tool has run, while a chat turn is
+    bounded at about twenty minutes."""
     import agent_escalation
     from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS,
                               CHANNEL_MAX_TOOL_ITERATIONS, FREE_MODELS,
@@ -146,15 +146,22 @@ def test_each_cut_off_clears_the_worst_case_of_its_own_path():
     def worst(rounds, timeout):
         # Written out here rather than read from worst_turn_seconds, so this
         # test cannot agree with a wrong formula by calling it. The two
-        # shapes are moving to the paid model at the start (the free
-        # attempts that decided it, then every round on paid) and moving at
-        # the round cap (every free round and fallback id, then the paid
-        # model's extra rounds). Both end in the write-up.
+        # shapes are moving to the paid model at the start (the one free
+        # answer that decided it, then every round on paid) and moving at
+        # the round cap (every free round, then the paid model's extra
+        # rounds). Both can end the same slow way: the paid write-up times
+        # out, the turn goes back to the free model it left, and that
+        # write-up spends the whole pool at the write-up timeout. Spending
+        # the fallback ids in the rounds instead costs less, because a
+        # write-up is never given less time than a round.
         paid = max(timeout, agent_escalation.PAID_TIMEOUT_SECONDS)
-        write_up = max(paid, FINAL_ROUND_MIN_TIMEOUT_SECONDS)
-        up_front = (1 + extra) * timeout + rounds * paid + write_up
-        at_cap = ((rounds + extra) * timeout
-                  + agent_escalation.PAID_EXTRA_ROUNDS * paid + write_up)
+        free_write_up = max(timeout, FINAL_ROUND_MIN_TIMEOUT_SECONDS)
+        paid_write_up = max(free_write_up,
+                            agent_escalation.PAID_TIMEOUT_SECONDS)
+        tail = paid_write_up + (1 + extra) * free_write_up
+        up_front = timeout + rounds * paid + tail
+        at_cap = (rounds * timeout
+                  + agent_escalation.PAID_EXTRA_ROUNDS * paid + tail)
         return timedelta(seconds=max(up_front, at_cap)), timedelta(seconds=paid)
 
     worst_schedule, schedule_round = worst(MAX_TOOL_ITERATIONS,
@@ -169,8 +176,9 @@ def test_each_cut_off_clears_the_worst_case_of_its_own_path():
     assert STALE_AFTER_SCHEDULE > worst_schedule + schedule_round, (
         "a healthy long schedule would be reported as failed")
     # The channel clears its worst case by exactly one round and not a
-    # second more: 660 plus 60 is 720, which is the twelve minute window. So
-    # this one is >= where the schedule's is >, and that is deliberate.
+    # second more: 1170 plus 90 is 1260, which is the twenty one minute
+    # window. So this one is >= where the schedule's is >, and that is
+    # deliberate.
     # Somebody is sitting at a keyboard here, and the only way to buy more
     # headroom is to make them wait longer for a turn that has already gone
     # wrong. Raising CHANNEL_MAX_TOOL_ITERATIONS or the pool means raising

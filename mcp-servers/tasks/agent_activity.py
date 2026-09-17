@@ -45,13 +45,15 @@ logger = logging.getLogger(__name__)
 #: failed, and it is the last turn of a bad day that gets called dead, not a
 #: healthy one. A test derives both numbers from the runner's constants.
 #:
-#: Seventeen, not twelve, since a free agent can move to the paid model
-#: partway through a turn (2026-09-17). The worst turn is now 930 seconds
-#: (agent_runner.worst_turn_seconds with 7 rounds at 60): three free attempts,
-#: seven paid rounds at 90 and the 120 second write-up, or seven free rounds,
-#: two fallback ids, three paid rounds and the write-up, which comes to the
-#: same. Seventeen minutes is that plus one paid round.
-STALE_AFTER_CHANNEL = timedelta(minutes=17)
+#: Twenty one, not twelve, since a free agent can move to the paid model
+#: partway through a turn (2026-09-17). The worst turn is now 1170 seconds
+#: (agent_runner.worst_turn_seconds with 7 rounds at 60): one free answer
+#: and seven paid rounds at 90, or seven free rounds and three paid ones,
+#: and then either way a paid write-up that times out at 120 and a free
+#: write-up that spends all three free ids at 120 each. Twenty one minutes
+#: is that plus one paid round. Seventeen, the first figure, left out the
+#: failed paid write-up and priced the fallback ids at the round timeout.
+STALE_AFTER_CHANNEL = timedelta(minutes=21)
 
 #: A scheduled run uses MAX_TOOL_ITERATIONS (8) and HTTP_TIMEOUT_SECONDS
 #: (240), so twenty minutes of model time alone is healthy before a single
@@ -67,8 +69,9 @@ STALE_AFTER_CHANNEL = timedelta(minutes=17)
 #: margin when tool time is not counted in it at all.
 #:
 #: Sixty five, not fifty, for the move to the paid model: eight free rounds,
-#: two fallback ids, three paid rounds and the write-up, all at 240 seconds,
-#: is 3360 seconds, fifty six minutes, and a round of headroom is sixty.
+#: three paid rounds, a paid write-up that times out and a free write-up
+#: that spends all three free ids, all at 240 seconds, is 3600 seconds,
+#: sixty minutes, and a round of headroom is sixty four.
 STALE_AFTER_SCHEDULE = timedelta(minutes=65)
 
 SOURCE_SCHEDULE = "schedule"
