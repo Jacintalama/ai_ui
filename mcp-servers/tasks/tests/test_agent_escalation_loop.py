@@ -414,6 +414,31 @@ async def test_a_follow_up_stays_paid_and_a_plain_question_goes_back(wired):
     assert models == ["gpt-5.5", "gpt-5.5", "agent-1", "gpt-5.5"]
 
 
+async def test_a_move_whose_paid_model_only_failed_opens_no_window(wired):
+    """Only a paid completion that answered opens the window. A move that
+    went back to the free model leaves it closed: otherwise every later
+    message moves again, waits out the paid timeout, goes back to free and
+    uses a slot of the daily cap, and the window never closes while the
+    person keeps typing (review of Task 7, 2026-09-17)."""
+    posts = []
+
+    async def fake_post(payload, token, timeout=None):
+        posts.append((payload["model"], timeout))
+        if payload["model"] == "gpt-5.5":
+            raise httpx.ReadTimeout("slow")
+        return _reply("free answer")
+
+    await _run(fake_post, "build me a todo app")
+    assert not agent_escalation.in_window("ada@example.com", "agent-1")
+    await _run(fake_post, "make it blue")
+    await _run(fake_post, "and the footer too")
+
+    assert posts == [("gpt-5.5", 90), ("agent-1", 60),
+                     ("agent-1", 60), ("agent-1", 60)]
+    assert wired["count"].await_count == 1
+    wired["marked"].assert_awaited_once_with("run-1", "build")
+
+
 async def test_usage_is_summed_over_every_completion_in_the_turn(wired):
     posts = []
 

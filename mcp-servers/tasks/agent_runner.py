@@ -565,7 +565,10 @@ class _Escalation:
         # the free model it was on.
         self.left_from = None if reason == agent_escalation.REASON_POOL_SPENT else active
         self.usage.escalation = reason
-        agent_escalation.mark_paid(self.user_email, self.agent_id)
+        # No sticky window here. complete() opens it when a paid completion
+        # answers. Opened at the move, a paid model that only fails would
+        # move every later message again, each waiting out the paid timeout
+        # and using a slot of the daily cap (review, 2026-09-17).
         await agent_activity.mark_escalated(self.usage.run_id, reason)
         logger.warning("agent %s moved to the paid model %s (%s)",
                        self.agent_id, agent_escalation.PAID_MODEL, reason)
