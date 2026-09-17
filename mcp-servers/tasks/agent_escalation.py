@@ -19,8 +19,10 @@ import math
 import os
 import re
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import TypeGuard
 
 
 def _int_env(name: str, default: int) -> int:
@@ -92,11 +94,11 @@ def paid_timeout(timeout: float) -> float:
 
 # --- cost -------------------------------------------------------------------
 
-def parse_prices(raw: str) -> dict:
+def parse_prices(raw: str) -> dict[str, tuple[float, float]]:
     """"gpt-5.5=5:30,gpt-5-mini=0.25:2" as {id: (input, output)}, in US
     dollars per million tokens. A malformed entry is skipped rather than
     guessed at, so a typo costs that model its price, not the service."""
-    out = {}
+    out: dict[str, tuple[float, float]] = {}
     for part in (raw or "").split(","):
         name, sep, value = part.strip().partition("=")
         if not sep or not name.strip():
@@ -118,7 +120,8 @@ def parse_prices(raw: str) -> dict:
 PRICES = parse_prices(os.environ.get("AGENT_PAID_PRICES", "gpt-5.5=5:30"))
 
 
-def cost_of(model: str, prompt_tokens: int, completion_tokens: int):
+def cost_of(model: str, prompt_tokens: int,
+            completion_tokens: int) -> float | None:
     """What one completion cost in dollars, or None when nothing says.
 
     Free ids cost nothing. A model with no price is None rather than 0, so a
@@ -132,7 +135,7 @@ def cost_of(model: str, prompt_tokens: int, completion_tokens: int):
     return (prompt_tokens * price[0] + completion_tokens * price[1]) / 1_000_000
 
 
-def _is_count(value) -> bool:
+def _is_count(value: object) -> TypeGuard[int | float]:
     """A token count a reply actually gave, as opposed to junk or nothing.
 
     json.loads accepts NaN, Infinity and 1e999, and int() raises on the first
@@ -142,7 +145,7 @@ def _is_count(value) -> bool:
             and math.isfinite(value) and value >= 0)
 
 
-def _count(value) -> int:
+def _count(value: object) -> int:
     return int(value) if _is_count(value) else 0
 
 
@@ -161,7 +164,7 @@ class TurnUsage:
     completion_tokens: int = 0
     cost_usd: float | None = 0.0
 
-    def add(self, model: str, usage) -> None:
+    def add(self, model: str, usage: object) -> None:
         self.model = model
         free = isinstance(model, str) and model.endswith(":free")
         if not isinstance(usage, dict):
@@ -219,7 +222,7 @@ _ERROR = re.compile(
     re.MULTILINE)
 
 
-def rule_reason(text) -> str | None:
+def rule_reason(text: object) -> str | None:
     """Why this message needs the paid model, or None. Read from what the
     person typed, never from an instruction this service added."""
     raw = text if isinstance(text, str) else ""
@@ -251,7 +254,7 @@ _TASK_WORDS = re.compile(
     r"header|footer|logo|font|images?|database|login|form)\b")
 
 
-def is_plain_question(text) -> bool:
+def is_plain_question(text: object) -> bool:
     """A question about something other than the work in hand.
 
     "What is on my calendar tomorrow?" goes back to the free model even while
@@ -266,13 +269,13 @@ def is_plain_question(text) -> bool:
     return not _TASK_WORDS.search(low)
 
 
-def looks_like_pass(content) -> bool:
+def looks_like_pass(content: object) -> bool:
     """The room's PASS, in the shapes models send it."""
     text = content if isinstance(content, str) else ""
     return text.strip().strip('."\'').upper() == "PASS"
 
 
-def names_heavy_tool(calls) -> bool:
+def names_heavy_tool(calls: object) -> bool:
     for call in calls if isinstance(calls, list) else []:
         fn = call.get("function") if isinstance(call, dict) else None
         name = fn.get("name") if isinstance(fn, dict) else None
@@ -281,7 +284,7 @@ def names_heavy_tool(calls) -> bool:
     return False
 
 
-def conversation_chars(messages) -> int:
+def conversation_chars(messages: object) -> int:
     total = 0
     for m in messages if isinstance(messages, list) else []:
         if not isinstance(m, dict):
@@ -304,7 +307,7 @@ def conversation_chars(messages) -> int:
     return total
 
 
-def too_long(messages) -> bool:
+def too_long(messages: object) -> bool:
     return conversation_chars(messages) > CONVERSATION_CHARS
 
 
@@ -323,7 +326,8 @@ class Intent:
     follow_up: bool = False
 
 
-_current = contextvars.ContextVar("agent_escalation_intent", default=None)
+_current: contextvars.ContextVar[Intent | None] = contextvars.ContextVar(
+    "agent_escalation_intent", default=None)
 
 
 def current_intent() -> Intent | None:
@@ -331,7 +335,7 @@ def current_intent() -> Intent | None:
 
 
 @contextlib.contextmanager
-def asking(intent: Intent):
+def asking(intent: Intent) -> Iterator[Intent]:
     """Carry an intent to the turn beneath this call without changing the
     signature of everything in between. Reset on the way out, so it never
     leaks to the next agent in the room."""
@@ -344,14 +348,15 @@ def asking(intent: Intent):
 
 # --- sticky window ----------------------------------------------------------
 
-_windows: dict = {}
+_windows: dict[tuple[str, str], float] = {}
 
 
-def _key(user_email, agent_id) -> tuple:
+def _key(user_email: str | None, agent_id: str | None) -> tuple[str, str]:
     return ((user_email or "").strip().lower(), agent_id or "")
 
 
-def mark_paid(user_email, agent_id, now: float | None = None) -> None:
+def mark_paid(user_email: str | None, agent_id: str | None,
+              now: float | None = None) -> None:
     now = time.monotonic() if now is None else now
     if len(_windows) > 500:
         for k in [k for k, until in _windows.items() if until <= now]:
@@ -359,7 +364,8 @@ def mark_paid(user_email, agent_id, now: float | None = None) -> None:
     _windows[_key(user_email, agent_id)] = now + STICKY_SECONDS
 
 
-def in_window(user_email, agent_id, now: float | None = None) -> bool:
+def in_window(user_email: str | None, agent_id: str | None,
+              now: float | None = None) -> bool:
     now = time.monotonic() if now is None else now
     key = _key(user_email, agent_id)
     until = _windows.get(key)
@@ -387,10 +393,10 @@ def decide(intent: Intent, window_open: bool) -> str | None:
 
 # --- the once a day note ----------------------------------------------------
 
-_noted: set = set()
+_noted: set[tuple[str, str]] = set()
 
 
-def take_cap_note(user_email, today: str | None = None) -> str:
+def take_cap_note(user_email: str | None, today: str | None = None) -> str:
     """The cap note the first time today, "" after that."""
     day = today or datetime.now(timezone.utc).date().isoformat()
     key = ((user_email or "").strip().lower(), day)
