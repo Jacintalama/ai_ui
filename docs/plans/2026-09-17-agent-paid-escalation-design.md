@@ -134,8 +134,12 @@ yet) is discarded and asked again on paid. A named agent moves at once.
    plain sentence to its answer saying the daily limit for the stronger
    model is used up. In the answer, not in notes, because the room draws
    answers and drops notes. Never added to a PASS.
-5. `AGENT_PAID_DAILY_CAP=0` or a blank `AGENT_PAID_MODEL` turns the feature
-   off without a code change.
+5. Two ways to turn the feature off without a code change:
+   `AGENT_PAID_DAILY_CAP=0`, or `AGENT_PAID_MODEL=` set blank in `.env`.
+   Blank works only because compose declares that one as
+   `${AGENT_PAID_MODEL-gpt-5.5}`, with no colon: `${VAR:-default}` replaces
+   a blank value with the default, so a blank line in `.env` would still
+   run gpt-5.5. Deleting the line from `.env` gives the default, gpt-5.5.
 6. No footer or label in replies.
 
 ### Timing
@@ -173,7 +177,11 @@ code, and that test says by how much. The numbers with the default settings:
 
 `AGENT_PAID_MODEL=gpt-5.5`, `AGENT_PAID_REASONING=low`,
 `AGENT_PAID_TIMEOUT_SECONDS=90`, `AGENT_PAID_DAILY_CAP=40`,
-`AGENT_PAID_PRICES=gpt-5.5=5:30`. Code defaults only, overridable by env:
+`AGENT_PAID_PRICES=gpt-5.5=5:30`. `AGENT_PAID_MODEL` and
+`AGENT_PAID_REASONING` are declared `${VAR-default}` (no colon), so a value
+set blank in `.env` reaches the container blank; the other three are
+`${VAR:-default}`, so blank gives the default (`AGENT_PAID_DAILY_CAP=0`,
+not blank, is the off switch). Code defaults only, overridable by env:
 `AGENT_PAID_STICKY_SECONDS=900`, `AGENT_PAID_EXTRA_ROUNDS=3`,
 `AGENT_PAID_CONVERSATION_CHARS=60000`, `AGENT_PAID_MESSAGE_CHARS=2000`.
 
@@ -198,7 +206,8 @@ code, and that test says by how much. The numbers with the default settings:
 
 1. That gpt-5.5 through Open WebUI accepts `reasoning_effort: low`. If it
    does not, the paid call fails, the turn goes back to free and logs it;
-   set `AGENT_PAID_REASONING` blank.
+   set `AGENT_PAID_REASONING=` blank in `.env` (it passes through compose
+   blank, see Settings) and no `reasoning_effort` is sent.
 2. That Open WebUI passes `usage` through for a gpt-5.5 non-stream reply.
 3. That gpt-5.5 answers an agent turn with tool specs inside 90 seconds.
 4. That tool calling works when the base id gpt-5.5 is posted with

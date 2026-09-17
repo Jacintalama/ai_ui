@@ -37,17 +37,24 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
-#: The model a free agent moves to. Blank switches the feature off.
+#: The model a free agent moves to. AGENT_PAID_MODEL= set blank in .env
+#: switches the feature off, and so does AGENT_PAID_DAILY_CAP=0. Blank
+#: reaches this process only because compose declares it
+#: ${AGENT_PAID_MODEL-gpt-5.5} with no colon; ${VAR:-default} would hand
+#: over the default instead. Unset (the line deleted) means gpt-5.5.
 PAID_MODEL = os.environ.get("AGENT_PAID_MODEL", "gpt-5.5").strip()
 
-#: Sent as reasoning_effort on paid completions. Blank sends nothing.
+#: Sent as reasoning_effort on paid completions. AGENT_PAID_REASONING= set
+#: blank in .env sends nothing, declared with no colon in compose for the
+#: same reason.
 PAID_REASONING = os.environ.get("AGENT_PAID_REASONING", "low").strip()
 
 #: The least a paid completion is allowed. A caller's own timeout wins when
 #: it is longer (a schedule's 240 seconds).
 PAID_TIMEOUT_SECONDS = _int_env("AGENT_PAID_TIMEOUT_SECONDS", 90)
 
-#: Paid turns per person per UTC day. 0 switches the feature off.
+#: Paid turns per person per UTC day. 0 switches the feature off. Blank is
+#: not an off switch: compose and _int_env both read it as 40.
 DAILY_CAP = _int_env("AGENT_PAID_DAILY_CAP", 40)
 
 #: How long an agent stays on the paid model for this person after a paid

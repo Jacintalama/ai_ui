@@ -468,9 +468,13 @@ services:
       # gpt-5.5 has. Prices are dollars per million tokens, input:output,
       # read 2026-09-17 from developers.openai.com/api/docs/pricing.
       # AGENT_PAID_DAILY_CAP is paid turns per person per UTC day; 0 turns
-      # the whole feature off without a code change.
-      - AGENT_PAID_MODEL=${AGENT_PAID_MODEL:-gpt-5.5}
-      - AGENT_PAID_REASONING=${AGENT_PAID_REASONING:-low}
+      # the whole feature off without a code change. So does
+      # AGENT_PAID_MODEL set blank in .env, and AGENT_PAID_REASONING set
+      # blank sends no reasoning_effort. Those two use ${VAR-default}, no
+      # colon, on purpose: ${VAR:-default} replaces a blank value with the
+      # default, so blank could never reach the container.
+      - AGENT_PAID_MODEL=${AGENT_PAID_MODEL-gpt-5.5}
+      - AGENT_PAID_REASONING=${AGENT_PAID_REASONING-low}
       - AGENT_PAID_TIMEOUT_SECONDS=${AGENT_PAID_TIMEOUT_SECONDS:-90}
       - AGENT_PAID_DAILY_CAP=${AGENT_PAID_DAILY_CAP:-40}
       - AGENT_PAID_PRICES=${AGENT_PAID_PRICES:-gpt-5.5=5:30}
