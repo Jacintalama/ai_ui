@@ -21,10 +21,24 @@
   // after hydration. Clicking the sidebar was always fine, which is why this
   // hid for as long as it did: /channel had the same hole since it shipped.
   //
-  // So bounce once through "/", where the router is happy, and let the code
-  // below reopen the pane and put the feature URL back. Only a direct arrival
-  // pays the extra load. Kept in sync with NAV_ENTRIES by
-  // tests/test_feature_pages_embed.py::test_every_pane_url_is_rescued.
+  // So the URL is rescued to "/", where the router is happy, and the code
+  // below reopens the pane and puts the feature URL back. The PRIMARY rescue
+  // is not in this file: an inline script in the <head> of
+  // openwebui-overrides/index.html runs before SvelteKit, writes the same
+  // pending record and rewrites the URL with history.replaceState. Nothing
+  // reloads, and by the time this file runs the pathname is already "/", so
+  // the bounce below does not fire.
+  //
+  // The bounce is only the FALLBACK, for an index.html without that head
+  // script, because it signs people out. This file loads at the end of body,
+  // after SvelteKit has started, and by then Open WebUI's root layout has
+  // often sent GET /api/v1/auths/. location.replace() aborts that request,
+  // Open WebUI reads the network error as a dead session and removes the
+  // token, and the page that loads at "/" goes to /auth. With the bounce as
+  // the only rescue, a reload at /ai-agents or /app-builder ended signed out
+  // in 12 of 20 browser runs against production's files; a reload at "/" in
+  // 0 of 10. Both path lists are kept equal to NAV_ENTRIES by
+  // tests/test_feature_pages_embed.py.
   const AIUI_URL_PATHS = ["/app-builder", "/cronjobs", "/video-generation",
                           "/channel", "/ai-agents", "/graph"];
   const AIUI_PENDING_KEY = "__aiuiOpenPath";
@@ -1610,7 +1624,9 @@
         // so "is one open" has to ask whether it is SHOWING. A bare
         // [data-aiui-embed] lookup answers yes forever after the first open.
         // Either we are already sitting on the feature URL (the pane pushed it
-        // and the app never navigated away), or we were bounced here from one.
+        // and the app never navigated away), or a rescue recorded one: the
+        // head script in index.html earlier on this same load, or the bounce
+        // on the load before it. The record reads the same either way.
         // NOT named `pending`: that is the re-entrancy guard in the enclosing
         // scope, and shadowing it here put it in the temporal dead zone, so
         // `pending = false` at the top of this callback threw and killed the
@@ -1620,7 +1636,7 @@
           (cfg) => cfg.urlPath &&
                    (cfg.urlPath === location.pathname || cfg.urlPath === pendingPath));
         // Only open once the real app is on screen. A signed-out visitor who
-        // pastes a feature URL is bounced to "/" and lands on the SIGN-IN page,
+        // pastes a feature URL is rescued to "/" and lands on the SIGN-IN page,
         // where opening a pane would both cover the login form and burn the
         // request, so after signing in they would land on a plain chat. The
         // sidebar is the honest signal that the app rendered and the user is

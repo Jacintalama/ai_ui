@@ -18,6 +18,12 @@ native OWUI feature. Its entire coupling to OWUI is three things:
   `openwebui-overrides/index.html` that injects one boot script,
   `/tasks/static/task-panel.js`. That script deep-clones OWUI's sidebar row to
   add "App Builder / Video / Cron" nav entries and borrows OWUI's login JWT.
+  The override also carries an inline `<head>` script that moves a pane URL
+  (`/app-builder`, `/ai-agents`, ...) to `/` before SvelteKit boots. When the
+  override is regenerated for an OWUI upgrade, carry BOTH over: without the
+  head script, reloading a pane URL often signs the user out (see the
+  comment in that script). `tests/test_feature_pages_embed.py` in the tasks service fails
+  if it is missing.
 - **Everything else is re-implemented under `/tasks/*`:** the gallery
   (`projects.html`), the preview/editor (`preview.html` + a home-grown iframe +
   `picker.js` visual-edit), templates, task tracking, cron, and even the built

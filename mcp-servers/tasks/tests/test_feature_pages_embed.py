@@ -171,6 +171,105 @@ def test_a_pane_never_opens_over_the_sign_in_page():
     assert "wanted && appIsUp" in JS
 
 
+# --- the rescue must not sign anyone out ---------------------------------
+#
+# The bounce in task-panel.js used to be the only rescue, and it logged people
+# out. task-panel.js loads at the END of body, after the SvelteKit bootstrap
+# has started Open WebUI, whose root layout asks GET /api/v1/auths/ who the
+# user is. location.replace("/") aborts that request, Open WebUI reads the
+# network error as "no session" and deletes the token, and the page that then
+# loads at "/" goes to /auth. Measured in a browser against production's
+# files: 12 of 20 reloads at /ai-agents or /app-builder ended signed out,
+# 0 of 10 at "/". Production's logs agreed: 24 of 28 password sign-ins over
+# 30 days came 3 to 14 s after a full load of a pane URL.
+#
+# The override now rewrites the URL in <head>, before any of SvelteKit runs, so
+# there is no navigation left to abort. These read the real override file:
+# it is regenerated from the stock image on every Open WebUI upgrade, and a
+# head script is the kind of thing that gets left behind.
+
+def _override() -> str:
+    return (ROOT / "openwebui-overrides" / "index.html").read_text(
+        encoding="utf-8")
+
+
+def _js_code(src: str) -> str:
+    """Script text without comments, so a comment explaining why
+    location.replace is dangerous does not count as calling it."""
+    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    return re.sub(r"(?m)//.*$", "", src)
+
+
+def _head_rescue() -> tuple:
+    """(offset, body) of the inline <head> script that records the pane path,
+    or (-1, "") when the override has none."""
+    html = _override()
+    head = html.split("</head>", 1)[0]
+    for m in re.finditer(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>",
+                         head, re.S):
+        if "sessionStorage" in _js_code(m.group(1)):
+            return m.start(), m.group(1)
+    return -1, ""
+
+
+def test_the_override_rescues_pane_urls_in_head():
+    at, _ = _head_rescue()
+    assert at >= 0, (
+        "openwebui-overrides/index.html has no inline <head> script recording "
+        "the pane path, so a reload at a pane URL falls back to the bounce in "
+        "task-panel.js, which signs people out. Regenerated the override for "
+        "an Open WebUI upgrade? Carry the head script over too.")
+
+
+def test_the_head_rescue_runs_before_anything_else_on_the_page():
+    """Before the SvelteKit bootstrap specifically, since that is what starts
+    the session check; and before every other script, so nothing on the page
+    ever reads the pane URL it is about to lose."""
+    html = _override()
+    at, _ = _head_rescue()
+    boot = html.find('import("/_app/immutable/entry/start.')
+    assert boot >= 0, "SvelteKit bootstrap not found; this check would be vacuous"
+    assert 0 <= at < boot
+    assert at == html.find("<script"), "another script runs before the rescue"
+
+
+def test_the_head_rescue_knows_every_pane_url():
+    """Same list as the fallback in task-panel.js, which
+    test_every_pane_url_is_rescued keeps equal to NAV_ENTRIES. A URL missing
+    here would still be rescued, but by the bounce, and so would still sign
+    people out."""
+    _, body = _head_rescue()
+    assert "AIUI_URL_PATHS = [" in body, "no path list in the head rescue"
+    head_paths = set(re.findall(
+        r'"([^"]+)"', body.split("AIUI_URL_PATHS = [", 1)[1].split("]", 1)[0]))
+    panel_paths = set(re.findall(
+        r'"([^"]+)"', JS.split("const AIUI_URL_PATHS = [", 1)[1].split("]", 1)[0]))
+    assert head_paths == panel_paths, head_paths.symmetric_difference(panel_paths)
+
+
+def test_the_head_rescue_hands_over_to_the_panel_without_navigating():
+    """It writes the exact record aiuiPendingPath() reads, then changes the
+    URL in place. Any real navigation here would bring the logout back."""
+    _, body = _head_rescue()
+    code = _js_code(body)
+    key = re.search(r'const AIUI_PENDING_KEY = "([^"]+)"', JS).group(1)
+    assert f'"{key}"' in code, f"head rescue does not write {key}"
+    assert "path: location.pathname" in code and "at: Date.now()" in code
+    assert 'history.replaceState(history.state, "", "/")' in code
+    assert "try" in code and "catch" in code, "a storage error must not break the page"
+    assert not re.search(r"location\.(replace|assign|reload)\s*\(", code)
+    assert not re.search(r"location(\.href)?\s*=(?!=)", code)
+
+
+def test_the_panel_keeps_the_bounce_for_an_override_without_the_head_script():
+    """An override regenerated without the head script still needs a way off
+    SvelteKit's 404, and the bounce is it. With the head script in place the
+    pathname is already "/" when task-panel.js runs, so the bounce never
+    fires."""
+    rescue = JS.split("function rescueDirectFeatureUrl", 1)[1].split("})();", 1)[0]
+    assert 'location.replace("/")' in rescue
+
+
 # --- "no loading" -------------------------------------------------------
 
 def test_an_opened_page_is_kept_alive_instead_of_rebuilt():

@@ -14,10 +14,18 @@ pane and puts the feature URL back. That is a real navigation, so it cannot be
 tested against file:// — these tests run a throwaway HTTP server that imitates
 the two behaviours that matter: any path returns the same shell, and the shell
 "routes" to a 404 body for paths it does not know.
+
+That bounce is now the fallback. It signed people out: the navigation aborts
+Open WebUI's in-flight session check and Open WebUI deletes the token. The
+primary rescue is an inline <head> script in openwebui-overrides/index.html
+that moves the URL to "/" before the app starts, with no navigation at all.
+The last test here runs that script, lifted verbatim from the real override,
+in front of the same shell.
 """
 import functools
 import http.server
 import pathlib
+import re
 import shutil
 import threading
 
@@ -57,13 +65,15 @@ SHELL = """<!doctype html><html><head><meta charset="utf-8"><title>Open WebUI</t
 
 
 class _Handler(http.server.SimpleHTTPRequestHandler):
+    shell = SHELL
+
     def do_GET(self):  # noqa: N802 - stdlib naming
         path = self.path.split("?")[0]
         if path == "/task-panel.js":
             body = (pathlib.Path(self.directory) / "task-panel.js").read_bytes()
             ctype = "application/javascript"
         else:
-            body = SHELL.encode()
+            body = self.shell.encode()
             ctype = "text/html"
         self.send_response(200)          # 200 for EVERY path, like the real one
         self.send_header("Content-Type", ctype)
@@ -75,13 +85,47 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
         pass
 
 
-@pytest.fixture(scope="module")
-def base_url(tmp_path_factory):
+def _serve(tmp_path_factory, shell):
     d = tmp_path_factory.mktemp("shell")
     shutil.copy(STATIC / "task-panel.js", d / "task-panel.js")
-    handler = functools.partial(_Handler, directory=str(d))
+    handler = functools.partial(
+        type("_ShellHandler", (_Handler,), {"shell": shell}), directory=str(d))
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+@pytest.fixture(scope="module")
+def base_url(tmp_path_factory):
+    srv = _serve(tmp_path_factory, SHELL)
+    yield f"http://127.0.0.1:{srv.server_address[1]}"
+    srv.shutdown()
+
+
+def _override_head_rescue() -> str:
+    """The inline rescue <script> from the real override's <head>, verbatim.
+
+    Lifted from the file rather than retyped, so this cannot pass against a
+    script the test author imagined. Skips only where the override is not
+    part of the checkout (the tasks image ships tests/ without it)."""
+    parents = HERE.parents
+    override = (parents[3] / "openwebui-overrides" / "index.html"
+                if len(parents) > 3 else None)
+    if override is None or not override.exists():
+        pytest.skip("openwebui-overrides/index.html is not in this checkout")
+    head = override.read_text(encoding="utf-8").split("</head>", 1)[0]
+    for m in re.finditer(r"<script(?![^>]*\bsrc=)[^>]*>.*?</script>", head, re.S):
+        if "sessionStorage" in m.group(0):
+            return m.group(0)
+    return ""
+
+
+@pytest.fixture(scope="module")
+def override_base_url(tmp_path_factory):
+    rescue = _override_head_rescue()
+    assert rescue, "openwebui-overrides/index.html has no <head> rescue script"
+    # Same place as in the real file: in <head>, ahead of the app's scripts.
+    srv = _serve(tmp_path_factory, SHELL.replace("</title>", "</title>\n" + rescue, 1))
     yield f"http://127.0.0.1:{srv.server_address[1]}"
     srv.shutdown()
 
@@ -187,5 +231,27 @@ def test_a_stale_request_does_not_ambush_a_later_visit(browser, base_url):
         assert pg.locator("[data-aiui-embed][data-open]").count() == 0
         assert pg.evaluate(
             "() => sessionStorage.getItem('__aiuiOpenPath')") is None
+    finally:
+        pg.close()
+
+
+@pytest.mark.parametrize("url_path", PANE_URLS + ["/graph"])
+def test_the_override_opens_a_pane_url_without_a_second_page_load(
+        browser, override_base_url, url_path):
+    """With the head script from the real override, the pane URL is loaded
+    ONCE. A second document request would be the bounce, and the bounce is
+    what aborted Open WebUI's session check and signed people out."""
+    pg = browser.new_page()
+    docs = []
+    pg.on("request", lambda r: docs.append(r.url)
+          if r.is_navigation_request() and r.frame == pg.main_frame else None)
+    try:
+        pg.goto(override_base_url + url_path)
+        pg.wait_for_selector("[data-aiui-embed][data-open]", timeout=8000)
+        assert "404" not in pg.inner_text("#app")
+        assert pg.locator("#sidebar").count() == 1, "landed without a sidebar"
+        assert pg.url == override_base_url + url_path
+        assert docs == [override_base_url + url_path], (
+            f"the page loaded {len(docs)} times: {docs}")
     finally:
         pg.close()

@@ -35,6 +35,38 @@
 		<meta name="theme-color" content="#171717" />
 		<meta name="robots" content="noindex,nofollow" />
 
+		<script>
+			// AIUI pane URLs. Not part of stock Open WebUI: when this file is
+			// regenerated from a new image, carry this block over along with the
+			// task-panel.js tag at the end of body.
+			// mcp-servers/tasks/tests/test_feature_pages_embed.py fails without it.
+			//
+			// /app-builder, /cronjobs and the other pane URLs belong to task-panel.js,
+			// so Open WebUI's router renders a bare 404 for them. task-panel.js used
+			// to fix that with location.replace("/"), but it runs at the end of body,
+			// after SvelteKit has started and sent GET /api/v1/auths/. That navigation
+			// aborts the request, Open WebUI takes the network error for a dead
+			// session and deletes the token, and the user lands on the sign-in page.
+			// Rewriting the URL here, before any SvelteKit script runs, needs no
+			// navigation: the app boots at "/", and task-panel.js reads the record
+			// below, reopens the pane and puts the feature URL back. Same list and
+			// record format as AIUI_URL_PATHS and aiuiPendingPath() in task-panel.js.
+			(function () {
+				try {
+					const AIUI_URL_PATHS = ["/app-builder", "/cronjobs", "/video-generation",
+						"/channel", "/ai-agents", "/graph"];
+					if (AIUI_URL_PATHS.indexOf(location.pathname) < 0) return;
+					// Stored before the URL changes. If storage is blocked this throws
+					// first and the URL is left alone, which is where things stood
+					// before this block existed.
+					sessionStorage.setItem("__aiuiOpenPath", JSON.stringify(
+						{ path: location.pathname, at: Date.now() }));
+					// Same state object, so whatever the history entry carries survives.
+					history.replaceState(history.state, "", "/");
+				} catch (e) { /* URL untouched; the task-panel.js bounce is still behind this */ }
+			})();
+		</script>
+
 		<script src="/static/loader.js" defer crossorigin="use-credentials"></script>
 		<link rel="stylesheet" href="/static/custom.css" crossorigin="use-credentials" />
 
