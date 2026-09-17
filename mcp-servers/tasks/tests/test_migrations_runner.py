@@ -70,3 +70,14 @@ def test_the_agent_memory_migration_is_picked_up():
     sql = (MIGRATIONS / "049_agent_memory.sql").read_text(encoding="utf-8")
     assert "CREATE TABLE IF NOT EXISTS tasks.agent_memory" in sql
     assert "UNIQUE (agent_id, user_email, key)" in sql
+
+
+def test_the_agent_run_cost_migration_is_picked_up_and_its_rollback_is_not():
+    names = [f.name for f in _would_run()]
+    assert "050_agent_run_model_and_cost.sql" in names
+    sql = (MIGRATIONS / "050_agent_run_model_and_cost.sql").read_text(encoding="utf-8")
+    for column in ("model TEXT", "escalation TEXT", "prompt_tokens INTEGER",
+                   "completion_tokens INTEGER", "cost_usd DOUBLE PRECISION"):
+        assert "ADD COLUMN IF NOT EXISTS " + column in sql
+    assert "DROP" not in sql.upper()
+    assert (MIGRATIONS / "rollbacks" / "050_agent_run_model_and_cost.down.sql").exists()
