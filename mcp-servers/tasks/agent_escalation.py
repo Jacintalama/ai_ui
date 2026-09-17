@@ -270,3 +270,98 @@ def conversation_chars(messages) -> int:
 
 def too_long(messages) -> bool:
     return conversation_chars(messages) > CONVERSATION_CHARS
+
+
+# --- who is asking ----------------------------------------------------------
+
+@dataclass(frozen=True)
+class Intent:
+    """What a turn's caller knows about the person asking.
+
+    person_text is what they typed. may_pass is true in the room when this
+    agent was not named and may answer PASS. follow_up is true when the turn
+    continues one that stopped to ask.
+    """
+    person_text: str = ""
+    may_pass: bool = False
+    follow_up: bool = False
+
+
+_current = contextvars.ContextVar("agent_escalation_intent", default=None)
+
+
+def current_intent() -> Intent | None:
+    return _current.get()
+
+
+@contextlib.contextmanager
+def asking(intent: Intent):
+    """Carry an intent to the turn beneath this call without changing the
+    signature of everything in between. Reset on the way out, so it never
+    leaks to the next agent in the room."""
+    token = _current.set(intent)
+    try:
+        yield intent
+    finally:
+        _current.reset(token)
+
+
+# --- sticky window ----------------------------------------------------------
+
+_windows: dict = {}
+
+
+def _key(user_email, agent_id) -> tuple:
+    return ((user_email or "").strip().lower(), agent_id or "")
+
+
+def mark_paid(user_email, agent_id, now: float | None = None) -> None:
+    now = time.monotonic() if now is None else now
+    if len(_windows) > 500:
+        for k in [k for k, until in _windows.items() if until <= now]:
+            _windows.pop(k, None)
+    _windows[_key(user_email, agent_id)] = now + STICKY_SECONDS
+
+
+def in_window(user_email, agent_id, now: float | None = None) -> bool:
+    now = time.monotonic() if now is None else now
+    key = _key(user_email, agent_id)
+    until = _windows.get(key)
+    if until is None:
+        return False
+    if until <= now:
+        _windows.pop(key, None)
+        return False
+    return True
+
+
+def decide(intent: Intent, window_open: bool) -> str | None:
+    """Why this turn starts on the paid model, or None."""
+    reason = rule_reason(intent.person_text)
+    if reason:
+        return reason
+    if not window_open:
+        return None
+    if intent.follow_up:
+        return REASON_STICKY
+    if is_plain_question(intent.person_text):
+        return None
+    return REASON_STICKY
+
+
+# --- the once a day note ----------------------------------------------------
+
+_noted: set = set()
+
+
+def take_cap_note(user_email, today: str | None = None) -> str:
+    """The cap note the first time today, "" after that."""
+    day = today or datetime.now(timezone.utc).date().isoformat()
+    key = ((user_email or "").strip().lower(), day)
+    if key in _noted:
+        return ""
+    if len(_noted) > 1000:
+        for old in [k for k in _noted if k[1] != day]:
+            _noted.discard(old)
+    _noted.add(key)
+    return CAP_NOTE % DAILY_CAP
