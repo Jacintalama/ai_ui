@@ -206,6 +206,27 @@ async def test_a_count_that_failed_stays_free_and_says_nothing(wired):
     assert [p["model"] for p in posts] == ["agent-1"]
 
 
+async def test_the_cap_note_is_never_added_to_a_pass_and_is_kept_for_an_answer(wired):
+    """An unnamed agent whose first free reply takes the job asks to move,
+    is refused at the cap, and then passes. The room drops a PASS, so a note
+    on it would be lost, and the day's one note would be spent on nothing."""
+    wired["count"].return_value = 40
+    replies = [_reply("", calls=[_call("list_my_apps")]), _reply("PASS"),
+               _reply("here is a start")]
+
+    async def fake_post(payload, token, timeout=None):
+        return replies.pop(0)
+
+    passed, _, _ = await _run(fake_post, "build me a todo app", may_pass=True)
+    answered, _, _ = await _run(fake_post, "build me a todo app")
+
+    assert passed == "PASS"
+    assert answered == ("here is a start\n\nToday's limit of 40 turns on the "
+                        "stronger model is used up, so this answer comes from "
+                        "the free model.")
+    assert wired["count"].await_count == 2
+
+
 # --- the room: decide on free first -----------------------------------------
 
 async def test_an_unnamed_agent_that_passes_costs_nothing_paid(wired):
@@ -283,6 +304,26 @@ async def test_an_empty_answer_is_asked_again_on_the_paid_model(wired):
         posts.append(payload)
         if len(posts) == 1:
             return _reply("")
+        return _reply("a real answer")
+
+    answer, _, usage = await _run(fake_post, "summarise my week")
+    assert answer == "a real answer"
+    assert [p["model"] for p in posts] == ["agent-1", "gpt-5.5"]
+    assert usage.escalation == "empty_answer"
+
+
+async def test_reasoning_with_no_answer_is_asked_again_on_the_paid_model(wired):
+    """The design's other empty answer: the model thought and said nothing.
+    The thinking is not an answer and is never shown."""
+    posts = []
+
+    async def fake_post(payload, token, timeout=None):
+        posts.append(payload)
+        if len(posts) == 1:
+            return {"choices": [{"message": {
+                "content": None, "tool_calls": None,
+                "reasoning_content": "The person wants a summary of"},
+                "finish_reason": "length"}]}
         return _reply("a real answer")
 
     answer, _, usage = await _run(fake_post, "summarise my week")
@@ -394,12 +435,21 @@ async def test_a_paid_reply_that_is_not_json_goes_back_to_the_free_model(wired, 
     assert posts == ["gpt-5.5", "agent-1"]
 
 
-async def test_a_401_on_the_paid_model_is_raised_not_hidden(wired):
+@pytest.mark.parametrize("status", [401, 403])
+async def test_a_401_or_403_on_the_paid_model_is_raised_not_hidden(wired, status):
+    """Only the paid post fails, so a loop that went back to the free model
+    would answer instead of raising."""
+    posts = []
+
     async def fake_post(payload, token, timeout=None):
-        raise _http(401, "Not authenticated")
+        posts.append(payload["model"])
+        if payload["model"] == "gpt-5.5":
+            raise _http(status, "Not authenticated")
+        return _reply("free answer")
 
     with pytest.raises(httpx.HTTPStatusError):
         await _run(fake_post, "build me a todo app")
+    assert posts == ["gpt-5.5"]
 
 
 async def test_it_moves_at_most_once_a_turn(wired):
