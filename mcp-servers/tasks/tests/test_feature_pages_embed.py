@@ -180,8 +180,9 @@ def test_a_pane_never_opens_over_the_sign_in_page():
 # network error as "no session" and deletes the token, and the page that then
 # loads at "/" goes to /auth. Measured in a browser against production's
 # files: 12 of 20 reloads at /ai-agents or /app-builder ended signed out,
-# 0 of 10 at "/". Production's logs agreed: 24 of 28 password sign-ins over
-# 30 days came 3 to 14 s after a full load of a pane URL.
+# 0 of 10 at "/". Production's request log (mcp_proxy.api_analytics, read
+# 2026-09-17) agreed: 24 of 28 password sign-ins over the 30 days before
+# came 3 to 14 s after a full load of a pane URL.
 #
 # The override now rewrites the URL in <head>, before any of SvelteKit runs, so
 # there is no navigation left to abort. These read the real override file:

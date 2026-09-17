@@ -259,8 +259,9 @@ def _failure_fragment(messages: list[dict], tid: str, name: str, answer: str,
 
 
 def _question_events(messages: list[dict], pending: dict, tid: str,
-                     agent_id: str, name: str, answer: str, answering,
-                     raw_pending) -> list[dict] | None:
+                     agent_id: str, name: str, answer: str,
+                     answering: str | None,
+                     raw_pending: object) -> list[dict] | None:
     """Records an agent that stopped to ask, and returns what to stream for
     it, or None when this turn did not ask anything.
 
