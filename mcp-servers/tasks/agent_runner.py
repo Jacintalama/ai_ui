@@ -518,8 +518,14 @@ def _paid_failed(exc) -> bool:
     model for. Wider than _provider_failed on purpose: a paid id this box
     cannot route, or a parameter it rejects, is a 400 that says nothing about
     the provider, and the person should still get the free answer. A 401 or
-    403 is this service's own token and ends the turn as it always did."""
-    if isinstance(exc, (httpx.TimeoutException, httpx.TransportError)):
+    403 is this service's own token and ends the turn as it always did.
+
+    A ValueError is a 200 whose body is not JSON: _post_chat's r.json()
+    raises JSONDecodeError, or UnicodeDecodeError for bytes that are not
+    text (checked against httpx 0.28.1 locally, 2026-09-17). That is the HTTP
+    exchange failing too, and without this it ended the turn instead."""
+    if isinstance(exc, (httpx.TimeoutException, httpx.TransportError,
+                        ValueError)):
         return True
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code not in (401, 403)

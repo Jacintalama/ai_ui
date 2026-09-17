@@ -374,6 +374,26 @@ async def test_a_failing_paid_model_goes_back_to_the_free_model_it_left(wired):
     assert usage.escalation == "build"
 
 
+@pytest.mark.parametrize("body", [b"<html>busy</html>", b"\x80 not utf-8"])
+async def test_a_paid_reply_that_is_not_json_goes_back_to_the_free_model(wired, body):
+    """A 200 whose body is not JSON, a proxy's page say, is an HTTP failure
+    like any other. What the fake raises is what httpx itself raises from
+    _post_chat's r.json() for that body: JSONDecodeError for the first,
+    UnicodeDecodeError for the second, both ValueErrors."""
+    req = httpx.Request("POST", "http://open-webui:8080/api/chat/completions")
+    posts = []
+
+    async def fake_post(payload, token, timeout=None):
+        posts.append(payload["model"])
+        if payload["model"] == "gpt-5.5":
+            return httpx.Response(200, content=body, request=req).json()
+        return _reply("free answer")
+
+    answer, _, _ = await _run(fake_post, "build me a todo app")
+    assert answer == "free answer"
+    assert posts == ["gpt-5.5", "agent-1"]
+
+
 async def test_a_401_on_the_paid_model_is_raised_not_hidden(wired):
     async def fake_post(payload, token, timeout=None):
         raise _http(401, "Not authenticated")
