@@ -127,8 +127,13 @@ def cost_of(model: str, prompt_tokens: int, completion_tokens: int):
     return (prompt_tokens * price[0] + completion_tokens * price[1]) / 1_000_000
 
 
+def _is_count(value) -> bool:
+    """A token count a reply actually gave, as opposed to junk or nothing."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def _count(value) -> int:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if not _is_count(value):
         return 0
     return max(int(value), 0)
 
@@ -156,10 +161,19 @@ class TurnUsage:
             if not free:
                 self.cost_usd = None
             return
-        prompt = _count(usage.get("prompt_tokens"))
-        completion = _count(usage.get("completion_tokens"))
+        given_prompt = usage.get("prompt_tokens")
+        given_completion = usage.get("completion_tokens")
+        prompt = _count(given_prompt)
+        completion = _count(given_completion)
         self.prompt_tokens += prompt
         self.completion_tokens += completion
+        if not free and not (_is_count(given_prompt)
+                             or _is_count(given_completion)):
+            # A usage of {}, of nulls, or of names this does not read says no
+            # more than no usage, and pricing it at 0 tokens would record a
+            # paid reply as $0.00.
+            self.cost_usd = None
+            return
         cost = cost_of(model, prompt, completion)
         if cost is None or self.cost_usd is None:
             self.cost_usd = None

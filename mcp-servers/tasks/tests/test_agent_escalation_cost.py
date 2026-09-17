@@ -49,9 +49,32 @@ def test_a_free_reply_without_usage_still_costs_nothing():
     assert u.cost_usd == 0.0
 
 
-def test_junk_token_counts_count_as_zero():
+@pytest.mark.parametrize("usage", [
+    {"prompt_tokens": "lots", "completion_tokens": True},
+    {},
+    {"prompt_tokens": None, "completion_tokens": None},
+    # Another provider's names for the same counts. Nothing here reads them,
+    # so the cost is unknown rather than priced at nothing.
+    {"input_tokens": 7000, "output_tokens": 500},
+])
+def test_a_paid_reply_with_no_usable_token_counts_is_unknown_not_free(usage):
+    # The design: a paid reply without usage records NULL cost, never 0. A
+    # usage dict with no number in it says as little as no usage at all.
     u = esc.TurnUsage()
-    u.add("gpt-5.5", {"prompt_tokens": "lots", "completion_tokens": True})
+    u.add("gpt-5.5", usage)
+    assert (u.prompt_tokens, u.completion_tokens, u.cost_usd) == (0, 0, None)
+
+
+def test_one_usable_count_is_enough_to_price_a_paid_reply():
+    u = esc.TurnUsage()
+    u.add("gpt-5.5", {"prompt_tokens": 1000, "completion_tokens": None})
+    assert (u.prompt_tokens, u.completion_tokens) == (1000, 0)
+    assert u.cost_usd == pytest.approx(1000 * 5 / 1_000_000)
+
+
+def test_a_free_reply_with_junk_token_counts_still_costs_nothing():
+    u = esc.TurnUsage()
+    u.add("nex-agi/nex-n2.5-pro:free", {"prompt_tokens": "lots"})
     assert (u.prompt_tokens, u.completion_tokens, u.cost_usd) == (0, 0, 0.0)
 
 
