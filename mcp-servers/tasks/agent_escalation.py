@@ -222,21 +222,35 @@ class TurnUsage:
 #: The thing being built has to be software, and it has to be what the verb
 #: makes: the head of the phrase after it, not a word forty characters on.
 #: "make dinner plans after the game" reaches "after" before it reaches
-#: "game", and a word in _NOT_A_MODIFIER ends the phrase.
+#: "game", and a word in _NOT_A_MODIFIER ends the phrase. Only function
+#: words end it: what the app is for (an expense tracker, a tax calculator,
+#: a job board) is a modifier like any other.
 _BUILD_VERB = (r"\b(?:build|create|make(?!\s+sure)|generate|scaffold|develop|"
                r"code up|spin up|set up)\s+(?:(?:me|us)\s+)?")
 _DETERMINER = r"(?:(?:a|an|the|my|our|this|that|some|another)\s+)?"
+#: "to" and "and" end the phrase because "create a reminder to renew app
+#: subscriptions" and "create an invoice and email app receipts" make a
+#: reminder and an invoice. A to-do is the one thing "to" names, so "to-do"
+#: is a modifier anywhere and "to do" right after the determiner.
 _NOT_A_MODIFIER = (r"(?:a|an|the|my|our|your|his|her|their|this|that|for|with|"
                    r"after|before|about|to|from|on|in|at|of|by|and|or|but|"
-                   r"which|where|who|when|so|if|job|visa|loan|grant|rental|"
-                   r"permit|passport|credit|mortgage|insurance|expense|tax)")
-_MODIFIERS = r"(?:(?!%s\b)[a-z0-9][\w'-]{0,30}\s+){0,3}" % _NOT_A_MODIFIER
+                   r"which|where|who|when|so|if)")
+_MODIFIERS = (r"(?:(?:to-do|(?!%s\b)[a-z0-9][\w'-]{0,30})\s+){0,3}"
+              % _NOT_A_MODIFIER)
 #: No store, shop, api key, meeting, plans or event. A site is not a site
-#: visit, and an application is software only when it says so.
+#: visit, and an application is software only when it says so. A page is a
+#: web page when it is a kind only a site has (contact, signup, pricing) or
+#: is in an app or a site, and not when it is in a notebook or a doc.
 _SOFTWARE = (
     r"(?:apps?|web ?apps?|(?:web|mobile|desktop|ios|android) applications?|"
     r"web ?sites?|sites?(?!\s+(?:visits?|surveys?|inspections?|meetings?|"
-    r"managers?|plans?|walks?|tours?))|web ?pages?|landing pages?|"
+    r"managers?|plans?|walks?|tours?))|web ?pages?|"
+    r"(?:landing|signup|sign-up|sign ?up|login|log-in|log ?in|sign-in|"
+    r"sign ?in|contact|portfolio|pricing|checkout|settings|profile|admin|"
+    r"product|about|home|404) pages?(?!\s+(?:notes?\b|in\s+(?:(?:my|the|a|"
+    r"our)\s+)?(?:notebook|doc|document|notion|onenote)\b))|"
+    r"pages?\s+(?:in|on|for|to)\s+(?:my|our|the)\s+(?:web ?apps?|apps?|"
+    r"web ?sites?|sites?(?!\s+visits?))|"
     r"dashboards?|backend|back-end|frontend|front-end|"
     r"apis?(?!\s+(?:keys?|tokens?|secrets?|credentials?|access|accounts?))|"
     r"(?:browser|chrome|firefox|vs ?code) extensions?|bots?|plugins?|"
@@ -244,8 +258,8 @@ _SOFTWARE = (
 #: "make a snake game" is a build; "make the game on Friday" is a calendar.
 _GAME = (r"(?:a|an)\s+" + _MODIFIERS
          + r"games?\b(?!\s+(?:plans?|nights?|days?|shows?))")
-_BUILD = re.compile(_BUILD_VERB + r"(?:" + _DETERMINER + _MODIFIERS
-                    + _SOFTWARE + r"|" + _GAME + r")")
+_BUILD = re.compile(_BUILD_VERB + r"(?:" + _DETERMINER + r"(?:to do\s+)?"
+                    + _MODIFIERS + _SOFTWARE + r"|" + _GAME + r")")
 
 #: Codes that are not source code: a zip code, a promo code, a door code.
 #: Whole words, so "navbar code" is still code. Left out on purpose because

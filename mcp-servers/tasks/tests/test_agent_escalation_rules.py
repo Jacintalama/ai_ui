@@ -58,6 +58,21 @@ def _limits(monkeypatch):
      esc.REASON_ERROR),
     ("GET /api/orders returns 500 Internal Server Error", esc.REASON_ERROR),
     ("the checkout page shows 502 on /api/pay", esc.REASON_ERROR),
+    # Builds before the tightening and lost by it, found in review the same
+    # day: a to-do, a tax or a job board is what the app is for, and a
+    # contact or signup page is a web page.
+    ("make a to-do app", esc.REASON_BUILD),
+    ("build me a to do list app", esc.REASON_BUILD),
+    ("build an expense tracker app", esc.REASON_BUILD),
+    ("create a tax calculator app", esc.REASON_BUILD),
+    ("make a mortgage calculator app", esc.REASON_BUILD),
+    ("build me an insurance quote calculator app", esc.REASON_BUILD),
+    ("build a job board website", esc.REASON_BUILD),
+    ("build a signup page for my newsletter", esc.REASON_BUILD),
+    ("create a contact page", esc.REASON_BUILD),
+    ("make a portfolio page", esc.REASON_BUILD),
+    ("make an about page for my bakery", esc.REASON_BUILD),
+    ("create a new page in my app for settings", esc.REASON_BUILD),
 ])
 def test_work_the_free_model_does_badly_moves_to_paid(text, reason):
     assert esc.rule_reason(text) == reason
@@ -102,6 +117,18 @@ def test_work_the_free_model_does_badly_moves_to_paid(text, reason):
     "add a feature story to the newsletter",
     "create a new event: team lunch at noon",
     "set up a weekly standup every Monday at 10",
+    # "to" and "and" still end the phrase: what is made here is a reminder,
+    # a call or an invoice. An application is still not software on its own,
+    # and a page in a notebook is not a web page.
+    "create a reminder to renew app subscriptions",
+    "set up a call to discuss website changes",
+    "create an invoice and email app receipts",
+    "make a loan application at the bank",
+    "create a page in my notebook for meeting notes",
+    "make a new page in the shared doc",
+    "make a cover page for the report",
+    "create a contact page in my notebook",
+    "create a home page in notion",
     "",
     None,
 ])

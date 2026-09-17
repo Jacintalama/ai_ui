@@ -68,7 +68,11 @@ agent's card, press Edit and change its model, then change it back. The ask:
 1. Up front, from what the person typed (never from an instruction this
    service added, such as PASS_INSTRUCTION, the identity line or the recall
    block):
-   1. asks to build or create an app, site, page or dashboard (`build`)
+   1. asks to build or create an app, site, dashboard, bot, extension or
+      game, or a web page: a kind only a site has (landing, signup, contact,
+      pricing) or a page in an app or site. A page in a notebook or a doc is
+      not one, and neither is an application that does not say web or
+      mobile (`build`)
    2. asks to write, change, refactor, implement or debug code, or mentions
       App Builder, or pastes a code block (`code`)
    3. pastes an error, exception or stack trace (`error`)
