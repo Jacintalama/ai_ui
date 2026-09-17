@@ -284,13 +284,23 @@ def names_heavy_tool(calls) -> bool:
 def conversation_chars(messages) -> int:
     total = 0
     for m in messages if isinstance(messages, list) else []:
-        content = m.get("content") if isinstance(m, dict) else None
+        if not isinstance(m, dict):
+            continue
+        content = m.get("content")
         if isinstance(content, str):
             total += len(content)
         elif isinstance(content, list):
             total += sum(len(p.get("text") or "") for p in content
                          if isinstance(p, dict)
                          and isinstance(p.get("text"), str))
+        # The arguments of a tool call are carried in every later round too,
+        # and a file body handed to apply_app_change can be most of them.
+        calls = m.get("tool_calls")
+        for call in calls if isinstance(calls, list) else []:
+            fn = call.get("function") if isinstance(call, dict) else None
+            arguments = fn.get("arguments") if isinstance(fn, dict) else None
+            if isinstance(arguments, str):
+                total += len(arguments)
     return total
 
 

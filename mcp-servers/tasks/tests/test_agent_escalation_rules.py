@@ -99,3 +99,16 @@ def test_conversation_size_counts_text_parts_and_ignores_junk(monkeypatch):
             {"role": "tool", "content": None}, "junk"]
     assert esc.conversation_chars(msgs) == 11
     assert esc.too_long(msgs)
+
+
+def test_conversation_size_counts_the_arguments_of_tool_calls():
+    # A file body the model hands apply_app_change is carried in every later
+    # round like any other text.
+    msgs = [{"role": "assistant", "content": None, "tool_calls": [
+        {"function": {"name": "apply_app_change", "arguments": "x" * 70000}},
+        {"function": {"name": "read_app_file", "arguments": "{}"}},
+        {"function": {"name": "junk", "arguments": None}},
+        {"function": "junk"}, None]},
+        {"role": "assistant", "content": "ok", "tool_calls": "junk"}]
+    assert esc.conversation_chars(msgs) == 70000 + 2 + 2
+    assert esc.too_long(msgs)
