@@ -513,7 +513,7 @@ CHAT_TOKEN_TTL_SECONDS = int(
     worst_turn_seconds(MAX_TOOL_ITERATIONS, HTTP_TIMEOUT_SECONDS)) + 60
 
 
-def _paid_failed(exc) -> bool:
+def _paid_failed(exc: BaseException) -> bool:
     """True when the paid model failed in a way worth going back to the free
     model for. Wider than _provider_failed on purpose: a paid id this box
     cannot route, or a parameter it rejects, is a 400 that says nothing about
@@ -538,7 +538,7 @@ class _Escalation:
     paid model that failed is not tried again."""
 
     def __init__(self, *, enabled: bool, user_email: str, agent_id: str,
-                 usage: "agent_escalation.TurnUsage"):
+                 usage: "agent_escalation.TurnUsage") -> None:
         self.enabled = enabled
         self.user_email = user_email
         self.agent_id = agent_id
