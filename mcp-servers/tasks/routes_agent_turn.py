@@ -1004,6 +1004,17 @@ async def chat(body: ChatIn,
         # to what they actually typed, not silence.
         await _clear_pin(key)
 
+    if agent is None:
+        # Nobody named and nobody pinned. Before handing this to IO, the same
+        # ladder the panel uses gets a look: if exactly one agent owns the
+        # subject, "anything unread in my inbox" is a question for the one
+        # agent with the mailbox, not a question for a general model that
+        # cannot see it. Only when it is unambiguous, so a room where two
+        # agents read email still falls through.
+        owner = agent_routing.domain_owner(text, agents)
+        if owner is not None:
+            agent = owner
+
     if agent is None and getattr(body, "route_only", False):
         # The caller will answer for itself. Saying so with an empty list
         # rather than an IO answer is what keeps the Auto pipe from asking

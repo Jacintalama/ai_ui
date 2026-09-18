@@ -5,6 +5,7 @@ panel, its scripts, and the elements the fragments target, because the last
 attempt shipped with the server side correct and the screen wrong.
 """
 import pathlib
+import re
 
 STATIC = pathlib.Path(__file__).resolve().parents[1] / "static"
 PAGE = STATIC / "agents.html"
@@ -106,6 +107,38 @@ def test_the_panel_styles_cover_the_classes_it_renders():
 
 # The divider between the conversation and the agents. A width somebody drags
 # and loses on the next visit is worse than one they cannot change at all.
+
+def test_the_page_itself_does_not_scroll():
+    """Ralph, with a screenshot, 2026-09-18: "make it fit no need to scroll".
+    The cards grew the page, so the window scrolled, the conversation scrolled
+    inside it, and getting back to the composer meant scrolling the page down
+    again. The page is a screen now: it fills the window, and the two columns
+    scroll inside it.
+
+    Only above the breakpoint. Stacked into one column, the page has to scroll
+    or everything below the fold is unreachable."""
+    page, css = _page(), _styles()
+    assert "overflow: hidden" in page, "the page still scrolls as a document"
+    assert "min-width: 1181px" in page, (
+        "the shell must not apply where the columns stack")
+    assert "overflow-y: auto" in css.split(".agents-main")[1][:200], (
+        "the cards column has to carry its own overflow")
+    # The declaration, not the word: the comment above the rule says what it
+    # used to be, and a test that cannot tell prose from code would forbid
+    # explaining the change.
+    rules = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    assert "100vh" not in rules, (
+        "the panel is sized by its column now, not by the window")
+
+
+def test_a_card_says_nothing_about_memory_until_there_is_some():
+    """Every card carried "Memory: 0 notes" and a Show button that opened an
+    empty list. That is the height that pushed the seventh agent off screen.
+
+    The painter is the page's own inline script, not the panel's: the cards
+    belong to the page and the panel does not know they exist."""
+    assert "el.hidden = n === 0" in _page()
+
 
 def test_the_columns_can_be_resized_and_the_width_is_remembered():
     page, js, css = _page(), _script(), _styles()

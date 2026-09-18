@@ -123,6 +123,174 @@ def match_agent(text: str, agents) -> dict | None:
     return matches[0] if matches else None
 
 
+#: Said to answer a question an agent asked, rather than to start something
+#: new. Matched against the WHOLE message so "no" dismisses a pending question
+#: while "no, the other app" is an instruction and goes through the ladder.
+YES_WORDS = frozenset({
+    "y", "yes", "yes please", "yeah", "yep", "yup", "ok", "okay", "sure",
+    "go", "go ahead", "go head", "do it", "apply it", "apply", "approve",
+    "approved", "confirm", "confirmed", "proceed", "please do", "send it",
+    "run it", "build it", "just do it",
+})
+REFUSAL_WORDS = frozenset({
+    "n", "no", "nope", "no thanks", "no thank you", "cancel", "stop that",
+    "do not", "dont", "don't", "deny", "denied", "refuse", "skip it",
+    "not now", "leave it",
+})
+
+#: Carries on what the last agent was doing rather than opening a subject.
+#: Only consulted when an agent spoke last and nobody was named, so a
+#: continuation goes back to whoever is mid job instead of to the whole room.
+CONTINUATION_OPENERS = (
+    "go ahead", "go head", "carry on", "continue", "keep going", "and then",
+    "then ", "also ", "next", "what about", "why", "how about", "do it",
+    "try again", "again", "instead", "make it", "change it", "fix it",
+    "yes ", "no ", "ok ", "okay ", "thanks", "thank you",
+)
+
+#: How short a message has to be, in characters, to read as a follow on rather
+#: than a new request. A long message carries its own subject and belongs to
+#: the room even when it opens with "and".
+CONTINUATION_CHARS = 80
+
+#: The words that say which agent a message is for when nobody was named, and
+#: the tool that owns each. Only used when exactly ONE agent holds that tool:
+#: two agents with email means the room decides, the same as before.
+DOMAIN_WORDS = {
+    "gmail": ("email", "emails", "inbox", "unread", "mail", "mailbox",
+              "draft", "reply to", "send it to", "message from"),
+    "calendar": ("calendar", "meeting", "meetings", "appointment", "diary",
+                 "free time", "busy", "my day", "my week", "book a"),
+    "gdrive": ("drive", "file", "files", "folder", "document", "documents",
+               "spreadsheet", "doc", "docs"),
+    "code": ("app", "apps", "website", "site", "page", "build", "deploy",
+             "bug", "error", "errors", "broken", "repo", "code", "landing"),
+    "schedules": ("schedule", "schedules", "cron", "every day", "every week",
+                  "weekly", "daily", "reminder"),
+    "account": ("account", "connection", "connections", "connected",
+                "integration", "integrations"),
+}
+
+#: Why a message went where it did. Returned alongside the speakers so the
+#: caller can log it, test it, and one day show it.
+ROUTE_APPROVAL = "approval"
+ROUTE_NAMED = "named"
+ROUTE_COLLECTIVE = "collective"
+ROUTE_CONTINUATION = "continuation"
+ROUTE_OWNER = "owner"
+ROUTE_ROOM = "room"
+
+
+def _whole_message(text) -> str:
+    """The message lower cased, stripped of the punctuation people end on."""
+    return (text if isinstance(text, str) else "").strip().lower().rstrip(".!,")
+
+
+def answers_yes_or_no(text):
+    """True for yes, False for no, None when the message is neither.
+
+    Only the WHOLE message counts. "yes" answers the question that is
+    waiting; "yes, but use the other app" is an instruction with a subject of
+    its own and must not be read as a bare approval.
+    """
+    whole = _whole_message(text)
+    if whole in YES_WORDS:
+        return True
+    if whole in REFUSAL_WORDS:
+        return False
+    return None
+
+
+def _continues(text) -> bool:
+    """True when this reads as carrying on rather than starting something."""
+    whole = _whole_message(text)
+    if not whole:
+        return False
+    if len(whole) > CONTINUATION_CHARS:
+        return False
+    if answers_yes_or_no(text) is not None:
+        return True
+    return any(whole.startswith(opener) for opener in CONTINUATION_OPENERS)
+
+
+def _own_tool_ids(agent) -> list:
+    meta = agent.get("meta") if isinstance(agent, dict) else None
+    meta = meta if isinstance(meta, dict) else {}
+    return [t for t in (meta.get("toolIds") or []) if isinstance(t, str)]
+
+
+def domain_owner(text, agents):
+    """The one agent whose tool this message is obviously about, or None.
+
+    Returns None the moment it is not obvious: no domain word, no agent with
+    that tool, or more than one. Guessing between two agents that both read
+    email is what the room is for.
+    """
+    hay = (text if isinstance(text, str) else "").lower()
+    if not isinstance(agents, (list, tuple)):
+        return None
+    hits = set()
+    for tool, words in DOMAIN_WORDS.items():
+        if any(_whole_word_hit(hay, word) for word in words):
+            hits.add(tool)
+    if len(hits) != 1:
+        return None
+    tool = hits.pop()
+    owners = [a for a in agents
+              if isinstance(a, dict) and tool in _own_tool_ids(a)]
+    return owners[0] if len(owners) == 1 else None
+
+
+def choose_speakers(text, agents, last_speaker=None, has_pending=False):
+    """Who answers this message, whether they may pass, and why.
+
+    One ladder, used by the panel and by the Discord and Telegram gateway, so
+    a question asked in one place goes to the same agent in the other. Each
+    rung is tried in order and the first that matches wins:
+
+    1. An agent is waiting on a yes or a no and the whole message is one.
+       That answer belongs to the agent that asked, never to the room. Seen
+       live 2026-09-18: "Yes" to Rex's approval went to all seven agents, all
+       seven passed, and the person was told nobody had anything to add while
+       the change they had just approved sat unapplied.
+    2. A name is spoken. Naming somebody is a question put to them, so they
+       answer and may not pass.
+    3. A collective word. Everybody hears it and each decides for itself,
+       which is what stops seven agents all saying hello.
+    4. A short follow on while one agent is mid job. "go ahead", "try again",
+       "why" belong to whoever just spoke, not to the room.
+    5. Exactly one agent owns the subject. One agent has the calendar, so
+       "when is my next meeting" is not a question for the other six.
+    6. Otherwise the room hears it and the ones with something to say answer.
+
+    Pure: every input is passed in, so each rung is testable without a
+    session, a database or a model.
+    """
+    every = [a for a in agents if isinstance(a, dict)] if isinstance(
+        agents, (list, tuple)) else []
+    if not every:
+        return [], True, ROUTE_ROOM
+
+    if has_pending and answers_yes_or_no(text) is not None:
+        one = [last_speaker] if isinstance(last_speaker, dict) else []
+        return one or every[:1], False, ROUTE_APPROVAL
+
+    named = match_agents(text, every)
+    if named and not addresses_everyone(text):
+        return named, False, ROUTE_NAMED
+    if named:
+        return named, True, ROUTE_COLLECTIVE
+
+    if isinstance(last_speaker, dict) and _continues(text):
+        return [last_speaker], False, ROUTE_CONTINUATION
+
+    owner = domain_owner(text, every)
+    if owner is not None:
+        return [owner], False, ROUTE_OWNER
+
+    return every, True, ROUTE_ROOM
+
+
 def last_user_text(messages) -> str:
     """The most recent thing the person actually typed.
 

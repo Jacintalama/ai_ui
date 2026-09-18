@@ -127,6 +127,77 @@ def test_yes_resumes_only_that_agent(monkeypatch):
     assert "Sent it." in r.text
 
 
+# Typing the answer is pressing the button. Ralph, with a screenshot,
+# 2026-09-18: Rex asked to apply a change, he typed "Yes", and because "yes"
+# names nobody it went to all seven agents. Every one of them passed, the
+# panel said nobody had anything to add, and the change he had just approved
+# was never applied.
+
+def test_typing_yes_answers_the_question_that_is_waiting(monkeypatch):
+    app, mod, resumed = _app(monkeypatch, _asking_turn())
+    c, _ = _ask(app)
+    c.post("/tasks/agents/chat/send", data={"message": "yes"}, headers=_hdr())
+    body = c.get("/tasks/agents/chat/stream", headers=_hdr()).text
+    assert [r["approved"] for r in resumed] == [True], (
+        "the typed answer never reached the agent that asked")
+    assert resumed[0]["agent_id"] == "agent-a"
+    assert "Sent it." in body
+    assert not _questions(mod), "the question is spent and must not linger"
+
+
+def test_typing_no_refuses_it(monkeypatch):
+    app, mod, resumed = _app(monkeypatch, _asking_turn())
+    c, _ = _ask(app)
+    c.post("/tasks/agents/chat/send", data={"message": "no"}, headers=_hdr())
+    body = c.get("/tasks/agents/chat/stream", headers=_hdr()).text
+    assert [r["approved"] for r in resumed] == [False]
+    assert "I did not run that." in body
+
+
+def test_a_typed_yes_never_becomes_a_message_for_the_room(monkeypatch):
+    """The other agents must not be asked. Seven turns for one word is what
+    the room cost, and one of them could answer as though it had been asked
+    to do the thing the person was approving."""
+    app, mod, resumed = _app(monkeypatch, _asking_turn())
+    c, _ = _ask(app)
+    body = c.post("/tasks/agents/chat/send", data={"message": "yes"},
+                  headers=_hdr()).text
+    body += c.get("/tasks/agents/chat/stream", headers=_hdr()).text
+    assert "Mia here" not in body, "the room answered an approval"
+
+
+def test_yes_with_a_subject_of_its_own_is_not_an_approval(monkeypatch):
+    """"yes, but send it tomorrow" is an instruction. Reading it as a bare
+    approval would run the tool the person was in the middle of changing."""
+    app, mod, resumed = _app(monkeypatch, _asking_turn())
+    c, _ = _ask(app)
+    c.post("/tasks/agents/chat/send",
+           data={"message": "yes but send it tomorrow instead please"},
+           headers=_hdr())
+    c.get("/tasks/agents/chat/stream", headers=_hdr())
+    assert resumed == [], "a sentence was treated as a bare yes"
+    assert _questions(mod), "the question must still be waiting"
+
+
+def test_with_two_questions_waiting_a_typed_yes_asks_which(monkeypatch):
+    """Which tool runs is not a coin toss. Two agents waiting and one word
+    means the buttons decide it."""
+    async def both_ask(email, agent, messages, names=()):
+        return {"answer": "May I send this?", "notes": [],
+                "agent": {"id": agent["id"], "name": agent["name"]},
+                "pending": {"agent_id": agent["id"], "user_email": EMAIL,
+                            "calls": CALLS, "conversation": HELD}}
+
+    app, mod, resumed = _app(monkeypatch, both_ask)
+    c, _ = _ask(app)
+    assert len(_questions(mod)) == 2
+    c.post("/tasks/agents/chat/send", data={"message": "yes"}, headers=_hdr())
+    body = c.get("/tasks/agents/chat/stream", headers=_hdr()).text
+    assert resumed == [], "it guessed which question to answer"
+    assert "Yes or No" in body
+    assert len(_questions(mod)) == 2, "both questions stay waiting"
+
+
 def test_no_refuses_and_says_so(monkeypatch):
     app, mod, resumed = _app(monkeypatch, _asking_turn())
     c, _ = _ask(app)

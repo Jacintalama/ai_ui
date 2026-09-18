@@ -118,6 +118,42 @@ def test_a_collective_word_reaches_everyone_without_compelling_them(monkeypatch)
         "the room was addressed, not interrogated one by one")
 
 
+def test_a_follow_on_goes_back_to_whoever_is_mid_job(monkeypatch):
+    """"go ahead" is not a question for the room. Ralph, 2026-09-18: Rex was
+    part way through building a page and every short reply after it went to
+    all seven agents, who each had to decide whether it was theirs."""
+    app, mod, seen, _ = _app(monkeypatch, answers={"Ada": "PASS",
+                                                   "Mia": "On it."})
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/send", data={"message": "mia start the draft"},
+           headers=_hdr())
+    c.get("/tasks/agents/chat/stream", headers=_hdr())
+    seen.clear()
+    c.post("/tasks/agents/chat/send", data={"message": "go ahead"},
+           headers=_hdr())
+    c.get("/tasks/agents/chat/stream", headers=_hdr())
+    assert [t["agent"] for t in seen] == [MIA["id"]], (
+        "the follow on went to the room instead of to Mia")
+    assert not seen[0]["may_pass"], "it was asked, so it cannot pass"
+
+
+def test_a_new_subject_still_reaches_the_room(monkeypatch):
+    """The other half of the rule above: a message that carries its own
+    subject is not a follow on, however recently somebody spoke."""
+    app, mod, seen, _ = _app(monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/send", data={"message": "mia start the draft"},
+           headers=_hdr())
+    c.get("/tasks/agents/chat/stream", headers=_hdr())
+    seen.clear()
+    c.post("/tasks/agents/chat/send",
+           data={"message": "what does everybody think we should charge for "
+                            "the new plan, and why that number"},
+           headers=_hdr())
+    c.get("/tasks/agents/chat/stream", headers=_hdr())
+    assert sorted(t["agent"] for t in seen) == sorted([ADA["id"], MIA["id"]])
+
+
 def test_speakers_for_is_the_whole_rule():
     import routes_agent_chat as mod
     named, may_pass = mod._speakers_for("ada, look this up", [ADA, MIA])

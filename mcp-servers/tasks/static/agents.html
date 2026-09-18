@@ -26,6 +26,15 @@
      attribute alone hides nothing. */
   [hidden] { display: none !important; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: var(--font-ui); }
+  /* One screen, not a document. The page fills the window and the two
+     columns scroll inside it, so the composer is always where it was left
+     and the window itself never gains a scrollbar. Only while both columns
+     exist: below the breakpoint they stack, and stacked columns have to
+     scroll the page or the lower one is unreachable. */
+  @media (min-width: 1181px) {
+    html, body { height: 100%; overflow: hidden; }
+    body { display: flex; flex-direction: column; }
+  }
 
   .topbar {
     height: 64px; display: flex; align-items: center; gap: 12px;
@@ -1533,6 +1542,11 @@
           var n = counts[el.getAttribute("data-memory-for")] || 0;
           el.querySelector(".memory-count").textContent =
             "Memory: " + n + (n === 1 ? " note" : " notes");
+          // An agent that has learned nothing yet says nothing here. The row
+          // was a line of text and a Show button that opened an empty list,
+          // on every card, and that height is what pushed the seventh agent
+          // below the fold. It comes back the moment there is a note in it.
+          el.hidden = n === 0;
         });
       } catch (e) {
         // Silent, the same as activity, and the line is left empty rather

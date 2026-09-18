@@ -274,30 +274,22 @@ def _question_events(messages: list[dict], pending: dict, tid: str,
     return events
 
 
-def _speakers_for(text: str, agents: list[dict]) -> tuple[list[dict], bool]:
+def _speakers_for(text: str, agents: list[dict], last_speaker: dict | None = None,
+                  has_pending: bool = False) -> tuple[list[dict], bool]:
     """Who answers this message, and whether they are allowed to pass.
 
-    Naming an agent is how you ask one of them something: the named ones
-    answer, and they answer because you asked, so they may not pass. Naming
-    nobody is the ordinary case, and then everybody in the room hears it and
-    each decides for itself whether it has anything to add.
+    The rule itself is agent_routing.choose_speakers, which the Discord and
+    Telegram gateway uses too, so a question asked in the panel reaches the
+    same agent as the same question asked in a channel. This wrapper keeps the
+    panel's own two-value shape and drops the reason.
 
-    match_agents is the same routing the channels use, so asking for Mia in
-    the panel and asking for Mia in Discord pick the same agent.
+    `last_speaker` and `has_pending` are what let the ladder tell a follow on
+    from a new subject, and an answer from a question. Both default to the old
+    behaviour so a caller that knows neither still gets named-or-everybody.
     """
-    named = agent_routing.match_agents(text, agents)
-    if named:
-        # A collective word reaches everybody and stops there. Addressing a
-        # room is not the same as asking every person in it: say "hey
-        # everyone" to seven people and one or two answer, not seven. Until
-        # this, "everyone" matched every agent AS IF each had been named, so
-        # none of them could pass and the owner got seven replies of "I'm
-        # here, what do you need?". Reported with a screenshot 2026-09-14.
-        #
-        # Naming an agent is still a question put to that agent, so it still
-        # answers and still may not pass.
-        return named, agent_routing.addresses_everyone(text)
-    return list(agents), True
+    speakers, may_pass, _why = agent_routing.choose_speakers(
+        text, agents, last_speaker=last_speaker, has_pending=has_pending)
+    return speakers, may_pass
 
 
 def _last_speaker(messages: list[dict], agents: list[dict]) -> dict | None:
@@ -405,7 +397,35 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
     # to build first. Name an agent and only that agent answers; name nobody
     # and everybody hears it and decides for itself.
     asked = agent_routing.last_user_text(s.messages)
-    speakers, may_pass = _speakers_for(asked, agents)
+    # The two facts the ladder needs beyond the message itself: who is mid
+    # job, so a bare "go ahead" goes back to them rather than to the room, and
+    # whether anybody is waiting on a yes, so "Yes" answers the question that
+    # was asked instead of being put to seven agents who all pass.
+    last = _last_speaker(s.messages, agents)
+    speakers, may_pass, why = agent_routing.choose_speakers(
+        asked, agents, last_speaker=last, has_pending=bool(s.pending))
+
+    if why == agent_routing.ROUTE_APPROVAL:
+        # Typing "yes" is pressing Yes. The agent that asked is waiting on
+        # this one word, so it goes there and the round ends: putting it to
+        # the room instead is how an approved change sat unapplied while
+        # seven agents passed on it.
+        ask_id = _pending_ask_id(s)
+        if ask_id:
+            yes = bool(agent_routing.answers_yes_or_no(asked))
+            html = await _apply_pending_answer(email, s, ask_id, yes, agents)
+            yield {"event": "message", "data": render.into_turn(tid, html)}
+        else:
+            # Two agents are waiting and the message says only "yes". Which
+            # tool runs is not a coin toss, so the buttons decide it.
+            line = ("More than one agent is waiting on an answer. Use the "
+                    "Yes or No on the one you mean.")
+            messages_note = {"role": "note", "content": line}
+            s.messages.append(messages_note)
+            yield {"event": "message",
+                   "data": render.into_turn(tid, render.note(line))}
+        yield {"event": "working", "data": render.turn_status(tid, "")}
+        return
     # What this round is answering, carried onto every answer so the bubble can
     # say so. Only when there is something to be confused about: with one
     # question and one answer, a quote repeats the line directly above it.
@@ -846,30 +866,65 @@ async def agent_chat_approve(ask_id: str = Form(...),
             busy + render.approval_bubble(name, ask_id,
                                           page_pending["calls"]))
 
-    s.pending.pop(ask_id, None)
+    yes = (approved or "").strip().lower() in ("yes", "true", "1", "on")
+    return HTMLResponse(
+        await _apply_pending_answer(user.email, s, ask_id, yes, agents))
+
+
+def _pending_ask_id(s: store.RoomSession) -> str:
+    """Which waiting question a typed yes or no is answering.
+
+    The only one waiting, or nothing. A word like "yes" carries no clue about
+    which question it belongs to, and each question runs a tool: sending an
+    email is not undone by explaining afterwards that the other one was meant.
+
+    An earlier version preferred whichever agent spoke most recently, on the
+    grounds that its question is the one at the bottom of the screen. A test
+    written for it caught the flaw at once: with Ada and Mia both waiting,
+    "yes" ran Mia's send_email because Mia happened to answer second. Order of
+    arrival is not consent.
+    """
+    pendings = list(s.pending)
+    return pendings[0] if len(pendings) == 1 else ""
+
+
+async def _apply_pending_answer(email: str, s: store.RoomSession, ask_id: str,
+                                yes: bool, agents: list[dict]) -> str:
+    """Answer one waiting question, and return what to draw for it.
+
+    Shared by the Yes and No buttons and by typing "yes" into the composer,
+    so an answer means the same thing however it was given. It was not
+    shared before, and typing "yes" went to the whole room: seven agents
+    heard it, all seven passed, and the change the person had just approved
+    was never applied while the panel said nobody had anything to add.
+    """
+    pending = s.pending.pop(ask_id, None)
+    if not isinstance(pending, dict) or not pending.get("calls"):
+        return render.note("That question is no longer waiting for an answer.")
+    agent_id = str(pending.get("agent_id") or "")
+    name = _name_for(agent_id, agents) or "Agent"
     # Cleared here, before the resume runs, so a reload shows no stale Yes
     # and No whatever _resume_turn does next.
     _clear_awaiting(s.messages, ask_id)
 
-    yes = (approved or "").strip().lower() in ("yes", "true", "1", "on")
     try:
         out = await _resume_turn(
-            user_email=user.email, agent_id=agent_id,
+            user_email=email, agent_id=agent_id,
             conversation=list(pending.get("conversation") or []),
             calls=list(pending.get("calls") or []), approved=yes)
     except Exception:                                       # noqa: BLE001
         log.exception("agent chat: resume failed for %s", agent_id)
         try:
-            await store.save_chat(user.email, s)
+            await store.save_chat(email, s)
         except Exception:                                   # noqa: BLE001
             log.exception("agent chat: could not save after a failed "
                           "approval")
         # The pending stays popped. On a timeout the tool may already have
         # run, so putting the question back and offering Yes again could run
         # it a second time. Failing closed here is deliberate, not a bug.
-        return HTMLResponse(render.note(
+        return render.note(
             "That could not be completed, so it is no longer waiting for "
-            "an answer."))
+            "an answer.")
     answer = out.get("answer") or ""
 
     raw_pending = out.get("pending")
@@ -894,10 +949,10 @@ async def agent_chat_approve(ask_id: str = Form(...),
         html = render.agent_bubble(name, answer)
 
     try:
-        await store.save_chat(user.email, s)
+        await store.save_chat(email, s)
     except Exception:                                       # noqa: BLE001
         log.exception("agent chat: could not save after an approval")
-    return HTMLResponse(html)
+    return html
 
 
 @router.get("/tasks/agents/chat/thread", include_in_schema=False)
