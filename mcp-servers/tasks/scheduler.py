@@ -320,6 +320,33 @@ async def _create_task_from_schedule(sched: Schedule) -> TaskItem:
     return item
 
 
+def _run_status_for(row) -> str:
+    """What to report for a scheduled run, from the task row it left behind.
+
+    A one-shot build that fails is parked back at `status="pending"` with the
+    reason in `result`. That is deliberate and load bearing for the App
+    Builder page, which offers Try again from exactly that state (see
+    test_build_failure_is_visible, 2026-08-12).
+
+    On this path it reads as a lie. The scheduler creates the row and runs it
+    synchronously, so it cannot still be queued when the call returns:
+    `pending` here means the run did not succeed. Passed through raw it
+    reached Discord as a daily warning headed PENDING and the Cron page as the
+    QUEUED badge, so two schedules sat visibly not-failing for a week while
+    every run was being refused for lack of credit (2026-09-18, 14 rows).
+
+    Only `pending` is reinterpreted. `awaiting_input` is genuinely waiting,
+    and calling that a failure would be the same lie pointing the other way.
+    A row that has vanished is `unknown` rather than `failed`: something else
+    happened, and inventing a reason for somebody's thread is worse than
+    admitting it is not known.
+    """
+    status = (getattr(row, "status", None) if row is not None else None) or ""
+    if not status:
+        return "unknown"
+    return "failed" if status == "pending" else status
+
+
 def _deliverable_result(raw_log: str, fallback: str = "") -> str:
     """The text to deliver for a finished scheduled run.
 
@@ -397,7 +424,7 @@ async def _run_scheduled_task(sched: Schedule) -> tuple[str, str, dict]:
             ex = (await s.execute(
                 select(TaskExecution).where(TaskExecution.id == execution_id)
             )).scalar_one_or_none()
-        status = (row.status if row else None) or "unknown"
+        status = _run_status_for(row)
         raw_log = (ex.log if ex else "") or ""
         result = _deliverable_result(raw_log, (row.result if row else None) or "")
         return status, result, {}
