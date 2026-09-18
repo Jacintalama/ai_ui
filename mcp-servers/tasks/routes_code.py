@@ -87,6 +87,17 @@ async def _spawn_enhance(user_email: str, slug: str, prompt: str):
     return await _create_and_spawn_enhance(user_email, slug, prompt)
 
 
+async def _spawn_build(user_email: str, seed: str, description: str):
+    """A seam over the builder for a NEW app, the twin of _spawn_enhance.
+
+    Same lazy import for the same reason: the builder pulls in the execution
+    stack, and a test proving which description was sent must not start a
+    real build to do it.
+    """
+    from routes_aiuibuilder import _create_and_spawn_build
+    return await _create_and_spawn_build(user_email, seed, description)
+
+
 async def _require_member(user_email: str, slug: str) -> None:
     if not await _can_see(user_email, slug):
         raise HTTPException(status_code=403, detail="That is not your app.")
@@ -112,6 +123,18 @@ class ProposeIn(BaseModel):
 class ApplyIn(BaseModel):
     user_email: str
     token: str
+
+
+class CreateIn(BaseModel):
+    #: What the app should be, in the person's own words. The builder reads
+    #: this as the brief, so it is passed through rather than summarised.
+    user_email: str
+    description: str
+    #: What to call it. Only a seed for the slug; the builder makes the slug
+    #: unique itself. Optional, because "a landing page for my camera brand"
+    #: is already a usable name and asking for one twice is a worse
+    #: conversation than picking one.
+    name: str | None = None
 
 
 @router.get("/apps")
@@ -276,3 +299,37 @@ async def apply(body: ApplyIn,
             # change was "ready in App Builder", and the person had to find
             # it themselves.
             "url": await app_url(slug)}
+
+
+@router.post("/create")
+async def create(body: CreateIn,
+                 x_internal_secret: str = Header(default="")) -> dict:
+    """Build a NEW app from a description.
+
+    Every other route here needs a slug, which means an app that already
+    exists. Asked for a landing page that did not exist, an agent could only
+    list the apps it could not help with and ask the person to pick one of
+    them (Ralph's screenshot, 2026-09-18).
+
+    There is no proposal step. Propose and apply exist because changing an
+    app can destroy work that is already there; a new app starts from
+    nothing, and the enhance path still guards every change made afterwards.
+    Whether an agent may call this at all is decided by its access level, the
+    same as any other write.
+
+    The builder owns the rest: it makes the slug unique, refuses a second
+    build while one is running (429, which reaches the agent as the reason it
+    was refused), and smoke tests the result.
+    """
+    _require_internal(x_internal_secret)
+    description = (body.description or "").strip()
+    if not description:
+        raise HTTPException(status_code=400,
+                            detail="Say what the app should do.")
+    # The name is a seed for the slug, not a title, so the description does
+    # the job when there is no name. _make_slug handles the rest.
+    seed = (body.name or "").strip() or description
+    task_id, slug = await _spawn_build(body.user_email, seed, description)
+    # Always App Builder at this point: nothing has been published, and this
+    # is where the build can be watched.
+    return {"task_id": task_id, "slug": slug, "url": await app_url(slug)}

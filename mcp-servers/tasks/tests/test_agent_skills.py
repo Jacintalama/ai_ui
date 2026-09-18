@@ -69,7 +69,7 @@ def test_every_tool_a_skill_needs_is_one_this_platform_has(skill):
     and the form promises to tell people which tool to tick."""
     known = {"server:mcp-proxy", "gmail", "calendar", "gdrive", "documents",
              "excel_creator", "executive_dashboard", "remember", "schedules",
-             "account", "code"}
+             "account", "code", "video"}
     assert set(skill["tools"]) <= known, set(skill["tools"]) - known
 
 

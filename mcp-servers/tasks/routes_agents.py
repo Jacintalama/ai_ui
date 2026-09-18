@@ -262,6 +262,7 @@ _LABELS = {
     "excel_creator": "Excel",
     "executive_dashboard": "Dashboard",
     "remember": "Memory",
+    "video": "Video",
 }
 
 #: Native tool id -> the public table that proves THIS user connected it.

@@ -60,6 +60,10 @@ def _app_on_disk(tmp_path, slug="shop"):
     ("POST", "/code/propose", {"user_email": OWNER, "slug": "shop",
                                "description": "x"}),
     ("POST", "/code/apply", {"user_email": OWNER, "token": "t"}),
+    # Creating is the newest way in and the most powerful: it starts a real
+    # build. Listed here the day it was added, because the point of this
+    # parametrisation is that a new route cannot quietly skip the check.
+    ("POST", "/code/create", {"user_email": OWNER, "description": "a page"}),
 ])
 async def test_every_endpoint_requires_the_secret(client, method, path, payload):
     """Internal only is this surface's primary safety property, and it was
@@ -73,6 +77,94 @@ async def test_every_endpoint_requires_the_secret(client, method, path, payload)
     else:
         r = await client.post(path, json=payload)
     assert r.status_code == 403, path
+
+
+# Building something that does not exist yet. Ralph's screenshot, 2026-09-18:
+# he asked for a camera landing page called Thunder, and the agent answered "I
+# can only build inside an existing app, so choose one of your existing app
+# slugs". Every route above needs a slug, so the one thing an agent could not
+# do was make the thing being asked for.
+
+@pytest.fixture
+def no_builder(monkeypatch):
+    """The builder, replaced by a record of what it was asked.
+
+    _spawn_build exists as a seam for exactly this: the real one imports the
+    execution stack and starts an agent against a real directory.
+    """
+    asked = {}
+
+    async def spawn(user_email, seed, description):
+        asked.update(user_email=user_email, seed=seed, description=description)
+        return "task-1", "camera-brand-9f21"
+
+    async def url(slug):
+        return "https://ai-ui.example/app-builder"
+
+    monkeypatch.setattr(routes_code, "_spawn_build", spawn)
+    monkeypatch.setattr(routes_code, "app_url", url)
+    return asked
+
+
+async def _create(client, **body):
+    return await client.post("/code/create", json=body,
+                             headers={"X-Internal-Secret": SECRET})
+
+
+async def test_a_new_app_is_built_from_their_own_words(client, no_builder):
+    """The description is the brief the builder works from, so it is passed
+    through rather than summarised on the way."""
+    r = await _create(client, user_email=OWNER, name="Thunder",
+                      description="a landing page for my camera brand")
+    assert r.status_code == 200, r.text
+    assert no_builder["description"] == "a landing page for my camera brand"
+    assert no_builder["user_email"] == OWNER
+    assert r.json()["slug"] == "camera-brand-9f21"
+
+
+async def test_the_reply_says_where_to_watch_it(client, no_builder):
+    """Nothing is published while it builds, so the honest destination is App
+    Builder, where the build can be watched."""
+    r = await _create(client, user_email=OWNER, description="a page")
+    assert r.json()["url"].endswith("/app-builder")
+    assert r.json()["task_id"] == "task-1"
+
+
+async def test_the_name_is_only_a_seed_for_the_slug(client, no_builder):
+    await _create(client, user_email=OWNER, name="Thunder",
+                  description="a landing page for my camera brand")
+    assert no_builder["seed"] == "Thunder"
+
+
+async def test_no_name_seeds_the_slug_from_the_description(client, no_builder):
+    """Asking for a name twice is a worse conversation than picking one: "a
+    landing page for my camera brand" is already a usable seed."""
+    await _create(client, user_email=OWNER,
+                  description="a landing page for my camera brand")
+    assert no_builder["seed"] == "a landing page for my camera brand"
+
+
+@pytest.mark.parametrize("description", ["", "   ", "\n\t "])
+async def test_an_empty_description_builds_nothing(client, no_builder,
+                                                   description):
+    """A build with no brief produces something nobody asked for, and it holds
+    the platform's single build slot while it does."""
+    r = await _create(client, user_email=OWNER, description=description)
+    assert r.status_code == 400
+    assert no_builder == {}, "it started a build with no brief"
+
+
+async def test_one_build_at_a_time_reaches_the_caller(client, monkeypatch):
+    """The builder allows one build platform-wide and says so with a 429.
+    Swallowing it would leave an agent reporting a failure for a queue."""
+    async def busy(user_email, seed, description):
+        raise HTTPException(status_code=429,
+                            detail="A build is already running. Try shortly.")
+
+    monkeypatch.setattr(routes_code, "_spawn_build", busy)
+    r = await _create(client, user_email=OWNER, description="a page")
+    assert r.status_code == 429
+    assert "already running" in r.json()["detail"]
 
 
 def test_the_router_is_mounted_once_and_only_internally():

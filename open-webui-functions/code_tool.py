@@ -144,6 +144,39 @@ class Tools:
                  + (m.get("text") or "") for m in matches]
         return "Matches in " + slug + ":\n" + "\n".join(lines)
 
+    async def create_app(self, description: str, name: str = "",
+                         __user__: dict = {}) -> str:
+        """
+        Build a NEW app, site or page for this person from a description.
+
+        Use this when what they asked for does not exist yet. Every other
+        tool here works on an app that is already there, so without this the
+        only honest answer to "build me a landing page" is a list of apps
+        that are not the one they wanted.
+
+        Do not ask them to pick an existing app first. Do not ask for an
+        approval code either; there is nothing yet to overwrite. Say what you
+        are building, build it, and give them the link in the result exactly
+        as it is written.
+        """
+        try:
+            data = await self._call("POST", "/code/create",
+                                    user_email=self._email(__user__),
+                                    description=description,
+                                    name=(name or "").strip() or None)
+        except RuntimeError as exc:
+            return self._message(exc)
+        said = ("Building " + (data.get("slug") or "the app")
+                + " now: " + (description or "").strip()
+                + ". It takes a few minutes, and it is smoke tested when it "
+                  "finishes and rolled back automatically if it breaks.")
+        url = data.get("url") or ""
+        if url:
+            # Its own line, like apply_app_change: the panel draws a card for
+            # a link like this.
+            said += "\nWatch it here: " + url
+        return said
+
     async def propose_app_change(self, slug: str, description: str,
                                  __user__: dict = {}) -> str:
         """
