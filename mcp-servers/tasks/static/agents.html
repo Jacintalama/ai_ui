@@ -34,6 +34,18 @@
   @media (min-width: 1181px) {
     html, body { height: 100%; overflow: hidden; }
     body { display: flex; flex-direction: column; }
+    /* The chain has to be unbroken from the window down to the two columns.
+       Leaving this a plain block left .agents-layout with nothing to stretch
+       against, so the grid grew to fit the cards, the panel took 100% of
+       THAT, and the composer sat 1700px down a 900px window with
+       overflow:hidden quietly clipping it off. A browser test caught it: the
+       window did not scroll, which is what was asked for, and the thing the
+       page is for was unreachable. */
+    .container {
+      flex: 1; min-height: 0;
+      display: flex; flex-direction: column;
+      padding-top: 18px; padding-bottom: 18px;
+    }
   }
 
   .topbar {
