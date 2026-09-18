@@ -28,7 +28,7 @@ def _app(monkeypatch, turn=None, agents=(ADA, MIA)):
 
     seen = []
 
-    async def default_turn(email, agent, messages, names=()):
+    async def default_turn(email, agent, messages, names=(), **kw):
         seen.append({"agent": agent["id"], "messages": [dict(m) for m in messages]})
         return {"answer": f'{agent["name"]} here', "notes": [],
                 "agent": {"id": agent["id"], "name": agent["name"]}}
@@ -46,8 +46,15 @@ def _app(monkeypatch, turn=None, agents=(ADA, MIA)):
     async def noop_save(email, s):
         return None
 
+    async def no_graph(email, question=""):
+        return ""
+
     monkeypatch.setattr(routes_agent_chat.store, "create_chat", noop_create)
     monkeypatch.setattr(routes_agent_chat.store, "save_chat", noop_save)
+    # Same reason as the store: a round reads the person's whole account from
+    # the database before the first agent speaks, and these tests measure the
+    # round rather than what happens when that read is unavailable.
+    monkeypatch.setattr(routes_agent_chat.agent_graph, "graph_block", no_graph)
 
     app = FastAPI()
     app.include_router(routes_agent_chat.router)
@@ -154,7 +161,7 @@ def test_that_note_survives_a_reload(monkeypatch):
 
 
 def test_a_failed_agent_does_not_take_the_round_down(monkeypatch):
-    async def turn(email, agent, messages, names=()):
+    async def turn(email, agent, messages, names=(), **kw):
         if agent["id"] == "agent-a":
             # _turn_for never raises; a blown-up turn comes back as a sentence.
             return {"answer": "Ada could not finish that just now.", "notes": [],
@@ -191,7 +198,7 @@ def test_an_abandoned_round_does_not_unlock_a_newer_one(monkeypatch):
     app, mod, _ = _app(monkeypatch)
     s = _seat(mod, ["agent-a"])
 
-    async def turn(email, agent, messages, names=()):
+    async def turn(email, agent, messages, names=(), **kw):
         # Mid-round: New chat bumps the generation and a fresh send re-claims
         # the session, exactly as the New chat route will.
         s.generation += 1

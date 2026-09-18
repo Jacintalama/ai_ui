@@ -10,6 +10,7 @@ the work to the ordinary App Builder enhance, which already smoke tests the
 result and rolls the app back if it broke.
 """
 import logging
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, Header, HTTPException
@@ -31,6 +32,43 @@ router = APIRouter(prefix="/code")
 #: Tests point this at a tmp_path. Production leaves it None so
 #: app_code_access uses CLAUDE_WORKSPACE.
 _apps_root_override: Path | None = None
+
+#: Where a person opens an app that has not been published. Its files exist
+#: and its preview works there; only the public address is missing.
+BUILDER_PATH = "/app-builder"
+
+
+def _public_base() -> str:
+    """This platform's own address, with no trailing slash."""
+    return os.environ.get("AIUI_PUBLIC_BASE_URL", "").strip().rstrip("/")
+
+
+async def app_url(slug: str) -> str:
+    """Where this person can actually open the app, or "".
+
+    A published app is served at /apps/<slug>/. An unpublished one is NOT:
+    main.py serves that route only for a slug with a tasks.published_apps
+    row and 404s otherwise, so linking every app there would hand somebody a
+    dead link at the exact moment they were told their change was applied.
+    An unpublished app points at App Builder instead, where its files are.
+
+    Fails open to App Builder rather than to nothing: the app was just
+    changed, so the person needs somewhere to go even when the publish
+    lookup is the thing that broke.
+    """
+    base = _public_base()
+    if not base or not slug:
+        return ""
+    try:
+        async with session() as s:
+            row = (await s.execute(
+                text("SELECT 1 FROM tasks.published_apps WHERE slug = :slug"),
+                {"slug": slug})).first()
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not tell whether %s is published", slug,
+                       exc_info=True)
+        return base + BUILDER_PATH
+    return "%s/apps/%s/" % (base, slug) if row else base + BUILDER_PATH
 
 
 async def _can_see(user_email: str, slug: str) -> bool:
@@ -233,4 +271,8 @@ async def apply(body: ApplyIn,
             await _restore_quietly(body.user_email, body.token, proposal["slug"])
         raise
     return {"task_id": task_id, "slug": slug,
-            "description": proposal["description"]}
+            "description": proposal["description"],
+            # Somewhere to go. Without this the agent could only say the
+            # change was "ready in App Builder", and the person had to find
+            # it themselves.
+            "url": await app_url(slug)}

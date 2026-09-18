@@ -125,7 +125,7 @@ def _room(monkeypatch, answers):
     importlib.reload(routes_agent_chat)
     seen = []
 
-    async def turn(email, agent, messages, names=()):
+    async def turn(email, agent, messages, names=(), **kw):
         seen.append(agent_escalation.current_intent())
         return {"answer": answers.pop(0), "notes": [],
                 "agent": {"id": agent["id"], "name": agent["name"]}}

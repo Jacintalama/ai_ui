@@ -55,8 +55,13 @@ def _app(monkeypatch, answers=None, agents=(ADA, MIA)):
     async def agents_for(email):
         return list(agents)
 
-    async def turn(email, agent, messages, names=()):
+    async def turn(email, agent, messages, names=(), **kw):
         seen.append({"agent": agent["id"],
+                     # What the round handed this agent besides the
+                     # conversation: the roster with everybody's job, and the
+                     # block describing what this person actually has.
+                     "roster": kw.get("roster"),
+                     "graph": kw.get("graph"),
                      "may_pass": any(
                          "reply with exactly PASS" in (m.get("content") or "")
                          for m in messages)})
@@ -64,8 +69,15 @@ def _app(monkeypatch, answers=None, agents=(ADA, MIA)):
         return {"answer": reply, "notes": [],
                 "agent": {"id": agent["id"], "name": agent["name"]}}
 
+    async def no_graph(email, question=""):
+        return ""
+
     monkeypatch.setattr(routes_agent_chat, "_agents_for", agents_for)
     monkeypatch.setattr(routes_agent_chat, "_turn_for", turn)
+    # Real I/O, like the store above: a round reads the person's whole
+    # account before the first agent speaks. The tests that are about the
+    # graph patch this again with something that answers.
+    monkeypatch.setattr(routes_agent_chat.agent_graph, "graph_block", no_graph)
     rows = _fake_store(routes_agent_chat, monkeypatch)
     app = FastAPI()
     app.include_router(routes_agent_chat.router)
@@ -152,6 +164,51 @@ def test_a_new_subject_still_reaches_the_room(monkeypatch):
            headers=_hdr())
     c.get("/tasks/agents/chat/stream", headers=_hdr())
     assert sorted(t["agent"] for t in seen) == sorted([ADA["id"], MIA["id"]])
+
+
+def test_the_room_reads_the_account_once_and_gives_it_to_everybody(monkeypatch):
+    """Ralph, 2026-09-18: "make sure the graph connected to the agents so
+    agents use the graph". It was wired to every ordinary model through an
+    Open WebUI inlet filter and to none of the agents, because an agent turn
+    is a direct API call that never passes through that filter.
+
+    Once per question, not once per agent: _assemble_live reads the whole
+    account, and a room of seven answering one question would read it seven
+    times for an answer that cannot have changed in between."""
+    app, mod, seen, _ = _app(monkeypatch)
+    asked = []
+
+    async def fake_block(user_email, question=""):
+        asked.append((user_email, question))
+        return "WHAT THEY HAVE"
+
+    monkeypatch.setattr(mod.agent_graph, "graph_block", fake_block)
+    _ask(app, "what am I working on")
+
+    assert asked == [(EMAIL, "what am I working on")], asked
+    assert [t["graph"] for t in seen] == ["WHAT THEY HAVE"] * len(seen)
+
+
+def test_every_agent_is_told_who_the_others_are_and_what_they_do(monkeypatch):
+    """The roster travels with the turn, so the brief can say "Rex
+    (programmer)" rather than listing bare names and letting each agent guess
+    at the others' jobs."""
+    app, mod, seen, _ = _app(monkeypatch)
+    _ask(app, "what should we do about the invoices")
+    for turn in seen:
+        assert [a["id"] for a in turn["roster"]] == [ADA["id"], MIA["id"]]
+
+
+def test_a_graph_that_fails_does_not_stop_the_round(monkeypatch):
+    """It is an improvement to an answer the person is getting either way."""
+    app, mod, seen, _ = _app(monkeypatch)
+
+    async def broken(user_email, question=""):
+        raise RuntimeError("no database")
+
+    monkeypatch.setattr(mod.agent_graph, "graph_block", broken)
+    _, body = _ask(app, "what am I working on")
+    assert "Ada here" in body
 
 
 def test_speakers_for_is_the_whole_rule():
@@ -260,7 +317,7 @@ def test_the_fallback_prefers_whoever_spoke_last(monkeypatch):
     _ask(app, "mia, hello")            # Mia answers, so Mia spoke last
     seen.clear()
     # Now everybody passes on the next message.
-    async def all_pass(email, agent, messages, names=()):
+    async def all_pass(email, agent, messages, names=(), **kw):
         seen.append({"agent": agent["id"],
                      "may_pass": any("reply with exactly PASS" in (m.get("content") or "")
                                      for m in messages)})

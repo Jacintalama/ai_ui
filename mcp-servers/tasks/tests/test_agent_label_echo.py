@@ -361,6 +361,33 @@ def test_picked_with_nothing_ticked_still_means_everything():
     assert "and nothing else" not in said
 
 
+def test_an_agent_is_told_what_the_others_are_for():
+    """Asked "who handles coding?", Kai said he did, Ada said Kai led it and
+    Rex also worked on it, and Rex said he did (Ralph's screenshot,
+    2026-09-18). None of them was lying: the brief listed the others by name
+    and never said what any of them was for, so each filled the gap from its
+    own instructions."""
+    from routes_agent_turn import _identity_line
+    roster = [
+        {"id": "k", "name": "Kai", "meta": {"role": "App reviewer"}},
+        {"id": "r", "name": "Rex", "meta": {"role": "Programmer"}},
+        {"id": "a", "name": "Ada", "meta": {"role": "Project manager"}},
+    ]
+    said = _identity_line(roster[0], [a["name"] for a in roster],
+                          roster=roster)["content"]
+    assert "Rex (programmer)" in said
+    assert "Ada (project manager)" in said
+    assert "Kai (" not in said, "an agent is not one of its own others"
+
+
+def test_a_roster_entry_with_no_role_is_still_just_a_name():
+    """Most agents predate the role field, and every surface that has only
+    names still passes those. A bare name has to read exactly as before."""
+    from routes_agent_turn import _identity_line
+    said = _identity_line({"id": "a", "name": "Ada"}, ["Ada", "Mia"])["content"]
+    assert "The other assistants here are Mia." in said
+
+
 def test_an_agent_is_told_not_to_claim_another_agents_work():
     from routes_agent_turn import _identity_line
     said = _identity_line({"id": "i", "name": "Iris"}, ["Iris", "Ada"])["content"]

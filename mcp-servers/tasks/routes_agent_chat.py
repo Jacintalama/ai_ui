@@ -23,6 +23,7 @@ import agent_chat_store as store
 from auth import CurrentUser, current_user
 import agent_access
 import agent_escalation
+import agent_graph
 import agent_routing
 from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS, FREE_POOL_EXHAUSTED,
                           ROUTER_EXHAUSTED, _chat)
@@ -434,6 +435,20 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
     # agent. See the module docstring of routes_agent_turn for what happens
     # when agents read each other's labelled replies.
     history = _history_for_round(s.messages, s.summary)
+    # What this person actually has, read once and handed to everybody, the
+    # same as history. Per agent it would read the whole account seven times
+    # for one question. Empty when the graph is empty or the read failed,
+    # which costs the round nothing.
+    # Guarded as well as fail-open inside, because this one is different from
+    # the reads inside a turn: it happens in the generator that IS the round,
+    # so anything escaping here ends the round before a single agent speaks
+    # and the person watching gets an empty answer to a question they asked.
+    try:
+        graph = await agent_graph.graph_block(email, asked)
+    except Exception:                                       # noqa: BLE001
+        log.warning("agent chat: could not read the graph for this round",
+                    exc_info=True)
+        graph = ""
     # Bound once, alongside history, and written to for the rest of the round
     # instead of going through s. each time. _turn_for is a real outbound
     # call, so the event loop can service another request from the same
@@ -466,7 +481,8 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
         # _turn_for and _run_turn sit in between.
         with agent_escalation.asking(agent_escalation.Intent(
                 person_text=asked, may_pass=may_pass)):
-            out = await _turn_for(email, agent, turn_history, names)
+            out = await _turn_for(email, agent, turn_history, names,
+                                  roster=agents, graph=graph)
         answer = out.get("answer") or ""
 
         fr = _failure_reason(name, answer)
@@ -509,7 +525,8 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
               "data": render.turn_status(tid, render.working(name))}
         with agent_escalation.asking(agent_escalation.Intent(
                 person_text=asked, may_pass=False)):
-            out = await _turn_for(email, fallback, history, names)
+            out = await _turn_for(email, fallback, history, names, roster=agents,
+                              graph=graph)
         answer = out.get("answer") or ""
         fr = _failure_reason(name, answer)
         # Asked for before the pass check, as in the loop above: a turn that

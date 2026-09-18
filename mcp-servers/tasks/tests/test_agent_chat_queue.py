@@ -306,7 +306,7 @@ async def _walk_away_mid_round(monkeypatch, s, saved, during=None):
     person does while the round is still in flight."""
     import asyncio
 
-    async def hangs(email, agent, history, names=()):
+    async def hangs(email, agent, history, names=(), **kw):
         if during is not None:
             await during()
         await asyncio.Event().wait()
@@ -355,8 +355,16 @@ def _no_db(monkeypatch):
     async def newest(email):
         return None
 
+    async def no_graph(email, question=""):
+        return ""
+
     monkeypatch.setattr(store, "create_chat", created)
     monkeypatch.setattr(store, "newest_chat", newest)
+    # The Brain reads the whole account over the database, and a round now
+    # does that before the first agent speaks. Left real, it is the await the
+    # disconnect lands in, so the round never reaches the agent and a test
+    # about what happens DURING a turn never gets there.
+    monkeypatch.setattr(chat.agent_graph, "graph_block", no_graph)
 
 
 async def test_a_round_the_browser_left_releases_the_room(monkeypatch):
@@ -479,7 +487,7 @@ async def test_a_failed_agent_renders_as_a_failure(monkeypatch):
     s = store.get_session(_User.email)
     await _send("hi")
 
-    async def failing(email, agent, history, names=()):
+    async def failing(email, agent, history, names=(), **kw):
         return {"answer": rt._turn_failed_sentence("Ada"), "notes": [],
                 "agent": {"id": "agent-a", "name": "Ada"}}
 
@@ -513,7 +521,7 @@ async def test_the_free_router_giving_up_also_renders_as_a_failure(
     s = store.get_session(_User.email)
     await _send("hi")
 
-    async def exhausted(email, agent, history, names=()):
+    async def exhausted(email, agent, history, names=(), **kw):
         return {"answer": ROUTER_EXHAUSTED, "notes": [],
                 "agent": {"id": "agent-a", "name": "Ada"}}
 
@@ -550,7 +558,7 @@ async def test_the_everybody_passed_fallback_call_can_also_fail(monkeypatch):
 
     calls = []
 
-    async def pass_once_then_fail(email, agent, history, names=()):
+    async def pass_once_then_fail(email, agent, history, names=(), **kw):
         calls.append(1)
         if len(calls) == 1:
             # The one agent in the room, asked with the option to pass.

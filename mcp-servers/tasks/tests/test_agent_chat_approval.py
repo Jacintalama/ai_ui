@@ -47,9 +47,15 @@ def _app(monkeypatch, turn):
     async def noop_save(email, s):
         return None
 
+    async def no_graph(email, question=""):
+        return ""
+
     monkeypatch.setattr(routes_agent_chat, "_agents_for", agents_for)
     monkeypatch.setattr(routes_agent_chat, "_turn_for", turn)
     monkeypatch.setattr(routes_agent_chat, "_resume_turn", resume_turn)
+    # The round reads the person's account before anybody speaks, which is a
+    # real database read this harness has no database for.
+    monkeypatch.setattr(routes_agent_chat.agent_graph, "graph_block", no_graph)
     monkeypatch.setattr(routes_agent_chat.store, "create_chat", noop_create)
     monkeypatch.setattr(routes_agent_chat.store, "save_chat", noop_save)
 
@@ -59,7 +65,7 @@ def _app(monkeypatch, turn):
 
 
 def _asking_turn(who="agent-a"):
-    async def turn(email, agent, messages, names=()):
+    async def turn(email, agent, messages, names=(), **kw):
         if agent["id"] == who:
             return {"answer": "May I send this?", "notes": [],
                     "agent": {"id": agent["id"], "name": agent["name"]},
@@ -182,7 +188,7 @@ def test_yes_with_a_subject_of_its_own_is_not_an_approval(monkeypatch):
 def test_with_two_questions_waiting_a_typed_yes_asks_which(monkeypatch):
     """Which tool runs is not a coin toss. Two agents waiting and one word
     means the buttons decide it."""
-    async def both_ask(email, agent, messages, names=()):
+    async def both_ask(email, agent, messages, names=(), **kw):
         return {"answer": "May I send this?", "notes": [],
                 "agent": {"id": agent["id"], "name": agent["name"]},
                 "pending": {"agent_id": agent["id"], "user_email": EMAIL,
@@ -377,7 +383,7 @@ def test_the_first_question_can_still_be_answered_afterwards(monkeypatch):
 def _passes_then_asks(answer=""):
     """Passes whenever passing is on offer, and stops to ask when it is not,
     which is exactly the shape _turn_for hands back for a held turn."""
-    async def turn(email, agent, messages, names=()):
+    async def turn(email, agent, messages, names=(), **kw):
         offered = any("reply with exactly PASS" in (m.get("content") or "")
                       for m in messages)
         who = {"id": agent["id"], "name": agent["name"]}

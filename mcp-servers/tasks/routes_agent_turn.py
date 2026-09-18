@@ -26,6 +26,7 @@ from sqlalchemy import select
 import agent_access
 import agent_activity
 import agent_escalation
+import agent_graph
 import agent_memory
 import agent_routing
 import agent_skills
@@ -787,7 +788,35 @@ def _tools_sentence(agent: dict) -> str:
             "offer to do it." % (_join_words(reach), base))
 
 
-def _identity_line(agent: dict, names, memory: str = "") -> dict:
+def _others_with_roles(roster, me: str) -> list[str]:
+    """The other assistants, each with its job, as "Mia (receptionist)".
+
+    Asked "who handles coding?", Kai said he did, Ada said Kai was the lead
+    and Rex also worked on it, and Rex said he did (Ralph's screenshot,
+    2026-09-18). All three were guessing: the brief listed the other agents
+    by name and never said what any of them was for, so each one filled the
+    gap from its own instructions.
+
+    Accepts plain names as well as agent rows, because `names` is a list of
+    strings on every surface that also feeds it to clean_history_for_agent.
+    A name with no role reads as a bare name, exactly as before.
+    """
+    out: list[str] = []
+    for entry in roster or []:
+        if isinstance(entry, dict):
+            name = str(entry.get("name") or "").strip()
+            role = _role_of(entry)
+        else:
+            name = str(entry or "").strip()
+            role = ""
+        if not name or name == me:
+            continue
+        out.append("%s (%s)" % (name, role) if role else name)
+    return out
+
+
+def _identity_line(agent: dict, names, memory: str = "", roster=(),
+                   graph: str = "") -> dict:
     """Who the agent is and how it is expected to work, as one system line.
 
     Two faults, both seen live, both fixed here rather than on any one card.
@@ -808,7 +837,9 @@ def _identity_line(agent: dict, names, memory: str = "") -> dict:
     not to write the name into the answer, which the renderer adds.
     """
     me = str(agent.get("name") or agent.get("id") or "this assistant")
-    others = [str(n) for n in (names or []) if n and str(n) != me]
+    # The roster carries each agent's job; `names` is the same list with only
+    # the names, which is what the history cleaners take. Either works here.
+    others = _others_with_roles(roster or names, me)
 
     role = _role_of(agent)
     said = ["You are %s, this person's %s." % (me, role) if role
@@ -887,13 +918,20 @@ def _identity_line(agent: dict, names, memory: str = "") -> dict:
     # thing in the line and the thing most likely to answer the question
     # being asked, so it sits nearest the conversation. Empty for an agent
     # with nothing stored, which keeps every existing turn byte identical.
+    # The person's own account, from the Brain. Before the memory block and
+    # after the skills, because it is context rather than instruction: it says
+    # what exists, where a skill says what to do and memory says what this
+    # agent was told. Empty for anybody whose graph has nothing in it, and
+    # empty whenever the read failed, which costs the turn nothing.
+    if graph:
+        content += "\n\n" + graph
     if memory:
         content += "\n\n" + memory
     return {"role": "system", "content": content}
 
 
 async def _turn_for(user_email: str, agent: dict, messages: list[dict],
-                    names=()) -> dict:
+                    names=(), roster=(), graph: str = "") -> dict:
     """One rendered turn for a single named agent. Never raises.
 
     Wraps _run_turn so a blown-up tool call in one agent's turn cannot take
@@ -917,7 +955,8 @@ async def _turn_for(user_email: str, agent: dict, messages: list[dict],
                        exc_info=True)
         memory = ""
     try:
-        history = ([_identity_line(agent, names, memory=memory)]
+        history = ([_identity_line(agent, names, memory=memory,
+                                   roster=roster, graph=graph)]
                    + agent_routing.clean_history_for_agent(messages, names))
         out = await _run_turn(user_email, agent["id"], history)
     except Exception as exc:                                # noqa: BLE001
@@ -968,10 +1007,15 @@ async def chat(body: ChatIn,
         # who a follow up with no name goes to, so "actually ada, you take
         # this" hands over cleanly even when Mia was also named.
         names = [a.get("name") for a in agents if a.get("name")]
+        # Once for the message, not once per agent: naming two agents runs two
+        # turns about one question, and the account has not changed between
+        # them.
+        graph = await agent_graph.graph_block(body.user_email, text)
         speakers = named[:1] if getattr(body, "first_only", False) else named
         turns = []
         for agent in speakers:
-            turns.append(await _turn_for(body.user_email, agent, body.messages, names))
+            turns.append(await _turn_for(body.user_email, agent, body.messages,
+                                         names, roster=agents, graph=graph))
         # An approval interrupts the round for the agent that asked: the
         # pin goes to the one who is waiting, not to the last one named,
         # so the person's yes or no reaches them.
@@ -1036,6 +1080,9 @@ async def chat(body: ChatIn,
     # A follow up keeps the agent awake. Without this the pin would run out
     # five minutes after the agent was last NAMED, mid conversation.
     names = [a.get("name") for a in agents if a.get("name")]
-    turn = await _turn_for(body.user_email, agent, body.messages, names)
+    turn = await _turn_for(body.user_email, agent, body.messages, names,
+                           roster=agents,
+                           graph=await agent_graph.graph_block(
+                               body.user_email, text))
     await _write_pin(key, agent["id"])
     return {"turns": [turn], "rendered": render_turns([turn]), "queue": [], "marker": ""}

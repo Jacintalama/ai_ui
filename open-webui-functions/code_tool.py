@@ -171,6 +171,10 @@ class Tools:
         Carry out a change the person has just approved, using the approval
         code from propose_app_change. Only call this after they have
         actually agreed. The code works once.
+
+        The result carries a link to the app. Give them that link in your
+        reply, exactly as it is written, rather than telling them to go and
+        find it.
         """
         try:
             data = await self._call("POST", "/code/apply",
@@ -178,7 +182,14 @@ class Tools:
                                     token=token)
         except RuntimeError as exc:
             return self._message(exc)
-        return ("Started. " + (data.get("slug") or "The app")
+        said = ("Started. " + (data.get("slug") or "The app")
                 + " is being changed: " + (data.get("description") or "")
                 + ". It is smoke tested afterwards and rolled back "
                   "automatically if it breaks.")
+        url = data.get("url") or ""
+        if url:
+            # Written on its own line so it survives being quoted back: the
+            # panel draws a card for a link like this, and the owner gets
+            # somewhere to click rather than the name of a page.
+            said += "\nOpen it here: " + url
+        return said

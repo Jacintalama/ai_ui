@@ -9,6 +9,7 @@ page: the panel then has no client-side model of the conversation that can
 drift from the server's.
 """
 import html
+import re
 import uuid
 
 
@@ -149,6 +150,46 @@ def _quote(text) -> str:
     return f'<div class="aquote">{esc(one_line)}</div>'
 
 
+#: An app this platform serves, in an answer. Matched on the path rather than
+#: on the host so it still works from a custom domain or a subdomain, and the
+#: slug is taken from the URL rather than from anything the model said about
+#: it. Kept deliberately narrow: a link to a page INSIDE an app
+#: (/apps/x/about.html) is a link, not the app, and gets no card.
+_APP_LINK = re.compile(
+    r"https?://[^\s<>\"']+/apps/([a-z0-9][a-z0-9._-]*)/?(?=[\s<>\"']|$)")
+
+
+def app_card(url: str, slug: str) -> str:
+    """One app, as something to open.
+
+    An agent that has just changed an app used to end with a sentence about
+    App Builder, and the person had to go and find it. The card is drawn from
+    the answer's own text, so a reload shows the same thing the round did
+    rather than a bare link where a card used to be.
+    """
+    return ('<a class="acard" href="%s" target="_blank" rel="noopener">'
+            '<span class="acard-icon" aria-hidden="true">&#9654;</span>'
+            '<span class="acard-body">'
+            '<span class="acard-title">%s</span>'
+            '<span class="acard-sub">%s</span>'
+            '</span>'
+            '<span class="acard-go">Open</span></a>'
+            % (esc(url), esc(slug), esc(url)))
+
+
+def app_cards_for(content: str) -> str:
+    """A card for every app linked in this answer, each one once."""
+    seen = []
+    out = []
+    for match in _APP_LINK.finditer(content or ""):
+        url = match.group(0)
+        if url in seen:
+            continue
+        seen.append(url)
+        out.append(app_card(url, match.group(1)))
+    return "".join(out)
+
+
 def agent_bubble(name: str, content: str, replying_to=None) -> str:
     """One agent's finished answer: its own row, its own name, its own avatar.
 
@@ -167,6 +208,7 @@ def agent_bubble(name: str, content: str, replying_to=None) -> str:
             f'{_quote(replying_to)}'
             f'<div class="awho">{esc(name)}</div>'
             f'<div class="atext md">{esc(content)}</div>'
+            f'{app_cards_for(content)}'
             '</div></div>')
 
 

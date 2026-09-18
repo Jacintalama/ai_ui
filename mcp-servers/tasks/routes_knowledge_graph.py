@@ -1064,6 +1064,36 @@ async def get_my_graph(user: CurrentUser = Depends(current_user)):
     }
 
 
+async def context_for(user_email: str, q: str = "", limit: int = 6,
+                      include_team: bool = False) -> dict:
+    """The user's graph context for `q`, as {context, count, used, mode}.
+
+    Public because it has two callers now. The route below serves the Open
+    WebUI inlet filter, which is how ordinary models get this. An agent turn
+    never passes through that filter: it is a direct API call from this
+    service, so until this existed every agent answered knowing nothing about
+    what the person actually has, while the plain models did.
+
+    `include_team` stays False for anyone but an admin. The Brain is private
+    per user and team material is admin only, by Ralph's decision
+    2026-07-31, so this is passed in rather than inferred here.
+    """
+    conn = await _connect()
+    try:
+        await ensure_table(conn)
+        await graph_embeddings.ensure_embed_table(conn)
+        nodes, counts = await _assemble_live(conn, user_email,
+                                             include_team=include_team)
+        ctx, mode = await build_memory_context_smart(conn, nodes, q, limit,
+                                                     counts=counts)
+        age = await _skeleton_age_hours(conn, user_email)
+    finally:
+        await conn.close()
+    _maybe_schedule_auto_build(user_email, nodes, counts, age)
+    return {"context": ctx, "count": len(nodes), "used": bool(ctx),
+            "mode": mode}
+
+
 @router.get("/context")
 async def my_graph_context(
     q: str = "",
@@ -1075,20 +1105,8 @@ async def my_graph_context(
     Consumed by the global OWUI memory filter (inlet) so every model gets the
     user's own knowledge-graph context injected at chat time. Strictly
     per-user; returns {"context": "", ...} when there is nothing to inject."""
-    conn = await _connect()
-    try:
-        await ensure_table(conn)
-        await graph_embeddings.ensure_embed_table(conn)
-        nodes, counts = await _assemble_live(conn, user.email,
-                                             include_team=user.is_admin)
-        ctx, mode = await build_memory_context_smart(conn, nodes, q, limit,
-                                                     counts=counts)
-        age = await _skeleton_age_hours(conn, user.email)
-    finally:
-        await conn.close()
-    _maybe_schedule_auto_build(user.email, nodes, counts, age)
-    return {"context": ctx, "count": len(nodes), "used": bool(ctx),
-            "mode": mode}
+    return await context_for(user.email, q, limit,
+                             include_team=user.is_admin)
 
 
 @router.post("/prebuild")
