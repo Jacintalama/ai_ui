@@ -37,6 +37,24 @@ def test_two_different_apps_get_a_card_each():
     assert said.count('class="acard"') == 2
 
 
+BUILD = BASE + "/tasks/static/preview.html?task=8a2851d8-3aa9-4963-a987-a71df"
+
+
+def test_a_build_in_progress_gets_a_card_too():
+    """What an agent hands back the moment it starts a build. Without this the
+    link arrives as bare text and the person lands on a list of twenty apps
+    instead of on the one being built."""
+    said = render.agent_bubble("Rex", "Building thunder-2b68 now.\n" + BUILD)
+    assert 'class="acard"' in said
+    assert 'href="%s"' % BUILD in said
+    assert "Watch it build" in said
+
+
+def test_a_build_card_is_drawn_once():
+    said = render.agent_bubble("Rex", "%s and %s" % (BUILD, BUILD))
+    assert said.count('class="acard"') == 1
+
+
 def test_an_answer_with_no_app_link_gets_no_card():
     said = render.agent_bubble("Mia", "Nothing unread in your inbox.")
     assert "acard" not in said

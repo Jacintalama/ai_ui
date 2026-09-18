@@ -60,15 +60,23 @@ def test_applying_is_a_write():
     assert "apply_app_change" not in READ_METHODS
 
 
-def test_the_tool_exposes_exactly_the_five_functions():
+def test_the_tool_exposes_exactly_the_functions_it_means_to():
+    """Six now, not five. create_app was added 2026-09-18: every other
+    function here takes a slug, so an agent asked for a landing page that did
+    not exist yet could only list the apps that were not it and ask the person
+    to pick one (Ralph's screenshot).
+
+    Still an equality check rather than a subset. What this tool offers is the
+    whole of what an agent can do to somebody's apps, and a function arriving
+    here unnoticed is exactly what it is guarding against."""
     source = _source()
     # Excludes a leading underscore so a private helper such as _call,
-    # which is also "async def _call(self", is not counted as a sixth
-    # public function.
+    # which is also "async def _call(self", is not counted as a public
+    # function.
     found = {name for name in re.findall(r"async def (\w+)\(self", source)
              if not name.startswith("_")}
     assert found == {"list_my_apps", "read_app_file", "search_my_app",
-                     "propose_app_change", "apply_app_change"}
+                     "create_app", "propose_app_change", "apply_app_change"}
 
 
 def test_the_tool_holds_no_filesystem_or_routing_logic():

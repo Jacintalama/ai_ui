@@ -43,6 +43,20 @@ def _public_base() -> str:
     return os.environ.get("AIUI_PUBLIC_BASE_URL", "").strip().rstrip("/")
 
 
+def builder_url(task_id) -> str:
+    """The page that watches ONE build, or "".
+
+    App Builder itself is a wall of every app this person has; Ralph had
+    twenty when he was handed that link and had to find the new one himself
+    (2026-09-18). This is the same destination the card's own Watch progress
+    button uses, so the link lands on the thing that was just started.
+    """
+    base = _public_base()
+    if not base or not task_id:
+        return ""
+    return "%s/tasks/static/preview.html?task=%s" % (base, task_id)
+
+
 async def app_url(slug: str) -> str:
     """Where this person can actually open the app, or "".
 
@@ -293,12 +307,19 @@ async def apply(body: ApplyIn,
             # pipeline, which fails open rather than failing the build.
             await _restore_quietly(body.user_email, body.token, proposal["slug"])
         raise
+    # Somewhere to go. Without this the agent could only say the change was
+    # "ready in App Builder", and the person had to find it themselves.
+    #
+    # A published app is served somewhere real, so that wins. An unpublished
+    # one would otherwise fall back to the whole App Builder list, and this
+    # change is still running, so the page that watches THIS run is both more
+    # specific and more useful.
+    where = await app_url(slug)
+    if where.endswith(BUILDER_PATH):
+        where = builder_url(task_id) or where
     return {"task_id": task_id, "slug": slug,
             "description": proposal["description"],
-            # Somewhere to go. Without this the agent could only say the
-            # change was "ready in App Builder", and the person had to find
-            # it themselves.
-            "url": await app_url(slug)}
+            "url": where}
 
 
 @router.post("/create")
@@ -330,6 +351,7 @@ async def create(body: CreateIn,
     # the job when there is no name. _make_slug handles the rest.
     seed = (body.name or "").strip() or description
     task_id, slug = await _spawn_build(body.user_email, seed, description)
-    # Always App Builder at this point: nothing has been published, and this
-    # is where the build can be watched.
-    return {"task_id": task_id, "slug": slug, "url": await app_url(slug)}
+    # This build, not the list of everything. Falls back to App Builder only
+    # when there is no public address configured to build a link from.
+    return {"task_id": task_id, "slug": slug,
+            "url": builder_url(task_id) or await app_url(slug)}

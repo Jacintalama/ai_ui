@@ -158,8 +158,16 @@ def _quote(text) -> str:
 _APP_LINK = re.compile(
     r"https?://[^\s<>\"']+/apps/([a-z0-9][a-z0-9._-]*)/?(?=[\s<>\"']|$)")
 
+#: One build being watched, which is where an agent sends somebody after it
+#: starts or changes an app that is not published. Drawn as a card for the
+#: same reason the served app is: a bare link in a paragraph is a link nobody
+#: clicks, and this one is the difference between landing on the new app and
+#: landing on a list of twenty.
+_BUILD_LINK = re.compile(
+    r"https?://[^\s<>\"']+/tasks/static/preview\.html\?task=[A-Za-z0-9_-]+")
 
-def app_card(url: str, slug: str) -> str:
+
+def app_card(url: str, title: str) -> str:
     """One app, as something to open.
 
     An agent that has just changed an app used to end with a sentence about
@@ -174,11 +182,11 @@ def app_card(url: str, slug: str) -> str:
             '<span class="acard-sub">%s</span>'
             '</span>'
             '<span class="acard-go">Open</span></a>'
-            % (esc(url), esc(slug), esc(url)))
+            % (esc(url), esc(title), esc(url)))
 
 
 def app_cards_for(content: str) -> str:
-    """A card for every app linked in this answer, each one once."""
+    """A card for every app or build linked in this answer, each one once."""
     seen = []
     out = []
     for match in _APP_LINK.finditer(content or ""):
@@ -187,6 +195,14 @@ def app_cards_for(content: str) -> str:
             continue
         seen.append(url)
         out.append(app_card(url, match.group(1)))
+    for match in _BUILD_LINK.finditer(content or ""):
+        url = match.group(0)
+        if url in seen:
+            continue
+        seen.append(url)
+        # Named by what pressing it does, because the task id in the URL is
+        # not something anybody recognises.
+        out.append(app_card(url, "Watch it build"))
     return "".join(out)
 
 

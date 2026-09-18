@@ -122,12 +122,25 @@ async def test_a_new_app_is_built_from_their_own_words(client, no_builder):
     assert r.json()["slug"] == "camera-brand-9f21"
 
 
-async def test_the_reply_says_where_to_watch_it(client, no_builder):
-    """Nothing is published while it builds, so the honest destination is App
-    Builder, where the build can be watched."""
+async def test_the_reply_points_at_this_build_and_not_the_whole_list(
+        client, no_builder, monkeypatch):
+    """Ralph had twenty apps when he was handed a link to App Builder and had
+    to find the new one himself. This is the same destination the card's own
+    Watch progress button uses."""
+    monkeypatch.setenv("AIUI_PUBLIC_BASE_URL", "https://ai-ui.example")
+    r = await _create(client, user_email=OWNER, description="a page")
+    assert r.json()["url"] == (
+        "https://ai-ui.example/tasks/static/preview.html?task=task-1")
+    assert r.json()["task_id"] == "task-1"
+
+
+async def test_with_no_public_address_it_still_says_somewhere(
+        client, no_builder, monkeypatch):
+    """A link cannot be built without knowing this platform's address. App
+    Builder is then the only honest destination, and it is better than none."""
+    monkeypatch.delenv("AIUI_PUBLIC_BASE_URL", raising=False)
     r = await _create(client, user_email=OWNER, description="a page")
     assert r.json()["url"].endswith("/app-builder")
-    assert r.json()["task_id"] == "task-1"
 
 
 async def test_the_name_is_only_a_seed_for_the_slug(client, no_builder):
