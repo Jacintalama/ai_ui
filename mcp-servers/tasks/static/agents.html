@@ -1554,11 +1554,6 @@
           var n = counts[el.getAttribute("data-memory-for")] || 0;
           el.querySelector(".memory-count").textContent =
             "Memory: " + n + (n === 1 ? " note" : " notes");
-          // An agent that has learned nothing yet says nothing here. The row
-          // was a line of text and a Show button that opened an empty list,
-          // on every card, and that height is what pushed the seventh agent
-          // below the fold. It comes back the moment there is a note in it.
-          el.hidden = n === 0;
         });
       } catch (e) {
         // Silent, the same as activity, and the line is left empty rather

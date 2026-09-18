@@ -131,13 +131,22 @@ def test_the_page_itself_does_not_scroll():
         "the panel is sized by its column now, not by the window")
 
 
-def test_a_card_says_nothing_about_memory_until_there_is_some():
-    """Every card carried "Memory: 0 notes" and a Show button that opened an
-    empty list. That is the height that pushed the seventh agent off screen.
+def test_the_memory_row_is_still_there_on_an_agent_that_remembers_nothing():
+    """A reversal, and worth keeping the reasoning.
 
-    The painter is the page's own inline script, not the panel's: the cards
-    belong to the page and the panel does not know they exist."""
-    assert "el.hidden = n === 0" in _page()
+    Every card carried "Memory: 0 notes" above a Show button, and that height
+    is what pushed the seventh agent off screen, so the row was hidden
+    whenever the count was zero. That deleted the only way into memory for an
+    agent with nothing in it, and with it Show, Forget all and the "Nothing
+    remembered yet" line. Five browser tests caught it, all of them reaching
+    memory through that row.
+
+    The height comes out of the styling instead, which costs nothing anybody
+    can click."""
+    assert "el.hidden = n === 0" not in _page(), (
+        "hiding the row takes Show and Forget all with it")
+    assert ".agents-main .card-memory" in _styles(), (
+        "the row has to be compacted in the two column layout instead")
 
 
 def test_the_columns_can_be_resized_and_the_width_is_remembered():
