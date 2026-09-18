@@ -177,6 +177,40 @@ class Tools:
             said += "\nWatch it here: " + url
         return said
 
+    async def build_status(self, task_id: str, __user__: dict = {}) -> str:
+        """
+        Say how a build is getting on, using the id from create_app.
+
+        Use this whenever they ask whether it is done, or before you tell
+        them an app is ready. A build runs for minutes after you answer, so
+        without checking, the first thing they learn about a failure is a red
+        badge on a card they had to go and find.
+        """
+        try:
+            data = await self._call("GET", "/code/build",
+                                    user_email=self._email(__user__),
+                                    task_id=task_id)
+        except RuntimeError as exc:
+            return self._message(exc)
+        status = str(data.get("status") or "")
+        slug = str(data.get("slug") or "the app")
+        if status == "completed":
+            where = data.get("preview_url") or data.get("url") or ""
+            said = slug + " is built."
+            return said + ("\nOpen it here: " + where if where else "")
+        if status == "failed":
+            # The reason as the platform recorded it. Today that is often a
+            # billing refusal from the model provider, which is something the
+            # owner can act on and nothing an agent can retry around.
+            why = str(data.get("error") or "").strip()
+            return (slug + " failed to build."
+                    + ("\n" + why if why else ""))
+        if status == "needs_input":
+            question = str(data.get("question") or "").strip()
+            return (slug + " is waiting on an answer."
+                    + ("\n" + question if question else ""))
+        return slug + " is still building."
+
     async def propose_app_change(self, slug: str, description: str,
                                  __user__: dict = {}) -> str:
         """

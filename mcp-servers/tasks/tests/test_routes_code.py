@@ -64,6 +64,7 @@ def _app_on_disk(tmp_path, slug="shop"):
     # build. Listed here the day it was added, because the point of this
     # parametrisation is that a new route cannot quietly skip the check.
     ("POST", "/code/create", {"user_email": OWNER, "description": "a page"}),
+    ("GET", "/code/build", None),
 ])
 async def test_every_endpoint_requires_the_secret(client, method, path, payload):
     """Internal only is this surface's primary safety property, and it was
@@ -71,9 +72,12 @@ async def test_every_endpoint_requires_the_secret(client, method, path, payload)
     check and missed one would have served app source to anything that can
     reach tasks:8210."""
     if method == "GET":
-        r = await client.get(path, params={"user_email": OWNER,
-                                           "slug": "shop", "path": "index.html",
-                                           "query": "x"})
+        # Every query parameter any GET route here needs, in one bag. They
+        # have to be present or FastAPI answers 422 for the missing one and
+        # the request never reaches the secret check this is about.
+        r = await client.get(path, params={
+            "user_email": OWNER, "slug": "shop", "path": "index.html",
+            "query": "x", "task_id": "8a2851d8-3aa9-4963-a987-a71df3bc40db"})
     else:
         r = await client.post(path, json=payload)
     assert r.status_code == 403, path
@@ -165,6 +169,69 @@ async def test_an_empty_description_builds_nothing(client, no_builder,
     r = await _create(client, user_email=OWNER, description=description)
     assert r.status_code == 400
     assert no_builder == {}, "it started a build with no brief"
+
+
+@pytest.fixture
+def build_state(monkeypatch):
+    """The builder's own view of a run, replaced by whatever a test wants."""
+    state = {"value": None}
+
+    async def read(user_email, task_id):
+        return state["value"]
+
+    monkeypatch.setattr(routes_code, "_build_state", read)
+    return state
+
+
+async def _status(client, task_id="8a2851d8-3aa9-4963-a987-a71df3bc40db"):
+    return await client.get("/code/build",
+                            params={"user_email": OWNER, "task_id": task_id},
+                            headers={"X-Internal-Secret": SECRET})
+
+
+async def test_a_finished_build_says_where_it_is(client, build_state):
+    build_state["value"] = {"status": "completed", "slug": "thunder-2b68",
+                            "preview_url": "https://ai-ui.example/x/",
+                            "error": None, "question": None}
+    r = await _status(client)
+    assert r.status_code == 200
+    assert r.json()["status"] == "completed"
+    assert r.json()["preview_url"] == "https://ai-ui.example/x/"
+
+
+async def test_a_failed_build_carries_the_reason(client, build_state):
+    """Ralph's build failed with a billing refusal from the model provider.
+    That is something he can act on, and an agent can only pass it on if the
+    reason survives this far."""
+    build_state["value"] = {
+        "status": "failed", "slug": "thunder-2b68", "preview_url": None,
+        "error": "API Error: 402 This request requires more credits",
+        "question": None}
+    r = await _status(client)
+    assert "402" in r.json()["error"]
+
+
+async def test_a_build_that_is_not_yours_is_not_found(client, build_state):
+    """None covers both "no such build" and "not yours". 404 rather than 403,
+    so a stranger learns nothing about what exists."""
+    build_state["value"] = None
+    r = await _status(client)
+    assert r.status_code == 404
+
+
+@pytest.mark.parametrize("bad", ["not-a-uuid", "../apps", "", "1"])
+async def test_an_id_that_is_not_an_id_never_reaches_the_database(
+        client, monkeypatch, bad):
+    reached = []
+
+    async def read(user_email, task_id):
+        reached.append(task_id)
+        return None
+
+    monkeypatch.setattr(routes_code, "_build_state", read)
+    r = await _status(client, task_id=bad)
+    assert r.status_code == 404
+    assert reached == [], "a hallucinated id reached the query"
 
 
 async def test_one_build_at_a_time_reaches_the_caller(client, monkeypatch):

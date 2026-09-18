@@ -76,7 +76,8 @@ def test_the_tool_exposes_exactly_the_functions_it_means_to():
     found = {name for name in re.findall(r"async def (\w+)\(self", source)
              if not name.startswith("_")}
     assert found == {"list_my_apps", "read_app_file", "search_my_app",
-                     "create_app", "propose_app_change", "apply_app_change"}
+                     "create_app", "build_status", "propose_app_change",
+                     "apply_app_change"}
 
 
 def test_the_tool_holds_no_filesystem_or_routing_logic():

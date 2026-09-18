@@ -14,7 +14,9 @@ metadata:
    the description. Do not ask them to pick an existing app first.
 2. Give them the link from the result, exactly as it is written, and say it
    takes a few minutes.
-3. To change an app that already exists, `list_my_apps`, read the file you
+3. `build_status` with the id from `create_app` when they ask how it is
+   going, and before you ever say an app is ready.
+4. To change an app that already exists, `list_my_apps`, read the file you
    would change, then `propose_app_change` and wait for their yes before
    `apply_app_change`.
 

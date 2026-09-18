@@ -11,6 +11,7 @@ result and rolls the app back if it broke.
 """
 import logging
 import os
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Header, HTTPException
@@ -99,6 +100,36 @@ async def _spawn_enhance(user_email: str, slug: str, prompt: str):
     builder module pulls in the execution stack."""
     from routes_aiuibuilder import _create_and_spawn_enhance
     return await _create_and_spawn_enhance(user_email, slug, prompt)
+
+
+async def _build_state(user_email: str, task_id):
+    """How one build is getting on, or None when it is not this person's.
+
+    A seam over the builder, like _spawn_build, and it reuses the builder's
+    own ownership check and status mapping rather than writing a second copy
+    of either. None covers both "no such build" and "not yours", which is how
+    _load_owned_build already behaves: existence is not leaked to a stranger.
+    """
+    from routes_aiuibuilder import (_load_owned_build, _preview_url,
+                                    _public_build_status)
+    item = await _load_owned_build(user_email, task_id)
+    if item is None:
+        return None
+    status = _public_build_status(item.status)
+    slug = item.built_app_slug or ""
+    return {
+        "status": status,
+        "slug": slug,
+        "preview_url": _preview_url(slug) if status == "completed" and slug
+        else None,
+        # The reason as the platform recorded it, capped the same way the
+        # builder's own route caps it. For a failure today this is usually a
+        # billing refusal from the model provider, which is something the
+        # owner can act on and nothing an agent can retry around.
+        "error": (item.result or "")[:500] if status == "failed" else None,
+        "question": (item.result or "")[:500] if status == "needs_input"
+        else None,
+    }
 
 
 async def _spawn_build(user_email: str, seed: str, description: str):
@@ -320,6 +351,33 @@ async def apply(body: ApplyIn,
     return {"task_id": task_id, "slug": slug,
             "description": proposal["description"],
             "url": where}
+
+
+@router.get("/build")
+async def build_state(user_email: str, task_id: str,
+                      x_internal_secret: str = Header(default="")) -> dict:
+    """How a build started by create_app is getting on.
+
+    Without this an agent says "building now" and goes quiet: the build runs
+    for minutes afterwards, so the first thing the owner learns about a
+    failure is a red badge on a card they had to go and find (Ralph,
+    2026-09-18, whose build failed on the provider's billing).
+
+    A build id that is not this person's answers 404 rather than 403, the
+    same as the builder's own route: a stranger learns nothing about what
+    exists.
+    """
+    _require_internal(x_internal_secret)
+    try:
+        parsed = uuid.UUID(str(task_id))
+    except (ValueError, AttributeError, TypeError):
+        # A model chose this. Refusing here also keeps a hallucinated id from
+        # reaching the database as a malformed query.
+        raise HTTPException(status_code=404, detail="No such build.")
+    state = await _build_state(user_email, parsed)
+    if state is None:
+        raise HTTPException(status_code=404, detail="No such build.")
+    return state
 
 
 @router.post("/create")
