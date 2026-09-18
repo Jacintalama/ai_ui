@@ -6388,12 +6388,13 @@
     // loading sequence — it'll call loadFileTree + startPolling + loadLogs
     // once the build reaches completed. Kicking them off now would just
     // produce noisy 404s. For completed/failed tasks, run normally.
+    let initialTask = null;
     try {
-      const task = await apiFetch("GET", "/" + taskId);
-      if (task && BUILDING_STATES.has(task.status)) {
+      initialTask = await apiFetch("GET", "/" + taskId);
+      if (initialTask && BUILDING_STATES.has(initialTask.status)) {
         return;  // overlay watcher takes over
       }
-    } catch (_) { /* fall through to normal init */ }
+    } catch (_) { initialTask = null; /* fall through to normal init */ }
     await loadFileTree();
     startPolling();
     loadLogs();
@@ -6405,7 +6406,13 @@
     // Auto-start the preview on page load. The presence heartbeat keeps
     // it running; the backend's idle-sweep stops it ~2.5 min after the
     // last user leaves. No manual Run click needed.
-    maybeAutoStartPreview();
+    //
+    // Not for a build that failed. It wrote no files, so the only possible
+    // answer is "cannot determine how to run apps/<slug>/", which arrived as
+    // a raw 404 in a toast on top of the error the page was already showing
+    // (Ralph's screenshot, 2026-09-18). Run is still there for anyone who
+    // wants to try it by hand.
+    if (!initialTask || initialTask.status !== "failed") maybeAutoStartPreview();
   }
   init();
 
