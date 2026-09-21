@@ -20,6 +20,7 @@ import re
 import shlex
 from typing import AsyncIterator
 
+import build_model
 from claude_executor import (
     EXECUTION_TIMEOUT_SECONDS,
     MAX_LOG_BYTES,
@@ -88,7 +89,7 @@ class RemoteExecutor:
         host = os.environ["AGENT_HOST"]
         user = os.environ.get("AGENT_USER", "claude-agent")
         key  = os.environ["AGENT_SSH_KEY_PATH"]
-        effort = os.environ.get("AIUI_AGENT_EFFORT", "low")
+        effort = build_model.effort(os.environ.get("AIUI_AGENT_EFFORT", "low"))
 
         # 2. Health check
         if not await self._ssh_ok(host, user, key):
@@ -240,13 +241,23 @@ class RemoteExecutor:
         # so ANTHROPIC_API_KEY actually reaches the claude subprocess. Without
         # this, plain `source` only sets shell locals and the subprocess sees
         # apiKeySource=none → "Not logged in · Please run /login".
+        #
+        # With APP_BUILD_MODEL set, build_model drops the Anthropic key and
+        # names the model on every slot, after the source so ~/.env cannot
+        # put either back, and --model names it on the command line too.
+        # apiKeySource=none is fine then: ~/.env also sets
+        # ANTHROPIC_AUTH_TOKEN, which claude sends instead (checked against a
+        # stub server on the build host, 2026-09-21).
+        model_args = "".join(shlex.quote(a) + " " for a in build_model.cli_args())
         return (
             "set -e; "
             f"cd {cwd}; "
             "set -a; source ~/.env; set +a; "
+            + build_model.remote_shell_prefix() +
             "IS_SANDBOX=1 claude --print --dangerously-skip-permissions "
             "--output-format stream-json --verbose "
             f"--effort {shlex.quote(effort)} "
+            + model_args +
             f"-- {qprompt}"
         )
 

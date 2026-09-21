@@ -415,6 +415,16 @@ services:
       - AGENT_HOST=${AGENT_HOST:-172.22.0.1}
       - AGENT_USER=${AGENT_USER:-claude-agent}
       - AGENT_SSH_KEY_PATH=/run/secrets/agent_ssh_key
+      # The model every App Builder build runs on (build_model.py). Claude Code
+      # still does the building, through OpenRouter, on this model instead of
+      # the claude-sonnet-4-5 the build host's ~/.env names. Chosen 2026-09-21:
+      # openai/gpt-5.1-codex, $1.25 in / $10 out per 1M on OpenRouter that day.
+      # It takes effort medium only ("high" answered 400 "Supported values
+      # are: 'medium'"), hence APP_BUILD_EFFORT. No colon, so APP_BUILD_MODEL=
+      # set blank in .env goes back to the host's Claude model; nothing Claude
+      # is removed.
+      - APP_BUILD_MODEL=${APP_BUILD_MODEL-openai/gpt-5.1-codex}
+      - APP_BUILD_EFFORT=${APP_BUILD_EFFORT-medium}
       - CRON_SHARED_SECRET=${CRON_SHARED_SECRET:-}
       - WEBHOOK_HANDLER_URL=${WEBHOOK_HANDLER_URL:-http://webhook-handler:8086}
       - INTERNAL_CALLBACK_SECRET=${INTERNAL_CALLBACK_SECRET:-}

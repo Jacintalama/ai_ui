@@ -13,6 +13,7 @@ import asyncio
 import os
 from typing import AsyncIterator
 
+import build_model
 from claude_executor import (
     CLAUDE_SANDBOX_DIR,
     CLAUDE_WORKSPACE,
@@ -40,8 +41,10 @@ class LocalExecutor:
             prompt = prompt[:MAX_PROMPT_CHARS] + "\n[truncated by tasks service]"
 
         cwd = CLAUDE_SANDBOX_DIR or CLAUDE_WORKSPACE
-        env = {**os.environ, "IS_SANDBOX": "1"}
-        effort = os.environ.get("AIUI_AGENT_EFFORT", "low")
+        # APP_BUILD_MODEL, when set, drops the Anthropic key and names the
+        # model; see build_model for why the key has to go.
+        env = build_model.local_env({**os.environ, "IS_SANDBOX": "1"})
+        effort = build_model.effort(os.environ.get("AIUI_AGENT_EFFORT", "low"))
 
         self._proc = await asyncio.create_subprocess_exec(
             "claude",
@@ -50,6 +53,7 @@ class LocalExecutor:
             "--output-format", "stream-json",
             "--verbose",
             "--effort", effort,
+            *build_model.cli_args(),
             prompt,
             cwd=cwd,
             stdout=asyncio.subprocess.PIPE,
