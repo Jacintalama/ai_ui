@@ -415,15 +415,17 @@ services:
       - AGENT_HOST=${AGENT_HOST:-172.22.0.1}
       - AGENT_USER=${AGENT_USER:-claude-agent}
       - AGENT_SSH_KEY_PATH=/run/secrets/agent_ssh_key
-      # The model every App Builder build runs on (build_model.py). Claude Code
-      # still does the building, through OpenRouter, on this model instead of
-      # the claude-sonnet-4-5 the build host's ~/.env names. Chosen 2026-09-21:
-      # openai/gpt-5.1-codex, $1.25 in / $10 out per 1M on OpenRouter that day.
-      # It takes effort medium only ("high" answered 400 "Supported values
-      # are: 'medium'"), hence APP_BUILD_EFFORT. No colon, so APP_BUILD_MODEL=
-      # set blank in .env goes back to the host's Claude model; nothing Claude
-      # is removed.
-      - APP_BUILD_MODEL=${APP_BUILD_MODEL-openai/gpt-5.1-codex}
+      # The model every App Builder build runs on (build_model.py). Blank, the
+      # default, is the claude-sonnet-4-5 the build host's ~/.env names,
+      # through OpenRouter: measured 2 to 5 minutes and $0.27 to $0.39 a build.
+      # APP_BUILD_MODEL=openai/gpt-5.1-codex in .env moves builds to GPT-5.1
+      # Codex ($1.25 in / $10 out per 1M): tried 2026-09-22, four attempts,
+      # $1.96, no app (plan mode; build_model.py point 4 has the fix that
+      # went in after). It takes effort medium only ("high" answered 400
+      # "Supported values are: 'medium'"), hence APP_BUILD_EFFORT, which only
+      # applies with a model set. No colon, so a blank line in .env passes
+      # through as blank.
+      - APP_BUILD_MODEL=${APP_BUILD_MODEL-}
       - APP_BUILD_EFFORT=${APP_BUILD_EFFORT-medium}
       - CRON_SHARED_SECRET=${CRON_SHARED_SECRET:-}
       - WEBHOOK_HANDLER_URL=${WEBHOOK_HANDLER_URL:-http://webhook-handler:8086}

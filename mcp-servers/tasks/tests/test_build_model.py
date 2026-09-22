@@ -51,6 +51,15 @@ def test_blank_model_is_no_override(monkeypatch):
     assert build_model.effort("low") == "low"
 
 
+def test_override_disallows_the_tools_a_headless_build_cannot_use(override):
+    # Task c09fb88f, 2026-09-22: EnterPlanMode, ExitPlanMode x14,
+    # AskUserQuestion and EnterWorktree, four attempts, no app.
+    args = build_model.cli_args()
+    assert args[:2] == ["--model", GPT]
+    assert args[args.index("--disallowedTools") + 1] == (
+        "EnterPlanMode,ExitPlanMode,AskUserQuestion,EnterWorktree")
+
+
 def test_override_effort_replaces_the_default(override):
     assert build_model.effort("low") == "medium"
 
@@ -88,6 +97,7 @@ def test_remote_command_with_override(override):
     cmd = _remote_cmd()
     assert "--model " + GPT in cmd
     assert "--effort medium" in cmd
+    assert "--disallowedTools EnterPlanMode,ExitPlanMode," in cmd
     source = cmd.index("source ~/.env")
     unset = cmd.index("unset ANTHROPIC_API_KEY")
     claude = cmd.index("claude --print")
@@ -181,6 +191,7 @@ async def test_local_build_with_override(override, monkeypatch):
     args, env = await _local_spawn(monkeypatch)
     assert args[args.index("--model") + 1] == GPT
     assert args[args.index("--effort") + 1] == "medium"
+    assert "EnterPlanMode" in args[args.index("--disallowedTools") + 1]
     assert "ANTHROPIC_API_KEY" not in env
     assert env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] == GPT
     # The prompt stays the last argument.

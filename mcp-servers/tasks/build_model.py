@@ -19,6 +19,14 @@ Measured on production 2026-09-21 with Claude Code 2.1.140 on the build host:
 3. Claude Code also picks models by alias for side calls (a Haiku call titled
    the session in one capture) and for subagents. Every slot is named, so a
    build calls the override model and nothing else.
+4. A non-Claude model reaches for plan mode. Measured 2026-09-22 on a real
+   build (task c09fb88f, openai/gpt-5.1-codex): attempt 1 called EnterPlanMode,
+   wrote a plan and called ExitPlanMode 14 times, which a headless build can
+   never approve; attempts 3 and 4 called AskUserQuestion and EnterWorktree
+   and stopped to ask. Four attempts, $1.96 on OpenRouter, no app. So the
+   override build passes --disallowedTools for those four tools, which
+   removes them from the model's tool list (26 to 22, checked against a stub
+   server on the build host the same day).
 
 Read at call time, not import, like the executors' own AIUI_AGENT_EFFORT.
 """
@@ -54,10 +62,16 @@ def effort(default: str) -> str:
     return chosen if model() and chosen else default
 
 
+#: Tools a headless build cannot use and a non-Claude model reaches for.
+#: See point 4 above.
+DISALLOWED_TOOLS = "EnterPlanMode,ExitPlanMode,AskUserQuestion,EnterWorktree"
+
+
 def cli_args() -> list[str]:
-    """Extra claude arguments: --model with the override, none without."""
+    """Extra claude arguments: --model and --disallowedTools with the
+    override, none without."""
     m = model()
-    return ["--model", m] if m else []
+    return ["--model", m, "--disallowedTools", DISALLOWED_TOOLS] if m else []
 
 
 def model_slots() -> dict[str, str]:
