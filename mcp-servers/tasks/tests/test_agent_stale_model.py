@@ -298,11 +298,11 @@ async def test_the_chat_path_shows_the_note_when_there_is_no_answer(monkeypatch)
     import routes_agent_turn as rt
 
     async def resolve(email, agent_id):
-        # Four values since the agent row joined them: _run_turn hands
+        # Five values since the roster joined them: _run_turn hands
         # the row to the loop, so the loop can fall back through the
         # free pool. _resolve_agent, the three-value wrapper, is no
         # longer on this path and patching it would seal nothing.
-        return "tok", ["gmail"], "ask", {"id": agent_id}
+        return "tok", ["gmail"], "ask", {"id": agent_id}, []
 
     async def chat(**kw):
         return "", ["Stopped after 5 rounds of tool use, so this answer may "

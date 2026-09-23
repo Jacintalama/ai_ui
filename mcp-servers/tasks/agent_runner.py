@@ -24,7 +24,9 @@ import httpx
 
 import agent_access
 import agent_activity
+import agent_brief
 import agent_escalation
+import agent_graph
 import agent_memory
 import agent_routing
 from agent_tools import (arguments_of, execute_tool_call,
@@ -438,10 +440,13 @@ def _agent_system(agent: dict | None) -> str:
     beside params precisely because it is not blanked.
 
     It matters most on a schedule. A chat turn carries the persona again in
-    its identity line, so a fallback there loses a duplicate; a schedule has
-    no identity line, so a fallback for a shared agent would post the raw
-    base model with no instructions at all: the same agent, answering as
-    nobody, once a week, to somebody who is not watching.
+    its identity line, so a fallback there loses a duplicate. A schedule
+    carries a brief of its own since 2026-09-23, but a brief is not a
+    persona: it says which assistant this is and how to work, and the
+    instructions the owner wrote are what it is FOR. Without this a fallback
+    for a shared agent would post the raw base model with the brief and none
+    of that: the right name, doing nobody's job, once a week, to somebody who
+    is not watching.
 
     Blank counts as absent, not as an answer: Open WebUI blanks the field
     rather than dropping the key, so reading the key alone would stop here
@@ -1019,8 +1024,15 @@ async def run_agent(sched) -> tuple[str, str, dict]:
             level, getattr(sched, "tool_mode", None),
             agent_access.SURFACE_SCHEDULE)
 
-        # What this agent remembers rides in front of the task, the same
-        # block the chat surfaces carry. Empty when nothing is stored.
+        # The same brief the chat surfaces carry, in front of the task.
+        #
+        # This used to be the memory block alone. Everything else the brief
+        # holds reached exactly one of the four ways an agent runs, so an
+        # agent given meta.skillIds ran its weekly cron without ever being
+        # shown the skill, and none of them knew what day it was.
+        #
+        # No roster: that sentence says "the other assistants HERE", and on a
+        # cron run nobody else is speaking.
         messages = _messages_for(sched)
         try:
             memory = await agent_memory.recall_block(sched.user_email,
@@ -1035,8 +1047,15 @@ async def run_agent(sched) -> tuple[str, str, dict]:
             logger.warning("could not read agent memory for %s",
                            getattr(sched, "agent_id", None), exc_info=True)
             memory = ""
-        if memory:
-            messages = [{"role": "system", "content": memory}] + messages
+        # The prompt is the question the graph is read against, the same way
+        # the chat path reads it against what the person just typed.
+        graph = await agent_graph.graph_block(sched.user_email, sched.prompt)
+        # The schedule's own zone, not the owner's current one: this is the
+        # clock the cron matched a minute ago, so it is the clock the run is
+        # happening on.
+        messages = [agent_brief.build(
+            agent, (), memory=memory, graph=graph,
+            now=agent_brief.now_in(getattr(sched, "tz", "") or ""))] + messages
 
         # Keyword arguments on purpose: the tests assert on them by name, and
         # a positional call here would silently drift from those assertions.

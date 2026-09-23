@@ -358,6 +358,10 @@ def _no_db(monkeypatch):
     async def no_graph(email, question=""):
         return ""
 
+    async def utc(email):
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc)
+
     monkeypatch.setattr(store, "create_chat", created)
     monkeypatch.setattr(store, "newest_chat", newest)
     # The Brain reads the whole account over the database, and a round now
@@ -365,6 +369,11 @@ def _no_db(monkeypatch):
     # disconnect lands in, so the round never reaches the agent and a test
     # about what happens DURING a turn never gets there.
     monkeypatch.setattr(chat.agent_graph, "graph_block", no_graph)
+    # The person's clock, read once per round beside the graph since
+    # 2026-09-23, and the second await of exactly that kind: read_timezone
+    # opens its own connection, so left real it swallows the 0.2s before the
+    # disconnect and the round never reaches the agent either.
+    monkeypatch.setattr(chat, "clock_for", utc)
 
 
 async def test_a_round_the_browser_left_releases_the_room(monkeypatch):

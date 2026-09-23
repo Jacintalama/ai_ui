@@ -51,6 +51,11 @@ def wired(monkeypatch):
     same, but unpatched every test in this file waits on a database
     this machine does not have: measured at about two seconds a test.
 
+    graph_block joined it on 2026-09-23 for exactly the same reason, when
+    a scheduled run started carrying the whole brief rather than the
+    memory block alone. It also fails open, and it also waits on that
+    database first.
+
     The run bookkeeping in agent_activity opens its own session and is
     still unpatched, so some of that cost remains. Nothing here asserts
     on it.
@@ -66,7 +71,21 @@ def wired(monkeypatch):
     chat = AsyncMock(return_value=("Two need a reply today.", []))
     monkeypatch.setattr(agent_runner, "_chat", chat)
     monkeypatch.setattr(agent_memory, "recall_block", AsyncMock(return_value=""))
+    monkeypatch.setattr(agent_runner.agent_graph, "graph_block",
+                        AsyncMock(return_value=""))
     return SimpleNamespace(chat=chat, owui_user_id_for=owui_user_id_for)
+
+
+def _carried(msgs: list[dict]) -> list[dict]:
+    """The conversation without the brief.
+
+    Every scheduled run leads with one since 2026-09-23. It is the same
+    block on every run, so it is never what a test about what this run
+    carries forward is asking about. tests/test_agent_brief.py pins the
+    brief itself.
+    """
+    assert msgs and msgs[0]["role"] == "system", msgs
+    return msgs[1:]
 
 
 async def test_it_runs_the_named_agent(wired):
@@ -201,14 +220,17 @@ async def test_the_previous_result_is_carried_forward(wired):
 async def test_a_huge_previous_result_is_trimmed(wired):
     await agent_runner.run_agent(_sched(last_result="x" * 9000))
 
-    sent = "".join(m["content"] for m in wired.chat.await_args.kwargs["messages"])
+    # The carried message alone. Measuring the whole conversation would put
+    # the brief's own length inside a limit that is about last_result.
+    sent = "".join(m["content"]
+                   for m in _carried(wired.chat.await_args.kwargs["messages"]))
     assert len(sent) < 4000, "the whole of last_result was pasted in"
 
 
 async def test_the_first_run_carries_nothing(wired):
     await agent_runner.run_agent(_sched(last_result=None))
 
-    msgs = wired.chat.await_args.kwargs["messages"]
+    msgs = _carried(wired.chat.await_args.kwargs["messages"])
     assert len(msgs) == 1, msgs
 
 
@@ -222,7 +244,7 @@ async def test_a_failed_previous_run_is_not_carried_forward(wired):
                     "again at the next scheduled time.",
         last_run_status="failed"))
 
-    msgs = wired.chat.await_args.kwargs["messages"]
+    msgs = _carried(wired.chat.await_args.kwargs["messages"])
     assert len(msgs) == 1, msgs
     sent = "".join(m["content"] for m in msgs)
     assert "could not finish" not in sent

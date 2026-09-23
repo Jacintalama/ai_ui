@@ -29,7 +29,7 @@ from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS, FREE_POOL_EXHAUSTED,
                           ROUTER_EXHAUSTED, _chat)
 from routes_agent_turn import (AGENT_ON_CALLBACK_MODEL, _agents_for,
                                _resolve_agent, _resume_turn,
-                               _turn_failed_sentence, _turn_for)
+                               _turn_failed_sentence, _turn_for, clock_for)
 from routes_agents import _pending_for_page
 
 log = logging.getLogger(__name__)
@@ -449,6 +449,14 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
         log.warning("agent chat: could not read the graph for this round",
                     exc_info=True)
         graph = ""
+    # The same once-per-round rule as the graph block above. Read here rather
+    # than inside each turn because read_timezone opens a connection per call,
+    # and a room of seven agents answering one question would open seven.
+    #
+    # No guard around it, unlike the graph read: clock_for swallows its own
+    # failure and answers UTC, so there is nothing here that can end the
+    # round before anybody speaks.
+    now = await clock_for(email)
     # Bound once, alongside history, and written to for the rest of the round
     # instead of going through s. each time. _turn_for is a real outbound
     # call, so the event loop can service another request from the same
@@ -482,7 +490,7 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
         with agent_escalation.asking(agent_escalation.Intent(
                 person_text=asked, may_pass=may_pass)):
             out = await _turn_for(email, agent, turn_history, names,
-                                  roster=agents, graph=graph)
+                                  roster=agents, graph=graph, now=now)
         answer = out.get("answer") or ""
 
         fr = _failure_reason(name, answer)
@@ -526,7 +534,7 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
         with agent_escalation.asking(agent_escalation.Intent(
                 person_text=asked, may_pass=False)):
             out = await _turn_for(email, fallback, history, names, roster=agents,
-                              graph=graph)
+                              graph=graph, now=now)
         answer = out.get("answer") or ""
         fr = _failure_reason(name, answer)
         # Asked for before the pass check, as in the loop above: a turn that

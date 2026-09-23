@@ -95,8 +95,9 @@ async def test_the_turn_endpoint_prepends_the_block_for_the_bots(monkeypatch):
     _turn_for, so without this they were the three surfaces with no memory."""
     seen = {}
 
-    async def fake_run(user_email, agent_id, messages):
+    async def fake_run(user_email, agent_id, messages, brief=False):
         seen["messages"] = messages
+        seen["brief"] = brief
         return {"answer": "ok", "notes": []}
 
     monkeypatch.setattr(rt, "_require_internal", lambda secret: None)
@@ -106,17 +107,22 @@ async def test_the_turn_endpoint_prepends_the_block_for_the_bots(monkeypatch):
 
     await rt.turn(_body(), x_internal_secret="s")
 
-    assert seen["messages"][0]["role"] == "system"
-    assert "likes tea" in seen["messages"][0]["content"]
-    assert seen["messages"][1] == {"role": "user", "content": "hello there"}
+    # The block is assembled a layer down now, inside the brief, from the row
+    # _run_turn has already resolved. What this endpoint owes the bots is the
+    # ASK for one; tests/test_agent_brief.py pins what actually arrives.
+    assert seen["brief"] is True
+    assert seen["messages"] == [{"role": "user", "content": "hello there"}]
 
 
-async def test_the_turn_endpoint_sends_the_messages_untouched_when_nothing_is_stored(
+async def test_the_turn_endpoint_passes_the_bots_own_messages_through(
         monkeypatch):
+    """It adds nothing to the conversation itself. The brief is built and
+    prepended inside _run_turn, the only place holding the row it is written
+    from."""
     seen = {}
     sent = [{"role": "user", "content": "hello there"}]
 
-    async def fake_run(user_email, agent_id, messages):
+    async def fake_run(user_email, agent_id, messages, brief=False):
         seen["messages"] = messages
         return {"answer": "ok", "notes": []}
 
@@ -173,6 +179,11 @@ def _wire_schedule(monkeypatch, memory):
                         AsyncMock(return_value=None))
     monkeypatch.setattr(agent_runner.agent_activity, "finish_run", AsyncMock())
     monkeypatch.setattr(agent_memory, "recall_block", AsyncMock(return_value=memory))
+    # The brief reads the account too. Patched here so these tests stay off
+    # the network; what the block itself carries is pinned in
+    # tests/test_agent_brief.py.
+    monkeypatch.setattr(agent_runner.agent_graph, "graph_block",
+                        AsyncMock(return_value=""))
     import routes_agent_turn
     monkeypatch.setattr(routes_agent_turn, "tools_for_agent", AsyncMock(return_value=[]))
     return seen
@@ -188,12 +199,17 @@ async def test_a_schedule_run_carries_the_block_as_the_leading_system_message(mo
     assert seen["messages"][-1]["content"] == "Write the weekly review."
 
 
-async def test_a_schedule_run_with_nothing_stored_sends_the_task_unchanged(monkeypatch):
+async def test_a_schedule_run_with_nothing_stored_carries_no_recall_block(monkeypatch):
+    """The task arrives exactly as it was written, behind the brief every
+    run now carries. The brief is not what this test is about: an agent with
+    nothing stored must not be handed an empty "known about this person"
+    heading, which reads as a person the agent has been told nothing about."""
     seen = _wire_schedule(monkeypatch, "")
 
     status, _result, _extras = await agent_runner.run_agent(_Sched())
     assert status == "completed"
-    assert seen["messages"] == agent_runner._messages_for(_Sched())
+    assert seen["messages"][1:] == agent_runner._messages_for(_Sched())
+    assert "Known about this person" not in seen["messages"][0]["content"]
 
 
 # ---------------------------------------------------------------------------
@@ -369,4 +385,7 @@ async def test_a_broken_memory_read_costs_a_schedule_its_memory_not_its_run(
 
     assert status == "completed", (status, result)
     assert result == "report"
-    assert seen["messages"] == agent_runner._messages_for(_Sched())
+    assert seen["messages"][1:] == agent_runner._messages_for(_Sched())
+    # The rest of the brief survives the broken read, because each optional
+    # part of it is read in its own arm.
+    assert "You are Ada" in seen["messages"][0]["content"]

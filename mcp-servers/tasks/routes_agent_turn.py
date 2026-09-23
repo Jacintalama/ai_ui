@@ -25,11 +25,12 @@ from sqlalchemy import select
 
 import agent_access
 import agent_activity
+import agent_brief
 import agent_escalation
 import agent_graph
 import agent_memory
 import agent_routing
-import agent_skills
+import routes_prefs
 from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS,
                           CHANNEL_MAX_TOOL_ITERATIONS,
                           CHAT_TOKEN_TTL_SECONDS, _chat, _list_agents,
@@ -83,7 +84,7 @@ _TOOLS_AN_AGENT_MAY_NOT_HAVE = frozenset({"agents"})
 #: An agent limited to the tools somebody actually picked. Anything else,
 #: including absent and including junk, means everything the owner can reach,
 #: which is what every agent has always done.
-TOOL_SCOPE_PICKED = "picked"
+TOOL_SCOPE_PICKED = agent_brief.TOOL_SCOPE_PICKED
 
 
 async def _every_tool_for(user_email: str) -> list[str]:
@@ -137,8 +138,8 @@ AGENT_ON_CALLBACK_MODEL = (
 
 
 async def _resolve_agent_row(user_email: str, agent_id: str
-                             ) -> tuple[str, list[str], str | None, dict]:
-    """(token, the agent's own tool ids, its access level, the agent row).
+                             ) -> tuple[str, list[str], str | None, dict, list[dict]]:
+    """(token, tool ids, access level, the agent row, every agent listed).
 
     Raises HTTPException rather than returning a sentinel: every caller here
     would have to re-raise anyway, and a sentinel that got ignored once would
@@ -148,6 +149,12 @@ async def _resolve_agent_row(user_email: str, agent_id: str
     free-model agent's fallback pool and its no-reasoning payload are both
     decided from base_model_id and params, and this function was already the
     only place on the chat path that had them.
+
+    The whole listing comes back for the same reason: the brief names the
+    other assistants and their jobs, and this call has already paid for that
+    list. A caller that fetched it again would page Open WebUI's model list
+    twice for one Discord message, on a box where a turn already waits on
+    that service's connection pool.
     """
     owner = await _owui_user_id_for(user_email)
     if not owner:
@@ -173,12 +180,13 @@ async def _resolve_agent_row(user_email: str, agent_id: str
                             detail=AGENT_ON_CALLBACK_MODEL)
     meta = agent.get("meta") if isinstance(agent.get("meta"), dict) else {}
     return (token, await tools_for_agent(user_email, meta),
-            agent_access.level_of(meta), agent)
+            agent_access.level_of(meta), agent, agents)
 
 
 async def _resolve_agent(user_email: str, agent_id: str) -> tuple[str, list[str], str | None]:
     """The three values every older caller reads. See _resolve_agent_row."""
-    token, tools, level, _agent = await _resolve_agent_row(user_email, agent_id)
+    token, tools, level, _agent, _roster = await _resolve_agent_row(
+        user_email, agent_id)
     return token, tools, level
 
 
@@ -270,14 +278,25 @@ def _pending_payload(user_email: str, agent_id: str,
     }}
 
 
-async def _run_turn(user_email: str, agent_id: str,
-                    messages: list[dict]) -> dict:
+async def _run_turn(user_email: str, agent_id: str, messages: list[dict],
+                    brief: bool = False) -> dict:
     """Run one turn as this user's agent, tools and all.
 
     Split out of the endpoint so /agents/chat can reuse it without going back
     out over HTTP to ourselves. Returns the same two shapes the endpoint does.
+
+    `brief` is for callers that have not built one. _turn_for builds its own
+    and passes it in front of the history, because it runs several agents
+    over one message and reads the account once for all of them. The bot
+    gateway has no such round, and the row and roster a brief needs are
+    resolved here anyway, so asking for it here is what stops that endpoint
+    fetching the same listing a second time.
     """
-    token, tools, level, agent = await _resolve_agent_row(user_email, agent_id)
+    token, tools, level, agent, roster = await _resolve_agent_row(
+        user_email, agent_id)
+    if brief:
+        made = await _brief_for(user_email, agent, roster, messages)
+        messages = [made] + messages
     mode = agent_access.effective_mode(level, None, agent_access.SURFACE_CHANNEL)
 
     run_id = await agent_activity.start_run(
@@ -329,24 +348,15 @@ async def turn(body: TurnIn,
                x_internal_secret: str = Header(default="")) -> dict:
     """Run one turn as this user's agent, tools and all."""
     _require_internal(x_internal_secret)
-    # Discord, Slack and Telegram arrive here, not through _turn_for, so
-    # the recall block has to be added on this path too. A leading system
-    # message rather than an identity line, because this endpoint has
-    # neither the agent row nor the other agents' names to build one from.
-    messages = list(body.messages)
-    try:
-        memory = await agent_memory.recall_block(body.user_email,
-                                                 body.agent_id)
-    except Exception:                                   # noqa: BLE001
-        # Optional by definition. recall_block already fails open, so this
-        # only catches a bug in it, and a bug there must cost the memory,
-        # not the bot's answer.
-        logger.warning("could not read agent memory for %s", body.agent_id,
-                       exc_info=True)
-        memory = ""
-    if memory:
-        messages = [{"role": "system", "content": memory}] + messages
-    return await _run_turn(body.user_email, body.agent_id, messages)
+    # Discord, Slack and Telegram arrive here, not through _turn_for, so the
+    # brief has to be built on this path too. It used to be the recall block
+    # alone, on the grounds that this endpoint has neither the agent row nor
+    # the other agents' names: _run_turn resolves both to run the turn at
+    # all, so asking it for a brief costs nothing, and doing without one left
+    # every bot turn with no skills, no account context and no idea what its
+    # own job was.
+    return await _run_turn(body.user_email, body.agent_id,
+                           list(body.messages), brief=True)
 
 
 #: Fed back as the tool result when the owner said no, so the agent can say
@@ -372,7 +382,8 @@ async def _resume_turn(user_email: str, agent_id: str, conversation: list[dict],
     can be edited or deleted, and somebody who has second thoughts and turns
     an agent down to read only has turned it down.
     """
-    token, tools, level, agent = await _resolve_agent_row(user_email, agent_id)
+    token, tools, level, agent, _roster = await _resolve_agent_row(
+        user_email, agent_id)
     mode = agent_access.effective_mode(level, None, agent_access.SURFACE_CHANNEL)
     if mode not in _RESUMABLE:
         return {"answer": "This agent is set to read only now, so I did not "
@@ -694,244 +705,61 @@ def _turn_failed_sentence(name: str) -> str:
     return "%s could not answer just now. Try again in a moment." % (name or "That agent")
 
 
-#: A role is typed by the owner into a form whose input caps at 32. This cap
-#: is the brief's own defence, not the form's: meta comes off a database row
-#: that Open WebUI's model API writes, so nothing here can assume the form was
-#: the last thing to touch it.
-ROLE_MAX_CHARS = 40
+#: The brief lives in agent_brief so every surface can build the same one.
+#: Kept as a name here because this module's own callers, and the tests that
+#: pin what the brief says, have always reached it through this one.
+_identity_line = agent_brief.build
 
 
-def _role_of(agent: dict) -> str:
-    """The agent's job, ready to drop into the middle of a sentence.
+async def clock_for(user_email: str) -> datetime:
+    """The time on this person's own clock, for a brief.
 
-    Empty when there is none, which is the ordinary case: every agent that
-    existed before the field did has no role, and the field is optional.
-
-    Typed into a form a role arrives capitalised, and "You are Ada, this
-    person's Project manager" reads as a proper noun. So the first letter is
-    lowered, EXCEPT when the first word is an initialism, because "qa lead"
-    and "hr assistant" are worse than the capital they fix.
+    Public because a caller running several agents over one message reads it
+    once and passes it to each of them. read_timezone opens a connection per
+    call, and the clock does not move between two agents answering the same
+    question.
     """
-    meta = agent.get("meta")
-    role = meta.get("role") if isinstance(meta, dict) else None
-    if not isinstance(role, str):
-        return ""
-    role = " ".join(role.split())[:ROLE_MAX_CHARS].strip()
-    if not role:
-        return ""
-    first = role.split(" ", 1)[0]
-    if len(first) > 1 and first.isupper():
-        return role
-    return role[0].lower() + role[1:]
+    try:
+        tz, _source = await routes_prefs.read_timezone(user_email)
+    except Exception:                                       # noqa: BLE001
+        # read_timezone says it never raises. If that stops being true, the
+        # turn loses the right clock, not the answer.
+        logger.warning("could not read the timezone for %s", user_email,
+                       exc_info=True)
+        tz = ""
+    return agent_brief.now_in(tz or "")
 
 
-#: What each tool reaches, in the words the owner would use. Kept here rather
-#: than imported from routes_agents, which imports this module.
-_TOOL_WORDS = {
-    "gmail": "email",
-    "calendar": "the calendar",
-    "gdrive": "Drive",
-    "code": "the apps they build",
-    "schedules": "their schedules",
-    "remember": "saved notes",
-    "documents": "making documents",
-    "excel_creator": "making spreadsheets",
-    "executive_dashboard": "making dashboards",
-    "account": "their account and connections",
-    "server:mcp-proxy": "their connected apps and the web",
-    "agents": "the other assistants",
-}
+async def _brief_for(user_email: str, agent: dict, roster: list[dict],
+                     messages: list[dict]) -> dict:
+    """The brief for a turn nobody else built one for.
 
-
-def _own_tools(agent: dict):
-    """This agent's own tools when it is narrowed, or None when it reaches
-    everything. The same rule tools_for_agent applies, so the brief and the
-    tools actually attached can never describe different agents."""
-    meta = agent.get("meta") if isinstance(agent.get("meta"), dict) else {}
-    own = [t for t in (meta.get("toolIds") or []) if isinstance(t, str)]
-    if meta.get("toolScope") == TOOL_SCOPE_PICKED and own:
-        return own
-    return None
-
-
-def _reaches(agent: dict, tool_id: str) -> bool:
-    own = _own_tools(agent)
-    return own is None or tool_id in own
-
-
-def _join_words(words: list) -> str:
-    if len(words) <= 1:
-        return "".join(words)
-    return ", ".join(words[:-1]) + " and " + words[-1]
-
-
-def _tools_sentence(agent: dict) -> str:
-    """What this agent can reach, and what to do about the rest.
-
-    It used to say the same thing to every agent: that it had tools for
-    mail, files, apps, connections, schedules and saved notes. True of an
-    agent with everything, false of every narrowed one, so Mia, Nora and Iris
-    each offered to bug-hunt an app none of them can open.
+    Every part of it is optional and every part fails open on its own, which
+    is the whole reason this is not one try block: a bot turn answering
+    without its skills is worse than one with them and far better than none.
+    The identity, the role and the tools sentence come off the row this was
+    handed, so those are there whatever else fails.
     """
-    base = ("When they ask about their own things, use a tool and answer "
-            "from what it returns. Never state a number or a name you have "
-            "not looked up. Never describe what you could do instead of "
-            "doing it: if you can check, check, then say what you found.")
-    own = _own_tools(agent)
-    if own is None:
-        return "You have tools that read this person's real account. " + base
-    reach = [_TOOL_WORDS.get(t, t) for t in own if t != "skills"]
-    if not reach:
-        return base
-    return ("Your tools reach %s, and nothing else. %s Anything that needs "
-            "another tool is not yours to do: say so or pass, and never "
-            "offer to do it." % (_join_words(reach), base))
-
-
-def _others_with_roles(roster, me: str) -> list[str]:
-    """The other assistants, each with its job, as "Mia (receptionist)".
-
-    Asked "who handles coding?", Kai said he did, Ada said Kai was the lead
-    and Rex also worked on it, and Rex said he did (Ralph's screenshot,
-    2026-09-18). All three were guessing: the brief listed the other agents
-    by name and never said what any of them was for, so each one filled the
-    gap from its own instructions.
-
-    Accepts plain names as well as agent rows, because `names` is a list of
-    strings on every surface that also feeds it to clean_history_for_agent.
-    A name with no role reads as a bare name, exactly as before.
-    """
-    out: list[str] = []
-    for entry in roster or []:
-        if isinstance(entry, dict):
-            name = str(entry.get("name") or "").strip()
-            role = _role_of(entry)
-        else:
-            name = str(entry or "").strip()
-            role = ""
-        if not name or name == me:
-            continue
-        out.append("%s (%s)" % (name, role) if role else name)
-    return out
-
-
-def _identity_line(agent: dict, names, memory: str = "", roster=(),
-                   graph: str = "") -> dict:
-    """Who the agent is and how it is expected to work, as one system line.
-
-    Two faults, both seen live, both fixed here rather than on any one card.
-
-    It did not know its own name. The transcript it reads has every speaker
-    label stripped, because those lines taught it to invent exchanges between
-    agents, and that fix left it with nothing to go on: asked "where is Ada",
-    Ada answered that Ada was somebody else.
-
-    And it would not use what it had. Asked "who has all my app connections"
-    it guessed at a number; asked "do you have any work today" it offered to
-    help rather than looking. It now holds tools that read the person's real
-    account, so the brief says to use them and says that guessing is worse
-    than saying it could not check.
-
-    A system line is not the hazard a labelled transcript is: it states an
-    identity rather than demonstrating a format, and it says in as many words
-    not to write the name into the answer, which the renderer adds.
-    """
-    me = str(agent.get("name") or agent.get("id") or "this assistant")
-    # The roster carries each agent's job; `names` is the same list with only
-    # the names, which is what the history cleaners take. Either works here.
-    others = _others_with_roles(roster or names, me)
-
-    role = _role_of(agent)
-    said = ["You are %s, this person's %s." % (me, role) if role
-            else "You are %s, one of this person's own assistants." % me]
-    if others:
-        said.append(
-            "The other assistants here are %s. They are software, like you, "
-            "not this person's colleagues: when they say team or everyone "
-            "they mean you and the other assistants, so answer for yourself "
-            "rather than suggesting they go and ask somebody. Never answer "
-            "for them or invent what they said. Earlier replies here came "
-            "from several of you, so never say you changed or checked "
-            "something unless you did it in this reply." % ", ".join(others))
-
-    said.append(_tools_sentence(agent))
-
-    said.append(
-        "Asked what you do or what you are working on, answer from your own "
-        "instructions in terms of this person's actual work, in a sentence or "
-        "two. Do not describe yourself as an assistant who can help with a "
-        "variety of tasks; they know that already and it tells them nothing.")
-
-    # The owner reads every one of these and asked for it directly. The dash
-    # is also how a whole room of agents ends up sounding identical: they all
-    # reach for the same punctuation, so seven replies look like one voice
-    # repeated. Spelled out with the characters named, because "avoid
-    # em-dashes" does not survive a model that does not know which key that is.
-    said.append(
-        "Never use the long dashes — or –. Use a comma, a full stop "
-        "or the word and. This person will notice.")
-
-    said.append(
-        "You can see this whole conversation. Do not say again what you have "
-        "already said in it: if they have seen a list, do not print it a "
-        "second time, refer to it. When they tell you something is handled, "
-        "not needed, or already dealt with, that settles it, and raising it "
-        "again is the same as not listening.")
-
-    said.append(
-        "Answer the question they actually asked. Running your usual job and "
-        "reporting the result is not an answer to a different question.")
-
-    if _reaches(agent, "remember"):
-        said.append(
-            "You have a tool for remembering things. When they tell you "
-            "something worth keeping, a preference, a decision, a name, save "
-            "it, so the next conversation starts where this one ended.")
-
-    # A narrowed agent without the skills tool still gets its assigned skills
-    # through brief_for below; telling it to call find_skills only spends a
-    # round on "not available".
-    if _reaches(agent, "skills"):
-        said.append(
-            "Before doing a job you have no instructions for, call find_skills "
-            "with what they asked in their own words. If one fits, use_skill "
-            "and follow it. If none does, do the job and say so.")
-
-    said.append(
-        "Answer, then stop. Do not close with an offer of further help or an "
-        "invitation to let you know. If something is genuinely out of reach, "
-        "say what is missing and what would fix it, rather than apologising.")
-
-    said.append(
-        "Answer as yourself. Do not put your own name at the start of your "
-        "answer; it is added for you.")
-
-    content = " ".join(said)
-    # Appended, never in place of the above. The brief exists because an agent
-    # did not know its own name; a skill adds a job to that, it does not
-    # replace who is doing it. Joined with a blank line rather than a space
-    # because a skill is a markdown document, not another sentence.
-    chosen = agent_skills.brief_for(agent.get("meta"))
-    if chosen:
-        content += "\n\n" + chosen
-    # Last, after the skills. What the agent remembers is the most specific
-    # thing in the line and the thing most likely to answer the question
-    # being asked, so it sits nearest the conversation. Empty for an agent
-    # with nothing stored, which keeps every existing turn byte identical.
-    # The person's own account, from the Brain. Before the memory block and
-    # after the skills, because it is context rather than instruction: it says
-    # what exists, where a skill says what to do and memory says what this
-    # agent was told. Empty for anybody whose graph has nothing in it, and
-    # empty whenever the read failed, which costs the turn nothing.
-    if graph:
-        content += "\n\n" + graph
-    if memory:
-        content += "\n\n" + memory
-    return {"role": "system", "content": content}
+    agent_id = agent.get("id")
+    try:
+        memory = await agent_memory.recall_block(user_email, agent_id)
+    except Exception:                                       # noqa: BLE001
+        # recall_block already fails open, so this only catches a bug in it,
+        # and a bug there must cost the memory, not the bot's answer.
+        logger.warning("could not read agent memory for %s", agent_id,
+                       exc_info=True)
+        memory = ""
+    names = [a.get("name") for a in roster
+             if isinstance(a, dict) and a.get("name")]
+    graph = await agent_graph.graph_block(
+        user_email, agent_routing.last_user_text(messages))
+    return agent_brief.build(agent, names, memory=memory, roster=roster,
+                             graph=graph, now=await clock_for(user_email))
 
 
 async def _turn_for(user_email: str, agent: dict, messages: list[dict],
-                    names=(), roster=(), graph: str = "") -> dict:
+                    names=(), roster=(), graph: str = "",
+                    now: datetime | None = None) -> dict:
     """One rendered turn for a single named agent. Never raises.
 
     Wraps _run_turn so a blown-up tool call in one agent's turn cannot take
@@ -954,9 +782,16 @@ async def _turn_for(user_email: str, agent: dict, messages: list[dict],
         logger.warning("could not read agent memory for %s", agent.get("id"),
                        exc_info=True)
         memory = ""
+    # A caller running a round reads this once and hands the same clock to
+    # everybody, the way it does with the graph block: read_timezone opens
+    # its own Postgres connection and closes it, so a per-agent read would
+    # cost a connection per agent per message. Only a caller running one
+    # agent leaves it out, and then this is the one read.
+    if now is None:
+        now = await clock_for(user_email)
     try:
         history = ([_identity_line(agent, names, memory=memory,
-                                   roster=roster, graph=graph)]
+                                   roster=roster, graph=graph, now=now)]
                    + agent_routing.clean_history_for_agent(messages, names))
         out = await _run_turn(user_email, agent["id"], history)
     except Exception as exc:                                # noqa: BLE001
@@ -1011,11 +846,13 @@ async def chat(body: ChatIn,
         # turns about one question, and the account has not changed between
         # them.
         graph = await agent_graph.graph_block(body.user_email, text)
+        now = await clock_for(body.user_email)
         speakers = named[:1] if getattr(body, "first_only", False) else named
         turns = []
         for agent in speakers:
             turns.append(await _turn_for(body.user_email, agent, body.messages,
-                                         names, roster=agents, graph=graph))
+                                         names, roster=agents, graph=graph,
+                                         now=now))
         # An approval interrupts the round for the agent that asked: the
         # pin goes to the one who is waiting, not to the last one named,
         # so the person's yes or no reaches them.

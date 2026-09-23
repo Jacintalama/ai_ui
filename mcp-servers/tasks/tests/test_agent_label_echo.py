@@ -215,10 +215,20 @@ def test_the_brief_stays_short_enough_to_send_every_turn():
     Raised from 2100 to 2250 on 2026-09-14 for the long-dash rule, which
     clears that bar: the owner sent a screenshot of his own agents using the
     dash he has a standing rule against. The rule was written twice and cut
-    to two lines before this rose, so it is the smallest rise that fits."""
+    to two lines before this rose, so it is the smallest rise that fits.
+
+    Raised from 2250 to 2320 on 2026-09-23 for the date. This one is not a
+    rule and the bar above does not quite fit it: it is the single fact an
+    agent had no way to obtain. No datetime reached any prompt, because the
+    per-user clock is an Open WebUI inlet filter and an agent turn does not
+    pass through filters. Two of this owner's daily schedules ask for
+    something "for today" and neither agent could tell today from the day
+    the schedule was written. 2320 is the measured brief plus the longest
+    timezone key there is (America/Argentina/ComodRivadavia), which is what
+    sets the sentence's own worst case."""
     from routes_agent_turn import _identity_line
     said = _identity_line({"id": "a", "name": "Ada"}, ["Ada", "Mia"])["content"]
-    assert len(said) < 2250, len(said)
+    assert len(said) < 2320, len(said)
 
 
 def test_the_brief_says_not_to_repeat_itself():
