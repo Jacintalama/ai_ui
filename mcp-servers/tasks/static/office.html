@@ -214,6 +214,8 @@
   .section-title { font-size: 12px; color: var(--muted); margin: 0 0 9px; }
   .tags { display: flex; gap: 6px; flex-wrap: wrap; }
   .tag { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: 2px 9px; font-size: 11.5px; color: var(--muted); }
+  a.tag.skill { color: var(--text); border-color: var(--border-2); text-decoration: none; }
+  a.tag.skill:hover { border-color: var(--accent); color: var(--accent); }
   .rows { list-style: none; margin: 0; padding: 0; }
   .rows li { display: flex; gap: 9px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
   .rows li:last-child { border-bottom: 0; }
@@ -273,7 +275,8 @@
 (function () {
   "use strict";
 
-  var AGENTS = [], ACTIVITY = {}, STATS = {}, SELECTED = null, TAB = "office";
+  var AGENTS = [], ACTIVITY = {}, STATS = {}, SKILLS = {}, SELECTED = null,
+      TAB = "office";
 
   function authHeaders() {
     var h = { "Content-Type": "application/json" };
@@ -423,6 +426,48 @@
       (working ? " &middot; " + working + " working now" : " &middot; none working right now");
   }
 
+  // --- what this agent can actually be asked for --------------------------
+  // 67 skills ship with the image and an agent is given some of them, but the
+  // only place one was ever visible is inside the agent edit form, in a
+  // section collapsed by default because "most edits never touch skills". So
+  // the features existed and were unreachable: a person opening this page had
+  // no way to learn that Ada holds a weekly review.
+  //
+  // Each one becomes a message rather than a button that fires. The wording
+  // names the agent, which is what the routing ladder matches on, so it goes
+  // to that agent and it may not pass. It is handed to the composer and NOT
+  // sent: a turn costs money, and a message the person never read being sent
+  // on their behalf is worse than one more click.
+  function skillsOf(m) {
+    var ids = (m.meta && m.meta.skillIds) || [];
+    if (!Array.isArray(ids)) return [];
+    return ids.map(function (id) {
+      return SKILLS[id] || { name: id, description: "" };
+    });
+  }
+
+  function saying(id) {
+    return String(id || "").replace(/-/g, " ");
+  }
+
+  function canDo(m) {
+    var mine = skillsOf(m);
+    if (!mine.length) {
+      return '<p class="section-title" style="margin-top:18px">What to ask for</p>' +
+        '<p class="empty">This agent has no ready-made skills yet. You can ' +
+        'still ask it anything, or give it some when you edit it.</p>';
+    }
+    var name = m.name || "this agent";
+    return '<p class="section-title" style="margin-top:18px">What you can ask ' +
+      esc(name) + ' for</p><div class="tags">' +
+      mine.map(function (s) {
+        var msg = name + ", " + saying(s.name);
+        return '<a class="tag skill" href="/tasks/agents?ask=' +
+          encodeURIComponent(msg) + '" title="' + esc(s.description) + '">' +
+          esc(saying(s.name)) + '</a>';
+      }).join("") + '</div>';
+  }
+
   function drawSide() {
     var side = document.getElementById("side");
     var m = AGENTS.filter(function (a) { return a.id === SELECTED; })[0];
@@ -460,6 +505,7 @@
         '<div class="stat"><div class="k">Finished cleanly</div><div class="v">' + success + '</div></div>' +
         '<div class="stat"><div class="k">Spent</div><div class="v">' + cost + '</div></div>' +
       '</div>' +
+      canDo(m) +
       '<p class="section-title">Recent activity</p>' + recent +
       '<p class="section-title" style="margin-top:18px">Tools it can reach</p>' +
       '<div class="tags">' +
@@ -543,6 +589,15 @@
     try { STATS = (await getJson("/api/tasks/agents/stats")).stats || {}; }
     catch (e) { console.warn("[office] stats unavailable", e); }
   }
+  async function loadSkills() {
+    // The catalogue ships with the image and is the same for everybody, so it
+    // is read once and never again. Losing it costs the descriptions, not the
+    // list: an id still reads as words.
+    try {
+      var got = (await getJson("/api/tasks/agents/skills")).skills || [];
+      got.forEach(function (s) { SKILLS[s.name] = s; });
+    } catch (e) { console.warn("[office] skill catalogue unavailable", e); }
+  }
 
   document.getElementById("stage").addEventListener("click", function (ev) {
     var who = ev.target.closest(".who");
@@ -569,7 +624,7 @@
       console.warn("[office] could not list agents", e);
       return;
     }
-    await Promise.all([loadActivity(), loadStats()]);
+    await Promise.all([loadActivity(), loadStats(), loadSkills()]);
     if (!SELECTED && AGENTS.length) SELECTED = AGENTS[0].id;
     draw();
     // Only the live half repeats. The aggregate covers every run an agent has

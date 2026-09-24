@@ -24,11 +24,12 @@ STATIC = pathlib.Path(__file__).resolve().parents[2] / "static"
 AGENTS = [
     {"id": "agent-research-assistant-0001", "name": "Ada",
      "meta": {"role": "Project manager", "description": "Keeps things moving.",
-              "toolIds": ["code", "schedules", "remember", "account", "skills"]},
+              "toolIds": ["code", "schedules", "remember", "account", "skills"],
+              "skillIds": ["weekly-review", "daily-standup"]},
      "params": {}, "user_id": "me", "created_at": 1, "updated_at": 1},
     {"id": "agent-iris-a103", "name": "Iris",
      "meta": {"role": "Drive librarian", "description": "Finds your files.",
-              "toolIds": ["gdrive"]},
+              "toolIds": ["gdrive"], "skillIds": ["find-my-file"]},
      "params": {}, "user_id": "me", "created_at": 2, "updated_at": 2},
     # Not an agent. The listing carries every model this person can see, and
     # the page must not draw gpt-5 as a colleague.
@@ -100,6 +101,8 @@ def page(browser, request):
             body = {"activity": ACTIVITY}
         elif "/agents/stats" in url:
             body = {"stats": stats}
+        elif "/agents/skills" in url:
+            body = {"skills": SKILLS}
         else:
             body = {}
         r.fulfill(status=200, content_type="application/json",
@@ -221,3 +224,50 @@ def test_two_agents_in_one_area_do_not_stand_on_each_other(page):
     spots = page.locator(".who").evaluate_all(
         "els => els.map(e => e.style.left + ':' + e.style.top)")
     assert len(set(spots)) == len(spots), spots
+
+
+# --- being able to actually use what an agent can do ------------------------
+# 67 skills ship with the image and an agent is given some of them, but the
+# only place a person could ever see one is inside the agent edit form, in a
+# section collapsed by default because "most edits never touch skills". So the
+# person who opens the office has no idea what to ask for, and the features
+# are unreachable rather than missing.
+
+SKILLS = [
+    {"name": "weekly-review",
+     "description": "Summarise the week: what shipped, what slipped.",
+     "tools": ["code", "schedules"], "tags": ["planning"]},
+    {"name": "daily-standup", "description": "What happened yesterday.",
+     "tools": [], "tags": ["planning"]},
+    {"name": "find-my-file", "description": "Find a file in Drive.",
+     "tools": ["gdrive"], "tags": ["files"]},
+]
+
+
+def test_the_panel_says_what_the_agent_can_do(page):
+    """Ada holds weekly-review and daily-standup. A person must be able to see
+    that without opening a settings form."""
+    page.locator('.who[data-id="agent-research-assistant-0001"]').click()
+    said = page.locator("#side").inner_text().lower()
+    assert "weekly review" in said, said
+    assert "daily standup" in said, said
+
+
+def test_a_skill_is_one_click_to_ask_for(page):
+    """Seeing it is half of it. The other half is not having to work out the
+    wording, so each one is a link that hands the chat a message naming the
+    agent, which is what the routing ladder matches on."""
+    page.locator('.who[data-id="agent-research-assistant-0001"]').click()
+    href = page.locator("#side a.skill").first.get_attribute("href")
+    assert href.startswith("/tasks/agents?ask="), href
+    assert "Ada" in href
+    assert "weekly" in href.lower()
+
+
+def test_an_agent_is_only_offered_its_own_skills(page):
+    """Iris holds find-my-file. Offering her the weekly review would be
+    offering something she was never given."""
+    page.locator('.who[data-id="agent-iris-a103"]').click()
+    said = page.locator("#side").inner_text().lower()
+    assert "find my file" in said, said
+    assert "weekly review" not in said, said

@@ -2710,6 +2710,36 @@
     });
   })();
   </script>
+<script>
+  // Arriving with something to ask.
+  //
+  // The Agent Office lists what each agent can be asked for, because 67
+  // skills ship with the image and the only place one was ever visible is a
+  // section of the edit form that is collapsed by default. Those are links,
+  // and this is what the page they land on does with them.
+  //
+  // It fills the box and STOPS. A turn costs money and can run tools, so
+  // sending a message the person has not read, on their behalf, because they
+  // followed a link, is worse than asking for one more click. They can edit
+  // it first, which is the point of showing it.
+  (function () {
+    try {
+      var ask = new URLSearchParams(location.search).get("ask");
+      if (!ask) return;
+      var box = document.querySelector(".ap-composer input[name=message]");
+      if (!box) return;
+      box.value = ask;
+      box.focus();
+      // Taken out of the address bar once it is in the box. Left there, F5
+      // would put it back after the person cleared it, and a URL copied out
+      // of the bar would carry somebody else's question.
+      var url = location.pathname + location.hash;
+      history.replaceState(null, "", url);
+    } catch (e) {
+      console.warn("[agents] could not read the asked question", e);
+    }
+  })();
+</script>
 <script src="/tasks/static/agent-chat.js"></script>
 </body>
 </html>
