@@ -28,7 +28,24 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from unittest.mock import AsyncMock, MagicMock  # noqa: E402
 from contextlib import asynccontextmanager  # noqa: E402
 
+import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _an_agent_to_default_to(monkeypatch):
+    """Creating a schedule needs an agent as of 2026-09-24.
+
+    A schedule naming nobody fails every time it fires, so the API picks the
+    owner's oldest agent when the client names none, and refuses when it
+    cannot pick one. These tests are about caps, scoping and delivery, not
+    about that pick, so they are given somebody to default to.
+    """
+    async def _agents(_email):
+        return [{"id": "agent-ada-0001", "name": "Ada", "created_at": 1}]
+
+    monkeypatch.setattr("routes_schedules._agents_for_owner", _agents)
+
 
 
 def test_list_requires_secret():
@@ -378,11 +395,14 @@ def test_create_with_agent_id_persists_it(monkeypatch):
     assert rows[0].agent_id == "agent-triage-0002"
 
 
-def test_create_without_agent_id_leaves_it_none(monkeypatch):
-    """Omitting agent_id keeps the row's default of None.
+def test_create_without_agent_id_gets_the_owners_oldest_agent(monkeypatch):
+    """This used to assert that omitting agent_id LEAVES IT NONE, because
+    "null is the normal case (the CLI executor schedules have always used)".
 
-    Null is the normal case (the CLI executor schedules have always used)
-    and must stay the default, so every existing caller is unaffected.
+    That executor built an app out of the prompt, and a schedule naming
+    nobody now fails every time it fires, so null is no longer something to
+    preserve. A client that cannot name an agent, which is every bot, gets
+    the owner's oldest rather than a schedule that never runs.
     """
     from main import app
 
@@ -403,7 +423,7 @@ def test_create_without_agent_id_leaves_it_none(monkeypatch):
     )
     assert r.status_code == 201, r.text
     assert len(rows) == 1
-    assert rows[0].agent_id is None
+    assert rows[0].agent_id == "agent-ada-0001"
 
 
 def test_list_no_platform_returns_all(monkeypatch):

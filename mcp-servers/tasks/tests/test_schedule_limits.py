@@ -84,6 +84,22 @@ def test_an_expression_that_can_never_fire_reports_zero():
 
 
 from fastapi.testclient import TestClient  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _an_agent_to_default_to(monkeypatch):
+    """Creating a schedule needs an agent as of 2026-09-24.
+
+    A schedule naming nobody fails every time it fires, so the API picks the
+    owner's oldest agent when the client names none, and refuses when it
+    cannot pick one. These tests are about caps, scoping and delivery, not
+    about that pick, so they are given somebody to default to.
+    """
+    async def _agents(_email):
+        return [{"id": "agent-ada-0001", "name": "Ada", "created_at": 1}]
+
+    monkeypatch.setattr("routes_schedules._agents_for_owner", _agents)
+
 from sqlalchemy.sql.selectable import Select  # noqa: E402
 
 MAX = 10

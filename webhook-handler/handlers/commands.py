@@ -38,6 +38,23 @@ from config import settings, get_service_endpoints
 
 logger = logging.getLogger(__name__)
 
+
+def _who_runs_it(result: dict) -> str:
+    """" · Ada will run it." for a create response that names an agent.
+
+    A schedule needs one, and this panel has no way to ask which, so the
+    tasks service picks the agent the person has had longest and names it
+    back. Saying so is the difference between knowing who is answering and
+    finding out at 7pm: two of the owner's daily schedules ran the wrong
+    thing for months and the delivered result never said whose it was.
+
+    Empty when the key is absent, which is what an older tasks service
+    returns, so a confirmation never loses the schedule id over this.
+    """
+    name = str((result or {}).get("agent_name") or "").strip()
+    return f"\n{name} will run it. Change that on the Schedules page." if name else ""
+
+
 BUILD_POLL_SECONDS = 12
 BUILD_MAX_POLLS = 150  # ~30 min at 12s
 BUILD_MAX_CONSECUTIVE_ERRORS = 5
@@ -2238,6 +2255,7 @@ class CommandRouter:
                 await ctx.respond(
                     f"Schedule created: `{result['id']}`\n"
                     f"`{cron_expr}` — {prompt[:200]}"
+                    f"{_who_runs_it(result)}"
                 )
 
             elif action == "delete":
@@ -3142,6 +3160,7 @@ class CommandRouter:
         await ctx.respond(
             f"✅ Scheduled **{name}** — {cp.describe_cron(cron_expr)}\n"
             f"`{result.get('id','?')}` · {prompt[:200]}"
+            f"{_who_runs_it(result)}"
         )
 
     async def run_cron_list(self, ctx: CommandContext) -> None:

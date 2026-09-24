@@ -140,3 +140,40 @@ async def test_unknown_action_usage():
     router = _router({"100": "alice@x.com"}, tc)
     await router._handle_cronjob(_ctx("100", "frobnicate", captured))
     assert any("Usage" in m for m in captured)
+
+
+@pytest.mark.asyncio
+async def test_create_says_which_agent_will_run_it():
+    """A schedule needs an agent, and a bot cannot ask for one, so the API
+    picks the one the person has had longest and names it in the response.
+    Saying so here is the difference between knowing who is answering and
+    finding out at 7pm. Measured 2026-09-24: two of the owner's daily
+    schedules ran the wrong thing for months without anybody noticing."""
+    captured = []
+    tc = MagicMock()
+    tc.create_schedule = AsyncMock(
+        return_value={"id": "new-uuid", "agent_id": "agent-ada-0001",
+                      "agent_name": "Ada"})
+    router = _router({"100": "alice@x.com"}, tc)
+
+    await router._handle_cronjob(
+        _ctx("100", 'create "0 8 * * *" "summarize emails"', captured))
+
+    said = " ".join(str(c) for c in captured)
+    assert "Ada" in said, said
+
+
+@pytest.mark.asyncio
+async def test_create_still_confirms_when_the_server_names_no_agent():
+    """An older tasks service returns only the id. The confirmation must not
+    lose the schedule id over a key that is not there."""
+    captured = []
+    tc = MagicMock()
+    tc.create_schedule = AsyncMock(return_value={"id": "new-uuid"})
+    router = _router({"100": "alice@x.com"}, tc)
+
+    await router._handle_cronjob(
+        _ctx("100", 'create "0 8 * * *" "summarize emails"', captured))
+
+    said = " ".join(str(c) for c in captured)
+    assert "new-uuid" in said, said

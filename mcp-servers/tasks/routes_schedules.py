@@ -11,6 +11,7 @@ Two ways to authenticate:
 
 Without EITHER header, every call returns 403.
 """
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
@@ -22,6 +23,8 @@ from sqlalchemy import delete, select, update
 
 from db import session
 from models import Schedule
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/schedules")
 
@@ -77,6 +80,51 @@ class CreateScheduleIn(BaseModel):
     agent_id: str | None = None
     tool_mode: str | None = None
     video_config: dict | None = None
+
+
+async def _agents_for_owner(email: str):
+    """This person's agents. A seam, so tests need no Open WebUI.
+
+    Imported inside the function because routes_agent_turn pulls in the whole
+    turn path, and this router is mounted twice (bare and under /api/tasks).
+    """
+    from routes_agent_turn import _agents_for
+    return await _agents_for(email)
+
+
+async def _default_agent(owner: str) -> dict | None:
+    """The agent a schedule runs as when the client could not name one.
+
+    The oldest, because Ada is seeded before Mia for every user and the one
+    somebody has had longest is the one they think of as theirs. Arbitrary
+    either way, which is why it is RECORDED on the row rather than inferred
+    at run time: it shows on the card and can be changed.
+
+    Exists because webhook-handler's create_schedule has no agent_id
+    parameter, so a schedule made from Discord or Slack could otherwise only
+    be one that fails every time it fires.
+    """
+    try:
+        agents = await _agents_for_owner(owner)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not list agents to pick a default for %s",
+                       owner, exc_info=True)
+        return None
+    rows = [a for a in (agents or [])
+            if isinstance(a, dict) and a.get("id")]
+    if not rows:
+        return None
+    # created_at is seconds on an Open WebUI model row. Missing sorts first
+    # rather than raising, which keeps the pick deterministic either way.
+    return sorted(rows, key=lambda a: (a.get("created_at") or 0))[0]
+
+
+#: Said when nobody can be picked. _agents_for returns [] on any doubt,
+#: including a listing that was cut short, so this cannot tell "you have none"
+#: from "we could not check" and must not claim either.
+NO_AGENT_TO_PICK = ("This schedule needs an agent to run it, and none could "
+                    "be chosen for you. Pick one on the Schedules page, or "
+                    "create an agent on the Agents page first.")
 
 
 def _validate_kind(kind: str, video_config: dict | None) -> None:
@@ -265,6 +313,18 @@ async def create_schedule(
     if not is_operator and not is_admin:
         await _enforce_count_cap(owner)
 
+    # Every schedule that runs an agent gets one now, named by the client or
+    # chosen here. A video schedule renders a walkthrough and never reaches
+    # the agent path, so requiring one there would block a feature that works.
+    agent_id = (body.agent_id or "").strip()
+    agent_name = ""
+    if not agent_id and body.kind != "video":
+        picked = await _default_agent(owner)
+        if not picked:
+            raise HTTPException(status_code=400, detail=NO_AGENT_TO_PICK)
+        agent_id = str(picked.get("id") or "")
+        agent_name = str(picked.get("name") or "")
+
     sid = uuid.uuid4()
     async with session() as s:
         s.add(Schedule(
@@ -281,13 +341,18 @@ async def create_schedule(
             delivery_platform=body.delivery_platform,
             kind=body.kind,
             video_config=body.video_config,
-            # None means the CLI executor schedules have always used.
-            agent_id=body.agent_id,
+            # Never None for an agent schedule: either the client named one
+            # or _default_agent picked it above.
+            agent_id=agent_id or None,
             # None means read_only, the safe default for an unattended run.
             tool_mode=body.tool_mode,
         ))
         await s.commit()
-    return {"id": str(sid)}
+    # The agent comes back so a caller that could not name one can still say
+    # who will run it. A bot that leaves the person to find out at 7pm is how
+    # two of these ran for months doing the wrong thing unnoticed.
+    return {"id": str(sid), "agent_id": agent_id or None,
+            "agent_name": agent_name}
 
 
 async def _scoped_schedule(
