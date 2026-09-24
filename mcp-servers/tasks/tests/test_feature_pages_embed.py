@@ -35,6 +35,10 @@ EMBEDDED = {
     "Cron Jobs": ("/tasks/static/cron.html", "/cronjobs"),
     "Channels": ("/tasks/gateway/channels", "/channel"),
     "AI Agents": ("/tasks/agents", "/ai-agents"),
+    # Nested on purpose, because the owner asked for it there: the office
+    # is about the agents, and the address bar should say so. The rescue
+    # matches the whole pathname, so a second segment costs it nothing.
+    "Agent Office": ("/tasks/office", "/ai-agents/office"),
     "Graph": ("/tasks/graph", "/graph"),
 }
 

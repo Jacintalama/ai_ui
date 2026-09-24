@@ -107,7 +107,7 @@ def page(browser, request):
 
     pg.route("**/api/**", route)
     pg.goto("http://127.0.0.1:%d/office.html" % srv.server_address[1])
-    pg.wait_for_selector(".card", state="visible")
+    pg.wait_for_selector(".who", state="visible")
     yield pg
     pg.close()
     srv.shutdown()
@@ -121,7 +121,7 @@ def test_it_shows_an_agent_per_card_and_nothing_else(page):
 
 
 def test_the_numbers_are_the_recorded_ones(page):
-    page.locator('.card[data-id="agent-research-assistant-0001"]').click()
+    page.locator('.who[data-id="agent-research-assistant-0001"]').click()
     side = page.locator("#side").inner_text()
     assert "801" in side
     assert "30.4s" in side
@@ -129,16 +129,16 @@ def test_the_numbers_are_the_recorded_ones(page):
 
 
 def test_a_second_agent_shows_its_own_numbers_not_the_first_ones(page):
-    page.locator('.card[data-id="agent-iris-a103"]').click()
+    page.locator('.who[data-id="agent-iris-a103"]').click()
     side = page.locator("#side").inner_text()
     assert "26" in side and "5.4s" in side and "100%" in side
     assert "801" not in side
 
 
 def test_an_agent_mid_run_reads_as_working(page):
-    card = page.locator('.card[data-id="agent-research-assistant-0001"]')
+    card = page.locator('.who[data-id="agent-research-assistant-0001"]')
     assert "Working" in card.inner_text()
-    assert page.locator('.card[data-id="agent-research-assistant-0001"] .dot.working'
+    assert page.locator('.who[data-id="agent-research-assistant-0001"] .dot.working'
                         ).count() == 1
 
 
@@ -177,9 +177,11 @@ def test_the_page_says_what_it_cannot_show(page):
 def test_an_agent_with_no_runs_shows_no_success_rate(page):
     """A new agent has never run. Drawing 0% against it says something
     untrue, so the rate is a dash until there is one."""
-    page.locator('.card[data-id="agent-iris-a103"]').click()
+    page.locator('.who[data-id="agent-iris-a103"]').click()
     side = page.locator("#side").inner_text()
-    assert "0 runs" in page.locator('.card[data-id="agent-iris-a103"]').inner_text()
+    # The floor marker carries the name and the live state; the record lives
+    # in the panel, which is where a count of zero belongs.
+    assert "Total runs\n0" in side, side
     assert "0%" not in side
 
 
@@ -187,4 +189,35 @@ def test_an_agent_with_no_runs_shows_no_success_rate(page):
 def test_losing_the_stats_still_draws_the_agents(page):
     """The aggregate is an extra read. Losing it must cost the numbers, not
     the page: the same rule every optional read in this codebase follows."""
-    assert page.locator(".card").count() == 2
+    assert page.locator(".who").count() == 2
+
+
+# --- the floor is a picture of how the agents are set up --------------------
+# A desk is chosen from the tools an agent actually holds, so the office shows
+# this person's own arrangement rather than a seating plan somebody typed.
+
+def test_the_floor_has_named_areas(page):
+    """Case-insensitive on purpose: the labels are upper-cased by CSS, and
+    inner_text reports what is rendered rather than what is written."""
+    zones = [z.lower() for z in page.locator(".zone span").all_inner_texts()]
+    assert "communication" in zones and "development" in zones, zones
+    assert "knowledge base" in zones, zones
+
+
+def test_an_agent_stands_where_its_tools_are(page):
+    """Iris holds gdrive, so she belongs at the knowledge base and not in
+    development. Position is a percentage of the floor, so the check is that
+    she is inside that zone's box rather than at any exact pixel."""
+    box = page.locator('.who[data-id="agent-iris-a103"]').evaluate(
+        "el => ({ left: parseFloat(el.style.left), top: parseFloat(el.style.top) })")
+    # Knowledge base occupies left 37%..65%, top 52%..94%.
+    assert 37 <= box["left"] <= 65, box
+    assert 52 <= box["top"] <= 94, box
+
+
+def test_two_agents_in_one_area_do_not_stand_on_each_other(page):
+    """Ada holds code and so does any other developer. Sharing a zone must
+    spread them, or the second is invisible under the first."""
+    spots = page.locator(".who").evaluate_all(
+        "els => els.map(e => e.style.left + ':' + e.style.top)")
+    assert len(set(spots)) == len(spots), spots

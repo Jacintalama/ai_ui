@@ -40,7 +40,8 @@
   // 0 of 10. Both path lists are kept equal to NAV_ENTRIES by
   // tests/test_feature_pages_embed.py.
   const AIUI_URL_PATHS = ["/app-builder", "/cronjobs", "/video-generation",
-                          "/channel", "/ai-agents", "/graph"];
+                          "/channel", "/ai-agents", "/ai-agents/office",
+                          "/graph"];
   const AIUI_PENDING_KEY = "__aiuiOpenPath";
 
   // Set the moment we decide to bounce. location.replace() does NOT stop this
@@ -1325,6 +1326,36 @@
             + '<circle cx="9" cy="14" r="1.2"></circle>'
             + '<circle cx="15" cy="14" r="1.2"></circle>'
             + '<path d="M2 13v3"></path><path d="M22 13v3"></path>';
+        },
+      },
+      {
+        attr: "data-aiui-office",
+        // Every signed-in user, like AI Agents: an agent is owner-scoped and
+        // so is everything this page says about one.
+        allUsers: true,
+        label: "Agent Office",
+        title: "Agent Office: what each of your agents has been doing",
+        href: "/tasks/office",
+        // Nested under the agents path because that is what it is about, and
+        // because the owner asked for it there. The rescue compares the whole
+        // pathname, so a second segment costs it nothing.
+        urlPath: "/ai-agents/office",
+        embed: true,
+        // an office floor: a building outline with lit windows
+        setIcon: (svg) => {
+          svg.setAttribute("viewBox", "0 0 24 24");
+          svg.setAttribute("fill", "none");
+          svg.setAttribute("stroke", "currentColor");
+          svg.setAttribute("stroke-width", "2");
+          svg.setAttribute("stroke-linecap", "round");
+          svg.setAttribute("stroke-linejoin", "round");
+          svg.innerHTML = '<path d="M3 21h18"></path>'
+            + '<path d="M5 21V5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v16"></path>'
+            + '<path d="M16 9h3a2 2 0 0 1 2 2v10"></path>'
+            + '<circle cx="9" cy="8" r="1"></circle>'
+            + '<circle cx="12.5" cy="8" r="1"></circle>'
+            + '<circle cx="9" cy="13" r="1"></circle>'
+            + '<circle cx="12.5" cy="13" r="1"></circle>';
         },
       },
     ];
