@@ -163,3 +163,77 @@ def test_a_wrong_shape_never_raises(junk):
 def test_a_wrong_shaped_message_never_raises():
     who, _, _ = r.choose_speakers(None, ROOM)
     assert _ids(who) == _ids(ROOM)
+
+
+# --- a meeting: everybody answers, nobody passes ---------------------------
+# From the owner's own screenshot, 2026-09-24. He typed "hi team" and "hey
+# team" and got one reply each time, then asked: "i check my team but they
+# didnt all reply only one".
+#
+# Nothing was broken. Every agent heard it and six correctly passed, because
+# the pass instruction says in as many words to pass on a greeting. His chat
+# titles show him working around it: "One-Sentence Each", "hi team, one short
+# sente...".
+#
+# So there is no way to call a meeting. A collective word alone must NOT mean
+# one, or seven agents say hello and the pass protocol was built to stop
+# exactly that. Asking the room to answer is a different thing from greeting
+# it, and has to be said on purpose.
+
+@pytest.mark.parametrize("said", [
+    "everyone answer", "everyone answer please", "roll call",
+    "one each", "one line each", "go round the room",
+    "let's do a meeting", "team meeting", "all of you answer this",
+    "everybody answer", "round the table",
+])
+def test_calling_a_meeting_wakes_everyone_and_nobody_may_pass(said):
+    who, may_pass, why = r.choose_speakers(said, ROOM)
+    assert _ids(who) == _ids(ROOM), (said, _ids(who))
+    assert may_pass is False, said
+    assert why == r.ROUTE_MEETING, said
+
+
+@pytest.mark.parametrize("said", [
+    "hi team", "hey team", "hello everyone", "morning all",
+    "thanks team", "good work everyone",
+])
+def test_greeting_the_room_is_not_a_meeting(said):
+    """The case the pass protocol exists for. Everyone still hears it and
+    each still decides for itself, so six of seven stay quiet."""
+    _who, may_pass, why = r.choose_speakers(said, ROOM)
+    assert may_pass is True, said
+    assert why != r.ROUTE_MEETING, said
+
+
+def test_a_meeting_outranks_a_name_in_it():
+    """"everyone answer, ada first" is a meeting, not a question for Ada.
+    Naming somebody inside a call for the whole room must not shrink it back
+    down to that one person."""
+    who, may_pass, why = r.choose_speakers("everyone answer, ada first", ROOM)
+    assert _ids(who) == _ids(ROOM)
+    assert may_pass is False
+    assert why == r.ROUTE_MEETING
+
+
+def test_a_waiting_yes_still_wins_over_the_new_meeting_rung():
+    """The approval rung is first for a reason that cost a real change: a
+    "yes" belongs to the agent that asked. Adding a rung above the name rung
+    must not have pushed it down.
+
+    An earlier version of this test used "yes everyone", which is not an
+    approval at all: the rung requires the WHOLE message to be a yes or a no,
+    and rightly so."""
+    who, _may, why = r.choose_speakers(
+        "yes", ROOM, last_speaker=MIA, has_pending=True)
+    assert why == r.ROUTE_APPROVAL
+    assert _ids(who) == ["agent-m"]
+
+
+def test_a_calendar_question_about_a_meeting_is_not_a_meeting():
+    """Caught by test_the_only_agent_with_the_calendar_takes_a_calendar_question
+    when the first version of the meeting rung matched a bare "meeting":
+    "when is my next meeting" became a seven agent round table."""
+    for said in ("when is my next meeting", "move the meeting to 3",
+                 "did the meeting notes come through"):
+        _who, _may, why = r.choose_speakers(said, ROOM)
+        assert why != r.ROUTE_MEETING, said

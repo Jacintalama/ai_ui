@@ -50,6 +50,15 @@ SUMMARY_BUDGET_CHARS = 4000
 #: and produces no bubble, which is the price of everybody listening.
 PASS_TOKEN = agent_routing.PASS_TOKEN
 
+#: Said when ONE agent, asked directly, answers with the pass token it was
+#: never offered. Worded after what the room says when everybody passes,
+#: because it is the same thing happening to one agent instead of all of them.
+NOTHING_TO_ADD = "%s had nothing to add to that."
+
+#: Said when a whole round passes, and the one re-asked without the option
+#: passes again. See the fallback at the end of the round.
+NOBODY_TO_ADD = "Nobody had anything to add to that."
+
 #: Given to an agent nobody named. Everyone hears every message; only the ones
 #: with something worth saying answer.
 PASS_INSTRUCTION = (
@@ -501,10 +510,28 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
                                              reason, fix)}
             continue
 
-        if may_pass and _is_pass(answer) and not out.get("pending"):
-            # It listened and had nothing to say. No bubble, nothing stored:
-            # a pass should leave no trace except the cost of asking.
-            passed += 1
+        if _is_pass(answer) and not out.get("pending"):
+            if may_pass:
+                # It listened and had nothing to say. No bubble, nothing
+                # stored: a pass should leave no trace except the cost of
+                # asking.
+                passed += 1
+                continue
+            # It was NOT offered the choice, and said it anyway. This used to
+            # fall straight past here and store the word as the agent's
+            # answer: seen in the owner's own thread on 2026-09-24 as a
+            # bubble reading "Ada / PASS", saved in agent_chats.messages so
+            # it redrew on every load.
+            #
+            # PASS is a word in a protocol between this code and the model
+            # and is never something a person should read. Saying nothing at
+            # all is worse though, because a question asked directly of one
+            # agent and answered with silence reads as a broken panel, which
+            # is the same reason the everybody-passed fallback speaks. So the
+            # person is told, in that fallback's words, and nothing is stored.
+            yield {"event": "message",
+                   "data": render.into_turn(tid, render.note(
+                       NOTHING_TO_ADD % name))}
             continue
 
         question = _question_events(messages, pending, tid, agent_id, name,

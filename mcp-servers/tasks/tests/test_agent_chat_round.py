@@ -389,3 +389,68 @@ async def test_a_summariser_that_raises_leaves_the_notes_alone(monkeypatch):
     s = _long_room(mod)
     await mod._keep_within_budget(EMAIL, s, [ADA])
     assert s.summary == "we agreed on blue"
+
+
+# --- a bare PASS must never reach the person --------------------------------
+# Seen live in the owner's own thread, 2026-09-24: a bubble reading "Ada /
+# PASS". One message with the content "PASS" was stored in
+# tasks.agent_chats.messages, so it redrew on every load.
+#
+# The cause is the `may_pass and` guard on the skip: an agent that says PASS
+# on a round where it was NOT offered the choice falls past the skip and its
+# answer is stored verbatim. Naming an agent, a short follow on, the owner
+# rung and the everybody-passed fallback are all may_pass=False.
+#
+# PASS is a word in a protocol between this code and the model. It is never
+# something a person should read.
+
+
+async def _passes(email, agent, messages, names=(), **kw):
+    return {"answer": "PASS", "notes": [],
+            "agent": {"id": agent["id"], "name": agent["name"]}}
+
+
+def test_a_named_agent_that_passes_anyway_does_not_show_the_word(monkeypatch):
+    """Naming somebody is a question put to them, so they are not offered the
+    pass. If the model says it regardless, the person must not be shown the
+    token."""
+    app, mod, _ = _app(monkeypatch, turn=_passes)
+    _seat(mod)
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/send", data={"message": "ada what do you think"},
+           headers=_hdr())
+
+    body = c.get("/tasks/agents/chat/stream", headers=_hdr()).text
+
+    assert "PASS" not in body, body[:400]
+
+
+def test_a_named_agent_that_passes_anyway_stores_nothing(monkeypatch):
+    """The bubble redrew on every load because the word was saved as the
+    agent's answer. Nothing may reach s.messages."""
+    app, mod, _ = _app(monkeypatch, turn=_passes)
+    _seat(mod)
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/send", data={"message": "ada what do you think"},
+           headers=_hdr())
+    c.get("/tasks/agents/chat/stream", headers=_hdr())
+
+    s = mod.store.get_session(EMAIL)
+    assert not [m for m in s.messages
+                if (m.get("content") or "").strip().upper() == "PASS"], s.messages
+
+
+def test_the_person_is_still_told_the_agent_had_nothing(monkeypatch):
+    """Silence is worse than the token. A question asked directly and
+    answered with nothing must say so, the same way the room does when
+    everybody passes."""
+    app, mod, _ = _app(monkeypatch, turn=_passes)
+    _seat(mod)
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/send", data={"message": "ada what do you think"},
+           headers=_hdr())
+
+    body = c.get("/tasks/agents/chat/stream", headers=_hdr()).text
+
+    assert "nothing to add" in body.lower(), body[:400]
+    assert "Ada" in body

@@ -174,6 +174,7 @@ DOMAIN_WORDS = {
 #: Why a message went where it did. Returned alongside the speakers so the
 #: caller can log it, test it, and one day show it.
 ROUTE_APPROVAL = "approval"
+ROUTE_MEETING = "meeting"
 ROUTE_NAMED = "named"
 ROUTE_COLLECTIVE = "collective"
 ROUTE_CONTINUATION = "continuation"
@@ -241,6 +242,37 @@ def domain_owner(text, agents):
     return owners[0] if len(owners) == 1 else None
 
 
+#: Calling a meeting: every agent answers and none may pass.
+#:
+#: Deliberately NOT a collective word on its own. "hi team" wakes everybody
+#: already, and the pass instruction tells them to stay quiet on a greeting,
+#: which is the whole reason seven agents do not all say hello. The owner hit
+#: this on 2026-09-24 ("i check my team but they didnt all reply only one")
+#: and had been working around it by asking for "One-Sentence Each" in the
+#: message itself.
+#:
+#: So a meeting has to be asked for: either an explicit word for one, or a
+#: room word followed by a request to ANSWER. Greetings and thanks carry no
+#: such verb and stay out.
+_MEETING = re.compile(
+    r"""\broll\s*call\b
+      | \b(?:team|staff|group|all[\s-]?hands)\s+meeting\b
+      | \b(?:have|hold|call|do|start|run)\s+(?:a|an|the)\s+meeting\b
+      | \blet'?s\s+meet\b
+      | \bround\s+the\s+(?:room|table)\b
+      | \bone\s+(?:\w+\s+){0,2}each\b
+      | \beach\s+of\s+you\b
+      | \b(?:everyone|everybody|all\s+of\s+you|team|all)\b[^.?!]{0,30}?
+        \b(?:answer|reply|respond|report|chime\s+in|weigh\s+in|speak)\b""",
+    re.IGNORECASE | re.VERBOSE)
+
+
+def calls_a_meeting(text) -> bool:
+    """True when the person asked the whole room to answer, not just greeted
+    it. Pure, so the phrasing is testable without a model or a session."""
+    return bool(_MEETING.search(str(text or "")))
+
+
 def choose_speakers(text, agents, last_speaker=None, has_pending=False):
     """Who answers this message, whether they may pass, and why.
 
@@ -274,6 +306,11 @@ def choose_speakers(text, agents, last_speaker=None, has_pending=False):
     if has_pending and answers_yes_or_no(text) is not None:
         one = [last_speaker] if isinstance(last_speaker, dict) else []
         return one or every[:1], False, ROUTE_APPROVAL
+
+    # Above the name rung on purpose: "everyone answer, ada first" is a
+    # meeting with Ada in it, not a question for Ada alone.
+    if calls_a_meeting(text):
+        return every, False, ROUTE_MEETING
 
     named = match_agents(text, every)
     if named and not addresses_everyone(text):
