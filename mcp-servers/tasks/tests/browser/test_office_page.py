@@ -271,3 +271,25 @@ def test_an_agent_is_only_offered_its_own_skills(page):
     said = page.locator("#side").inner_text().lower()
     assert "find my file" in said, said
     assert "weekly review" not in said, said
+
+
+def test_chat_with_an_agent_opens_a_chat_aimed_at_that_agent(page):
+    """"Chat with Mia" has to mean Mia, not the room.
+
+    A room message is heard by everyone and each decides whether to answer, so
+    a person who wanted one agent gets whoever felt like speaking. Naming the
+    agent is what the routing ladder matches on, and a named agent answers and
+    may not pass, so the composer is handed its name and a comma and the
+    person types the rest."""
+    page.locator('.who[data-id="agent-iris-a103"]').click()
+    href = page.locator("#side a.chat-with").get_attribute("href")
+    assert href.startswith("/tasks/agents?ask="), href
+    from urllib.parse import unquote
+    assert unquote(href.split("ask=", 1)[1]) == "Iris, "
+
+
+def test_the_chat_link_names_the_agent_you_picked(page):
+    page.locator('.who[data-id="agent-research-assistant-0001"]').click()
+    href = page.locator("#side a.chat-with").get_attribute("href")
+    from urllib.parse import unquote
+    assert unquote(href.split("ask=", 1)[1]) == "Ada, "

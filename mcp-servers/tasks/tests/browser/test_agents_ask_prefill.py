@@ -113,3 +113,27 @@ def test_the_url_is_tidied_so_a_reload_does_not_refill(browser, server):
         assert "ask=" not in pg.url, pg.url
     finally:
         pg.close()
+
+
+def test_the_cursor_waits_at_the_end_so_they_can_type_the_rest(browser, server):
+    """"Chat with Iris" hands over "Iris, " and the person writes the rest.
+    A cursor sitting at the front means the first thing they type lands in
+    front of the name, and the message stops naming anybody.
+
+    This passed the moment it was written: focus() on an input that already
+    has a value leaves the caret at the end. It is kept as a pin, not claimed
+    as a fix, because the behaviour it relies on belongs to the browser and
+    an explicit setSelectionRange would be the obvious thing for somebody to
+    "tidy up" later."""
+    q = "?ask=" + urllib.parse.quote("Iris, ")
+    pg = _open(browser, server, q)
+    try:
+        at = pg.eval_on_selector(
+            ".ap-composer input[name=message]",
+            "el => ({ start: el.selectionStart, end: el.selectionEnd, "
+            "focused: el === document.activeElement })")
+        assert at["focused"] is True
+        assert at["start"] == len("Iris, "), at
+        assert at["end"] == len("Iris, "), at
+    finally:
+        pg.close()

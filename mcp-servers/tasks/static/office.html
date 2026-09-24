@@ -513,7 +513,15 @@
           ? toolsOf(m).map(function (t) { return '<span class="tag">' + esc(t) + '</span>'; }).join("")
           : '<span class="empty">Everything this account can reach.</span>') +
       '</div>' +
-      '<a class="btn" href="/tasks/agents">Chat with ' + esc(m.name || "this agent") + '</a>' +
+      // Aimed at this agent, not at the room. A room message is heard by
+      // everyone and each decides whether to answer, so somebody who wanted
+      // one agent gets whoever felt like speaking. Naming it is what the
+      // routing ladder matches on, and a named agent answers and may not
+      // pass, so the box is handed the name and a comma and the person types
+      // the rest.
+      '<a class="btn chat-with" href="/tasks/agents?ask=' +
+        encodeURIComponent((m.name || "") + ", ") + '">Chat with ' +
+        esc(m.name || "this agent") + '</a>' +
       '<a class="btn ghost" href="/tasks/agents">Edit agent</a>' +
       '<p class="note">Which tool a run actually used is not recorded, so this ' +
         'is what it may reach, not what it is using. Only the most recent run ' +
