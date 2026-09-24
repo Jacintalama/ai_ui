@@ -11,8 +11,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-import pytest
-
 import scheduler
 from scheduler import cron_matches_now, should_fire
 
@@ -84,31 +82,56 @@ async def test_run_scheduled_task_dispatches_to_the_agent_path(monkeypatch):
     assert (status, result, extras) == ("completed", "done", {})
 
 
-async def test_run_scheduled_task_skips_the_agent_path_when_agent_id_is_null(
+# A test asserting that a null agent_id takes the CLI executor path stood
+# here. It passed for as long as it existed and it was describing a defect:
+# that path built an app out of the prompt. The requirement inverted on
+# 2026-09-23 and the case is covered below by
+# test_a_schedule_with_no_agent_refuses_instead_of_building_an_app, which
+# pins the same branch from the other side.
+
+
+async def test_a_schedule_with_no_agent_refuses_instead_of_building_an_app(
     monkeypatch,
 ):
-    """A null agent_id is what every CLI executor schedule has always had,
-    and must still take that path unchanged. Force the CLI branch to blow up
-    on its first DB touch (there is no DB here) so a distinctive exception
-    proves which branch actually ran, without needing a real database."""
+    """The CLI branch builds an APP out of the prompt. That was right when
+    every schedule was an app build and is wrong for what people type.
+
+    Measured on production 2026-09-23: two of the owner's enabled daily
+    schedules, "give me the best quote for this day and send me news update
+    today" and "give me the best qoute for today", had no agent. Every night
+    at 7:00pm and 9:41pm each one spawned Claude Code against a synthetic
+    slug, failed to build anything, and delivered "AutoFix could not resolve
+    these load errors: - http: main response status 404 -" to his Discord,
+    recorded as completed. 86 items rows going back to 2026-04-27 are the
+    wreckage of the same path.
+
+    Nothing can guess an app out of a sentence, so the run says what is
+    missing and stops. It must not create a task: a row that exists is a row
+    that shows on the App Builder page.
+    """
     run_agent = AsyncMock(return_value=("completed", "done", {}))
     monkeypatch.setattr("agent_runner.run_agent", run_agent)
 
-    class _TookTheCliPath(Exception):
-        pass
+    made = []
 
-    async def _boom(_sched):
-        raise _TookTheCliPath()
+    async def _made_a_task(_sched):
+        made.append(_sched)
+        raise AssertionError("a schedule with no agent must not create a task")
 
-    monkeypatch.setattr(scheduler, "_create_task_from_schedule", _boom)
+    monkeypatch.setattr(scheduler, "_create_task_from_schedule", _made_a_task)
 
     sched = SimpleNamespace(
-        id="sched-cli-1", kind="agent", agent_id=None,
-        user_email="owner@example.com", name="CLI schedule",
-        prompt="Do the thing.", last_result=None, last_run_status="completed",
+        id="sched-no-agent", kind="agent", agent_id=None,
+        user_email="owner@example.com", name="Daily quote",
+        prompt="give me the best quote for today", last_result=None,
+        last_run_status="completed",
     )
 
-    with pytest.raises(_TookTheCliPath):
-        await scheduler._run_scheduled_task(sched)
+    status, result, extras = await scheduler._run_scheduled_task(sched)
 
+    assert status == "failed"
+    assert made == []
     run_agent.assert_not_awaited()
+    # The owner reads this in Discord, so it has to say what to do about it.
+    assert "agent" in result.lower()
+    assert extras == {}

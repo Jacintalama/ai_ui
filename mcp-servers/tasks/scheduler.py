@@ -12,6 +12,15 @@ Architecture:
 Pure-function entry points (`cron_matches_now`, `should_fire`) are unit-tested.
 DB integration (`_tick_once`, `_create_task_from_schedule`, `_finalize_run`,
 `schedule_tick_loop`) is covered by live e2e — see plan Task 9.
+
+A run goes one of three ways, decided in `_run_scheduled_task`: a video
+schedule renders a walkthrough, a schedule naming an agent runs as that agent,
+and a schedule naming nobody runs NOTHING and says so. That last case used to
+build an app out of the prompt; see the comment there for what it delivered to
+a real owner for months. `_create_task_from_schedule`, `_run_status_for` and
+`_deliverable_result` are what that path used and are no longer reached by it.
+They are kept, with their tests, because scheduling a real app build is a
+reasonable thing to want back, under its own `kind` and asked for on purpose.
 """
 from __future__ import annotations
 
@@ -25,6 +34,14 @@ import httpx
 from croniter import croniter
 
 logger = logging.getLogger("tasks.scheduler")
+
+#: Delivered, and stored on the row, when a schedule names no agent. The owner
+#: reads this in Discord or Slack, so it says what is missing and what fixes
+#: it rather than naming a column. Its predecessor on this path was an App
+#: Builder autofix failure, which told them nothing they could act on.
+NO_AGENT = ("This schedule did not run because no agent is set to answer it. "
+            "Open it on the Schedules page and choose which of your agents "
+            "should handle it.")
 
 
 def cron_matches_now(cron_expr: str, tz: str, now_utc: datetime) -> bool:
@@ -381,8 +398,7 @@ async def _run_scheduled_task(sched: Schedule) -> tuple[str, str, dict]:
     if getattr(sched, "kind", "agent") == "video":
         return await _run_video_schedule(sched)
     # A schedule that names an AI Agent runs through the chat path as its
-    # owner, with that agent's own tools. Null means the CLI executor below,
-    # which is what every schedule did before this existed.
+    # owner, with that agent's own tools.
     #
     # Checked AFTER kind: a video schedule renders a walkthrough and has no
     # agent, so the order here decides which wins if a row somehow has both.
@@ -390,44 +406,26 @@ async def _run_scheduled_task(sched: Schedule) -> tuple[str, str, dict]:
         from agent_runner import run_agent
         async with _RUN_SEMAPHORE:
             return await run_agent(sched)
-    async with _RUN_SEMAPHORE:
-        item = await _create_task_from_schedule(sched)
-        # Create a TaskExecution row so _run_execution has something to update.
-        from models import TaskExecution
-        async with session() as s:
-            execution = TaskExecution(task_id=item.id, status="running", log="")
-            s.add(execution)
-            await s.commit()
-            await s.refresh(execution)
-        execution_id = execution.id
-        from routes_execution import _run_execution
-        # Pass the FULL composed description (persona + task + memory protocol)
-        # as the prompt, not just sched.prompt — the memory-protocol section
-        # needs to reach the agent. item.description was built by
-        # _create_task_from_schedule and already includes everything.
-        try:
-            await _run_execution(
-                item.id, execution_id, item.description, user_jwt=None,
-                schedule_id=str(sched.id),
-            )
-        except Exception as exc:
-            logger.exception("schedule %s run failed: %s", sched.id, scrub(str(exc)))
-            return "failed", "", {}
-        # Re-read the task's final status + result (set by _run_execution).
-        # Also read the execution's raw transcript: scheduled agents put their
-        # answer BEFORE the COMPLETED sentinel, so TaskItem.result (the
-        # after-sentinel payload) is empty — recover the answer via the log.
-        async with session() as s:
-            row = (await s.execute(
-                select(TaskItem).where(TaskItem.id == item.id)
-            )).scalar_one_or_none()
-            ex = (await s.execute(
-                select(TaskExecution).where(TaskExecution.id == execution_id)
-            )).scalar_one_or_none()
-        status = _run_status_for(row)
-        raw_log = (ex.log if ex else "") or ""
-        result = _deliverable_result(raw_log, (row.result if row else None) or "")
-        return status, result, {}
+    # A null agent_id used to mean the App Builder: the prompt was composed
+    # into a task and _run_execution spawned Claude Code to build an APP out
+    # of it. That was right when a schedule was only ever an app build, and it
+    # is wrong for what people actually type into the cron panel.
+    #
+    # What it did to the owner, measured 2026-09-23: two enabled daily
+    # schedules asking for a quote and a news update had no agent, so every
+    # night at 7:00pm and 9:41pm each one built against a synthetic
+    # sched-<uuid8> slug, failed, and delivered "AutoFix could not resolve
+    # these load errors: - http: main response status 404 -" to his Discord,
+    # stored as COMPLETED. 86 items rows back to 2026-04-27 are the wreckage.
+    #
+    # Nothing can guess an app out of a sentence, so this says what is missing
+    # and stops rather than guessing. It deliberately creates no task: a row
+    # that exists is a row the App Builder page shows. If scheduling a real
+    # app build is ever wanted, it needs its own `kind`, asked for on purpose,
+    # not inferred from a column being empty.
+    logger.warning("schedule %s has no agent, so it ran nothing",
+                   getattr(sched, "id", None))
+    return ("failed", NO_AGENT, {})
 
 
 async def _deliver_result(
