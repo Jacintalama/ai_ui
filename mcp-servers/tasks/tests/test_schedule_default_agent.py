@@ -5,9 +5,10 @@ The cron page now refuses to create one, but the bots cannot: webhook-handler's
 create_schedule has no agent_id parameter at all, so a schedule made from
 Discord or Slack could only ever be a dead one.
 
-Nothing can guess which agent somebody meant, but "the one they have had
-longest" is a defensible answer and a recorded one: it lands on the row, shows
-on the card, and can be changed. That is better than a schedule nobody runs,
+Nothing can guess which agent somebody meant. "The one they have had longest,
+then the lowest id" is arbitrary, and that is acceptable only because it is
+recorded and said out loud: it lands on the row, shows on the card, goes into
+the bot's confirmation, and can be changed. Better than a schedule nobody runs,
 and better than a cron panel that cannot create anything.
 """
 import uuid
@@ -79,8 +80,11 @@ def test_a_schedule_created_without_an_agent_gets_one(monkeypatch):
 
 
 def test_the_agent_it_picks_is_the_one_held_longest(monkeypatch):
-    """Not the first row the listing happened to return. Ada is seeded before
-    Mia for every user, so the oldest is the one people think of as theirs."""
+    """Not the first row the listing happened to return.
+
+    An earlier version of this docstring claimed Ada is seeded before Mia for
+    every user. Production says otherwise: they share a created_at to the
+    second. See the tie-break test at the bottom of this file."""
     c, created = _client(monkeypatch, [MIA, ADA])
 
     c.post("/schedules", json=_body(), headers=HEADERS)
@@ -135,3 +139,33 @@ def test_a_video_schedule_needs_no_agent(monkeypatch):
 
     assert r.status_code == 201, r.text
     assert created and created[0].agent_id is None
+
+
+# Ada and Mia are seeded together, in the same second. Measured on production
+# 2026-09-24, all three real accounts:
+#
+#   ralphbenitez32  agent-inbox-triage-0002      Mia  1787554470
+#   ralphbenitez32  agent-research-assistant-0001 Ada  1787554470
+#
+# so "the oldest" is a TIE, and a plain sort on created_at leaves the winner
+# to whatever order the listing happened to return. The first live call after
+# deploy picked Mia for an account whose Ada is the project manager. The pick
+# is arbitrary either way, which is fine because it is recorded and named
+# back, but it must at least be the SAME arbitrary answer every time.
+TIED_ADA = {"id": "agent-research-assistant-0001", "name": "Ada",
+            "created_at": 1787554470}
+TIED_MIA = {"id": "agent-inbox-triage-0002", "name": "Mia",
+            "created_at": 1787554470}
+
+
+def test_agents_seeded_in_the_same_second_break_the_tie_the_same_way_always(
+        monkeypatch):
+    """Same set, opposite listing order, same answer."""
+    c1, made1 = _client(monkeypatch, [TIED_MIA, TIED_ADA])
+    c1.post("/schedules", json=_body(), headers=HEADERS)
+
+    c2, made2 = _client(monkeypatch, [TIED_ADA, TIED_MIA])
+    c2.post("/schedules", json=_body(), headers=HEADERS)
+
+    assert made1[0].agent_id == made2[0].agent_id, (
+        "the default moved when the listing order did")

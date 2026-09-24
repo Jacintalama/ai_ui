@@ -95,14 +95,23 @@ async def _agents_for_owner(email: str):
 async def _default_agent(owner: str) -> dict | None:
     """The agent a schedule runs as when the client could not name one.
 
-    The oldest, because Ada is seeded before Mia for every user and the one
-    somebody has had longest is the one they think of as theirs. Arbitrary
-    either way, which is why it is RECORDED on the row rather than inferred
-    at run time: it shows on the card and can be changed.
-
     Exists because webhook-handler's create_schedule has no agent_id
     parameter, so a schedule made from Discord or Slack could otherwise only
     be one that fails every time it fires.
+
+    The oldest, then the lowest id. The id is not a tie-break for show:
+    a user's starter agents are seeded in the SAME SECOND, so on real data
+    the oldest is always a tie. Measured on production 2026-09-24, all three
+    accounts, e.g. agent-inbox-triage-0002 (Mia) and
+    agent-research-assistant-0001 (Ada) both at 1787554470. Without the id
+    the winner is whatever order the listing happened to return, and the
+    first live call after deploy picked the receptionist for an account whose
+    Ada is the project manager.
+
+    Which agent it lands on is arbitrary. That is acceptable only because the
+    choice is RECORDED on the row and named back to the caller, so it shows on
+    the card, gets said in the bot's confirmation, and can be changed. It must
+    at least be the same arbitrary answer every time.
     """
     try:
         agents = await _agents_for_owner(owner)
@@ -116,7 +125,8 @@ async def _default_agent(owner: str) -> dict | None:
         return None
     # created_at is seconds on an Open WebUI model row. Missing sorts first
     # rather than raising, which keeps the pick deterministic either way.
-    return sorted(rows, key=lambda a: (a.get("created_at") or 0))[0]
+    return sorted(rows, key=lambda a: (a.get("created_at") or 0,
+                                       str(a.get("id") or "")))[0]
 
 
 #: Said when nobody can be picked. _agents_for returns [] on any doubt,
