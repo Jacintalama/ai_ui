@@ -221,6 +221,19 @@ def agents_page():
     return FileResponse("static/agents.html", media_type="text/html")
 
 
+@app.get("/tasks/office", include_in_schema=False)
+def agent_office_page():
+    """Agent Office: every agent, what it has done, and what it is doing now.
+
+    Reads tasks.agent_run, which has recorded every run since migration 041
+    and had never been shown anywhere: one person's Ada had 801 runs at 40%
+    success against Iris's 26 at 100%, and no surface could tell them apart.
+
+    Pure frontend, like the Agents page: it calls Open WebUI's model API and
+    our own two read-only routes with the caller's own session."""
+    return FileResponse("static/office.html", media_type="text/html")
+
+
 @app.get("/tasks/app-builder", include_in_schema=False)
 async def app_builder_page() -> FileResponse:
     """Pretty URL for the app-builder SPA. Serves static/projects.html."""

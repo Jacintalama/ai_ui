@@ -420,6 +420,19 @@ async def activity(user: CurrentUser = Depends(current_user)) -> dict:
     return {"activity": await agent_activity.activity_for(user.email)}
 
 
+@router.get("/stats")
+async def stats(user: CurrentUser = Depends(current_user)) -> dict:
+    """What each of the caller's agents has done: runs, average seconds,
+    success rate, when it last started, what it has cost.
+
+    Scoped to the caller, the same way activity is. Separate from that route
+    because activity is polled every five seconds and this is not: these
+    numbers are an aggregate over every run an agent has ever had, and
+    nothing about them changes between two ticks of a clock.
+    """
+    return {"stats": await agent_activity.stats_for(user.email)}
+
+
 # ---------------------------------------------------------------------------
 # What an agent remembers, and how a person forgets it.
 #

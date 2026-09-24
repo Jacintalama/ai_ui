@@ -263,3 +263,56 @@ async def test_the_endpoint_reads_activity_for_the_asking_user(monkeypatch):
     monkeypatch.setattr(routes_agents.agent_activity, "activity_for", fake)
     await routes_agents.activity(user=_User())
     assert seen["email"] == "asker@example.com"
+
+
+# --- what an agent has done, for the Agent Office cards ---------------------
+# The card in the design shows Total Runs, Avg Response Time, Success Rate and
+# Last Active. Every one of those is already in tasks.agent_run and none of it
+# is shown anywhere. Measured on production 2026-09-24: Ada 801 runs at 30.4s
+# and 40% success, Iris 26 runs at 5.4s and 100%.
+#
+# Shaped here rather than in SQL so the rounding, the empty cases and the
+# "never run" case are testable without a database.
+
+
+def _stat(runs=10, completed=8, total_seconds=100.0, last=NOW, cost=0.5):
+    return {"agent_id": "agent-x", "runs": runs, "completed": completed,
+            "total_seconds": total_seconds, "last_started": last,
+            "cost_usd": cost}
+
+
+def test_it_counts_runs_and_averages_the_time():
+    out = agent_activity._shape_stats(_stat(runs=10, total_seconds=100.0))
+    assert out["runs"] == 10
+    assert out["avg_seconds"] == 10.0
+
+
+def test_success_is_a_whole_percent():
+    """A card has room for "98%", not for 97.5641%."""
+    out = agent_activity._shape_stats(_stat(runs=801, completed=320))
+    assert out["success_pct"] == 40
+
+
+def test_an_agent_that_has_never_run_shows_zeroes_not_a_crash():
+    """Every new agent is this until someone talks to it, and a division by
+    zero on the busiest page is not an acceptable way to say "no runs yet"."""
+    out = agent_activity._shape_stats(
+        _stat(runs=0, completed=0, total_seconds=0.0, last=None, cost=0.0))
+    assert out["runs"] == 0
+    assert out["avg_seconds"] == 0.0
+    assert out["success_pct"] is None
+    assert out["last_started"] is None
+
+
+def test_a_run_still_in_flight_does_not_break_the_average():
+    """finished_at is null while an agent is working, so the seconds summed
+    for it are null. The average is over the runs that finished."""
+    out = agent_activity._shape_stats(_stat(runs=5, total_seconds=None))
+    assert out["avg_seconds"] == 0.0
+    assert out["runs"] == 5
+
+
+def test_cost_is_carried_as_given():
+    """The paid tier is real money and the card should not round it away:
+    Rex has spent $1.148 against Kai's nothing."""
+    assert agent_activity._shape_stats(_stat(cost=1.148))["cost_usd"] == 1.148

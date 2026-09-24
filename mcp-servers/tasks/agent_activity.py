@@ -269,3 +269,64 @@ async def activity_for(user_email: str) -> dict:
 
     now = datetime.now(timezone.utc)
     return {r["agent_id"]: _shape(r, now) for r in rows}
+
+
+def _shape_stats(row) -> dict:
+    """One agent's record, as the Agent Office card reads it.
+
+    Every number here is already in tasks.agent_run and none of it has ever
+    been shown: measured on production 2026-09-24, Ada had 801 runs at 30.4s
+    and 40% success while Iris had 26 at 5.4s and 100%. A person with seven
+    agents has no way to tell those apart today.
+
+    Shaped in Python rather than SQL so the empty cases are testable without
+    a database. Two of them are real: an agent nobody has talked to yet has
+    no runs at all, and a run in flight has no finished_at, so the seconds
+    summed over it come back null.
+    """
+    runs = int(row["runs"] or 0)
+    seconds = float(row["total_seconds"] or 0.0)
+    completed = int(row["completed"] or 0)
+    return {
+        "runs": runs,
+        # Over the runs that finished. Zero reads as "nothing to average yet",
+        # which is true both for a new agent and for one still working.
+        "avg_seconds": round(seconds / runs, 1) if runs and seconds else 0.0,
+        # None, not 0: an agent that has never run has no success rate, and
+        # drawing 0% against a new agent says something untrue about it.
+        "success_pct": round(100.0 * completed / runs) if runs else None,
+        "last_started": row["last_started"],
+        # Real money on the paid tier, carried as given: Rex has spent $1.148
+        # where Kai has spent nothing, and rounding hides exactly that.
+        "cost_usd": float(row["cost_usd"] or 0.0),
+    }
+
+
+async def stats_for(user_email: str) -> dict:
+    """{agent_id: record} for every agent of this person that has ever run.
+
+    Scoped to the caller for the same reason activity_for is: one person's
+    agents are not another's, and an admin reading this must not see anyone
+    else's. Fails open to {} so the page draws without its numbers rather
+    than not at all.
+    """
+    if not user_email:
+        return {}
+    try:
+        async with session() as s:
+            rows = (await s.execute(
+                sql_text(
+                    "SELECT agent_id, COUNT(*) AS runs, "
+                    "  COUNT(*) FILTER (WHERE status = 'completed') AS completed, "
+                    "  SUM(EXTRACT(EPOCH FROM finished_at - started_at)) "
+                    "    AS total_seconds, "
+                    "  MAX(started_at) AS last_started, "
+                    "  SUM(COALESCE(cost_usd, 0)) AS cost_usd "
+                    "FROM tasks.agent_run "
+                    "WHERE user_email = :email "
+                    "GROUP BY agent_id"),
+                {"email": user_email})).mappings().all()
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not read agent stats", exc_info=True)
+        return {}
+    return {r["agent_id"]: _shape_stats(r) for r in rows}
