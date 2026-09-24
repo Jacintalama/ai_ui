@@ -1,7 +1,12 @@
 """Picking which agent a schedule runs as.
 
-The default has to stay the assistant schedules have always used: somebody who
-never touches this field must get exactly what they got before.
+This file used to say the default had to stay "the assistant schedules have
+always used", so that somebody who never touched the field got exactly what
+they got before. On 2026-09-24 that stopped being something to preserve: what
+they got before was the App Builder trying to build an app out of the prompt,
+which delivered an AutoFix 404 report to the owner's Discord twice a day for
+months. A schedule naming nobody now fails every time it fires, so the form
+refuses to create one.
 """
 import http.server
 import json
@@ -90,8 +95,10 @@ def _fill(page):
     page.fill("#prompt", "Sort my unread mail.")
 
 
-def test_the_field_defaults_to_the_usual_assistant(page):
-    """Somebody who never touches this must get exactly what they got before."""
+def test_the_field_starts_on_no_choice(page):
+    """Nothing is pre-selected, so the agent a schedule runs as is always one
+    somebody picked. Pre-selecting the first one would put a stranger's name
+    on a job they never chose, and the list order is not meaningful."""
     assert page.input_value("#run-as") == ""
 
 
@@ -101,18 +108,11 @@ def test_it_lists_the_agents_you_can_see(page):
     assert any("Scout" in t for t in labels), labels
 
 
-def test_leaving_it_alone_sends_no_agent(page):
-    """An untouched 'Run as' field must send no agent_id key at all.
-
-    An empty string is a failure, not an acceptable alternative: the API
-    interprets null (key absent) as "the assistant schedules have always
-    used", while a present empty string would be a data corruption risk.
-    """
-    _fill(page)
-    page.locator("#create-btn").click()
-    page.wait_for_timeout(400)
-    assert page.sent, "nothing was posted"
-    assert "agent_id" not in page.sent[-1], page.sent[-1]
+# test_leaving_it_alone_sends_no_agent stood here. It asserted that an
+# untouched field posts with no agent_id, which the API read as "the assistant
+# schedules have always used". That reading is what built an app out of a
+# quote request. The case is now covered by
+# test_the_form_will_not_post_a_schedule_with_no_agent: there is no such post.
 
 
 def test_picking_an_agent_sends_its_id(page):
@@ -123,16 +123,10 @@ def test_picking_an_agent_sends_its_id(page):
     assert page.sent[-1]["agent_id"] == "agent-triage-0002"
 
 
-def test_a_failure_to_list_agents_still_lets_you_create_a_schedule(page):
-    """The agent list is a convenience. Losing it must not take the form with
-    it, because the form works perfectly well without an agent."""
-    page.route("**/api/v1/models/list*", lambda r: r.abort())
-    page.reload()
-    page.wait_for_selector("#name", state="visible")
-    _fill(page)
-    page.locator("#create-btn").click()
-    page.wait_for_timeout(500)
-    assert page.sent, "the form stopped working when the agent list failed"
+# test_a_failure_to_list_agents_still_lets_you_create_a_schedule stood here,
+# on the grounds that "the form works perfectly well without an agent". It no
+# longer does. Inverted by
+# test_a_failed_agent_list_says_so_instead_of_posting_a_dead_schedule.
 
 
 # --- showing the agent on the card -----------------------------------------
@@ -287,3 +281,59 @@ def test_agents_landing_first_does_not_claim_the_list_is_empty(browser):
         release_schedules.set()
         pg.close()
         srv.shutdown()
+
+
+# --- a schedule with nobody to run it ---------------------------------------
+# Until 2026-09-24 an untouched "Run as" meant the App Builder: the prompt was
+# composed into a task and Claude Code built an APP out of it. Two of the
+# owner's daily schedules were created that way and delivered an AutoFix 404
+# report to his Discord twice a day for months. That dispatch is gone; a
+# schedule naming nobody now fails every time it fires.
+#
+# So the field is no longer a convenience with a sensible default. Every
+# option below that lets the form post without an agent creates a schedule
+# that provably cannot run, at 7pm, when nobody is watching. Better to refuse
+# here, while the person is standing in front of it.
+
+
+def test_the_field_offers_no_way_to_choose_nobody(page):
+    """"Default assistant" read like a real choice and produced a dead
+    schedule. Whatever the placeholder says now, it cannot be a value."""
+    values = page.locator("#run-as option").evaluate_all(
+        "os => os.map(o => o.value)")
+    assert "" not in [v for v in values if v is not None] or all(
+        page.locator("#run-as option[value='']").evaluate_all(
+            "os => os.map(o => o.disabled)")), values
+
+
+def test_the_form_will_not_post_a_schedule_with_no_agent(page):
+    """The whole point. Filling everything else in and pressing create must
+    not produce a schedule nobody runs."""
+    _fill(page)
+    page.locator("#create-btn").click()
+    page.wait_for_timeout(400)
+    assert not page.sent, "posted a schedule with no agent: %s" % (page.sent,)
+
+
+def test_choosing_an_agent_still_posts(page):
+    """The refusal must be about the missing agent, not about the form."""
+    _fill(page)
+    page.select_option("#run-as", "agent-scout-0001")
+    page.locator("#create-btn").click()
+    page.wait_for_timeout(400)
+    assert page.sent and page.sent[-1]["agent_id"] == "agent-scout-0001"
+
+
+def test_a_failed_agent_list_says_so_instead_of_posting_a_dead_schedule(page):
+    """This used to assert the opposite: that losing the list must not take
+    the form with it, "because the form works perfectly well without an
+    agent". It no longer does. With no list there is nobody to pick, so the
+    only honest outcome is to say the list could not load."""
+    page.route("**/api/v1/models/list*", lambda r: r.abort())
+    page.reload()
+    page.wait_for_selector("#name", state="visible")
+    _fill(page)
+    page.locator("#create-btn").click()
+    page.wait_for_timeout(500)
+    assert not page.sent, "created a schedule nobody can run"
+    assert "agent" in page.locator("#run-as-hint").inner_text().lower()

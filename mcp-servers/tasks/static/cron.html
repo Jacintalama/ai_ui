@@ -679,12 +679,12 @@
 
             <div class="field">
               <label class="form-label" for="run-as">Run as</label>
-              <select class="form-input" id="run-as" name="run-as">
-                <option value="">Default assistant</option>
+              <select class="form-input" id="run-as" name="run-as" required>
+                <option value="" disabled selected>Choose an agent</option>
               </select>
-              <span class="form-hint">Pick one of your agents to run this, with
-                its own instructions and tools. Leave it as it is and schedules
-                behave exactly as they always have.</span>
+              <span class="form-hint" id="run-as-hint">Pick one of your agents
+                to run this, with its own instructions and tools. A schedule
+                needs one: nobody else is awake at 7am to answer it.</span>
             </div>
 
             <div class="field">
@@ -860,9 +860,25 @@
         // can win the race against loadSchedules() and flip the loading
         // skeleton to the empty state while the real fetch is still in flight.
         if (schedulesLoadedOnce && typeof renderList === "function") renderList();
+        if (sel.options.length <= 1) noAgentsToPick(
+          "You have no agents yet. Create one on the Agents page, then come "
+          + "back: a schedule needs an agent to run it.");
       } catch (e) {
         console.warn("[cron] could not load agents for Run as", e);
+        // Not a convenience any more. This list used to be optional because a
+        // schedule with no agent still did something; it now fails every time
+        // it fires, so a form that posts without one creates a dead schedule
+        // at 7pm with nobody watching. Say so instead.
+        noAgentsToPick("Your agents could not be loaded, so there is nobody "
+                       + "to run this. Reload the page and try again.");
       }
+    }
+
+    //: Both ways the picker can end up with nothing choosable. The hint
+    //: carries the reason because the select itself can only say "choose".
+    function noAgentsToPick(why) {
+      const hint = document.getElementById("run-as-hint");
+      if (hint) hint.textContent = why;
     }
     loadAgentsForRunAs();
 
