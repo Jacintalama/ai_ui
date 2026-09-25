@@ -37,13 +37,19 @@ AGENTS = [
      "user_id": "me", "created_at": 3, "updated_at": 3},
 ]
 
+# The REAL shape agent_activity._shape returns. An earlier version of this
+# fixture invented "started_at" and "status"; the page was written against the
+# invention, every test passed, and production read undefined for both. Mia,
+# with 761 recorded runs, said "No runs recorded yet" and every live card said
+# "never" (owner's screenshot, 2026-09-25). A fixture that does not match the
+# producer tests nothing but itself.
 ACTIVITY = {
     "agent-research-assistant-0001": {
         "state": "working", "running_for_seconds": 12,
-        "started_at": "2026-09-24T10:02:22+00:00", "source": "channel"},
+        "last_run_at": "2026-09-24T10:02:22+00:00", "source": "channel"},
     "agent-iris-a103": {
         "state": "ready", "last_duration_seconds": 5,
-        "status": "completed", "started_at": "2026-09-24T09:00:00+00:00",
+        "last_status": "completed", "last_run_at": "2026-09-24T09:00:00+00:00",
         "source": "schedule"},
 }
 
@@ -293,3 +299,123 @@ def test_the_chat_link_names_the_agent_you_picked(page):
     href = page.locator("#side a.chat-with").get_attribute("href")
     from urllib.parse import unquote
     assert unquote(href.split("ask=", 1)[1]) == "Ada, "
+
+
+# --- times, which is where the page was quietly lying -----------------------
+# Owner's screenshot 2026-09-25: Mia's panel said "No runs recorded yet" while
+# her record beside it said 761 runs, and every live card said "never". The
+# page read a.started_at and a.status; agent_activity._shape returns
+# last_run_at and last_status. Both were undefined, so every time rendered as
+# "never" and the presence check for a run failed.
+
+def test_the_panel_says_when_the_last_run_was(page):
+    page.locator('.who[data-id="agent-iris-a103"]').click()
+    said = page.locator("#side").inner_text().lower()
+    assert "no runs recorded yet" not in said, said
+    assert "never" not in said, said
+    assert "ago" in said, said
+
+
+def test_the_live_strip_says_when_not_never(page):
+    said = page.locator("#live").inner_text().lower()
+    assert "never" not in said, said
+    assert "ago" in said, said
+
+
+def test_a_finished_run_shows_the_status_it_finished_with(page):
+    """last_status, not status. Iris completed hers."""
+    page.locator('.who[data-id="agent-iris-a103"]').click()
+    assert "completed" in page.locator("#side").inner_text().lower()
+
+
+def test_an_agent_that_truly_never_ran_still_says_so(page):
+    """The opposite mistake is as bad. An agent with no activity row at all
+    must not borrow somebody else's time."""
+    page.locator('.who[data-id="agent-research-assistant-0001"]').click()
+    # Ada IS running, so this asserts the other side stays correct rather
+    # than that "no runs" disappeared entirely.
+    assert "running now" in page.locator("#side").inner_text().lower()
+
+
+def test_no_two_agents_are_close_enough_to_cover_each_other(page):
+    """Owner's screenshot 2026-09-25: Ada and Rex sat on top of each other and
+    one name chip was hidden behind the other, so the floor showed six agents
+    where there were seven.
+
+    Distinct coordinates are not enough, because the isometric squash brings
+    rows visually closer than their numbers suggest. This measures the drawn
+    boxes rather than the percentages."""
+    boxes = page.locator(".who").evaluate_all(
+        "els => els.map(e => { const b = e.getBoundingClientRect();"
+        " return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; })")
+    for i in range(len(boxes)):
+        for j in range(i + 1, len(boxes)):
+            dx = boxes[i]["x"] - boxes[j]["x"]
+            dy = boxes[i]["y"] - boxes[j]["y"]
+            assert (dx * dx + dy * dy) ** 0.5 > 60, (boxes[i], boxes[j])
+
+
+# The owner's real seven, with the tools each actually holds on production.
+SEVEN = [
+    {"id": "agent-inbox-triage-0002", "name": "Mia",
+     "meta": {"role": "Receptionist", "toolIds": ["gmail"]}, "params": {}},
+    {"id": "agent-research-assistant-0001", "name": "Ada",
+     "meta": {"role": "Project manager",
+              "toolIds": ["account", "code", "remember", "schedules", "skills"]},
+     "params": {}},
+    {"id": "agent-kai-a100", "name": "Kai",
+     "meta": {"role": "App reviewer", "toolIds": ["code"]}, "params": {}},
+    {"id": "agent-rex-a101", "name": "Rex",
+     "meta": {"role": "Programmer", "toolIds": ["code"]}, "params": {}},
+    {"id": "agent-nora-a102", "name": "Nora",
+     "meta": {"role": "Calendar keeper", "toolIds": ["calendar", "remember"]},
+     "params": {}},
+    {"id": "agent-iris-a103", "name": "Iris",
+     "meta": {"role": "Drive librarian", "toolIds": ["gdrive"]}, "params": {}},
+    {"id": "agent-vera-a104", "name": "Vera",
+     "meta": {"role": "Researcher",
+              "toolIds": ["server:mcp-proxy", "remember", "video"]}, "params": {}},
+]
+
+
+def test_all_seven_of_the_owners_agents_stay_apart(browser):
+    """The collision in the screenshot needed seven, not two: Kai and Rex both
+    hold only `code` so they share Development, and Ada holds code too."""
+    html = (STATIC / "office.html").read_bytes()
+    srv = _serve(html)
+    pg = browser.new_page(viewport={"width": 1500, "height": 1000})
+    pg.set_default_timeout(6000)
+
+    def route(r):
+        url = r.request.url
+        if "/models/list" in url:
+            body = {"items": SEVEN, "total": len(SEVEN)}
+        elif "/agents/activity" in url:
+            body = {"activity": {}}
+        elif "/agents/stats" in url:
+            body = {"stats": {}}
+        elif "/agents/skills" in url:
+            body = {"skills": SKILLS}
+        else:
+            body = {}
+        r.fulfill(status=200, content_type="application/json", body=json.dumps(body))
+
+    pg.route("**/api/**", route)
+    pg.goto("http://127.0.0.1:%d/office.html" % srv.server_address[1])
+    pg.wait_for_selector(".who", state="visible")
+    pg.wait_for_timeout(300)
+    try:
+        assert pg.locator(".who").count() == 7
+        boxes = pg.locator(".who").evaluate_all(
+            "els => els.map(e => { const b = e.getBoundingClientRect();"
+            " return { x: b.x + b.width / 2, y: b.y + b.height / 2,"
+            "          n: e.getAttribute('data-id') }; })")
+        for i in range(len(boxes)):
+            for j in range(i + 1, len(boxes)):
+                dx = boxes[i]["x"] - boxes[j]["x"]
+                dy = boxes[i]["y"] - boxes[j]["y"]
+                gap = (dx * dx + dy * dy) ** 0.5
+                assert gap > 60, (boxes[i]["n"], boxes[j]["n"], round(gap))
+    finally:
+        pg.close()
+        srv.shutdown()

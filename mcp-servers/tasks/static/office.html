@@ -106,10 +106,10 @@
       radial-gradient(1100px 500px at 50% 8%, #191a2e 0%, transparent 62%),
       radial-gradient(800px 420px at 82% 92%, #10202a 0%, transparent 60%),
       var(--bg);
-    display: grid; place-items: center; padding: 26px 20px;
+    display: grid; place-items: center; padding: 10px 16px;
   }
   .stage {
-    position: relative; width: min(940px, 94%); aspect-ratio: 16 / 10;
+    position: relative; width: min(1180px, 99%); aspect-ratio: 16 / 9.4;
     transform: rotateX(54deg) rotateZ(-45deg);
     transform-style: preserve-3d;
     background:
@@ -132,8 +132,10 @@
     background: rgba(124,140,255,.035);
   }
   .zone > span {
-    position: absolute; top: 6px; left: 10px; font-size: 10.5px;
-    letter-spacing: .09em; text-transform: uppercase; color: #6f76a8;
+    position: absolute; top: 8px; left: 12px; font-size: 12px; font-weight: 600;
+    letter-spacing: .1em; text-transform: uppercase; color: #aab2e8;
+    background: rgba(10,10,18,.72); border: 1px solid rgba(124,140,255,.18);
+    border-radius: 999px; padding: 2px 10px;
     transform: rotateZ(45deg) rotateX(-54deg); transform-origin: left top;
     white-space: nowrap;
   }
@@ -154,8 +156,8 @@
     display: flex; flex-direction: column; align-items: center; gap: 5px;
   }
   .who .ring {
-    width: 42px; height: 42px; border-radius: 50%;
-    display: grid; place-items: center; font-weight: 700; font-size: 13px;
+    width: 50px; height: 50px; border-radius: 50%;
+    display: grid; place-items: center; font-weight: 700; font-size: 15px;
     color: #0b0b12; position: relative;
     box-shadow: 0 6px 18px rgba(0,0,0,.55);
   }
@@ -170,7 +172,7 @@
   }
   .chip {
     background: rgba(12,12,20,.92); border: 1px solid var(--border-2);
-    border-radius: 999px; padding: 2px 9px; font-size: 11px;
+    border-radius: 999px; padding: 3px 11px; font-size: 12px;
     white-space: nowrap; display: flex; align-items: center; gap: 5px;
     box-shadow: 0 4px 14px rgba(0,0,0,.5);
   }
@@ -378,11 +380,20 @@
     Object.keys(byZone).forEach(function (k) {
       var z = byZone[k].zone, of = byZone[k].of;
       of.forEach(function (m, i) {
+        // Along the zone AND down it. Spreading only sideways put Kai and Rex,
+        // who both hold nothing but `code`, 50 pixels apart once the
+        // isometric squash was applied, and one name chip covered the other
+        // so the floor showed six agents where there were seven (owner's
+        // screenshot, 2026-09-25). The squash flattens vertical distance by
+        // roughly the cosine of the tilt, so the rows are pushed further
+        // apart than they look like they need to be.
         var span = z.box[2], step = span / (of.length + 1);
+        var rows = Math.min(of.length, 2);
+        var row = i % rows;
         out.push({
           m: m,
           left: z.box[0] + step * (i + 1),
-          top: z.box[1] + z.box[3] * (0.42 + (i % 2) * 0.22),
+          top: z.box[1] + z.box[3] * (rows > 1 ? (0.26 + row * 0.48) : 0.5),
         });
       });
     });
@@ -480,11 +491,11 @@
     var avg = s.avg_seconds ? s.avg_seconds + "s" : "&mdash;";
     var cost = s.cost_usd ? "$" + s.cost_usd.toFixed(3) : "$0";
 
-    var recent = a && a.started_at
+    var recent = a && a.last_run_at
       ? '<ul class="rows"><li><span>' +
           esc(a.state === "working" ? "Running now"
-              : "Last run " + (a.status ? a.status : "finished")) +
-          '</span><span class="when">' + esc(ago(a.started_at)) + '</span></li>' +
+              : "Last run " + (a.last_status ? a.last_status : "finished")) +
+          '</span><span class="when">' + esc(ago(a.last_run_at)) + '</span></li>' +
         (a.last_duration_seconds != null
           ? '<li><span>Took ' + a.last_duration_seconds + 's</span></li>' : "") +
         (a.source ? '<li><span>Started from ' + esc(a.source) + '</span></li>' : "") +
@@ -533,7 +544,7 @@
       var a = ACTIVITY[m.id];
       return a ? { name: m.name || m.id, id: m.id, a: a } : null;
     }).filter(Boolean).sort(function (x, y) {
-      return new Date(y.a.started_at || 0) - new Date(x.a.started_at || 0);
+      return new Date(y.a.last_run_at || 0) - new Date(x.a.last_run_at || 0);
     });
   }
 
@@ -546,9 +557,9 @@
     live.innerHTML = rows.slice(0, 6).map(function (r) {
       var st = stateOf(r.id);
       return '<li><i class="dot ' + st.key + '"></i><span><b>' + esc(r.name) + '</b> ' +
-        esc(r.a.state === "working" ? "is working" : (r.a.status || "finished")) +
+        esc(r.a.state === "working" ? "is working" : (r.a.last_status || "finished")) +
         (r.a.source ? " from " + esc(r.a.source) : "") + '</span>' +
-        '<span class="when">' + esc(ago(r.a.started_at)) + '</span></li>';
+        '<span class="when">' + esc(ago(r.a.last_run_at)) + '</span></li>';
     }).join("");
   }
 
@@ -561,9 +572,9 @@
     feed.innerHTML = rows.map(function (r) {
       var st = stateOf(r.id);
       return '<li><i class="dot ' + st.key + '"></i><span>' + esc(r.name) + ' &middot; ' +
-        esc(r.a.state === "working" ? "working now" : (r.a.status || "finished")) +
+        esc(r.a.state === "working" ? "working now" : (r.a.last_status || "finished")) +
         (r.a.source ? " from " + esc(r.a.source) : "") + '</span>' +
-        '<span class="when">' + esc(ago(r.a.started_at)) + '</span></li>';
+        '<span class="when">' + esc(ago(r.a.last_run_at)) + '</span></li>';
     }).join("");
   }
 
