@@ -463,13 +463,23 @@ def test_a_room_nobody_works_in_is_not_drawn(browser):
 # 11px inside it. These are the two things the floor was for that the sections
 # still have to do.
 
-def test_an_agent_sits_in_the_department_its_tools_belong_to(page):
-    """Iris holds gdrive, so she is inside the Knowledge base section and
-    nowhere else. The grouping is the whole idea the floor was carrying."""
-    inside = page.locator(
-        'section.zone:has(.zone-head span:text("Knowledge base")) .card-name'
-    ).all_inner_texts()
-    assert inside == ["Iris"], inside
+def test_an_agent_stands_inside_the_room_its_tools_belong_to(page):
+    """Iris holds gdrive, so she stands within the Knowledge base room and
+    nowhere else. The grouping is the whole idea the floor carries.
+
+    Measured by geometry rather than by nesting: agents are drawn ABOVE the
+    rooms so a name label is never clipped by a wall, which means Iris is a
+    sibling of the room rather than a child of it."""
+    got = page.evaluate(
+        "() => {"
+        " const room = [...document.querySelectorAll('section.zone')]"
+        "   .find(z => z.textContent.toLowerCase().includes('knowledge base'));"
+        " const iris = document.querySelector('.who[data-id=\"agent-iris-a103\"]');"
+        " const r = room.getBoundingClientRect(), i = iris.getBoundingClientRect();"
+        " return { inside: i.left >= r.left && i.right <= r.right"
+        "                  && i.top >= r.top && i.bottom <= r.bottom,"
+        "          r: [r.left, r.right], i: [i.left, i.right] }; }")
+    assert got["inside"], got
 
 
 def test_each_department_is_its_own_colour(page):
@@ -491,3 +501,39 @@ def test_the_page_uses_the_products_own_colours(page):
         "          .getPropertyValue('--cyan').trim() }; }")
     assert got["cyan"].lower() == "#22d3ee", got
     assert got["bg"].replace(" ", "") == "rgb(11,18,33)", got
+
+
+def test_a_team_meeting_is_a_real_one(page):
+    """The owner's mockup has two buttons: "Simulate Collaboration" and "Team
+    Meeting". Only one of them can be true.
+
+    A meeting is real: choose_speakers has a meeting rung, so "everyone
+    answer" wakes every agent with may_pass false and all of them reply. The
+    button hands the chat exactly those words."""
+    from urllib.parse import unquote
+    href = page.locator('.floor-bar a.btn').first.get_attribute("href")
+    assert href.startswith("/tasks/agents?ask="), href
+    assert unquote(href.split("ask=", 1)[1]).startswith("everyone answer")
+
+
+def test_there_is_no_button_that_fakes_agents_talking(page):
+    """"Simulate Collaboration" walks Mia to Ada and shows them speaking.
+    Agents cannot address one another, so that button would animate an event
+    the system never emits. It is the one thing this page must not add."""
+    said = page.locator("#rooms").inner_text().lower()
+    assert "simulate" not in said, said
+    assert "collaborat" not in said, said
+
+
+def test_an_agent_that_is_working_says_so_on_the_floor(page):
+    """A coloured dot says something is happening without saying what, and
+    "Working 12s" is the reason to look at the floor at all."""
+    label = page.locator('.who[data-id="agent-research-assistant-0001"] .who-label').inner_text()
+    assert "Working" in label, label
+
+
+def test_an_idle_agent_shows_its_job_instead(page):
+    """When there is nothing happening the label is worth spending on the
+    role, which is what tells one agent from another."""
+    label = page.locator('.who[data-id="agent-iris-a103"] .who-label').inner_text()
+    assert "Drive librarian" in label, label

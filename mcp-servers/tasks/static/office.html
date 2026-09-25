@@ -103,53 +103,98 @@
             position: static; max-height: none; width: 100%; }
   }
 
-  /* --- a department ------------------------------------------------------ */
+  /* --- the floor, top-down ------------------------------------------------
+     From the owner's own mockup. Top-down rather than isometric is why it
+     reads: a room is a plain rectangle you can put a label in, and an agent
+     is a circle at a position, with no rotation flattening either. Five
+     attempts at an isometric plate ended in "i cant understand!". */
+  .floor {
+    position: relative; border: 1px solid var(--border); border-radius: 18px;
+    height: clamp(460px, 62vh, 720px); overflow: hidden;
+    background:
+      linear-gradient(90deg, rgba(230,241,255,.025) 1px, transparent 1px),
+      linear-gradient(rgba(230,241,255,.025) 1px, transparent 1px),
+      linear-gradient(145deg, #0d1b2d, #091522);
+    background-size: 44px 44px, 44px 44px, 100% 100%;
+  }
+  .floor::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(circle at 50% 45%, transparent 35%, rgba(0,0,0,.30) 100%);
+  }
   .zone {
-    border: 1px solid var(--border); border-left: 3px solid var(--glow, var(--cyan));
-    border-radius: var(--radius); background: var(--surface);
-    padding: 14px 16px; margin-bottom: 14px;
+    position: absolute; z-index: 2; border-radius: 14px;
+    border: 1px solid var(--border-2);
+    border-left: 3px solid var(--glow, var(--cyan));
+    background: rgba(14,29,47,.72);
+    box-shadow: inset 0 0 45px rgba(74,105,157,.05);
   }
-  .zone-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .zone-head {
+    position: absolute; left: 13px; top: 10px; right: 13px;
+    display: flex; align-items: baseline; gap: 10px;
+  }
   .zone-head > span:first-child {
-    font-size: 12px; font-weight: 700; letter-spacing: .12em;
-    text-transform: uppercase; color: var(--glow, var(--cyan));
+    color: var(--glow, var(--cyan)); font-size: 10px; font-weight: 800;
+    letter-spacing: .12em; text-transform: uppercase;
   }
-  .card-room { margin-left: auto; display: flex; gap: 16px; font-size: 12px; color: var(--muted); }
-  .card-room b { color: var(--text); font-weight: 700; font-size: 14px; }
+  .card-room { margin-left: auto; display: flex; gap: 10px; font-size: 10px; color: var(--muted); }
+  .card-room b { color: var(--text); font-weight: 700; }
 
-  .people { display: grid; gap: 10px; margin-top: 12px;
-            grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); }
+  /* a desk behind each agent, so the room is furnished rather than empty */
+  .desk {
+    position: absolute; width: 92px; height: 54px; margin: -6px 0 0 -46px;
+    border: 1px solid #344a68; border-radius: 9px; background: #101f33;
+    box-shadow: 0 8px 18px rgba(0,0,0,.22); z-index: 3;
+  }
+  .desk::before {
+    content: ""; position: absolute; left: 15px; right: 15px; top: 9px; height: 22px;
+    border: 1px solid #425878; border-radius: 4px;
+    background: linear-gradient(145deg, #152b47, #0a1525);
+    box-shadow: inset 0 0 12px rgba(79,130,205,.14);
+  }
+
   .who {
-    display: flex; gap: 11px; align-items: flex-start; text-align: left;
-    background: var(--surface-2); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 11px 12px; cursor: pointer;
-    font: inherit; color: inherit; width: 100%;
+    position: absolute; z-index: 12; width: 46px; height: 46px;
+    margin: -23px 0 0 -23px; border-radius: 50%;
+    display: grid; place-items: center; cursor: pointer;
+    font: inherit; font-size: 12px; font-weight: 800; color: #04121a;
+    border: 2px solid rgba(230,241,255,.22);
+    box-shadow: 0 10px 26px rgba(0,0,0,.45);
   }
-  .who:hover { border-color: var(--border-2); }
   .who[aria-current="true"] { border-color: var(--cyan); }
-  .who > span:last-child { min-width: 0; display: block; }
-  .ring {
-    width: 38px; height: 38px; border-radius: 50%; flex: none; position: relative;
-    display: grid; place-items: center; font-weight: 800; font-size: 13px; color: #04121a;
+  /* the state light, bottom-right, as in the mockup */
+  .who .dot {
+    position: absolute; right: -2px; bottom: -1px;
+    width: 12px; height: 12px; border: 2px solid var(--base);
   }
-  .who[data-state="working"] .ring::after {
-    content: ""; position: absolute; inset: -4px; border-radius: 50%;
+  .who[data-state="working"]::after {
+    content: ""; position: absolute; inset: -5px; border-radius: 50%;
     border: 2px solid currentColor; animation: halo 1.5s ease-out infinite;
   }
-  @keyframes halo { 0% { transform: scale(.9); opacity: .7 } 100% { transform: scale(1.3); opacity: 0 } }
-  .nm { font-weight: 700; display: block; }
-  .st { color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 5px; }
-  .who .role { color: var(--muted); font-size: 12px; display: block; }
-  .mini { display: flex; gap: 12px; margin-top: 6px; font-size: 11.5px; color: var(--muted); }
-  .mini b { color: var(--text); font-weight: 700; }
+  @keyframes halo { 0% { transform: scale(.9); opacity: .7 } 100% { transform: scale(1.35); opacity: 0 } }
+  .who-label {
+    position: absolute; top: 50px; left: 50%; transform: translateX(-50%);
+    white-space: nowrap; padding: 4px 8px; border: 1px solid var(--border-2);
+    border-radius: 8px; background: rgba(7,15,27,.94);
+    font-size: 10px; font-weight: 600; color: var(--text); pointer-events: none;
+  }
+  .who-label small { color: var(--muted); margin-left: 5px; font-weight: 500; }
 
-  .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex: none; }
-  .dot.ready { background: var(--ok); }
-  .dot.working { background: var(--cyan); animation: pulse 1.4s ease-in-out infinite; }
-  .dot.waiting { background: var(--warn); }
-  .dot.failed { background: var(--bad); }
-  .dot.idle { background: #3d4d6b; }
-  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
+  .team-zone {
+    position: absolute; z-index: 1; left: 37%; top: 44%; width: 26%; height: 12%;
+    border: 1px dashed var(--border-2); border-radius: 14px;
+    background: rgba(22,36,55,.28); display: grid; place-items: center;
+    color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .1em;
+  }
+  .floor-bar {
+    position: absolute; z-index: 40; left: 16px; right: 16px; bottom: 14px;
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  }
+  .floor-bar .now {
+    padding: 8px 12px; border: 1px solid var(--border-2); border-radius: 10px;
+    background: rgba(6,14,25,.9); font-size: 11.5px; color: var(--muted);
+  }
+  .floor-bar .now b { color: var(--text); }
+  .floor-bar .right { margin-left: auto; display: flex; gap: 8px; }
 
   /* --- right panel --- */
   .side h2 { font-size: 17px; margin: 0; }
@@ -220,7 +265,7 @@
       </a>
     </div>
 
-    <div id="panel-office"><div id="rooms"></div></div>
+    <div id="panel-office"><div class="floor" id="rooms"></div></div>
 
     <section id="panel-activity" hidden>
       <p class="section-title">Most recent run of each agent</p>
@@ -317,15 +362,26 @@
   // actually holds, so this is a picture of how they were set up rather than
   // a seating plan somebody typed. First match wins, so an agent holding both
   // code and schedules sits in Development.
+  // Six rooms on a plan, laid out as in the owner's mockup: three across the
+  // top, three across the bottom, with the middle left open.
   var ZONES = [
-    { key: "comms",      label: "Communication",  tools: ["gmail"],                      glow: "#f472b6" },
-    { key: "dev",        label: "Development",    tools: ["code"],                       glow: "#60a5fa" },
-    { key: "research",   label: "Research",       tools: ["server:mcp-proxy", "fusion"], glow: "#22D3EE" },
-    { key: "knowledge",  label: "Knowledge base", tools: ["gdrive", "documents"],        glow: "#a78bfa" },
-    { key: "automation", label: "Automation",     tools: ["schedules", "excel_creator", "executive_dashboard"], glow: "#fbbf24" },
-    { key: "meeting",    label: "Meeting room",   tools: ["calendar"],                   glow: "#34d399" },
+    { key: "research",   label: "Research",       tools: ["server:mcp-proxy", "fusion"],
+      at: [2, 3, 30, 39],   glow: "#22D3EE" },
+    { key: "dev",        label: "Development",    tools: ["code"],
+      at: [35, 3, 31, 39],  glow: "#60a5fa" },
+    { key: "comms",      label: "Communication",  tools: ["gmail"],
+      at: [68, 3, 30, 39],  glow: "#f472b6" },
+    { key: "meeting",    label: "Meeting room",   tools: ["calendar"],
+      at: [2, 58, 30, 39],  glow: "#34d399" },
+    { key: "knowledge",  label: "Knowledge base", tools: ["gdrive", "documents"],
+      at: [35, 58, 31, 39], glow: "#a78bfa" },
+    { key: "automation", label: "Automation",     tools: ["schedules", "excel_creator", "executive_dashboard"],
+      at: [68, 58, 30, 39], glow: "#fbbf24" },
   ];
-  var LOUNGE = { key: "lounge", label: "Open floor", tools: [], glow: "#8296b5" };
+  // An agent whose owner picked no tools reaches everything, so it has no one
+  // room. It stands in the open middle rather than being hidden.
+  var LOUNGE = { key: "lounge", label: "Open floor", tools: [],
+                 at: [37, 44, 26, 12], glow: "#8296b5" };
 
   function zoneFor(m) {
     var tools = toolsOf(m);
@@ -346,19 +402,38 @@
   }
   function saying(id) { return String(id || "").replace(/-/g, " "); }
 
-  function whoHtml(m) {
-    var st = stateOf(m.id), s = STATS[m.id] || {}, c = colourOf(m.id);
-    return '<button class="who" data-id="' + esc(m.id) + '" data-state="' + st.key + '"' +
-      (SELECTED === m.id ? ' aria-current="true"' : "") + ' style="color:' + c + '">' +
-      '<span class="ring" style="background:' + c + '">' + esc(initials(m.name)) + '</span>' +
-      '<span>' +
-        '<span class="nm card-name" style="color:var(--text)">' + esc(m.name || m.id) + '</span>' +
-        '<span class="st"><i class="dot ' + st.key + '"></i>' + esc(st.label) + '</span>' +
-        '<span class="role">' + esc(roleOf(m) || "No role set") + '</span>' +
-        '<span class="mini"><span>RUNS <b>' + (s.runs != null ? s.runs : 0) + '</b></span>' +
-        (s.success_pct == null ? "" : '<span>CLEAN <b>' + s.success_pct + '%</b></span>') +
-        '<span>' + esc(ago(s.last_started)) + '</span></span>' +
-      '</span></button>';
+  function whoHtml(m, x, y) {
+    var st = stateOf(m.id), c = colourOf(m.id);
+    return '<div class="desk" style="left:' + x + '%;top:' + (y + 6) + '%"></div>' +
+      '<button class="who" data-id="' + esc(m.id) + '" data-state="' + st.key + '"' +
+      (SELECTED === m.id ? ' aria-current="true"' : "") +
+      ' style="left:' + x + '%;top:' + y + '%;background:' + c + ';color:' + c + '"' +
+      ' title="' + esc(st.label) + '">' +
+      '<span style="color:#04121a">' + esc(initials(m.name)) + '</span>' +
+      '<i class="dot ' + st.key + '"></i>' +
+      // The role normally, but the STATE the moment there is one worth
+      // reading. A dot alone says something is happening without saying
+      // what, and "Working 12s" is the whole reason to look at this floor.
+      '<span class="who-label"><span class="card-name">' + esc(m.name || m.id) +
+        '</span><small>' + esc(st.key === "ready" || st.key === "idle"
+          ? (roleOf(m) || "no role") : st.label) + '</small></span>' +
+      '</button>';
+  }
+
+  // Where each agent stands inside its own room. Spread along the room and
+  // over two rows, so a room holding three does not stack them.
+  function placeIn(z, of) {
+    return of.map(function (m, i) {
+      var cols = Math.min(of.length, 2);
+      var col = i % cols, row = Math.floor(i / cols);
+      var rows = Math.ceil(of.length / cols);
+      return {
+        m: m,
+        x: z.at[0] + z.at[2] * ((col + 1) / (cols + 1)),
+        y: z.at[1] + z.at[3] * (rows > 1 ? (0.34 + row * (0.44 / Math.max(1, rows - 1)))
+                                         : 0.52),
+      };
+    });
   }
 
   function drawRooms() {
@@ -377,8 +452,10 @@
     });
 
     // Only rooms somebody works in. An empty room is scenery, and six of them
-    // is what made the previous floor unreadable.
-    var html = ZONES.concat([LOUNGE]).filter(function (z) {
+    // is what made the earlier floor unreadable.
+    var html = '<div class="team-zone">Open floor</div>';
+
+    html += ZONES.concat([LOUNGE]).filter(function (z) {
       return byZone[z.key];
     }).map(function (z) {
       var of = byZone[z.key].of;
@@ -386,30 +463,56 @@
       of.forEach(function (m) {
         var st = STATS[m.id] || {};
         runs += st.runs || 0;
-        // success_pct is a percentage of that agent's OWN runs, so it has to
-        // be weighted back into runs before rooms can be compared. Averaging
-        // the percentages would let an agent with three runs outvote one with
+        // success_pct is a percentage of that agent's OWN runs, so it is
+        // weighted back into runs before rooms can be compared. Averaging the
+        // percentages would let an agent with three runs outvote one with
         // eight hundred.
         if (st.runs && st.success_pct != null) done += st.runs * st.success_pct / 100;
         spent += st.cost_usd || 0;
         if (stateOf(m.id).key === "working") working++;
       });
       var pct = runs ? Math.round(100 * done / runs) : null;
-      return '<section class="zone" style="--glow:' + z.glow + '">' +
+      return '<section class="zone" style="--glow:' + z.glow + ';left:' + z.at[0] +
+        '%;top:' + z.at[1] + '%;width:' + z.at[2] + '%;height:' + z.at[3] + '%">' +
         '<div class="zone-head"><span>' + esc(z.label) + '</span>' +
-        '<span class="st"><i class="dot ' + (working ? "working" : "ready") + '"></i>' +
-          of.length + (of.length === 1 ? " agent" : " agents") + '</span>' +
         '<span class="card-room"><span>RUNS <b>' + runs + '</b></span>' +
         (pct == null ? "" : '<span>CLEAN <b>' + pct + '%</b></span>') +
-        (spent ? '<span>SPENT <b>$' + spent.toFixed(2) + '</b></span>' : "") +
-        '</span></div>' +
-        '<div class="people">' + of.map(whoHtml).join("") + '</div></section>';
+        (spent ? '<span>$<b>' + spent.toFixed(2) + '</b></span>' : "") +
+        '</span></div></section>';
     }).join("");
 
-    document.getElementById("rooms").innerHTML =
-      html || '<p class="empty">No agents yet. <a href="/tasks/agents">Create one</a>.</p>';
+    // Agents sit above the rooms, so a label is never clipped by a wall.
+    html += ZONES.concat([LOUNGE]).filter(function (z) { return byZone[z.key]; })
+      .map(function (z) {
+        return placeIn(z, byZone[z.key].of).map(function (s) {
+          return whoHtml(s.m, s.x.toFixed(1), s.y.toFixed(1));
+        }).join("");
+      }).join("");
 
     var working = shown.filter(function (m) { return stateOf(m.id).key === "working"; }).length;
+    var newest = recentRows()[0];
+
+    // The bar the mockup puts along the bottom. "Call a meeting" is real: it
+    // hands the chat the words the routing ladder matches as a meeting, so
+    // every agent answers and none may pass. There is deliberately no
+    // "simulate collaboration": agents cannot address each other, and a
+    // button that pretends otherwise is the one thing this page must not do.
+    html += '<div class="floor-bar">' +
+      '<span class="now"><i class="dot ' + (working ? "working" : "ready") + '"></i> ' +
+        (working ? '<b>' + working + '</b> working now'
+                 : (newest ? '<b>' + esc(newest.name) + '</b> ' +
+                    esc(newest.a.state === "working" ? "is working"
+                        : (newest.a.last_status || "finished")) + ' ' +
+                    esc(ago(newest.a.last_run_at))
+                  : "nothing has run yet")) + '</span>' +
+      '<span class="right">' +
+        '<a class="btn" href="/tasks/agents?ask=' +
+          encodeURIComponent("everyone answer: ") + '">Call a team meeting</a>' +
+        '<a class="btn ghost" href="/tasks/agents">Open the chat</a>' +
+      '</span></div>';
+
+    document.getElementById("rooms").innerHTML = html;
+
     document.getElementById("sub").innerHTML =
       '<i class="dot ' + (working ? "working" : "ready") + '"></i>' +
       AGENTS.length + (AGENTS.length === 1 ? " agent" : " agents") +
