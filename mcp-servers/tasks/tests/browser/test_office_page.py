@@ -205,12 +205,16 @@ def test_losing_the_stats_still_draws_the_agents(page):
 # A desk is chosen from the tools an agent actually holds, so the office shows
 # this person's own arrangement rather than a seating plan somebody typed.
 
-def test_the_floor_has_named_areas(page):
+def test_the_floor_names_the_rooms_that_are_in_use(page):
     """Case-insensitive on purpose: the labels are upper-cased by CSS, and
-    inner_text reports what is rendered rather than what is written."""
+    inner_text reports what is rendered rather than what is written.
+
+    Only occupied rooms are drawn now, so this names the two the fixture
+    actually fills. Ada holds BOTH code and schedules, and the first matching
+    area wins, so she sits in Development rather than Automation; Iris holds
+    gdrive and sits at the Knowledge base. An empty room is scenery."""
     zones = [z.lower() for z in page.locator(".zone span").all_inner_texts()]
-    assert "communication" in zones and "development" in zones, zones
-    assert "knowledge base" in zones, zones
+    assert sorted(zones) == ["development", "knowledge base"], zones
 
 
 def test_an_agent_stands_where_its_tools_are(page):
@@ -514,11 +518,14 @@ def test_the_floor_is_light_enough_to_read(page):
 def test_the_room_name_reads_against_the_room(page):
     """The labels were unreadable once already. Dark text on a pale pill now,
     and this fails if either side of that flips."""
-    got = page.locator(".zone span").first.evaluate(
-        "el => { const s = getComputedStyle(el);"
-        " return { c: s.color, b: s.backgroundColor }; }")
-    text = [int(n) for n in got["c"].replace("rgb(", "").replace(")", "").split(",")[:3]]
-    assert sum(text) / 3 < 120, got
+    # Read back through the browser's own parser rather than by string
+    # surgery: the colour is a color-mix() now, and splitting on commas turned
+    # "rgb(74, 70, 56)" into something int() would not take.
+    lum = page.locator(".zone span").first.evaluate(
+        "el => { const c = getComputedStyle(el).color;"
+        " const m = c.match(/[\d.]+/g).map(Number);"
+        " return (m[0] + m[1] + m[2]) / 3; }")
+    assert lum < 130, lum
 
 
 def test_the_brain_is_on_the_floor_and_goes_somewhere_real(page):
@@ -546,3 +553,119 @@ def test_the_rooms_do_not_touch(page):
             apart = (a["l"] + a["w"] <= b["l"] or b["l"] + b["w"] <= a["l"]
                      or a["t"] + a["h"] <= b["t"] or b["t"] + b["h"] <= a["t"])
             assert apart, (a, b)
+
+
+def test_no_room_card_covers_an_agent(browser):
+    """Owner's screenshot 2026-09-25: the Development card said 3 AGENTS and
+    two were visible, because Kai was drawn underneath the card describing
+    him. A card that hides its own subject is worse than no card."""
+    html = (STATIC / "office.html").read_bytes()
+    srv = _serve(html)
+    pg = browser.new_page(viewport={"width": 1500, "height": 1000})
+    pg.set_default_timeout(6000)
+
+    def route(r):
+        url = r.request.url
+        if "/models/list" in url:
+            body = {"items": SEVEN, "total": len(SEVEN)}
+        elif "/agents/stats" in url:
+            body = {"stats": {a["id"]: {"runs": 10, "avg_seconds": 1.0,
+                                        "success_pct": 100, "cost_usd": 0.0}
+                              for a in SEVEN}}
+        elif "/agents/skills" in url:
+            body = {"skills": SKILLS}
+        else:
+            body = {"activity": {}}
+        r.fulfill(status=200, content_type="application/json", body=json.dumps(body))
+
+    pg.route("**/api/**", route)
+    pg.goto("http://127.0.0.1:%d/office.html" % srv.server_address[1])
+    pg.wait_for_selector(".who", state="visible")
+    pg.wait_for_timeout(300)
+    try:
+        boxes = pg.evaluate(
+            "() => ({"
+            " who: [...document.querySelectorAll('.who')].map(e => {"
+            "   const b = e.getBoundingClientRect();"
+            "   return { id: e.dataset.id, l: b.left, r: b.right, t: b.top, b: b.bottom }; }),"
+            " card: [...document.querySelectorAll('.card-room > div')].map(e => {"
+            "   const b = e.getBoundingClientRect();"
+            "   return { l: b.left, r: b.right, t: b.top, b: b.bottom }; })"
+            "})")
+        for w in boxes["who"]:
+            for c in boxes["card"]:
+                overlap = not (w["r"] < c["l"] or c["r"] < w["l"]
+                               or w["b"] < c["t"] or c["b"] < w["t"])
+                assert not overlap, (w["id"], w, c)
+    finally:
+        pg.close()
+        srv.shutdown()
+
+
+def test_a_room_nobody_works_in_is_not_drawn(browser):
+    """Same screenshot: a large blank slab sat top-centre with no label and
+    nobody on it. An empty room is scenery, and scenery is what made the
+    floor unreadable."""
+    html = (STATIC / "office.html").read_bytes()
+    srv = _serve(html)
+    pg = browser.new_page(viewport={"width": 1500, "height": 1000})
+    pg.set_default_timeout(6000)
+
+    def route(r):
+        url = r.request.url
+        if "/models/list" in url:
+            body = {"items": [SEVEN[0]], "total": 1}   # Mia alone, in Communication
+        elif "/agents/skills" in url:
+            body = {"skills": SKILLS}
+        elif "/agents/stats" in url:
+            body = {"stats": {}}
+        else:
+            body = {"activity": {}}
+        r.fulfill(status=200, content_type="application/json", body=json.dumps(body))
+
+    pg.route("**/api/**", route)
+    pg.goto("http://127.0.0.1:%d/office.html" % srv.server_address[1])
+    pg.wait_for_selector(".who", state="visible")
+    pg.wait_for_timeout(300)
+    try:
+        labels = [t.lower() for t in pg.locator(".zone span").all_inner_texts()]
+        assert labels == ["communication"], labels
+        assert pg.locator(".zone").count() == 1
+    finally:
+        pg.close()
+        srv.shutdown()
+
+
+def test_every_room_is_a_different_colour(browser):
+    """Owner's screenshot: six identical cream slabs, so Development and
+    Research were indistinguishable. The tint read --tint, which nothing
+    sets, while every zone sets --glow, so they all fell back to one faint
+    default."""
+    html = (STATIC / "office.html").read_bytes()
+    srv = _serve(html)
+    pg = browser.new_page(viewport={"width": 1500, "height": 1000})
+    pg.set_default_timeout(6000)
+
+    def route(r):
+        url = r.request.url
+        if "/models/list" in url:
+            body = {"items": SEVEN, "total": len(SEVEN)}
+        elif "/agents/skills" in url:
+            body = {"skills": SKILLS}
+        elif "/agents/stats" in url:
+            body = {"stats": {}}
+        else:
+            body = {"activity": {}}
+        r.fulfill(status=200, content_type="application/json", body=json.dumps(body))
+
+    pg.route("**/api/**", route)
+    pg.goto("http://127.0.0.1:%d/office.html" % srv.server_address[1])
+    pg.wait_for_selector(".zone", state="visible")
+    pg.wait_for_timeout(300)
+    try:
+        shades = pg.locator(".zone").evaluate_all(
+            "els => els.map(e => getComputedStyle(e).backgroundImage)")
+        assert len(set(shades)) == len(shades), shades
+    finally:
+        pg.close()
+        srv.shutdown()
