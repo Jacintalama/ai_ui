@@ -19,10 +19,18 @@ def _hdr(email=EMAIL):
 
 
 def _fake_store(mod, monkeypatch):
-    """The single conversation row, as a dict."""
+    """The conversation rows, as dicts.
+
+    Keyed by the person alone, because these tests are about the room. The
+    real store keys by person AND agent since a conversation can now belong
+    to one agent; `agent_id` is accepted and asserted to be the room's None
+    rather than silently ignored, so a private conversation leaking into
+    these tests would fail here rather than quietly pass.
+    """
     rows: dict[str, dict] = {}
 
-    async def create(email, title, s):
+    async def create(email, title, s, agent_id=None):
+        assert agent_id is None, "the room tests do not talk to one agent"
         rows[email] = {"id": "chat-1", "user_email": email, "title": title,
                        "messages": list(s.messages), "summary": s.summary,
                        "pending": dict(s.pending)}
@@ -34,7 +42,9 @@ def _fake_store(mod, monkeypatch):
             row.update(messages=list(s.messages), summary=s.summary,
                        pending=dict(s.pending))
 
-    async def newest(email):
+    async def newest(email, agent_id=None):
+        if agent_id is not None:
+            return None
         row = rows.get(email)
         return dict(row) if row else None
 

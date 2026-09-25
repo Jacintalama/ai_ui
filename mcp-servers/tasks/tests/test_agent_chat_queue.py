@@ -152,7 +152,7 @@ class _Req:
 
 async def _drain(monkeypatch, s, rounds_seen):
     """Run the stream generator with the round itself stubbed out."""
-    async def fake_round(email, sess, agents, request=None, quote=False):
+    async def fake_round(email, sess, agents, request=None, quote=False, private=None):
         rounds_seen.append(chat.agent_routing.last_user_text(sess.messages))
         sess.messages.append({
             "role": "assistant", "agent_id": "a", "agent_name": "Ada",
@@ -216,7 +216,7 @@ async def test_a_cleared_room_abandons_whatever_was_queued(monkeypatch):
     s.queued = ["belongs to the old one"]
     seen = []
 
-    async def clearing_round(email, sess, agents, request=None, quote=False):
+    async def clearing_round(email, sess, agents, request=None, quote=False, private=None):
         seen.append(chat.agent_routing.last_user_text(sess.messages))
         sess.generation += 1          # as New chat does, mid round
         yield {"event": "message", "data": "x"}
@@ -258,7 +258,7 @@ async def test_each_drained_round_answers_under_the_turn_it_was_given(
     seen = []
 
     async def recording_round(email, sess, agents, request=None,
-                              quote=False):
+                              quote=False, private=None):
         seen.append((chat.agent_routing.last_user_text(sess.messages),
                     sess.turn_id))
         sess.messages.append({"role": "assistant", "agent_id": "a",
@@ -349,10 +349,10 @@ async def _walk_away_mid_round(monkeypatch, s, saved, during=None):
 
 
 def _no_db(monkeypatch):
-    async def created(email, title, sess):
+    async def created(email, title, sess, agent_id=None):
         return "chat-1"
 
-    async def newest(email):
+    async def newest(email, agent_id=None):
         return None
 
     async def no_graph(email, question=""):
@@ -472,7 +472,7 @@ async def test_a_reconnect_after_a_cancelled_round_does_not_run_one(
 
     ran = []
 
-    async def must_not_run(email, sess, agents, request=None, quote=False):
+    async def must_not_run(email, sess, agents, request=None, quote=False, private=None):
         ran.append(1)
         yield {"event": "message", "data": "x"}
 

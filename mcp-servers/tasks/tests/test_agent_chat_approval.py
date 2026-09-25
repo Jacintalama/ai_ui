@@ -41,7 +41,7 @@ def _app(monkeypatch, turn):
         return {"answer": "Sent it." if approved else "I did not run that.",
                 "notes": []}
 
-    async def noop_create(email, title, s):
+    async def noop_create(email, title, s, agent_id=None):
         return "chat-1"
 
     async def noop_save(email, s):

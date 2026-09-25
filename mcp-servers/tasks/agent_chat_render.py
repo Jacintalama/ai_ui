@@ -11,6 +11,7 @@ drift from the server's.
 import html
 import re
 import uuid
+from urllib.parse import quote
 
 
 def esc(s: str) -> str:
@@ -301,7 +302,7 @@ def failure(name: str, reason: str, fix: str = "") -> str:
             f'{esc(reason)}</div>{tail}</div>')
 
 
-def stream_block() -> str:
+def stream_block(agent: str = "") -> str:
     """The element that opens the SSE connection for one round.
 
     The two sse-swap divs are sinks, not destinations. One connection can
@@ -313,20 +314,34 @@ def stream_block() -> str:
     `sse-close` stops the browser reconnecting, which would otherwise re-run
     a round that has already been paid for.
     """
+    # The connection has to open on the same conversation the message was
+    # sent to, or a private round would be run against the room's session and
+    # answer into a thread nobody is looking at.
+    where = ("?agent=" + quote(agent, safe="")) if agent else ""
     return ('<div class="astream" hx-ext="sse" '
-            'sse-connect="/tasks/agents/chat/stream" sse-close="close">'
+            'sse-connect="/tasks/agents/chat/stream' + where + '" '
+            'sse-close="close">'
             '<div class="alive" sse-swap="message" hx-swap="beforeend"></div>'
             '<div class="awork" sse-swap="working" hx-swap="innerHTML"></div>'
             '</div>')
 
 
-def empty_thread() -> str:
+def empty_thread(private: bool = False) -> str:
+    """What an empty conversation says about itself.
+
+    The room's line is about everybody hearing you, which is exactly wrong in
+    a private conversation: it would tell somebody their private word is
+    being read by every agent they own.
+    """
+    if private:
+        return ('<div class="aempty">Just the two of you. Nobody else sees '
+                'what you say here, and nobody else answers.</div>')
     return ('<div class="aempty">Ask anything. Every agent hears it, and '
             'the ones with something to say answer. Name one and only they '
             'reply.</div>')
 
 
-def thread(messages: list[dict]) -> str:
+def thread(messages: list[dict], private: bool = False) -> str:
     """A saved conversation replayed, grouped into turns.
 
     Roles other than user, assistant, note and failure are the round
@@ -385,4 +400,4 @@ def thread(messages: list[dict]) -> str:
                                            awaiting["calls"]))
     if open_turn:
         out.append(turn_close())
-    return "".join(out) if out else empty_thread()
+    return "".join(out) if out else empty_thread(private)

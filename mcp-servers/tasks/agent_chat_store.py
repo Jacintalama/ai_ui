@@ -70,7 +70,10 @@ class RoomSession:
     turn_id: str = ""
 
 
-_SESSIONS: dict[str, RoomSession] = {}
+#: Keyed by the person AND who they are talking to: (email, agent_id), with
+#: agent_id None for the shared room. One room per person as before, plus one
+#: private conversation per agent they own.
+_SESSIONS: dict[tuple[str, str | None], RoomSession] = {}
 
 
 def sweep(now: float | None = None) -> None:
@@ -82,12 +85,19 @@ def sweep(now: float | None = None) -> None:
         del _SESSIONS[k]
 
 
-def get_session(email: str) -> RoomSession:
+def get_session(email: str, agent_id: str | None = None) -> RoomSession:
+    """This person's working copy of one conversation.
+
+    `agent_id` None is the shared room, where every agent hears everything.
+    A value is a private conversation with that one agent: nobody else reads
+    it and nobody else answers in it.
+    """
     sweep()
-    s = _SESSIONS.get(email)
+    key = (email, agent_id or None)
+    s = _SESSIONS.get(key)
     if s is None:
         s = RoomSession()
-        _SESSIONS[email] = s
+        _SESSIONS[key] = s
     s.last_used = time.time()
     return s
 
@@ -102,15 +112,17 @@ def title_from(message: str) -> str:
     return one_line[:47].rstrip() + "…"
 
 
-async def create_chat(email: str, title: str, s: RoomSession) -> str:
+async def create_chat(email: str, title: str, s: RoomSession,
+                      agent_id: str | None = None) -> str:
     chat_id = str(uuid.uuid4())
     async with session() as db:
         await db.execute(
             text("INSERT INTO tasks.agent_chats "
-                 "(id, user_email, title, messages, summary, pending) "
-                 "VALUES (:id, :email, :title, CAST(:messages AS JSONB), "
-                 ":summary, CAST(:pending AS JSONB))"),
-            {"id": chat_id, "email": email, "title": title,
+                 "(id, user_email, agent_id, title, messages, summary, pending) "
+                 "VALUES (:id, :email, :agent_id, :title, "
+                 "CAST(:messages AS JSONB), :summary, CAST(:pending AS JSONB))"),
+            {"id": chat_id, "email": email, "agent_id": agent_id or None,
+             "title": title,
              "messages": json.dumps(s.messages), "summary": s.summary,
              "pending": json.dumps(s.pending)})
         await db.commit()
@@ -138,7 +150,7 @@ async def save_chat(email: str, s: RoomSession) -> None:
         await db.commit()
 
 
-async def newest_chat(email: str) -> dict | None:
+async def newest_chat(email: str, agent_id: str | None = None) -> dict | None:
     """This person's conversation.
 
     The panel keeps one permanent room rather than a list, so there is only
@@ -150,8 +162,12 @@ async def newest_chat(email: str) -> dict | None:
         row = (await db.execute(
             text("SELECT id, title, messages, summary, pending "
                  "FROM tasks.agent_chats WHERE user_email = :email "
+                 # NOT DISTINCT FROM rather than =: the room's agent_id is
+                 # NULL and NULL = NULL is never true, so = would find no
+                 # room at all.
+                 "AND agent_id IS NOT DISTINCT FROM :agent_id "
                  "ORDER BY updated_at DESC LIMIT 1"),
-            {"email": email})).mappings().first()
+            {"email": email, "agent_id": agent_id or None})).mappings().first()
     return dict(row) if row else None
 
 

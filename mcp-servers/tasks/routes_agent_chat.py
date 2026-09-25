@@ -385,7 +385,8 @@ async def _keep_within_budget(email: str, s: store.RoomSession,
 
 
 async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
-                     request: Request | None = None, quote: bool = False):
+                     request: Request | None = None, quote: bool = False,
+                     private: str | None = None):
     """Yield one SSE event per thing that happens in a round.
 
     Agents run one at a time, never in parallel: a turn can run tools and this
@@ -414,6 +415,24 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
     last = _last_speaker(s.messages, agents)
     speakers, may_pass, why = agent_routing.choose_speakers(
         asked, agents, last_speaker=last, has_pending=bool(s.pending))
+
+    # A private conversation has already answered the question the ladder
+    # exists to answer. The one agent this thread belongs to speaks, and they
+    # may not pass: in the room a bare "hello" is put to everybody and any of
+    # them can decide it is not for them, but a conversation with one agent is
+    # not one they are allowed to sit out.
+    #
+    # Approval is the exception. "yes" still belongs to whoever asked, and
+    # that branch below answers the held question rather than taking a turn.
+    if private and why != agent_routing.ROUTE_APPROVAL:
+        # Filtered from the roster, never trusted from the request: the id
+        # arrives off a link in a browser, and only this person's own agents
+        # are in `agents`. An id that is not theirs finds nobody and the round
+        # ends without a word, which is the right answer to a thread that
+        # cannot exist.
+        speakers = [a for a in agents if a.get("id") == private]
+        may_pass = False
+        why = agent_routing.ROUTE_NAMED
 
     if why == agent_routing.ROUTE_APPROVAL:
         # Typing "yes" is pressing Yes. The agent that asked is waiting on
@@ -662,7 +681,21 @@ async def _save_despite_cancel(email: str, s: store.RoomSession) -> None:
     await asyncio.shield(task)
 
 
-async def _hydrate(email: str, s: store.RoomSession) -> None:
+def _which_chat(agent) -> str | None:
+    """Which conversation a request is about.
+
+    Empty is the room, where every agent hears everything. A value is a
+    private conversation with that one agent.
+
+    Anything that is not a string means nobody said: these endpoints are also
+    called directly as plain functions by the tests, and a parameter left at
+    its default then arrives as the Form object rather than as text.
+    """
+    return (agent.strip() or None) if isinstance(agent, str) else None
+
+
+async def _hydrate(email: str, s: store.RoomSession,
+                   agent_id: str | None = None) -> None:
     """Load this person's one conversation into a session that has none.
 
     The room is permanent, so a reload, a new tab or a service restart should
@@ -675,7 +708,7 @@ async def _hydrate(email: str, s: store.RoomSession) -> None:
     if s.chat_id is not None or s.messages:
         return
     try:
-        row = await store.newest_chat(email)
+        row = await store.newest_chat(email, agent_id)
     except Exception:                                       # noqa: BLE001
         log.exception("agent chat: could not load the conversation")
         return
@@ -689,13 +722,15 @@ async def _hydrate(email: str, s: store.RoomSession) -> None:
 
 @router.post("/tasks/agents/chat/send", include_in_schema=False)
 async def agent_chat_send(message: str = Form(...),
+                          agent: str = Form(""),
                           user: CurrentUser = Depends(current_user)
                           ) -> HTMLResponse:
     body = (message or "").strip()
     if not body:
         raise HTTPException(status_code=400, detail="empty message")
-    s = store.get_session(user.email)
-    await _hydrate(user.email, s)
+    who = _which_chat(agent)
+    s = store.get_session(user.email, who)
+    await _hydrate(user.email, s, who)
     if s.streaming:
         # Kept, not refused. The round in flight drains this when it finishes,
         # so there is still only ever one round, and no stream block is
@@ -727,22 +762,24 @@ async def agent_chat_send(message: str = Form(...),
     if s.chat_id is None:
         try:
             s.chat_id = await store.create_chat(
-                user.email, store.title_from(body), s)
+                user.email, store.title_from(body), s, who)
         except Exception:                                   # noqa: BLE001
             log.exception("agent chat: could not create the conversation row; "
                           "continuing unsaved")
 
     resp = HTMLResponse(render.turn_open(body, tid) + render.turn_close()
-                        + render.stream_block())
+                        + render.stream_block(who or ""))
     resp.headers["HX-Trigger"] = "agent-chats-changed"
     return resp
 
 
 @router.get("/tasks/agents/chat/stream", include_in_schema=False)
 async def agent_chat_stream(request: Request,
+                            agent: str = "",
                             user: CurrentUser = Depends(current_user)
                             ) -> EventSourceResponse:
-    s = store.get_session(user.email)
+    who = _which_chat(agent)
+    s = store.get_session(user.email, who)
 
     async def gen():
         # Only ever answer an unanswered message. A browser reconnects an
@@ -771,7 +808,7 @@ async def agent_chat_stream(request: Request,
                 # the ones reading the notes.
                 await _keep_within_budget(user.email, s, agents)
                 async for event in _run_round(user.email, s, agents, request,
-                                              quote=quote):
+                                              quote=quote, private=who):
                     yield event
 
                 # Anything typed while that was running gets answered now, on
@@ -870,6 +907,7 @@ async def agent_chat_stream(request: Request,
 @router.post("/tasks/agents/chat/approve", include_in_schema=False)
 async def agent_chat_approve(ask_id: str = Form(...),
                              approved: str = Form(...),
+                             agent: str = Form(""),
                              user: CurrentUser = Depends(current_user)
                              ) -> HTMLResponse:
     """Answer one agent's request to run a tool.
@@ -880,7 +918,7 @@ async def agent_chat_approve(ask_id: str = Form(...),
     from here straight into _resume_turn without ever having been in a
     browser.
     """
-    s = store.get_session(user.email)
+    s = store.get_session(user.email, _which_chat(agent))
     # Looked up, not popped: a stranger's click or a click mid round must not
     # discard the real owner's still-pending question, so nothing is taken
     # off the session until both of those are ruled out.
@@ -1008,20 +1046,24 @@ async def _apply_pending_answer(email: str, s: store.RoomSession, ask_id: str,
 
 
 @router.get("/tasks/agents/chat/thread", include_in_schema=False)
-async def agent_chat_thread(user: CurrentUser = Depends(current_user)
+async def agent_chat_thread(agent: str = "",
+                            user: CurrentUser = Depends(current_user)
                             ) -> HTMLResponse:
     """The conversation so far.
 
-    The panel asks for this on load. There is one room and it is permanent,
-    so opening the page mid-conversation should show the conversation.
+    The panel asks for this on load, and again whenever it switches between
+    the room and a private conversation. Both are permanent, so arriving
+    mid-conversation should show the conversation.
     """
-    s = store.get_session(user.email)
-    await _hydrate(user.email, s)
-    return HTMLResponse(render.thread(s.messages))
+    who = _which_chat(agent)
+    s = store.get_session(user.email, who)
+    await _hydrate(user.email, s, who)
+    return HTMLResponse(render.thread(s.messages, private=bool(who)))
 
 
 @router.post("/tasks/agents/chat/clear", include_in_schema=False)
-async def agent_chat_clear(user: CurrentUser = Depends(current_user)
+async def agent_chat_clear(agent: str = Form(""),
+                           user: CurrentUser = Depends(current_user)
                            ) -> HTMLResponse:
     """Empty the room and start again.
 
@@ -1029,8 +1071,9 @@ async def agent_chat_clear(user: CurrentUser = Depends(current_user)
     one conversation per person and nothing has to decide which of two is
     the real one.
     """
-    s = store.get_session(user.email)
-    await _hydrate(user.email, s)
+    who = _which_chat(agent)
+    s = store.get_session(user.email, who)
+    await _hydrate(user.email, s, who)
     # Replaced, never cleared in place: a round still running holds these
     # objects and must keep writing into the ones it started with rather
     # than into the fresh conversation.
@@ -1054,4 +1097,4 @@ async def agent_chat_clear(user: CurrentUser = Depends(current_user)
             await store.save_chat(user.email, s)
         except Exception:                                   # noqa: BLE001
             log.exception("agent chat: could not save after clearing")
-    return HTMLResponse(render.empty_thread())
+    return HTMLResponse(render.empty_thread(private=bool(who)))

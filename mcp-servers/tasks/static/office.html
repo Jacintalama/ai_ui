@@ -784,7 +784,8 @@
       '</div>' +
       // Aimed at this agent, not the room: naming it is what the routing
       // ladder matches on, and a named agent answers and may not pass.
-      '<a class="btn chat-with" target="_top" href="/tasks/agents?ask=' +
+      '<a class="btn chat-with" target="_top" data-id="' + esc(m.id) +
+        '" href="/tasks/agents?ask=' +
         encodeURIComponent((m.name || "") + ", ") + '">Chat with ' +
         esc(m.name || "this agent") + '</a>' +
       '<a class="btn ghost" target="_top" href="/tasks/agents">Edit agent</a>' +
@@ -1010,8 +1011,15 @@
     // Same origin only. The office and the page around it are served by the
     // same host, and a wildcard would hand whatever is typed to any parent
     // that framed this page.
-    window.parent.postMessage({ type: "aiui-office-ask", ask: ask },
-                              window.location.origin);
+    //
+    // The agent's id goes with it. The page around us opens that agent's own
+    // conversation rather than putting the question to the room: "Chat" on a
+    // robot means a private word with them, not a message everybody reads.
+    window.parent.postMessage({
+      type: "aiui-office-ask", ask: ask,
+      agent: a.getAttribute("data-id") || "",
+      name: (ask.split(",")[0] || "").trim()
+    }, window.location.origin);
   });
 
   document.getElementById("side").addEventListener("click", function (ev) {

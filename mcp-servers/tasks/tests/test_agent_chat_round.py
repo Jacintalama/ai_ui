@@ -40,7 +40,7 @@ def _app(monkeypatch, turn=None, agents=(ADA, MIA)):
     monkeypatch.setattr(routes_agent_chat, "_turn_for", turn or default_turn)
     # The store's SQL half needs a real Postgres. Swap it out so these tests
     # measure the round rather than the "database is down" path.
-    async def noop_create(email, title, s):
+    async def noop_create(email, title, s, agent_id=None):
         return "chat-1"
 
     async def noop_save(email, s):
@@ -454,3 +454,93 @@ def test_the_person_is_still_told_the_agent_had_nothing(monkeypatch):
 
     assert "nothing to add" in body.lower(), body[:400]
     assert "Ada" in body
+
+
+# --- a private word with one agent ------------------------------------------
+# "add that if he click that it will change the chat to name of the agent itl
+# not be global." Naming an agent in the room already routed the answer, but
+# the question and the reply stayed where every other agent read them.
+
+def test_in_a_private_chat_only_that_agent_answers(monkeypatch):
+    app, mod, seen = _app(monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/send",
+           data={"message": "hello", "agent": "agent-a"}, headers=_hdr())
+    c.get("/tasks/agents/chat/stream?agent=agent-a", headers=_hdr())
+    assert [t["agent"] for t in seen] == ["agent-a"]
+
+
+def test_the_private_agent_answers_without_being_named(monkeypatch):
+    """In the room a bare "hello" is put to everyone and they may pass. A
+    conversation with one agent is not one they can sit out."""
+    app, mod, seen = _app(monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/send",
+           data={"message": "hello", "agent": "agent-m"}, headers=_hdr())
+    body = c.get("/tasks/agents/chat/stream?agent=agent-m", headers=_hdr()).text
+    assert [t["agent"] for t in seen] == ["agent-m"]
+    assert "Mia here" in body
+
+
+def test_the_room_still_hears_everybody(monkeypatch):
+    """The default is unchanged: no agent named, everyone hears it."""
+    app, mod, seen = _app(monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/send", data={"message": "hi team"}, headers=_hdr())
+    c.get("/tasks/agents/chat/stream", headers=_hdr())
+    assert [t["agent"] for t in seen] == ["agent-a", "agent-m"]
+
+
+def test_a_private_chat_is_not_in_the_room(monkeypatch):
+    """The point of private. What was said to one agent must not turn up as
+    context for the others."""
+    app, mod, _ = _app(monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/send",
+           data={"message": "just between us", "agent": "agent-a"}, headers=_hdr())
+    room = mod.store.get_session(EMAIL)
+    said = " ".join(str(m.get("content", "")) for m in room.messages)
+    assert "just between us" not in said
+
+
+def test_each_agent_keeps_its_own_private_thread(monkeypatch):
+    app, mod, _ = _app(monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/send",
+           data={"message": "for Ada", "agent": "agent-a"}, headers=_hdr())
+    mia = mod.store.get_session(EMAIL, "agent-m")
+    said = " ".join(str(m.get("content", "")) for m in mia.messages)
+    assert "for Ada" not in said
+
+
+def test_the_private_thread_is_what_the_panel_asks_for(monkeypatch):
+    app, mod, _ = _app(monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/send",
+           data={"message": "for Ada only", "agent": "agent-a"}, headers=_hdr())
+    mine = c.get("/tasks/agents/chat/thread?agent=agent-a", headers=_hdr()).text
+    room = c.get("/tasks/agents/chat/thread", headers=_hdr()).text
+    assert "for Ada only" in mine
+    assert "for Ada only" not in room
+
+
+def test_clearing_a_private_chat_leaves_the_room_alone(monkeypatch):
+    app, mod, _ = _app(monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/send", data={"message": "in the room"}, headers=_hdr())
+    c.post("/tasks/agents/chat/clear", data={"agent": "agent-a"}, headers=_hdr())
+    room = mod.store.get_session(EMAIL)
+    said = " ".join(str(m.get("content", "")) for m in room.messages)
+    assert "in the room" in said
+
+
+def test_an_agent_that_is_not_yours_cannot_be_talked_to(monkeypatch):
+    """The id comes off a link in a browser. Only agents this person owns are
+    in the roster, so anything else has nobody to answer."""
+    app, mod, seen = _app(monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/send",
+           data={"message": "hello", "agent": "agent-somebody-elses"},
+           headers=_hdr())
+    c.get("/tasks/agents/chat/stream?agent=agent-somebody-elses", headers=_hdr())
+    assert seen == []

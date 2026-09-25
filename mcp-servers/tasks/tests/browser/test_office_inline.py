@@ -273,27 +273,28 @@ def test_bringing_it_back_keeps_the_same_frame(page):
 
 # --- asking an agent from the floor -----------------------------------------
 
-def test_chatting_from_the_office_fills_the_box_where_you_are(page):
+def test_chatting_from_the_office_opens_that_agents_own_conversation(page):
     """A chat link that navigated would tear the floor down and rebuild it on
-    every click. Inside the page it hands the question to the column."""
+    every click. It switches the conversation in place instead, and to that
+    agent's own thread rather than typing their name into the room."""
     frame = page.frame_locator("#office-body iframe")
     frame.locator('.who-chat[data-id="agent-iris-a103"]').wait_for()
     page.evaluate("() => { window.__stillHere = true; }")
     frame.locator('.who-chat[data-id="agent-iris-a103"]').click()
     page.wait_for_timeout(400)
     assert page.evaluate("() => window.__stillHere === true"), "the page reloaded"
-    assert page.locator(".ap-composer input[name=message]").input_value(
-        ).startswith("Iris,")
+    assert page.locator("#ap-agent").input_value() == "agent-iris-a103"
+    assert "Iris" in page.locator("#ap-who").inner_text()
 
 
-def test_it_fills_the_box_and_stops(page):
-    """The same rule the ?ask= links follow: a turn costs money and can run
-    tools, so it is never sent on the person's behalf."""
+def test_it_opens_the_conversation_and_sends_nothing(page):
+    """Switching rooms is free. Sending is not: a turn costs money and can
+    run tools, so nothing is ever sent on the person's behalf."""
     frame = page.frame_locator("#office-body iframe")
     frame.locator('.who-chat[data-id="agent-iris-a103"]').wait_for()
     frame.locator('.who-chat[data-id="agent-iris-a103"]').click()
     page.wait_for_timeout(400)
-    assert page.locator(".ap-composer input[name=message]").input_value() == "Iris, "
+    assert page.locator(".ap-composer input[name=message]").input_value() == ""
 
 
 def test_a_frame_that_does_not_host_the_office_still_follows_the_link(page, server):
@@ -377,3 +378,52 @@ def test_the_floor_bar_does_not_swallow_the_chat_pill(page):
         "el => getComputedStyle(el).pointerEvents") == "none"
     assert frame.locator(".floor-bar a").first.evaluate(
         "el => getComputedStyle(el).pointerEvents") == "auto"
+
+
+# --- a private word with one agent ------------------------------------------
+
+def test_the_chat_starts_on_the_room(page):
+    """The shared room is still the default and still what the page opens
+    on: "that global chat is for all the ai"."""
+    assert page.locator("#ap-agent").input_value() == ""
+    assert page.locator("#ap-who").inner_text() == "Chat with your agents"
+    assert page.locator("#ap-everyone").is_hidden()
+
+
+def test_the_header_says_who_you_are_talking_to(page):
+    """What you say is either heard by everybody or by nobody else at all,
+    and which of the two has to be impossible to mistake."""
+    page.evaluate("() => window.aiuiTalkTo('agent-iris-a103', 'Iris')")
+    page.wait_for_timeout(200)
+    assert page.locator("#ap-who").inner_text() == "Chat with Iris"
+    assert "Iris" in page.locator("#ap-sub").inner_text()
+    assert "Iris" in page.locator(
+        ".ap-composer input[name=message]").get_attribute("placeholder")
+
+
+def test_there_is_a_way_back_to_everyone(page):
+    page.evaluate("() => window.aiuiTalkTo('agent-iris-a103', 'Iris')")
+    page.wait_for_timeout(200)
+    assert page.locator("#ap-everyone").is_visible()
+    page.locator("#ap-everyone").click()
+    page.wait_for_timeout(200)
+    assert page.locator("#ap-agent").input_value() == ""
+    assert page.locator("#ap-who").inner_text() == "Chat with your agents"
+
+
+def test_who_you_are_talking_to_is_remembered(page):
+    page.evaluate("() => window.aiuiTalkTo('agent-iris-a103', 'Iris')")
+    page.wait_for_timeout(250)
+    page.reload()
+    page.wait_for_selector("#office-dock", state="attached")
+    page.wait_for_timeout(400)
+    assert page.locator("#ap-agent").input_value() == "agent-iris-a103"
+
+
+def test_the_message_carries_the_conversation_it_belongs_to(page):
+    """The field is what the send posts. Without it a private message would
+    be answered in the room, where everybody reads it."""
+    page.evaluate("() => window.aiuiTalkTo('agent-iris-a103', 'Iris')")
+    page.wait_for_timeout(200)
+    assert page.locator(
+        ".ap-composer input[name=agent]").input_value() == "agent-iris-a103"

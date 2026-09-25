@@ -285,8 +285,14 @@
   .card-tools .chip svg { width: 13px; height: 13px; color: var(--muted); flex: 0 0 13px; }
   .card-tools .chip.more, .card-tools .chip.none { color: var(--muted); }
   .card-foot {
-    display: flex; align-items: center; justify-content: space-between;
+    display: flex; align-items: center; gap: 8px;
     margin-top: auto; padding-top: 10px; border-top: 1px solid var(--border);
+  }
+  /* Takes the room the row has, so Edit and the overflow stay where they
+     were on the right. */
+  .card-foot .chat-with { margin-right: auto; }
+  .card-foot .chat-with[aria-current="true"] {
+    border-color: var(--accent); color: var(--accent);
   }
   .card-tools { margin-bottom: 15px; }
   /* Delete used to sit flush beside Edit at the same weight. A destructive
@@ -832,12 +838,17 @@
           title="Drag to resize"></button>
   <div class="ap-head">
     <div class="ap-title">
-      <h2>Chat with your agents</h2>
+      <h2 id="ap-who">Chat with your agents</h2>
       <!-- The panel never said what it was. Everyone who has opened it has
            had to work out from the placeholder that naming an agent picks
-           one and saying nothing asks them all. -->
-      <p class="ap-sub">Everyone hears you. Name one to ask only them.</p>
+           one and saying nothing asks them all. Now it can also be one
+           agent's own conversation, and which of the two it is has to be
+           impossible to mistake: what you say here is either heard by
+           everybody or by nobody else at all. -->
+      <p class="ap-sub" id="ap-sub">Everyone hears you. Name one to ask only them.</p>
     </div>
+    <!-- Only while a private conversation is open. -->
+    <button class="btn" type="button" id="ap-everyone" hidden>Back to everyone</button>
     <!-- The office is IN the column now, not over it. This only brings it
          back after somebody hides it. -->
     <button class="btn" type="button" id="office-open" hidden>Show the office</button>
@@ -856,6 +867,11 @@
   <form class="ap-composer" hx-post="/tasks/agents/chat/send"
         hx-target="#agent-thread" hx-swap="beforeend"
         hx-on::after-request="this.reset()">
+    <!-- Which conversation this message belongs to. Empty is the room.
+         A field rather than a URL, so the form carries it the same way it
+         carries the message and nothing has to rewrite hx-post. reset()
+         after a send would blank it, so it is restored below. -->
+    <input type="hidden" name="agent" id="ap-agent" value="">
     <input type="text" name="message" autocomplete="off"
            placeholder="Ask your agents something">
     <button class="btn primary" type="submit">Send</button>
@@ -877,6 +893,7 @@
           <button class="btn" type="button" id="ap-clear-cancel">Cancel</button>
           <button class="btn quiet-danger" type="button" id="ap-clear-confirm"
                   hx-post="/tasks/agents/chat/clear"
+                  hx-include="#ap-agent"
                   hx-target="#agent-thread" hx-swap="innerHTML">Clear</button>
         </div>
       </div>
@@ -1234,6 +1251,12 @@
               ? '<span class="chip model">' + esc(model) + "</span>" : "")
           + "</div>" +
         '<div class="card-foot">' +
+        // "please add chat with name of the agent on their card so user can
+        // also private message specific agent". Named, because "Chat" on a
+        // wall of cards does not say who you would be talking to.
+        '<button class="btn sm chat-with" type="button" data-act="chat" ' +
+          'data-name="' + esc(m.name || m.id) + '">Chat with '
+          + esc(m.name || m.id) + "</button>" +
         (mine
           ? '<button class="btn sm" type="button" data-act="edit">Edit</button>' +
             // Delete lives behind the overflow rather than flush beside Edit.
@@ -1745,6 +1768,10 @@
       if (showTemplates) renderTemplates();
       loadActivity();
       loadMemoryCounts();
+      // The cards were just replaced, so whoever is drawing on them has to
+      // draw again: the conversation switcher marks the card you are
+      // currently talking to.
+      document.body.dispatchEvent(new CustomEvent("aiui:cards-drawn"));
     }
 
     // FastAPI answers errors with JSON too, so .json() alone succeeds on a 401
@@ -2701,6 +2728,14 @@
         // something to read, not a destructive action to be kept out of
         // reach. Forget is destructive, but only of one note, and it is only
         // reachable once you have opened the list and read what it says.
+        if (btn.dataset.act === "chat") {
+          // Switches the conversation rather than pre-filling a message into
+          // the shared one. Named in the room routes the answer but leaves
+          // the words where every other agent reads them.
+          window.aiuiTalkTo(host.getAttribute("data-agent-id"),
+                            btn.getAttribute("data-name"));
+          return;
+        }
         if (btn.dataset.act === "memory") {
           showMemory(host.getAttribute("data-agent-id"),
                      host.querySelector(".card-memory"));
@@ -2800,6 +2835,107 @@
   })();
 </script>
 <script>
+  // Who you are talking to.
+  //
+  // The panel was one permanent room where every agent heard everything.
+  // Naming an agent routed the answer to them, but the question and the reply
+  // still sat where all the others read them as context, so there was nowhere
+  // to say a private word. "add that if he click that it will change the chat
+  // to name of the agent itl not be global."
+  //
+  // The room is still the default and still what the page opens on. A private
+  // conversation is its own thread, its own saved row, and only that agent
+  // answers in it.
+  (function () {
+    var TALK_KEY = "aiuiTalkingTo";
+    var field = document.getElementById("ap-agent");
+    var who = document.getElementById("ap-who");
+    var sub = document.getElementById("ap-sub");
+    var back = document.getElementById("ap-everyone");
+    var thread = document.getElementById("agent-thread");
+    if (!field || !who || !thread) return;
+
+    var current = { id: "", name: "" };
+
+    function remember() {
+      try {
+        if (current.id) {
+          localStorage.setItem(TALK_KEY, JSON.stringify(current));
+        } else {
+          localStorage.removeItem(TALK_KEY);
+        }
+      } catch (e) { /* the room is a fine place to come back to */ }
+    }
+
+    function paint() {
+      field.value = current.id;
+      if (back) back.hidden = !current.id;
+      if (current.id) {
+        who.textContent = "Chat with " + current.name;
+        if (sub) sub.textContent = "Only " + current.name +
+          " sees this and only they answer.";
+      } else {
+        who.textContent = "Chat with your agents";
+        if (sub) sub.textContent =
+          "Everyone hears you. Name one to ask only them.";
+      }
+      var box = document.querySelector(".ap-composer input[name=message]");
+      if (box) {
+        box.setAttribute("placeholder", current.id
+          ? "Ask " + current.name + " something"
+          : "Ask your agents something");
+      }
+      // The card you are in the middle of a conversation with says so.
+      var all = document.querySelectorAll(".card-foot .chat-with");
+      for (var i = 0; i < all.length; i++) {
+        var host = all[i].closest("[data-agent-id]");
+        var mine = host && host.getAttribute("data-agent-id") === current.id;
+        if (mine) all[i].setAttribute("aria-current", "true");
+        else all[i].removeAttribute("aria-current");
+      }
+    }
+
+    function load() {
+      // Whatever was said in that conversation before, which for a private
+      // one is a different saved row rather than a filtered view of the room.
+      var url = "/tasks/agents/chat/thread";
+      if (current.id) url += "?agent=" + encodeURIComponent(current.id);
+      if (window.htmx) htmx.ajax("GET", url, "#agent-thread");
+    }
+
+    // Called by the Chat with <name> button on a card, and by the office.
+    window.aiuiTalkTo = function (id, name) {
+      current = { id: id || "", name: name || "" };
+      remember();
+      paint();
+      load();
+      var box = document.querySelector(".ap-composer input[name=message]");
+      if (box) box.focus();
+    };
+
+    if (back) {
+      back.addEventListener("click", function () { window.aiuiTalkTo("", ""); });
+    }
+
+    // htmx reset() after a send empties every field in the form, including
+    // the hidden one that says which conversation this is. Without this the
+    // second message in a private chat would go to the room.
+    document.body.addEventListener("htmx:afterRequest", function () {
+      if (field.value !== current.id) field.value = current.id;
+    });
+
+    // Cards are drawn after this runs and again on every search, so the
+    // highlight is re-applied rather than set once.
+    document.body.addEventListener("aiui:cards-drawn", paint);
+
+    try {
+      var kept = JSON.parse(localStorage.getItem(TALK_KEY) || "null");
+      if (kept && kept.id) current = { id: kept.id, name: kept.name || kept.id };
+    } catch (e) { current = { id: "", name: "" }; }
+    paint();
+    if (current.id) load();
+  })();
+
   // The office, inline in the chat column.
   //
   // It was a floating window you clicked to open. "where is the office in
@@ -2987,6 +3123,13 @@
         return;
       }
       if (!msg || msg.type !== "aiui-office-ask" || typeof msg.ask !== "string") return;
+      // Clicking Chat on a robot opens that agent's own conversation. It used
+      // to type "Ada, " into the shared room, which routed the answer to Ada
+      // but left the words where every other agent read them.
+      if (msg.agent && typeof window.aiuiTalkTo === "function") {
+        window.aiuiTalkTo(msg.agent, msg.name || msg.agent);
+        return;
+      }
       var box = document.querySelector(".ap-composer input[name=message]");
       if (!box) return;
       box.value = msg.ask;
