@@ -99,6 +99,10 @@
   }
   @media (max-width: 1080px) {
     .wrap { flex-direction: column; }
+    /* .wrap is align-items:flex-start, which in a column makes every child
+       as wide as its own content instead of the row. The floor collapsed to
+       about 230px inside a 675px frame and the rooms piled onto each other. */
+    .main { width: 100%; }
     .side { flex: 1 1 auto; border-left: 0; border-top: 1px solid var(--border);
             position: static; max-height: none; width: 100%; }
   }
@@ -108,9 +112,14 @@
      reads: a room is a plain rectangle you can put a label in, and an agent
      is a circle at a position, with no rotation flattening either. Five
      attempts at an isometric plate ended in "i cant understand!". */
+  /* Scaled as a whole rather than reflowed. The floor is drawn at one fixed
+     size and shrunk to whatever room it is given, so every room, robot and
+     label keeps its proportions and the WHOLE office is always visible. */
+  .floor-fit { position: relative; overflow: hidden; }
   .floor {
-    position: relative; border: 1px solid var(--border); border-radius: 18px;
-    height: clamp(460px, 62vh, 720px); overflow: hidden;
+    position: absolute; top: 0; left: 0; transform-origin: 0 0;
+    width: 1040px; height: 680px;
+    border: 1px solid var(--border); border-radius: 18px; overflow: hidden;
     background:
       linear-gradient(90deg, rgba(230,241,255,.025) 1px, transparent 1px),
       linear-gradient(rgba(230,241,255,.025) 1px, transparent 1px),
@@ -204,6 +213,11 @@
   .floor-bar {
     position: absolute; z-index: 40; left: 16px; right: 16px; bottom: 14px;
     display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    /* A full width strip with transparent gaps must not swallow what is
+       under it: it was eating the Chat pill of whoever stood in the bottom
+       row, so clicking them did nothing at all. Only its own controls take
+       the pointer. */
+    pointer-events: none;
   }
   .floor-bar .now {
     padding: 8px 12px; border: 1px solid var(--border-2); border-radius: 10px;
@@ -211,6 +225,7 @@
   }
   .floor-bar .now b { color: var(--text); }
   .floor-bar .right { margin-left: auto; display: flex; gap: 8px; }
+  .floor-bar .now, .floor-bar a { pointer-events: auto; }
 
   /* --- right panel --- */
   .side h2 { font-size: 17px; margin: 0; }
@@ -227,6 +242,13 @@
   }
   a.tag.skill { color: var(--text); border-color: var(--border-2); text-decoration: none; }
   a.tag.skill:hover { border-color: var(--cyan); color: var(--cyan); }
+  .side-shut {
+    display: none; position: absolute; right: 10px; top: 10px; z-index: 2;
+    width: 26px; height: 26px; padding: 0; line-height: 1; cursor: pointer;
+    background: var(--surface-2); color: var(--text); font: inherit;
+    border: 1px solid var(--border-2); border-radius: 8px;
+  }
+  html.embed .side-shut { display: block; }
   .side-bot { width: 54px; flex: 0 0 54px; }
   .side-bot svg.bot { width: 100%; height: auto; display: block; }
   .swatches { gap: 8px; }
@@ -246,7 +268,15 @@
   .side .btn { width: 100%; text-align: center; margin-top: 8px; }
 
   /* --- brain + live strip --- */
-  .brain { margin-bottom: 14px; }
+  .brain { margin-bottom: 14px; display: flex; align-items: center; gap: 10px; }
+  .zoom { margin-left: auto; display: flex; gap: 4px; align-items: center; }
+  .zoom-btn {
+    background: var(--surface-2); color: var(--text); font: inherit;
+    border: 1px solid var(--border-2); border-radius: 8px; cursor: pointer;
+    width: 26px; height: 26px; padding: 0; line-height: 1;
+  }
+  .zoom-btn.wide { width: auto; padding: 0 9px; font-size: 12px; }
+  .zoom-btn:hover { border-color: var(--cyan); color: var(--cyan); }
   .brain a {
     display: inline-flex; align-items: center; gap: 8px; text-decoration: none;
     background: var(--surface); border: 1px solid var(--border-2);
@@ -273,14 +303,20 @@
      to be removed. */
   html.embed .top { display: none; }
   html.embed .main { padding: 10px 12px 12px; }
-  html.embed .side { top: 0; max-height: none; padding: 14px; }
-  /* The floor is clamp(460px, 62vh, 720px) on its own page. In the dock it
-     takes the height it is given, but NOT below 460: the rooms are placed in
-     percentages while a robot is a fixed 100px, so a shorter floor does not
-     shrink, it overlaps. Squashed to 330px the rooms ran into each other,
-     the floor bar sat on top of Iris and OPEN FLOOR came out behind Ada's
-     name. Under 460 the frame scrolls instead, which is legible. */
-  html.embed .floor { height: calc(100vh - 78px); min-height: 460px; }
+  /* The details slide over the floor instead of standing beside it. Empty,
+     a 340px column is 340px the floor does not get. */
+  html.embed .wrap { position: relative; }
+  html.embed .side {
+    position: absolute; right: 0; top: 0; bottom: 0; z-index: 30;
+    width: min(320px, 76%); max-height: none; padding: 14px;
+    border-left: 1px solid var(--border); overflow-y: auto;
+    box-shadow: -20px 0 44px rgba(0,0,0,.5); display: none;
+  }
+  html.embed .wrap.picked .side { display: block; }
+  /* No height rule here any more. The floor is a fixed canvas that is scaled
+     to fit, and an override left the element 460px tall while the wrapper
+     still reserved the canvas's own 680: the floor came out 714x316 inside a
+     1020x467 box, squashed and with a dead band under it. */
   html.embed .brain { margin-bottom: 8px; }
 </style>
 </head>
@@ -314,9 +350,17 @@
       <a href="/tasks/graph" target="_top" title="What this platform knows about you, which every agent reads before answering">
         <i class="dot working"></i>The Brain
       </a>
+      <span class="zoom">
+        <button class="zoom-btn" type="button" id="zoom-out" aria-label="Zoom out">&minus;</button>
+        <button class="zoom-btn wide" type="button" id="zoom-fit"
+                title="Fit the whole office">Fit</button>
+        <button class="zoom-btn" type="button" id="zoom-in" aria-label="Zoom in">+</button>
+      </span>
     </div>
 
-    <div id="panel-office"><div class="floor" id="rooms"></div></div>
+    <div id="panel-office">
+      <div class="floor-fit" id="floor-fit"><div class="floor" id="rooms"></div></div>
+    </div>
 
     <section id="panel-activity" hidden>
       <p class="section-title">Most recent run of each agent</p>
@@ -488,22 +532,22 @@
   // top, three across the bottom, with the middle left open.
   var ZONES = [
     { key: "research",   label: "Research",       tools: ["server:mcp-proxy", "fusion"],
-      at: [2, 3, 30, 39],   glow: "#22D3EE" },
+      at: [2, 2, 30, 29],   glow: "#22D3EE" },
     { key: "dev",        label: "Development",    tools: ["code"],
-      at: [35, 3, 31, 39],  glow: "#60a5fa" },
+      at: [35, 2, 31, 29],  glow: "#60a5fa" },
     { key: "comms",      label: "Communication",  tools: ["gmail"],
-      at: [68, 3, 30, 39],  glow: "#f472b6" },
+      at: [68, 2, 30, 29],  glow: "#f472b6" },
     { key: "meeting",    label: "Meeting room",   tools: ["calendar"],
-      at: [2, 58, 30, 39],  glow: "#34d399" },
+      at: [2, 62, 30, 29],  glow: "#34d399" },
     { key: "knowledge",  label: "Knowledge base", tools: ["gdrive", "documents"],
-      at: [35, 58, 31, 39], glow: "#a78bfa" },
+      at: [35, 62, 31, 29], glow: "#a78bfa" },
     { key: "automation", label: "Automation",     tools: ["schedules", "excel_creator", "executive_dashboard"],
-      at: [68, 58, 30, 39], glow: "#fbbf24" },
+      at: [68, 62, 30, 29], glow: "#fbbf24" },
   ];
   // An agent whose owner picked no tools reaches everything, so it has no one
   // room. It stands in the open middle rather than being hidden.
   var LOUNGE = { key: "lounge", label: "Open floor", tools: [],
-                 at: [37, 44, 26, 12], glow: "#8296b5" };
+                 at: [26, 33, 48, 27], glow: "#8296b5" };
 
   function zoneFor(m) {
     var tools = toolsOf(m);
@@ -677,6 +721,11 @@
   function drawSide() {
     var side = document.getElementById("side");
     var m = AGENTS.filter(function (a) { return a.id === SELECTED; })[0];
+    // In the card the details are an overlay, not a column: standing empty it
+    // was taking 340px of the width the floor needed, which is most of why
+    // the office looked cramped in there.
+    var wrap = document.querySelector(".wrap");
+    if (wrap) wrap.classList.toggle("picked", !!m);
     if (!m) {
       side.innerHTML = '<p class="empty">Pick an agent to see what it has been doing.</p>';
       return;
@@ -698,6 +747,8 @@
       : '<p class="empty">No runs recorded yet.</p>';
 
     side.innerHTML =
+      '<button class="side-shut" type="button" id="side-shut" ' +
+        'aria-label="Close the details">&times;</button>' +
       '<div class="side-head">' +
         '<div class="side-bot">' + robot(m.id, st.key === "working", "p") + '</div>' +
         '<div><h2>' + esc(m.name || m.id) + '</h2>' +
@@ -787,6 +838,10 @@
     document.getElementById("strip").hidden = TAB !== "office";
     if (TAB === "office") { drawRooms(); drawLive(); } else { drawActivity(); }
     drawSide();
+    // The side panel opening or closing changes how wide the floor's column
+    // is, and a hidden tab measures as zero, so the fit is recomputed after
+    // every draw rather than only on resize.
+    if (typeof drawZoom === "function") drawZoom();
   }
 
   async function loadAgents() {
@@ -824,6 +879,98 @@
     SELECTED = who.getAttribute("data-id");
     draw();
   });
+  // --- how big the floor is drawn -----------------------------------------
+  //
+  // The floor is one fixed canvas, 1040x580, scaled to whatever room it has.
+  // Reflowing it cannot work: a room is a percentage of the floor but a robot
+  // is 76 fixed pixels, so a narrow floor packs six rooms into strips too
+  // small to hold one and they pile onto each other.
+  //
+  // Fit is the default and it means the WHOLE office is visible: the smaller
+  // of the width and height ratios, so nothing is cut off on either axis.
+  var CANVAS_W = 1040, CANVAS_H = 680;
+  var ZOOM_KEY = "aiuiOfficeZoom";
+  var ZOOM = null;                  // null = fit; a number = the person chose
+
+  try {
+    var kept = parseFloat(localStorage.getItem(ZOOM_KEY) || "");
+    if (kept > 0) ZOOM = kept;
+  } catch (e) { /* fit, then */ }
+
+  function fitScale() {
+    var fit = document.getElementById("floor-fit");
+    if (!fit) return 1;
+    var w = fit.clientWidth || CANVAS_W;
+    // How far down the PAGE the floor starts, not where it currently appears
+    // on screen. getBoundingClientRect().top moves when the page scrolls, and
+    // this scale decides the wrapper's height, which decides whether the page
+    // scrolls: the two chased each other and the floor never held still long
+    // enough to be clicked.
+    var top = 0, el = fit;
+    while (el) { top += el.offsetTop; el = el.offsetParent; }
+    var h = Math.max(160, (window.innerHeight || CANVAS_H) - top - 16);
+    return Math.min(w / CANVAS_W, h / CANVAS_H);
+  }
+
+  function drawZoom() {
+    var fit = document.getElementById("floor-fit");
+    var floor = document.getElementById("rooms");
+    if (!fit || !floor) return;
+    var k = ZOOM == null ? fitScale() : ZOOM;
+    k = Math.min(Math.max(k, 0.25), 2);
+    floor.style.transform = "scale(" + k + ")";
+    // Centred when the height is what limits the fit, which it is in a short
+    // dock: the floor would otherwise sit against the left edge with the
+    // width it could not use left empty beside it.
+    var spare = (fit.clientWidth || CANVAS_W) - CANVAS_W * k;
+    floor.style.left = Math.round(Math.max(0, spare) / 2) + "px";
+    // The wrapper owns the space the scaled floor actually occupies. Without
+    // this the page still reserves the full 580px and leaves a gap under it.
+    fit.style.height = Math.round(CANVAS_H * k) + "px";
+    var label = document.getElementById("zoom-fit");
+    if (label) label.textContent = ZOOM == null ? "Fit" : Math.round(k * 100) + "%";
+    tellHostOurHeight(fit);
+  }
+
+  // How tall a card would have to be for the whole floor to show at this
+  // width. Deliberately computed from the WIDTH alone: a suggestion that
+  // depended on the height we currently have would change the height, which
+  // would change the suggestion, and the two would chase each other.
+  function tellHostOurHeight(fit) {
+    if (window.parent === window) return;
+    var w = fit.clientWidth || CANVAS_W;
+    var top = 0, el = fit;
+    while (el) { top += el.offsetTop; el = el.offsetParent; }
+    var need = Math.round(top + CANVAS_H * (w / CANVAS_W) + 16);
+    try {
+      window.parent.postMessage({ type: "aiui-office-size", height: need },
+                                window.location.origin);
+    } catch (e) { /* the card keeps whatever height it had */ }
+  }
+
+  function setZoom(k) {
+    ZOOM = k;
+    try {
+      if (k == null) localStorage.removeItem(ZOOM_KEY);
+      else localStorage.setItem(ZOOM_KEY, String(k));
+    } catch (e) { /* it will fit again next time */ }
+    drawZoom();
+  }
+
+  (function () {
+    var out = document.getElementById("zoom-out");
+    var into = document.getElementById("zoom-in");
+    var fitBtn = document.getElementById("zoom-fit");
+    function now() { return ZOOM == null ? fitScale() : ZOOM; }
+    if (out) out.addEventListener("click", function () { setZoom(now() / 1.15); });
+    if (into) into.addEventListener("click", function () { setZoom(now() * 1.15); });
+    // Back to showing everything, which is the one thing a person wants often
+    // enough to deserve its own button.
+    if (fitBtn) fitBtn.addEventListener("click", function () { setZoom(null); });
+    window.addEventListener("resize", drawZoom);
+    drawZoom();
+  })();
+
   // Asking from inside the frame.
   //
   // Every link here carries target="_top" so it escapes the frame rather than
@@ -868,6 +1015,7 @@
   });
 
   document.getElementById("side").addEventListener("click", function (ev) {
+    if (ev.target.closest("#side-shut")) { SELECTED = null; draw(); return; }
     var sw = ev.target.closest(".swatch");
     if (!sw || !SELECTED) return;
     pickColour(SELECTED, sw.getAttribute("data-hue"));
@@ -892,7 +1040,13 @@
       return;
     }
     await Promise.all([loadActivity(), loadStats(), loadSkills()]);
-    if (!SELECTED && AGENTS.length) SELECTED = AGENTS[0].id;
+    // Not in the card: a panel that opens by itself takes the width the
+    // floor was moved inline to get. On its own page the column is always
+    // there, so showing somebody in it beats showing an empty prompt.
+    if (!SELECTED && AGENTS.length &&
+        !document.documentElement.classList.contains("embed")) {
+      SELECTED = AGENTS[0].id;
+    }
     draw();
     // Only the live half repeats. The aggregate covers every run an agent has
     // ever had and does not move between two ticks of a clock.

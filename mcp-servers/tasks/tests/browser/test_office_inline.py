@@ -148,8 +148,13 @@ def test_it_is_not_a_floating_window(page):
     assert how in ("static", "relative"), how
 
 
-def test_it_sits_inside_the_chat_column(page):
-    assert page.locator("#agent-panel #office-dock").count() == 1
+def test_the_office_and_the_chat_are_separate_cards(page):
+    """"separaete the card for each office and chat." The office used to be a
+    section inside the conversation's card, which read as one thing with
+    another stuffed into it."""
+    assert page.locator(".chat-column > #office-dock").count() == 1
+    assert page.locator("#agent-panel #office-dock").count() == 0
+    assert page.locator(".chat-column > #agent-panel").count() == 1
 
 
 # --- and it costs nothing else its place ------------------------------------
@@ -182,14 +187,20 @@ def _drag_grip(page, by):
 
 
 def test_the_user_can_resize_it_by_dragging(page):
-    """make sure it can be able to resize but the user"""
-    before = _box(page, "#office-dock")["height"]
-    _drag_grip(page, 120)
-    assert _box(page, "#office-dock")["height"] > before + 60
+    """"make sure it can be able to resize but the user."
+
+    Shrink first, then grow. The card opens at the height the floor asked for,
+    which can already be as tall as the column will allow, and a test that
+    only grows would be measuring the ceiling rather than the grip."""
+    start = _box(page, "#office-dock")["height"]
+    _drag_grip(page, -150)
+    smaller = _box(page, "#office-dock")["height"]
+    assert smaller < start - 80, (start, smaller)
+    _drag_grip(page, 110)
+    assert _box(page, "#office-dock")["height"] > smaller + 60
 
 
 def test_it_can_be_dragged_smaller_again(page):
-    _drag_grip(page, 120)
     bigger = _box(page, "#office-dock")["height"]
     _drag_grip(page, -90)
     assert _box(page, "#office-dock")["height"] < bigger - 40
@@ -220,10 +231,10 @@ def test_the_keyboard_can_resize_it_too(page):
     at all. The column's own handle already takes arrow keys."""
     before = _box(page, "#office-dock")["height"]
     page.locator("#office-grip").focus()
-    for _ in range(4):
-        page.keyboard.press("ArrowDown")
+    for _ in range(5):
+        page.keyboard.press("ArrowUp")
     page.wait_for_timeout(200)
-    assert _box(page, "#office-dock")["height"] > before
+    assert _box(page, "#office-dock")["height"] < before
 
 
 # --- always there, but not inescapable --------------------------------------
@@ -334,14 +345,16 @@ def test_the_whole_floor_can_be_reached_by_making_it_bigger(page):
     assert _spill(page) <= 2, _spill(page)
 
 
-def test_the_floor_is_never_squashed_below_what_it_needs(page):
-    """Rooms are placed in percentages while a robot is a fixed 100px, so a
-    short floor does not shrink, it overlaps: at 330px the rooms ran into each
-    other, the floor bar sat on top of Iris and OPEN FLOOR came out behind
-    Ada's name. Dragged right down it keeps its height and scrolls."""
+def test_the_whole_floor_stays_visible_however_small_the_card_gets(page):
+    """"can you zoom out the office." Rooms are percentages of the floor but a
+    robot is a fixed 76px, so reflowing a narrow floor packs six rooms into
+    strips too small to hold one and they pile up. The floor is one fixed
+    canvas scaled to fit instead, so shrinking the card shrinks the office
+    rather than cropping it."""
+    before = _floor(page).evaluate("el => el.getBoundingClientRect().width")
     _drag_grip(page, -4000)
-    assert _box(page, "#office-dock")["height"] < 200
-    assert _floor(page).evaluate("el => el.getBoundingClientRect().height") >= 460
+    after = _floor(page).evaluate("el => el.getBoundingClientRect().width")
+    assert after < before, (before, after)
 
 
 def test_the_shell_pane_keeps_its_own_header(page, server):
@@ -351,3 +364,16 @@ def test_the_shell_pane_keeps_its_own_header(page, server):
     page.goto("http://127.0.0.1:%d/tasks/office" % server.server_address[1])
     page.wait_for_selector(".top", state="visible")
     assert page.locator(".top").is_visible()
+
+
+def test_the_floor_bar_does_not_swallow_the_chat_pill(page):
+    """The bar across the bottom of the floor is a full width strip with
+    transparent gaps. It sat on top of the Chat pill of whoever stood in the
+    bottom row, so clicking them did nothing and the click reported
+    "<div class=floor-bar> intercepts pointer events"."""
+    frame = page.frame_locator("#office-body iframe")
+    frame.locator(".floor-bar").wait_for()
+    assert frame.locator(".floor-bar").evaluate(
+        "el => getComputedStyle(el).pointerEvents") == "none"
+    assert frame.locator(".floor-bar a").first.evaluate(
+        "el => getComputedStyle(el).pointerEvents") == "auto"

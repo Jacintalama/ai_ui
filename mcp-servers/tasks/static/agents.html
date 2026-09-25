@@ -390,10 +390,16 @@
   /* The office, inline in the chat column. A flex item with a fixed height
      that the grip below it writes, and flex-shrink:0 so the thread gives way
      rather than squeezing the floor to nothing. */
-  .ap-office {
+  /* Its own card, the same surface and border as the conversation beside it,
+     so the two read as two things rather than one thing inside another. */
+  .chat-column {
+    display: flex; flex-direction: column; gap: 10px;
+    min-width: 0; min-height: 0; height: 100%;
+  }
+  .office-card {
     flex: 0 0 auto; height: 420px; min-height: 140px;
     display: flex; flex-direction: column; overflow: hidden;
-    background: var(--surface-2); border: 1px solid var(--border);
+    background: var(--surface); border: 1px solid var(--border);
     border-radius: var(--radius-lg);
   }
   .ap-office-head { display: flex; align-items: center; gap: 10px;
@@ -404,7 +410,7 @@
                            background: #0B1221; }
   /* While the grip is held the frame must not eat the pointer, or crossing
      into the office mid-drag strands the resize. */
-  .ap-office.sizing iframe { pointer-events: none; }
+  .office-card.sizing iframe { pointer-events: none; }
   .ap-office-grip {
     flex: 0 0 auto; height: 10px; margin: -4px 0 -2px; padding: 0;
     border: 0; background: none; cursor: ns-resize; position: relative;
@@ -798,6 +804,25 @@
     <div class="grid" id="template-gallery"></div>
 </div><!-- .agents-main -->
 
+<div class="chat-column">
+<!-- The floor is its own card, above the conversation rather than inside it.
+     It was a floating window, then a section of the chat card: "separaete the
+     card for each office and chat". Two cards, one column, the grip between
+     them deciding how the height is shared. -->
+<section class="office-card" id="office-dock" aria-label="The agent office">
+  <div class="ap-office-head">
+    <strong>Agent Office</strong>
+    <span class="ap-sub">Whoever is answering lights up while you watch.</span>
+    <button class="btn" type="button" id="office-close">Hide</button>
+  </div>
+  <div class="ap-office-body" id="office-body"></div>
+</section>
+<!-- A button, not a div, so it is reachable by keyboard: the same reason the
+     column's own resize handle is one. Arrow keys move it too. -->
+<button class="ap-office-grip" id="office-grip" type="button" role="separator"
+        aria-orientation="horizontal" aria-label="Resize the office"
+        title="Drag to resize the office"></button>
+
 <aside class="agent-panel" id="agent-panel">
   <!-- Drag to give the conversation more room, or the agents more. A button
        rather than a div so it is reachable by keyboard, which is also why it
@@ -822,25 +847,6 @@
          only thing that asks first. -->
     <button class="btn" type="button" id="ap-clear">Clear</button>
   </div>
-  <!-- The floor, inline above the conversation. It was a floating window you
-       had to open; "where is the office in this page... put it inline instead
-       of clicking it". Stacked in the same column as the thread and the
-       composer, so it covers neither, and the grip under it sets how much of
-       the column it takes. -->
-  <section class="ap-office" id="office-dock" aria-label="The agent office">
-    <div class="ap-office-head">
-      <strong>Agent Office</strong>
-      <span class="ap-sub">Whoever is answering lights up while you watch.</span>
-      <button class="btn" type="button" id="office-close">Hide</button>
-    </div>
-    <div class="ap-office-body" id="office-body"></div>
-  </section>
-  <!-- A button, not a div, so it is reachable by keyboard: the same reason
-       the column's own resize handle above is one. Arrow keys move it too. -->
-  <button class="ap-office-grip" id="office-grip" type="button" role="separator"
-          aria-orientation="horizontal" aria-label="Resize the office"
-          title="Drag to resize the office"></button>
-
   <div class="ap-thread" id="agent-thread"
        hx-get="/tasks/agents/chat/thread" hx-trigger="load"
        hx-swap="innerHTML">
@@ -855,6 +861,7 @@
     <button class="btn primary" type="submit">Send</button>
   </form>
 </aside>
+</div><!-- .chat-column -->
 </div><!-- .agents-layout -->
 
     <!-- Connecting an app used to mean leaving for a chat window and finding
@@ -2823,6 +2830,11 @@
     var HEIGHT_KEY = "aiuiOfficeHeight";
     var SHUT_KEY = "aiuiOfficeShut";
     var MIN = 140;
+    //: Whether the height is the person's rather than the floor's suggestion.
+    //: Set the moment they touch the grip, not when the drag ends: the floor
+    //: re-sends its suggestion on every resize, so a drag in progress was
+    //: being snapped straight back to the suggested height.
+    var chosen = false;
 
     // Every storage touch is guarded: a private window throws on access, and
     // the office should simply take its default height when it does.
@@ -2840,9 +2852,11 @@
     // still need their share, and a floor that ate the conversation would be
     // the floating window's problem all over again.
     function ceiling() {
-      var panel = dock.parentElement;
-      var room = panel ? panel.getBoundingClientRect().height : 0;
-      return room ? Math.max(MIN, room - 220) : 620;
+      var column = dock.parentElement;
+      var room = column ? column.getBoundingClientRect().height : 0;
+      // What is left has to stay a usable conversation: a thread worth
+      // reading plus the box you type in.
+      return room ? Math.max(MIN, room - 240) : 620;
     }
     function setHeight(px, remember) {
       var h = Math.round(Math.min(Math.max(px, MIN), ceiling()));
@@ -2881,6 +2895,7 @@
       if (open) open.hidden = true;
       save(SHUT_KEY, null);
       build();
+      if (saved(HEIGHT_KEY) != null) chosen = true;
       var h = parseInt(saved(HEIGHT_KEY) || "", 10);
       // A whole floor needs 570 here: its own 460 minimum plus this
       // dock's header, the frame's padding and the Brain chip. But the
@@ -2909,6 +2924,7 @@
     // pointer leaves the 10px strip.
     var from = null;
     grip.addEventListener("pointerdown", function (e) {
+      chosen = true;
       from = { y: e.clientY, h: dock.getBoundingClientRect().height };
       dock.classList.add("sizing");
       try { grip.setPointerCapture(e.pointerId); } catch (err) { /* older */ }
@@ -2931,6 +2947,7 @@
     // only answers a mouse is one a keyboard cannot reach.
     grip.addEventListener("keydown", function (e) {
       var step = e.shiftKey ? 48 : 16;
+      chosen = true;
       if (e.key === "ArrowDown") setHeight(dock.getBoundingClientRect().height + step, true);
       else if (e.key === "ArrowUp") setHeight(dock.getBoundingClientRect().height - step, true);
       else return;
@@ -2959,6 +2976,16 @@
       var msg = ev.data;
       // The frame finished before we could greet it. Answer now.
       if (msg && msg.type === "aiui-office-ready") { offerToHost(frame); return; }
+      // The floor knows how tall it has to be for all of it to show at this
+      // width. Only while nobody has chosen a height: once somebody drags the
+      // grip, that is the answer and the floor fits itself into it instead.
+      if (msg && msg.type === "aiui-office-size") {
+        if (!chosen && saved(HEIGHT_KEY) == null && typeof msg.height === "number") {
+          var head = dock.querySelector(".ap-office-head");
+          setHeight(msg.height + (head ? head.offsetHeight : 40), false);
+        }
+        return;
+      }
       if (!msg || msg.type !== "aiui-office-ask" || typeof msg.ask !== "string") return;
       var box = document.querySelector(".ap-composer input[name=message]");
       if (!box) return;
