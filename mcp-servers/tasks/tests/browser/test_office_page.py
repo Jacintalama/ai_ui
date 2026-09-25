@@ -419,3 +419,42 @@ def test_all_seven_of_the_owners_agents_stay_apart(browser):
     finally:
         pg.close()
         srv.shutdown()
+
+
+# --- a headline per room ----------------------------------------------------
+# From the reference the owner sent: a room is worth a number. Every figure is
+# an aggregate of the agents standing in THAT room, so a room that sums
+# somebody else's runs is the bug that looks perfectly fine.
+
+def test_each_room_with_somebody_in_it_gets_a_card(page):
+    labels = [t.lower() for t in page.locator(".card-room .rn").all_inner_texts()]
+    assert any("knowledge base" in t for t in labels), labels
+    assert len(labels) == 2, labels   # Ada in Automation, Iris at Knowledge base
+
+
+def test_an_empty_room_gets_no_card(page):
+    """A row of zeroes against a room nobody works in says nothing and makes
+    the floor look busy. Only rooms with agents in them get a headline."""
+    labels = " ".join(page.locator(".card-room .rn").all_inner_texts()).lower()
+    assert "meeting room" not in labels, labels
+    assert "research" not in labels, labels
+
+
+def test_a_room_counts_only_its_own_agents_runs(page):
+    """Ada is alone in Automation with 801 runs; Iris is alone at the
+    knowledge base with 26. Neither card may carry the other's."""
+    cards = page.locator(".card-room").all_inner_texts()
+    joined = " ".join(cards)
+    assert "801" in joined and "26" in joined, cards
+    for text in cards:
+        assert not ("801" in text and "26" in text), text
+
+
+def test_the_room_card_weights_success_by_runs(page):
+    """success_pct is a percentage of one agent's own runs. Averaging two
+    agents' percentages would let an agent with three runs outvote one with
+    eight hundred, so it is weighted back into runs first. Alone in a room,
+    an agent's own rate must survive the arithmetic unchanged."""
+    cards = page.locator(".card-room").all_inner_texts()
+    ada = [c for c in cards if "801" in c][0]
+    assert "40%" in ada, ada

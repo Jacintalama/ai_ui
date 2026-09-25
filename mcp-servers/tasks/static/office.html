@@ -126,10 +126,56 @@
       linear-gradient(90deg, rgba(124,140,255,.07) 1px, transparent 1px);
     background-size: 40px 40px;
   }
+  /* A room, not a rectangle. The plate is already rotated, so anything
+     inside it that needs to stand up does so by rotating about its own top
+     or left edge: the wall is a flat div stood on end. preserve-3d has to
+     be repeated here or the walls flatten back into the floor. */
   .zone {
     position: absolute; border-radius: 8px;
     border: 1px solid rgba(124,140,255,.16);
-    background: rgba(124,140,255,.035);
+    background:
+      radial-gradient(120% 90% at 30% 20%, var(--glow, rgba(124,140,255,.10)), transparent 70%),
+      rgba(124,140,255,.03);
+    transform-style: preserve-3d;
+  }
+  .wall {
+    position: absolute; left: 0; top: 0;
+    background: linear-gradient(180deg, rgba(38,42,70,.96), rgba(20,22,38,.96));
+    border: 1px solid rgba(124,140,255,.20);
+    border-bottom: 0;
+  }
+  .wall.n { width: 100%; height: 34px; transform-origin: top;  transform: rotateX(-90deg); }
+  .wall.w { width: 34px; height: 100%; transform-origin: left; transform: rotateY(90deg); }
+  /* A strip of light where the wall meets the floor, which is what makes a
+     flat plate read as a room rather than a drawing of one. */
+  .wall::after {
+    content: ""; position: absolute; left: 6%; right: 6%; bottom: 0; height: 2px;
+    background: var(--glow, rgba(124,140,255,.5)); filter: blur(1px); opacity: .85;
+  }
+
+  /* A desk with a monitor on it, so an agent is sitting somewhere rather
+     than floating. Both are raised off the floor; the monitor stands up the
+     same way a wall does. */
+  .spot { position: absolute; transform-style: preserve-3d; }
+  .desk {
+    position: absolute; width: 74px; height: 40px; left: -37px; top: -6px;
+    border-radius: 6px; transform: translateZ(7px);
+    background: linear-gradient(160deg, #2a3152, #1b2036);
+    border: 1px solid #39416b;
+    box-shadow: 0 14px 22px rgba(0,0,0,.55);
+    transform-style: preserve-3d;
+  }
+  .mon {
+    position: absolute; left: 18px; top: 4px; width: 38px; height: 22px;
+    border-radius: 3px; transform-origin: bottom; transform: rotateX(-78deg);
+    background: linear-gradient(180deg, var(--glow, #6d7cff), rgba(10,12,22,.9));
+    border: 1px solid rgba(160,175,255,.35);
+    box-shadow: 0 0 14px var(--glow, rgba(124,140,255,.55));
+  }
+  .chair {
+    position: absolute; width: 22px; height: 22px; left: -11px; top: 26px;
+    border-radius: 6px; transform: translateZ(5px);
+    background: #262c47; border: 1px solid #39416b;
   }
   .zone > span {
     position: absolute; top: 8px; left: 12px; font-size: 12px; font-weight: 600;
@@ -179,6 +225,28 @@
   .who[aria-current="true"] .chip { border-color: var(--accent); }
   .nm { font-weight: 600; }
   .st { color: var(--muted); }
+
+  /* A card per room, counter-rotated so it reads flat to the camera. Every
+     figure on it is an aggregate of that room's own agents: how many sit
+     there, how many runs they have between them, how well those finished and
+     what they cost. Nothing here is a target or an invention. */
+  .card-room {
+    position: absolute; transform-style: preserve-3d; pointer-events: none;
+  }
+  .card-room > div {
+    transform: rotateZ(45deg) rotateX(-54deg); transform-origin: left bottom;
+    background: rgba(12,13,22,.90); border: 1px solid var(--glow, rgba(124,140,255,.30));
+    border-radius: 10px; padding: 8px 11px; min-width: 132px;
+    box-shadow: 0 16px 34px rgba(0,0,0,.6);
+  }
+  .card-room .rn {
+    font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--glow, #aab2e8); display: flex; align-items: center; gap: 6px;
+  }
+  .card-room .big { font-size: 21px; font-weight: 700; letter-spacing: -.02em; }
+  .card-room .big small { font-size: 10.5px; font-weight: 500; color: var(--muted); letter-spacing: .08em; }
+  .card-room .kv { display: flex; gap: 10px; margin-top: 4px; font-size: 11px; color: var(--muted); }
+  .card-room .kv b { color: var(--text); font-weight: 600; }
 
   .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex: none; }
   .dot.ready { background: var(--ok); }
@@ -343,19 +411,20 @@
   // somebody typed. First match wins, most specific first.
   var ZONES = [
     { key: "comms",     label: "Communication", tools: ["gmail"],
-      box: [4, 6, 30, 40] },
+      box: [4, 6, 30, 40],  glow: "rgba(244,114,182,.55)" },
     { key: "research",  label: "Research",      tools: ["server:mcp-proxy", "fusion"],
-      box: [4, 52, 30, 42] },
+      box: [4, 52, 30, 42], glow: "rgba(34,211,238,.55)" },
     { key: "dev",       label: "Development",   tools: ["code"],
-      box: [37, 6, 28, 40] },
+      box: [37, 6, 28, 40], glow: "rgba(96,165,250,.55)" },
     { key: "knowledge", label: "Knowledge base", tools: ["gdrive", "documents"],
-      box: [37, 52, 28, 42] },
+      box: [37, 52, 28, 42], glow: "rgba(167,139,250,.55)" },
     { key: "automation", label: "Automation",   tools: ["schedules", "excel_creator", "executive_dashboard"],
-      box: [68, 6, 28, 40] },
+      box: [68, 6, 28, 40], glow: "rgba(251,146,60,.55)" },
     { key: "meeting",   label: "Meeting room",  tools: ["calendar"],
-      box: [68, 52, 28, 42] },
+      box: [68, 52, 28, 42], glow: "rgba(62,207,142,.55)" },
   ];
-  var LOUNGE = { key: "lounge", label: "Lounge", box: [4, 6, 92, 88] };
+  var LOUNGE = { key: "lounge", label: "Lounge", box: [4, 6, 92, 88],
+                 glow: "rgba(124,140,255,.45)" };
 
   function zoneFor(m) {
     var tools = toolsOf(m);
@@ -400,6 +469,42 @@
     return out;
   }
 
+  // A headline per room, added after the reference the owner sent: a room is
+  // worth a number. Every figure is an aggregate of the agents actually
+  // standing in THAT room, taken from tasks.agent_run, so a quiet room reads
+  // quiet. Rooms with nobody in them get no card rather than a row of zeroes.
+  function roomCards(placed) {
+    var byZone = {};
+    placed.forEach(function (s) {
+      var z = zoneFor(s.m);
+      (byZone[z.key] = byZone[z.key] || { z: z, of: [] }).of.push(s.m);
+    });
+    return Object.keys(byZone).map(function (k) {
+      var z = byZone[k].z, of = byZone[k].of;
+      var runs = 0, done = 0, spent = 0, working = 0;
+      of.forEach(function (m) {
+        var st = STATS[m.id] || {};
+        runs += st.runs || 0;
+        // success_pct is a percentage of that agent's own runs, so it has to
+        // be weighted back into runs before rooms can be compared.
+        if (st.runs && st.success_pct != null) done += st.runs * st.success_pct / 100;
+        spent += st.cost_usd || 0;
+        if (stateOf(m.id).key === "working") working++;
+      });
+      var pct = runs ? Math.round(100 * done / runs) : null;
+      return '<div class="card-room" style="--glow:' + z.glow + ';left:' +
+        z.box[0] + '%;top:' + z.box[1] + '%"><div>' +
+        '<div class="rn"><i class="dot ' + (working ? "working" : "ready") +
+          '"></i>' + esc(z.label) + '</div>' +
+        '<div class="big">' + of.length + ' <small>' +
+          (of.length === 1 ? "AGENT" : "AGENTS") + '</small></div>' +
+        '<div class="kv"><span>RUNS <b>' + runs + '</b></span>' +
+        (pct == null ? "" : '<span>CLEAN <b>' + pct + '%</b></span>') +
+        (spent ? '<span>SPENT <b>$' + spent.toFixed(2) + '</b></span>' : "") +
+        '</div></div></div>';
+    }).join("");
+  }
+
   function drawStage() {
     var q = (document.getElementById("q").value || "").trim().toLowerCase();
     var shown = AGENTS.filter(function (m) {
@@ -409,13 +514,28 @@
              toolsOf(m).join(" ").toLowerCase().indexOf(q) >= 0;
     });
 
+    var placed = seats(shown);
+
     var html = ZONES.map(function (z) {
-      return '<div class="zone" style="left:' + z.box[0] + '%;top:' + z.box[1] +
-        '%;width:' + z.box[2] + '%;height:' + z.box[3] + '%"><span>' +
+      return '<div class="zone" style="--glow:' + z.glow + ';left:' + z.box[0] +
+        '%;top:' + z.box[1] + '%;width:' + z.box[2] + '%;height:' + z.box[3] +
+        '%"><div class="wall n"></div><div class="wall w"></div><span>' +
         esc(z.label) + '</span></div>';
     }).join("");
 
-    html += seats(shown).map(function (s) {
+    html += roomCards(placed);
+
+    // A desk, a chair and a lit monitor under each agent, so somebody is
+    // sitting in the room rather than hovering over it. Drawn before the
+    // agent so the avatar is never behind its own furniture.
+    html += placed.map(function (s) {
+      var z = zoneFor(s.m);
+      return '<div class="spot" style="--glow:' + z.glow + ';left:' +
+        s.left.toFixed(1) + '%;top:' + s.top.toFixed(1) + '%">' +
+        '<div class="chair"></div><div class="desk"><div class="mon"></div></div></div>';
+    }).join("");
+
+    html += placed.map(function (s) {
       var m = s.m, st = stateOf(m.id), c = colourOf(m.id);
       return '<button class="who" data-id="' + esc(m.id) + '" data-state="' + st.key + '"' +
         (SELECTED === m.id ? ' aria-current="true"' : "") +
