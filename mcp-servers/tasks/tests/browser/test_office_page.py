@@ -660,3 +660,35 @@ def test_two_robots_for_one_agent_do_not_share_a_gradient_id(page):
     ids = page.eval_on_selector_all(
         "svg.bot linearGradient", "els => els.map(e => e.id)")
     assert len(ids) == len(set(ids)), ids
+
+
+def test_every_agent_offers_a_private_chat(page):
+    """"please put in evrey agent that user can chat to them privately."
+
+    One button on the selected agent means you must select somebody before
+    you can talk to them. Every robot on the floor carries its own."""
+    assert page.locator(".who-chat").count() == 2
+
+
+def test_the_private_chat_addresses_that_agent(page):
+    """Naming an agent is what makes a turn private: agent_routing's name
+    rung sends it to that one agent and nobody else answers. A link that did
+    not carry the name would open the room instead."""
+    href = page.locator('.who-chat[data-id="agent-iris-a103"]').get_attribute("href")
+    assert "ask=" in href
+    assert "Iris" in href
+
+
+def test_the_private_chat_is_not_inside_the_agent_button(page):
+    """A link nested in a button is invalid HTML, and the browser resolves it
+    by dropping one of them. The label and its chat link are siblings of the
+    robot, not children."""
+    assert page.locator(".who .who-chat").count() == 0
+
+
+def test_clicking_the_robot_still_selects_it(page):
+    """The chat link sits next to the robot. It must not have stolen the
+    click that opens the panel."""
+    page.locator('.who[data-id="agent-iris-a103"]').click()
+    page.wait_for_timeout(150)
+    assert page.locator("#side h2").inner_text() == "Iris"

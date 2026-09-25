@@ -183,6 +183,18 @@
   }
   .who-label small { color: var(--muted); margin-left: 5px; font-weight: 500; }
 
+  /* A sibling of the robot, never a child: an <a> inside a <button> is
+     invalid and the browser resolves it by dropping one of the two. It sits
+     just under the name label, which ends about 73px past the anchor. */
+  .who-chat {
+    position: absolute; z-index: 13; margin-top: 78px;
+    transform: translateX(-50%); text-decoration: none; white-space: nowrap;
+    padding: 3px 10px; border-radius: 999px;
+    border: 1px solid var(--border-2); background: rgba(7,15,27,.94);
+    font-size: 10px; font-weight: 600; color: var(--muted);
+  }
+  .who-chat:hover { border-color: var(--cyan); color: var(--cyan); }
+
   .team-zone {
     position: absolute; z-index: 1; left: 37%; top: 44%; width: 26%; height: 12%;
     border: 1px dashed var(--border-2); border-radius: 14px;
@@ -249,8 +261,37 @@
     border-radius: var(--radius); padding: 9px 12px; min-width: 216px;
     font-size: 12.5px; display: flex; gap: 8px; align-items: center;
   }
+
+  /* --- embedded in the agents column --------------------------------------
+     Set from ?embed=1, which only the dock on the agents page passes. It is a
+     URL flag rather than "am I in a frame" because this page is ALSO a whole
+     pane in the shell at /ai-agents/office, and there its own top bar is the
+     only header there is: hiding it everywhere would take the search box and
+     New agent with it.
+
+     Read before first paint, so there is no flash of a header that is about
+     to be removed. */
+  html.embed .top { display: none; }
+  html.embed .main { padding: 10px 12px 12px; }
+  html.embed .side { top: 0; max-height: none; padding: 14px; }
+  /* The floor is clamp(460px, 62vh, 720px) on its own page. In the dock it
+     takes the height it is given, but NOT below 460: the rooms are placed in
+     percentages while a robot is a fixed 100px, so a shorter floor does not
+     shrink, it overlaps. Squashed to 330px the rooms ran into each other,
+     the floor bar sat on top of Iris and OPEN FLOOR came out behind Ada's
+     name. Under 460 the frame scrolls instead, which is legible. */
+  html.embed .floor { height: calc(100vh - 78px); min-height: 460px; }
+  html.embed .brain { margin-bottom: 8px; }
 </style>
 </head>
+<script>
+  // Before first paint, so the header never flashes in and out.
+  try {
+    if (new URLSearchParams(location.search).get("embed") === "1") {
+      document.documentElement.classList.add("embed");
+    }
+  } catch (e) { /* no flag, no embed: the page looks like itself */ }
+</script>
 <body>
 
 <header class="top">
@@ -500,7 +541,16 @@
       '<span class="who-label"><span class="card-name">' + esc(m.name || m.id) +
         '</span><small>' + esc(st.key === "ready" || st.key === "idle"
           ? (roleOf(m) || "no role") : st.label) + '</small></span>' +
-      '</button>';
+      '</button>' +
+      // Every agent carries its own, because one button on whoever happens to
+      // be selected means you must pick somebody before you can talk to them.
+      // Naming the agent is what makes the turn private: agent_routing's name
+      // rung hands it to that one agent and nobody else answers.
+      '<a class="who-chat" data-id="' + esc(m.id) + '" target="_top"' +
+        ' style="left:' + x + '%;top:' + y + '%"' +
+        ' title="Ask ' + esc(m.name || m.id) + ' on their own"' +
+        ' href="/tasks/agents?ask=' +
+        encodeURIComponent((m.name || m.id) + ", ") + '">Chat</a>';
   }
 
   // Where each agent stands inside its own room. Spread along the room and
@@ -774,6 +824,49 @@
     SELECTED = who.getAttribute("data-id");
     draw();
   });
+  // Asking from inside the frame.
+  //
+  // Every link here carries target="_top" so it escapes the frame rather than
+  // loading the agents page INSIDE the office, which is a bug this page has
+  // already had. But the office is open the whole time now, so following one
+  // would tear the floor down and rebuild it on every click.
+  //
+  // Being in a frame is NOT enough to swallow the click. This page is also a
+  // pane in the shell, at /ai-agents/office, and there nobody is listening: a
+  // preventDefault with no host would make Chat do nothing at all. So the
+  // host has to say so first, and until it does the link behaves normally.
+  var HOSTED = false;
+  window.addEventListener("message", function (ev) {
+    if (ev.origin !== window.location.origin) return;
+    if (ev.source !== window.parent) return;
+    if (ev.data && ev.data.type === "aiui-office-host") HOSTED = true;
+  });
+  // Said in both directions, because either side can be the late one: the
+  // host posts when the frame fires load, and the frame announces itself in
+  // case it finished first.
+  if (window.parent !== window) {
+    try {
+      window.parent.postMessage({ type: "aiui-office-ready" },
+                                window.location.origin);
+    } catch (e) { /* a frame we cannot talk to is simply not a host */ }
+  }
+
+  document.addEventListener("click", function (ev) {
+    if (!HOSTED) return;
+    var a = ev.target.closest("a.who-chat, a.chat-with");
+    if (!a) return;
+    var ask = "";
+    try { ask = decodeURIComponent((a.href.split("ask=")[1] || "")); }
+    catch (e) { return; }                  // malformed: let the link do its job
+    if (!ask) return;
+    ev.preventDefault();
+    // Same origin only. The office and the page around it are served by the
+    // same host, and a wildcard would hand whatever is typed to any parent
+    // that framed this page.
+    window.parent.postMessage({ type: "aiui-office-ask", ask: ask },
+                              window.location.origin);
+  });
+
   document.getElementById("side").addEventListener("click", function (ev) {
     var sw = ev.target.closest(".swatch");
     if (!sw || !SELECTED) return;
