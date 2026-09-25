@@ -5,70 +5,67 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent Office</title>
 <!--
-  The Agent Office: an isometric floor where each of this person's agents sits
-  in the area its own tools belong to, and lights up when it is actually
-  running.
+  The Agent Office: every agent this person has, grouped by the part of the
+  office its own tools belong to, with what it has actually done.
 
-  EVERYTHING DRAWN HERE IS RECORDED. The desks come from meta.toolIds, the
-  state from /agents/activity, the numbers from /agents/stats over
-  tasks.agent_run, which has logged every run since migration 041 and had
-  never been shown anywhere: measured 2026-09-24, Ada 801 runs at 30.4s and
-  40% success against Iris's 26 at 5.4s and 100%.
+  WHY THIS IS NOT AN ISOMETRIC FLOOR ANY MORE. It was, through five rounds of
+  reshaping, and the owner's answer each time was that he could not read it:
+  "i cant understand!", then "the ui or the page isnt nice what you
+  reconmnend?". The problem was never the palette. A drawn floor spends the
+  whole screen on a picture and leaves the numbers at 11px inside it, and a
+  CSS plate cannot reach the quality of the hand-built 3D render he was
+  comparing it against. Departments keep the office idea, show strictly more,
+  and read at a glance.
 
-  WHAT IS DELIBERATELY NOT DRAWN, and why:
-    - agents speaking to each other, "Talking to Ada", delegation lines.
-      Agents cannot address one another. The tool that would let them is
-      removed from every agent (routes_agent_turn._TOOLS_AN_AGENT_MAY_NOT_HAVE)
-      after two agents on a callback model restarted Open WebUI twice on
-      2026-09-10. A round is one question fanned out to N agents, each
-      answering from an identical history with the others' names stripped.
-    - "Tools in use". The tool loop records no calls, so the office can only
-      honestly say which tools an agent MAY reach, and it says exactly that.
-    - a task title per run. tasks.agent_run stores no prompt.
+  Colours are the product's own: AIUI "Cyan Circuit", primary #22D3EE on base
+  #0B1221 with text #E6F1FF, as recorded in webhook-handler/schedule_format.py
+  and docs/superpowers/specs/2026-05-28-visual-editor-design.md.
 
-  Animating any of those would be a puppet show driven by a random number
-  generator, which is worse than a quiet floor. When tool calls are recorded,
-  this page gets an agent walking to the right desk for real.
+  EVERYTHING HERE IS RECORDED. Departments come from meta.toolIds, state from
+  /agents/activity, numbers from /agents/stats over tasks.agent_run, skills
+  from meta.skillIds against the shipped catalogue.
+
+  WHAT IS DELIBERATELY ABSENT: agents talking to each other, delegating, or
+  which tool a run used. Agents cannot address one another
+  (routes_agent_turn._TOOLS_AN_AGENT_MAY_NOT_HAVE, after two agents on a
+  callback model restarted Open WebUI twice on 2026-09-10) and the tool loop
+  records no calls. The page says so rather than implying otherwise.
 -->
 <style>
-  /* Light on purpose. The floor was dark navy on a dark shell and the owner
-     could not read it: "i want them same in the repo image, i can't
-     understand it". A lit room with dark furniture is legible at a glance in
-     a way that dark-on-dark never was, which is the whole point of drawing an
-     office instead of a table. */
   :root {
-    --bg:        #f2efe9;
-    --canvas:    #efebe3;
-    --surface:   #ffffff;
-    --surface-2: #f7f5f0;
-    --border:    #e0dbd1;
-    --border-2:  #cfc8ba;
-    --text:      #1b1b22;
-    --muted:     #77736b;
-    --accent:    #5b63d3;
-    --ok:        #1f9d63;
-    --warn:      #c2761a;
-    --radius:    8px;
-    --radius-lg: 14px;
+    /* AIUI Cyan Circuit */
+    --base:      #0B1221;
+    --surface:   #101a2e;
+    --surface-2: #14203a;
+    --border:    #1e2d4a;
+    --border-2:  #2a3d61;
+    --text:      #E6F1FF;
+    --muted:     #8296b5;
+    --cyan:      #22D3EE;
+    --ok:        #34d399;
+    --warn:      #fbbf24;
+    --bad:       #fb7185;
+    --radius:    10px;
     --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0; background: var(--bg); color: var(--text);
+    margin: 0; background: var(--base); color: var(--text);
     font-family: var(--font-ui); font-size: 14px; line-height: 1.5;
-    overflow-x: hidden;
   }
   a { color: inherit; }
 
   .top {
     display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
-    padding: 14px 20px; border-bottom: 1px solid var(--border);
-    background: var(--surface);
+    padding: 13px 20px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--surface), var(--base));
+    position: sticky; top: 0; z-index: 5;
   }
   .mark {
-    width: 34px; height: 34px; border-radius: 10px; flex: none;
-    background: linear-gradient(140deg, #5b63d3, #1f9fb8);
-    display: grid; place-items: center; font-size: 16px;
+    width: 34px; height: 34px; border-radius: 9px; flex: none;
+    background: linear-gradient(140deg, var(--cyan), #3b82f6);
+    display: grid; place-items: center; color: #04121a; font-weight: 800;
+    font-size: 13px;
   }
   h1 { font-size: 16px; margin: 0; letter-spacing: -.01em; }
   .online { color: var(--muted); font-size: 12.5px; display: flex; align-items: center; gap: 6px; }
@@ -76,247 +73,103 @@
   .search {
     background: var(--surface-2); border: 1px solid var(--border);
     border-radius: var(--radius); color: var(--text);
-    padding: 7px 12px; min-width: 200px; font: inherit;
+    padding: 8px 12px; min-width: 210px; font: inherit;
   }
-  .search:focus { outline: none; border-color: var(--border-2); }
+  .search::placeholder { color: var(--muted); }
+  .search:focus { outline: none; border-color: var(--cyan); }
   .btn {
-    background: var(--accent); color: #fff; border: 0; font: inherit;
-    font-weight: 600; padding: 7px 13px; border-radius: var(--radius);
+    background: var(--cyan); color: #04121a; border: 0; font: inherit;
+    font-weight: 700; padding: 8px 14px; border-radius: var(--radius);
     cursor: pointer; text-decoration: none; display: inline-block;
   }
-  .btn.ghost { background: transparent; color: var(--text); border: 1px solid var(--border-2); font-weight: 500; }
+  .btn.ghost { background: transparent; color: var(--text); border: 1px solid var(--border-2); font-weight: 600; }
+  .btn:hover { filter: brightness(1.08); }
   .tab {
     background: none; border: 0; border-bottom: 2px solid transparent;
-    color: var(--muted); font: inherit; padding: 6px 10px; cursor: pointer;
+    color: var(--muted); font: inherit; padding: 7px 11px; cursor: pointer;
   }
-  .tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+  .tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--cyan); }
 
-  .wrap { display: flex; align-items: stretch; min-height: calc(100vh - 63px); }
-  .main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+  .wrap { display: flex; align-items: flex-start; }
+  .main { flex: 1 1 auto; min-width: 0; padding: 18px 20px 24px; }
   .side {
-    flex: 0 0 330px; border-left: 1px solid var(--border);
-    background: var(--surface); padding: 20px; overflow-y: auto;
+    flex: 0 0 340px; align-self: stretch; border-left: 1px solid var(--border);
+    background: var(--surface); padding: 20px; position: sticky; top: 61px;
+    max-height: calc(100vh - 61px); overflow-y: auto;
   }
   @media (max-width: 1080px) {
     .wrap { flex-direction: column; }
-    .side { flex: 1 1 auto; border-left: 0; border-top: 1px solid var(--border); }
+    .side { flex: 1 1 auto; border-left: 0; border-top: 1px solid var(--border);
+            position: static; max-height: none; width: 100%; }
   }
 
-  /* --- the floor ---------------------------------------------------------
-     A 2.5D plate: the stage is rotated once and every desk sits on it in
-     plain left/top coordinates, so a zone is positioned in percentages a
-     person can reason about. Avatars counter-rotate so faces stay upright. */
-  .stage-wrap {
-    flex: 1 1 auto; position: relative; overflow: hidden;
-    background:
-      radial-gradient(1200px 600px at 50% 0%, #fbf9f5 0%, transparent 70%),
-      var(--canvas);
-    display: grid; place-items: center; padding: 10px 16px;
-  }
-  .stage {
-    position: relative; width: min(1180px, 99%); aspect-ratio: 16 / 9.4;
-    transform: rotateX(54deg) rotateZ(-45deg);
-    transform-style: preserve-3d;
-    background: transparent; border: 0; box-shadow: none;
-  }
-  /* floor grid */
-  .stage::before { content: none; }
-  /* A room, not a rectangle. The plate is already rotated, so anything
-     inside it that needs to stand up does so by rotating about its own top
-     or left edge: the wall is a flat div stood on end. preserve-3d has to
-     be repeated here or the walls flatten back into the floor. */
-  /* Each area is its own island with space around it, the way the reference
-     separates departments, instead of six rectangles sharing edges. The gap
-     is what lets you tell one room from the next at a glance. */
+  /* --- a department ------------------------------------------------------ */
   .zone {
-    position: absolute; border-radius: 10px;
-    border: 1px solid color-mix(in srgb, var(--glow, #5b63d3) 45%, #cfc8ba);
-    /* --glow, not --tint. The tint read a variable nothing sets, so every
-       room fell back to the same faint default and the floor was six
-       identical cream slabs you could not tell apart. */
-    background:
-      linear-gradient(160deg,
-        color-mix(in srgb, var(--glow, #5b63d3) 26%, #f3efe7),
-        color-mix(in srgb, var(--glow, #5b63d3) 10%, #efe9df));
-    transform-style: preserve-3d;
-    /* The slab's side. Under the plate's rotation this offset runs along the
-       floor diagonal, so it reads as thickness rather than a drop shadow. */
-    box-shadow:
-      14px 14px 0 #d4cec1,
-      16px 16px 0 1px var(--border-2),
-      26px 26px 42px rgba(60,52,38,.22);
+    border: 1px solid var(--border); border-left: 3px solid var(--glow, var(--cyan));
+    border-radius: var(--radius); background: var(--surface);
+    padding: 14px 16px; margin-bottom: 14px;
   }
-  .zone > span {
-    position: absolute; top: 8px; left: 12px; font-size: 11.5px; font-weight: 700;
-    letter-spacing: .1em; text-transform: uppercase;
-    color: color-mix(in srgb, var(--glow, #5b63d3) 70%, #1b1b22);
-    background: rgba(255,255,255,.94);
-    border: 1px solid color-mix(in srgb, var(--glow, #5b63d3) 40%, #e0dbd1);
-    border-radius: 999px; padding: 2px 10px;
-    transform: rotateZ(45deg) rotateX(-54deg); transform-origin: left top;
-    white-space: nowrap;
+  .zone-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .zone-head > span:first-child {
+    font-size: 12px; font-weight: 700; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--glow, var(--cyan));
   }
-  .wall {
-    position: absolute; left: 0; top: 0;
-    background: linear-gradient(180deg, #fbf9f5, #ece7dd);
-    border: 1px solid var(--border-2); border-bottom: 0;
-  }
-  .wall.n { width: 100%; height: 30px; transform-origin: top;  transform: rotateX(-90deg); }
-  .wall.w { width: 30px; height: 100%; transform-origin: left; transform: rotateY(90deg); }
-  .wall::after {
-    content: ""; position: absolute; left: 6%; right: 6%; bottom: 0; height: 2px;
-    background: var(--glow, rgba(91,99,211,.45)); filter: blur(1px); opacity: .7;
-  }
+  .card-room { margin-left: auto; display: flex; gap: 16px; font-size: 12px; color: var(--muted); }
+  .card-room b { color: var(--text); font-weight: 700; font-size: 14px; }
 
-  .spot { position: absolute; transform-style: preserve-3d; }
-  .desk {
-    position: absolute; width: 86px; height: 46px; left: -43px; top: -4px;
-    border-radius: 6px; transform: translateZ(7px);
-    background: linear-gradient(160deg, #cdb08a, #b8966e);
-    border: 1px solid #a5855f;
-    box-shadow: 0 12px 18px rgba(60,52,38,.30);
-    transform-style: preserve-3d;
-  }
-  .mon {
-    position: absolute; left: 23px; top: 5px; width: 42px; height: 25px;
-    border-radius: 3px; transform-origin: bottom; transform: rotateX(-78deg);
-    background: linear-gradient(180deg, #ffffff, var(--glow, #8d95e8));
-    border: 1px solid #9a9384;
-    box-shadow: 0 0 10px var(--glow, rgba(91,99,211,.40));
-  }
-  .chair {
-    position: absolute; width: 22px; height: 22px; left: -11px; top: 26px;
-    border-radius: 6px; transform: translateZ(5px);
-    background: #4a4638; border: 1px solid #3a372c;
-  }
-  /* an agent standing on the floor */
+  .people { display: grid; gap: 10px; margin-top: 12px;
+            grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); }
   .who {
-    position: absolute; transform-style: preserve-3d; cursor: pointer;
-    background: none; border: 0; padding: 0; font: inherit; color: inherit;
+    display: flex; gap: 11px; align-items: flex-start; text-align: left;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 11px 12px; cursor: pointer;
+    font: inherit; color: inherit; width: 100%;
   }
-  .who-inner {
-    transform: rotateZ(45deg) rotateX(-54deg);
-    transform-origin: center bottom;
-    display: flex; flex-direction: column; align-items: center; gap: 5px;
-  }
-  /* A person, not a disc. The reference reads as an office because there are
-     people sitting in it; ours read as tokens on a board. Drawn rather than
-     taken: the repository the owner pointed at is PolyForm Noncommercial with
-     terms forbidding its use to front another agent system, so its art is not
-     ours to lift. This is a head, shoulders and an arm on the desk, which is
-     all a 54px figure needs to look seated. */
-  .who .ring {
-    width: 54px; height: 54px; position: relative;
-    display: grid; place-items: end center;
-    filter: drop-shadow(0 8px 12px rgba(60,52,38,.35));
-  }
-  .who .ring svg { width: 100%; height: 100%; display: block; overflow: visible; }
-  .who .ring .seat-body { fill: currentColor; }
-  .who .ring .seat-head { fill: currentColor; }
-  .who .ring .seat-face { fill: rgba(255,255,255,.55); }
-  /* The initial rides on the chest, which keeps the figure identifiable at
-     this size without a second label. */
-  .who .ring .seat-init {
-    fill: rgba(255,255,255,.95); font: 700 11px var(--font-ui); text-anchor: middle;
+  .who:hover { border-color: var(--border-2); }
+  .who[aria-current="true"] { border-color: var(--cyan); }
+  .who > span:last-child { min-width: 0; display: block; }
+  .ring {
+    width: 38px; height: 38px; border-radius: 50%; flex: none; position: relative;
+    display: grid; place-items: center; font-weight: 800; font-size: 13px; color: #04121a;
   }
   .who[data-state="working"] .ring::after {
-    content: ""; position: absolute; left: 50%; bottom: -6px;
-    width: 46px; height: 46px; margin-left: -23px; border-radius: 50%;
-    border: 2px solid currentColor; opacity: .5;
-    animation: halo 1.6s ease-out infinite;
+    content: ""; position: absolute; inset: -4px; border-radius: 50%;
+    border: 2px solid currentColor; animation: halo 1.5s ease-out infinite;
   }
-  @keyframes halo {
-    0%   { transform: scale(.85); opacity: .65 }
-    100% { transform: scale(1.35); opacity: 0 }
-  }
-  .chip {
-    background: rgba(255,255,255,.96); border: 1px solid var(--border-2);
-    border-radius: 999px; padding: 3px 11px; font-size: 12px;
-    white-space: nowrap; display: flex; align-items: center; gap: 5px;
-    box-shadow: 0 6px 14px rgba(60,52,38,.22); color: var(--text);
-  }
-  .who[aria-current="true"] .chip { border-color: var(--accent); }
-  .nm { font-weight: 600; }
-  .st { color: var(--muted); }
+  @keyframes halo { 0% { transform: scale(.9); opacity: .7 } 100% { transform: scale(1.3); opacity: 0 } }
+  .nm { font-weight: 700; display: block; }
+  .st { color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 5px; }
+  .who .role { color: var(--muted); font-size: 12px; display: block; }
+  .mini { display: flex; gap: 12px; margin-top: 6px; font-size: 11.5px; color: var(--muted); }
+  .mini b { color: var(--text); font-weight: 700; }
 
-  /* A card per room, counter-rotated so it reads flat to the camera. Every
-     figure on it is an aggregate of that room's own agents: how many sit
-     there, how many runs they have between them, how well those finished and
-     what they cost. Nothing here is a target or an invention. */
-  .card-room {
-    position: absolute; transform-style: preserve-3d; pointer-events: none;
-  }
-  .card-room > div {
-    transform: rotateZ(45deg) rotateX(-54deg); transform-origin: left bottom;
-    background: #fff; border: 1px solid var(--border);
-    border-left: 3px solid var(--glow, var(--accent));
-    border-radius: 12px; padding: 9px 13px; min-width: 146px;
-    box-shadow: 0 18px 34px rgba(60,52,38,.22);
-  }
-  .card-room .rn {
-    font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
-    color: var(--muted); display: flex; align-items: center; gap: 6px;
-  }
-  .card-room .big {
-    font-size: 24px; font-weight: 700; letter-spacing: -.02em; color: var(--text);
-  }
-  .card-room .big small { font-size: 10.5px; font-weight: 600; color: var(--muted); letter-spacing: .1em; }
-  .card-room .kv { display: flex; gap: 11px; margin-top: 3px; font-size: 11px; color: var(--muted); }
-  .card-room .kv b { color: var(--text); font-weight: 700; }
-
-  /* The Brain, in the middle, where the reference puts it. It is a real page
-     in this product (/tasks/graph): what the platform knows about this
-     person. No note count is shown because nothing here counts them, and a
-     number nobody computed is the one thing this office does not do. */
-  .brain { position: absolute; left: 50%; top: 50%; transform-style: preserve-3d; }
-  .brain > a {
-    display: block; transform: rotateZ(45deg) rotateX(-54deg) translate(-50%, -50%);
-    transform-origin: left top;
-    background: #fff; border: 1px solid var(--border-2); border-radius: 999px;
-    padding: 7px 15px; text-decoration: none; color: var(--text);
-    font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
-    box-shadow: 0 16px 30px rgba(60,52,38,.24); white-space: nowrap;
-    pointer-events: auto;
-  }
-  .brain > a:hover { border-color: var(--accent); color: var(--accent); }
-  .brain .spark { color: var(--accent); margin-right: 6px; }
-
-  /* --- bottom strip --- */
-  .strip {
-    border-top: 1px solid var(--border); background: var(--surface);
-    padding: 12px 20px 16px;
-  }
-  .strip h2 { font-size: 12px; color: var(--muted); margin: 0 0 9px; font-weight: 500; }
-  .feed { list-style: none; margin: 0; padding: 0; display: flex; gap: 10px; overflow-x: auto; }
-  .feed li {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 9px 12px; min-width: 210px;
-    font-size: 12.5px; display: flex; gap: 8px; align-items: center;
-  }
-  .when { color: var(--muted); margin-left: auto; white-space: nowrap; font-size: 11.5px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex: none; }
+  .dot.ready { background: var(--ok); }
+  .dot.working { background: var(--cyan); animation: pulse 1.4s ease-in-out infinite; }
+  .dot.waiting { background: var(--warn); }
+  .dot.failed { background: var(--bad); }
+  .dot.idle { background: #3d4d6b; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
 
   /* --- right panel --- */
-  .side h2 { font-size: 16px; margin: 0; }
+  .side h2 { font-size: 17px; margin: 0; }
   .side-head { display: flex; gap: 11px; align-items: center; }
-  .av {
-    width: 40px; height: 40px; border-radius: 50%; flex: none;
-    display: grid; place-items: center; font-weight: 700; font-size: 13px; color: #0b0b12;
-  }
-  .role { color: var(--muted); font-size: 12.5px; }
   .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin: 16px 0 18px; }
   .stat { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 11px; }
-  .btn { box-shadow: 0 2px 0 rgba(60,52,38,.12); }
-  .btn.ghost { background: #fff; }
   .stat .k { color: var(--muted); font-size: 11px; }
-  .stat .v { font-size: 18px; font-weight: 600; margin-top: 2px; letter-spacing: -.02em; }
-  .section-title { font-size: 12px; color: var(--muted); margin: 0 0 9px; }
+  .stat .v { font-size: 19px; font-weight: 700; margin-top: 2px; letter-spacing: -.02em; }
+  .section-title { font-size: 12px; color: var(--muted); margin: 0 0 9px; letter-spacing: .04em; }
   .tags { display: flex; gap: 6px; flex-wrap: wrap; }
-  .tag { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: 2px 9px; font-size: 11.5px; color: var(--muted); }
+  .tag {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 999px; padding: 3px 10px; font-size: 11.5px; color: var(--muted);
+  }
   a.tag.skill { color: var(--text); border-color: var(--border-2); text-decoration: none; }
-  a.tag.skill:hover { border-color: var(--accent); color: var(--accent); }
+  a.tag.skill:hover { border-color: var(--cyan); color: var(--cyan); }
   .rows { list-style: none; margin: 0; padding: 0; }
   .rows li { display: flex; gap: 9px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
   .rows li:last-child { border-bottom: 0; }
+  .when { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
   .empty { color: var(--muted); font-size: 13px; }
   .note {
     background: var(--surface-2); border: 1px solid var(--border);
@@ -324,12 +177,29 @@
     font-size: 12px; margin-top: 14px;
   }
   .side .btn { width: 100%; text-align: center; margin-top: 8px; }
+
+  /* --- brain + live strip --- */
+  .brain { margin-bottom: 14px; }
+  .brain a {
+    display: inline-flex; align-items: center; gap: 8px; text-decoration: none;
+    background: var(--surface); border: 1px solid var(--border-2);
+    border-radius: 999px; padding: 7px 14px; font-size: 12.5px; font-weight: 600;
+  }
+  .brain a:hover { border-color: var(--cyan); color: var(--cyan); }
+  .strip { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px; }
+  .strip h2 { font-size: 12px; color: var(--muted); margin: 0 0 9px; font-weight: 600; letter-spacing: .04em; }
+  .feed { list-style: none; margin: 0; padding: 0; display: flex; gap: 10px; overflow-x: auto; }
+  .feed li {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 9px 12px; min-width: 216px;
+    font-size: 12.5px; display: flex; gap: 8px; align-items: center;
+  }
 </style>
 </head>
 <body>
 
 <header class="top">
-  <div class="mark" aria-hidden="true">🏢</div>
+  <div class="mark" aria-hidden="true">AI</div>
   <div>
     <h1>Agent Office</h1>
     <div class="online" id="sub"><i class="dot idle"></i>Loading your agents…</div>
@@ -344,11 +214,15 @@
 
 <div class="wrap">
   <main class="main">
-    <div class="stage-wrap" id="panel-office">
-      <div class="stage" id="stage"></div>
+    <div class="brain">
+      <a href="/tasks/graph" title="What this platform knows about you, which every agent reads before answering">
+        <i class="dot working"></i>The Brain
+      </a>
     </div>
 
-    <section id="panel-activity" hidden style="padding:20px">
+    <div id="panel-office"><div id="rooms"></div></div>
+
+    <section id="panel-activity" hidden>
       <p class="section-title">Most recent run of each agent</p>
       <ul class="rows" id="activity-feed"></ul>
       <p class="note">
@@ -365,7 +239,7 @@
   </main>
 
   <aside class="side" id="side">
-    <p class="empty">Pick an agent on the floor to see what it has been doing.</p>
+    <p class="empty">Pick an agent to see what it has been doing.</p>
   </aside>
 </div>
 
@@ -393,7 +267,9 @@
     });
   }
 
-  var HUES = ["#a78bfa", "#3ecf8e", "#60a5fa", "#f472b6", "#fb923c", "#22d3ee", "#facc15"];
+  // Cyan first, because it is the product's own colour. The rest spread
+  // around it so one floor of agents stays tellable apart at a glance.
+  var HUES = ["#22D3EE", "#34d399", "#a78bfa", "#f472b6", "#fbbf24", "#60a5fa", "#fb7185"];
   function colourOf(id) {
     var n = 0;
     for (var i = 0; i < id.length; i++) n = (n * 31 + id.charCodeAt(i)) >>> 0;
@@ -422,26 +298,9 @@
     return meta.description || params.system || meta.agent_instructions || "";
   }
 
-  // One seated person, in the agent's own colour. Head, shoulders and an arm
-  // resting on the desk is everything a figure this size needs to read as
-  // sitting; more detail just turns to mud at 54 pixels. currentColor is set
-  // on the wrapper, so the same markup serves every agent.
-  function seated(init) {
-    return '<svg viewBox="0 0 54 54" aria-hidden="true">' +
-      // chair back, behind the person
-      '<rect x="14" y="20" width="26" height="24" rx="7" ' +
-        'fill="#4a4638" stroke="rgba(0,0,0,.18)"/>' +
-      // torso
-      '<path class="seat-body" d="M15 46c0-9 5.4-14 12-14s12 5 12 14z"/>' +
-      // the arm that reaches the desk, which is what sells "working"
-      '<path class="seat-body" d="M36 38c5 1.6 8 3.4 10 5.6l-3.4 3.6c-2-2-4.6-3.4-8-4.4z"/>' +
-      // head
-      '<circle class="seat-head" cx="27" cy="22" r="8.2"/>' +
-      '<circle class="seat-face" cx="27" cy="22" r="5.4"/>' +
-      '<text class="seat-init" x="27" y="45">' + esc(init) + '</text>' +
-      '</svg>';
-  }
-
+  // agent_activity._shape returns last_run_at and last_status. Reading
+  // started_at and status gave undefined for both, so an agent with 761 runs
+  // said "No runs recorded yet" and every live card said "never".
   function stateOf(id) {
     var a = ACTIVITY[id];
     if (!a) return { key: "idle", label: "No runs yet" };
@@ -450,31 +309,23 @@
         (a.running_for_seconds != null ? " " + a.running_for_seconds + "s" : "") };
     }
     if (a.state === "waiting") return { key: "waiting", label: "Waiting on you" };
+    if (a.state === "failed") return { key: "failed", label: "Last run failed" };
     return { key: "ready", label: "Ready" };
   }
 
-  // --- where an agent sits -------------------------------------------------
-  // Its desk is decided by the tools it actually holds, so the floor is a
-  // picture of how this person set their agents up rather than a seating plan
-  // somebody typed. First match wins, most specific first.
+  // Which part of the office an agent belongs to, decided by the tools it
+  // actually holds, so this is a picture of how they were set up rather than
+  // a seating plan somebody typed. First match wins, so an agent holding both
+  // code and schedules sits in Development.
   var ZONES = [
-    { key: "comms",     label: "Communication", tools: ["gmail"],
-      box: [2, 4, 26, 34],   glow: "#e0609b" },
-    { key: "research",  label: "Research",      tools: ["server:mcp-proxy", "fusion"],
-      box: [2, 62, 26, 34],  glow: "#1f9fb8" },
-    { key: "dev",       label: "Development",   tools: ["code"],
-      box: [37, 2, 26, 30],  glow: "#4a7fd6" },
-    { key: "knowledge", label: "Knowledge base", tools: ["gdrive", "documents"],
-      box: [37, 66, 26, 30], glow: "#8b6fd6" },
-    { key: "automation", label: "Automation",   tools: ["schedules", "excel_creator", "executive_dashboard"],
-      box: [72, 4, 26, 34],  glow: "#d98330" },
-    { key: "meeting",   label: "Meeting room",  tools: ["calendar"],
-      box: [72, 62, 26, 34], glow: "#1f9d63" },
+    { key: "comms",      label: "Communication",  tools: ["gmail"],                      glow: "#f472b6" },
+    { key: "dev",        label: "Development",    tools: ["code"],                       glow: "#60a5fa" },
+    { key: "research",   label: "Research",       tools: ["server:mcp-proxy", "fusion"], glow: "#22D3EE" },
+    { key: "knowledge",  label: "Knowledge base", tools: ["gdrive", "documents"],        glow: "#a78bfa" },
+    { key: "automation", label: "Automation",     tools: ["schedules", "excel_creator", "executive_dashboard"], glow: "#fbbf24" },
+    { key: "meeting",    label: "Meeting room",   tools: ["calendar"],                   glow: "#34d399" },
   ];
-  // Nobody's desk in particular: an agent whose owner picked no tools reaches
-  // everything, so it stands in the open middle rather than being hidden.
-  var LOUNGE = { key: "lounge", label: "Open floor", box: [38, 36, 24, 26],
-                 glow: "#5b63d3" };
+  var LOUNGE = { key: "lounge", label: "Open floor", tools: [], glow: "#8296b5" };
 
   function zoneFor(m) {
     var tools = toolsOf(m);
@@ -483,84 +334,34 @@
         if (tools.indexOf(ZONES[i].tools[j]) >= 0) return ZONES[i];
       }
     }
-    // No tools picked means this agent reaches everything its owner can, so
-    // it has no one desk. It stands in the middle rather than being hidden.
+    // No tools picked means it reaches everything its owner can, so it has no
+    // one desk rather than being hidden.
     return LOUNGE;
   }
 
-  function seats(list) {
-    // Spread the agents that share a zone along it, so two never overlap.
-    var byZone = {};
-    list.forEach(function (m) {
-      var z = zoneFor(m);
-      (byZone[z.key] = byZone[z.key] || { zone: z, of: [] }).of.push(m);
-    });
-    var out = [];
-    Object.keys(byZone).forEach(function (k) {
-      var z = byZone[k].zone, of = byZone[k].of;
-      of.forEach(function (m, i) {
-        // Along the zone AND down it. Spreading only sideways put Kai and Rex,
-        // who both hold nothing but `code`, 50 pixels apart once the
-        // isometric squash was applied, and one name chip covered the other
-        // so the floor showed six agents where there were seven (owner's
-        // screenshot, 2026-09-25). The squash flattens vertical distance by
-        // roughly the cosine of the tilt, so the rows are pushed further
-        // apart than they look like they need to be.
-        var span = z.box[2], step = span / (of.length + 1);
-        var rows = Math.min(of.length, 2);
-        var row = i % rows;
-        out.push({
-          m: m,
-          left: z.box[0] + step * (i + 1),
-          top: z.box[1] + z.box[3] * (rows > 1 ? (0.26 + row * 0.48) : 0.5),
-        });
-      });
-    });
-    return out;
+  function skillsOf(m) {
+    var ids = (m.meta && m.meta.skillIds) || [];
+    if (!Array.isArray(ids)) return [];
+    return ids.map(function (id) { return SKILLS[id] || { name: id, description: "" }; });
+  }
+  function saying(id) { return String(id || "").replace(/-/g, " "); }
+
+  function whoHtml(m) {
+    var st = stateOf(m.id), s = STATS[m.id] || {}, c = colourOf(m.id);
+    return '<button class="who" data-id="' + esc(m.id) + '" data-state="' + st.key + '"' +
+      (SELECTED === m.id ? ' aria-current="true"' : "") + ' style="color:' + c + '">' +
+      '<span class="ring" style="background:' + c + '">' + esc(initials(m.name)) + '</span>' +
+      '<span>' +
+        '<span class="nm card-name" style="color:var(--text)">' + esc(m.name || m.id) + '</span>' +
+        '<span class="st"><i class="dot ' + st.key + '"></i>' + esc(st.label) + '</span>' +
+        '<span class="role">' + esc(roleOf(m) || "No role set") + '</span>' +
+        '<span class="mini"><span>RUNS <b>' + (s.runs != null ? s.runs : 0) + '</b></span>' +
+        (s.success_pct == null ? "" : '<span>CLEAN <b>' + s.success_pct + '%</b></span>') +
+        '<span>' + esc(ago(s.last_started)) + '</span></span>' +
+      '</span></button>';
   }
 
-  // A headline per room, added after the reference the owner sent: a room is
-  // worth a number. Every figure is an aggregate of the agents actually
-  // standing in THAT room, taken from tasks.agent_run, so a quiet room reads
-  // quiet. Rooms with nobody in them get no card rather than a row of zeroes.
-  function roomCards(placed) {
-    var byZone = {};
-    placed.forEach(function (s) {
-      var z = zoneFor(s.m);
-      (byZone[z.key] = byZone[z.key] || { z: z, of: [] }).of.push(s.m);
-    });
-    return Object.keys(byZone).map(function (k) {
-      var z = byZone[k].z, of = byZone[k].of;
-      var runs = 0, done = 0, spent = 0, working = 0;
-      of.forEach(function (m) {
-        var st = STATS[m.id] || {};
-        runs += st.runs || 0;
-        // success_pct is a percentage of that agent's own runs, so it has to
-        // be weighted back into runs before rooms can be compared.
-        if (st.runs && st.success_pct != null) done += st.runs * st.success_pct / 100;
-        spent += st.cost_usd || 0;
-        if (stateOf(m.id).key === "working") working++;
-      });
-      var pct = runs ? Math.round(100 * done / runs) : null;
-      // Clear of the slab entirely. Sitting on it, the card covered the very
-      // agents it was counting: the owner's Development card read 3 AGENTS
-      // while Kai was underneath it. Anchored to the room's outer corner and
-      // pushed further out again by the card's own transform origin.
-      return '<div class="card-room" style="--glow:' + z.glow + ';left:' +
-        (z.box[0] + z.box[2] + 1) + '%;top:' + (z.box[1] + z.box[3] * 0.5) +
-        '%"><div>' +
-        '<div class="rn"><i class="dot ' + (working ? "working" : "ready") +
-          '"></i>' + esc(z.label) + '</div>' +
-        '<div class="big">' + of.length + ' <small>' +
-          (of.length === 1 ? "AGENT" : "AGENTS") + '</small></div>' +
-        '<div class="kv"><span>RUNS <b>' + runs + '</b></span>' +
-        (pct == null ? "" : '<span>CLEAN <b>' + pct + '%</b></span>') +
-        (spent ? '<span>SPENT <b>$' + spent.toFixed(2) + '</b></span>' : "") +
-        '</div></div></div>';
-    }).join("");
-  }
-
-  function drawStage() {
+  function drawRooms() {
     var q = (document.getElementById("q").value || "").trim().toLowerCase();
     var shown = AGENTS.filter(function (m) {
       if (!q) return true;
@@ -569,57 +370,44 @@
              toolsOf(m).join(" ").toLowerCase().indexOf(q) >= 0;
     });
 
-    var placed = seats(shown);
+    var byZone = {};
+    shown.forEach(function (m) {
+      var z = zoneFor(m);
+      (byZone[z.key] = byZone[z.key] || { z: z, of: [] }).of.push(m);
+    });
 
-    // Only rooms somebody works in. A slab with nobody on it is scenery, and
-    // six of them made the floor unreadable: the owner's screenshot had a
-    // large blank platform with no label and no one in it.
-    var live = {};
-    placed.forEach(function (s) { live[zoneFor(s.m).key] = true; });
-
+    // Only rooms somebody works in. An empty room is scenery, and six of them
+    // is what made the previous floor unreadable.
     var html = ZONES.concat([LOUNGE]).filter(function (z) {
-      return live[z.key];
+      return byZone[z.key];
     }).map(function (z) {
-      return '<div class="zone" style="--glow:' + z.glow + ';left:' + z.box[0] +
-        '%;top:' + z.box[1] + '%;width:' + z.box[2] + '%;height:' + z.box[3] +
-        '%"><div class="wall n"></div><div class="wall w"></div><span>' +
-        esc(z.label) + '</span></div>';
+      var of = byZone[z.key].of;
+      var runs = 0, done = 0, spent = 0, working = 0;
+      of.forEach(function (m) {
+        var st = STATS[m.id] || {};
+        runs += st.runs || 0;
+        // success_pct is a percentage of that agent's OWN runs, so it has to
+        // be weighted back into runs before rooms can be compared. Averaging
+        // the percentages would let an agent with three runs outvote one with
+        // eight hundred.
+        if (st.runs && st.success_pct != null) done += st.runs * st.success_pct / 100;
+        spent += st.cost_usd || 0;
+        if (stateOf(m.id).key === "working") working++;
+      });
+      var pct = runs ? Math.round(100 * done / runs) : null;
+      return '<section class="zone" style="--glow:' + z.glow + '">' +
+        '<div class="zone-head"><span>' + esc(z.label) + '</span>' +
+        '<span class="st"><i class="dot ' + (working ? "working" : "ready") + '"></i>' +
+          of.length + (of.length === 1 ? " agent" : " agents") + '</span>' +
+        '<span class="card-room"><span>RUNS <b>' + runs + '</b></span>' +
+        (pct == null ? "" : '<span>CLEAN <b>' + pct + '%</b></span>') +
+        (spent ? '<span>SPENT <b>$' + spent.toFixed(2) + '</b></span>' : "") +
+        '</span></div>' +
+        '<div class="people">' + of.map(whoHtml).join("") + '</div></section>';
     }).join("");
 
-    html += roomCards(placed);
-
-    // The Brain sits in the middle of the floor, as in the reference. It is a
-    // real page here, not an ornament: /tasks/graph is what the platform
-    // knows about this person, and every agent reads from it before it
-    // answers (agent_graph.graph_block).
-    html += '<div class="brain"><a href="/tasks/graph" title="What this ' +
-      'platform knows about you, which every agent reads before answering">' +
-      '<span class="spark">&#9679;</span>The Brain</a></div>';
-
-    // A desk, a chair and a lit monitor under each agent, so somebody is
-    // sitting in the room rather than hovering over it. Drawn before the
-    // agent so the avatar is never behind its own furniture.
-    html += placed.map(function (s) {
-      var z = zoneFor(s.m);
-      return '<div class="spot" style="--glow:' + z.glow + ';left:' +
-        s.left.toFixed(1) + '%;top:' + s.top.toFixed(1) + '%">' +
-        '<div class="chair"></div><div class="desk"><div class="mon"></div></div></div>';
-    }).join("");
-
-    html += placed.map(function (s) {
-      var m = s.m, st = stateOf(m.id), c = colourOf(m.id);
-      return '<button class="who" data-id="' + esc(m.id) + '" data-state="' + st.key + '"' +
-        (SELECTED === m.id ? ' aria-current="true"' : "") +
-        ' style="left:' + s.left.toFixed(1) + '%;top:' + s.top.toFixed(1) + '%">' +
-        '<span class="who-inner" style="color:' + c + '">' +
-          '<span class="ring">' + seated(initials(m.name)) + '</span>' +
-          '<span class="chip"><i class="dot ' + st.key + '"></i>' +
-            '<span class="nm card-name">' + esc(m.name || m.id) + '</span>' +
-            '<span class="st">' + esc(st.label) + '</span></span>' +
-        '</span></button>';
-    }).join("");
-
-    document.getElementById("stage").innerHTML = html;
+    document.getElementById("rooms").innerHTML =
+      html || '<p class="empty">No agents yet. <a href="/tasks/agents">Create one</a>.</p>';
 
     var working = shown.filter(function (m) { return stateOf(m.id).key === "working"; }).length;
     document.getElementById("sub").innerHTML =
@@ -628,36 +416,16 @@
       (working ? " &middot; " + working + " working now" : " &middot; none working right now");
   }
 
-  // --- what this agent can actually be asked for --------------------------
   // 67 skills ship with the image and an agent is given some of them, but the
-  // only place one was ever visible is inside the agent edit form, in a
-  // section collapsed by default because "most edits never touch skills". So
-  // the features existed and were unreachable: a person opening this page had
-  // no way to learn that Ada holds a weekly review.
-  //
-  // Each one becomes a message rather than a button that fires. The wording
-  // names the agent, which is what the routing ladder matches on, so it goes
-  // to that agent and it may not pass. It is handed to the composer and NOT
-  // sent: a turn costs money, and a message the person never read being sent
-  // on their behalf is worse than one more click.
-  function skillsOf(m) {
-    var ids = (m.meta && m.meta.skillIds) || [];
-    if (!Array.isArray(ids)) return [];
-    return ids.map(function (id) {
-      return SKILLS[id] || { name: id, description: "" };
-    });
-  }
-
-  function saying(id) {
-    return String(id || "").replace(/-/g, " ");
-  }
-
+  // only place one was ever visible is a section of the edit form collapsed by
+  // default. Each becomes a message rather than a button that fires: a turn
+  // costs money, so the composer is handed the wording and the person sends it.
   function canDo(m) {
     var mine = skillsOf(m);
     if (!mine.length) {
       return '<p class="section-title" style="margin-top:18px">What to ask for</p>' +
-        '<p class="empty">This agent has no ready-made skills yet. You can ' +
-        'still ask it anything, or give it some when you edit it.</p>';
+        '<p class="empty">This agent has no ready-made skills yet. You can still ' +
+        'ask it anything, or give it some when you edit it.</p>';
     }
     var name = m.name || "this agent";
     return '<p class="section-title" style="margin-top:18px">What you can ask ' +
@@ -674,7 +442,7 @@
     var side = document.getElementById("side");
     var m = AGENTS.filter(function (a) { return a.id === SELECTED; })[0];
     if (!m) {
-      side.innerHTML = '<p class="empty">Pick an agent on the floor to see what it has been doing.</p>';
+      side.innerHTML = '<p class="empty">Pick an agent to see what it has been doing.</p>';
       return;
     }
     var s = STATS[m.id] || {}, st = stateOf(m.id), a = ACTIVITY[m.id];
@@ -695,11 +463,13 @@
 
     side.innerHTML =
       '<div class="side-head">' +
-        '<div class="av" style="background:' + colourOf(m.id) + '">' + esc(initials(m.name)) + '</div>' +
+        '<div class="ring" style="background:' + colourOf(m.id) + '">' +
+          esc(initials(m.name)) + '</div>' +
         '<div><h2>' + esc(m.name || m.id) + '</h2>' +
-        '<div class="online"><i class="dot ' + st.key + '"></i>' + esc(st.label) + '</div></div>' +
+        '<div class="st"><i class="dot ' + st.key + '"></i>' + esc(st.label) + '</div></div>' +
       '</div>' +
-      '<p class="role" style="margin:9px 0 0">' + esc(roleOf(m) || "No role set") + '</p>' +
+      '<p class="role" style="margin:9px 0 0;color:var(--muted)">' +
+        esc(roleOf(m) || "No role set") + '</p>' +
       '<p class="empty" style="margin:6px 0 0">' + esc(descOf(m) || "No description.") + '</p>' +
       '<div class="stats">' +
         '<div class="stat"><div class="k">Total runs</div><div class="v">' + (s.runs != null ? s.runs : 0) + '</div></div>' +
@@ -708,19 +478,15 @@
         '<div class="stat"><div class="k">Spent</div><div class="v">' + cost + '</div></div>' +
       '</div>' +
       canDo(m) +
-      '<p class="section-title">Recent activity</p>' + recent +
+      '<p class="section-title" style="margin-top:18px">Recent activity</p>' + recent +
       '<p class="section-title" style="margin-top:18px">Tools it can reach</p>' +
       '<div class="tags">' +
         (toolsOf(m).length
           ? toolsOf(m).map(function (t) { return '<span class="tag">' + esc(t) + '</span>'; }).join("")
           : '<span class="empty">Everything this account can reach.</span>') +
       '</div>' +
-      // Aimed at this agent, not at the room. A room message is heard by
-      // everyone and each decides whether to answer, so somebody who wanted
-      // one agent gets whoever felt like speaking. Naming it is what the
-      // routing ladder matches on, and a named agent answers and may not
-      // pass, so the box is handed the name and a comma and the person types
-      // the rest.
+      // Aimed at this agent, not the room: naming it is what the routing
+      // ladder matches on, and a named agent answers and may not pass.
       '<a class="btn chat-with" href="/tasks/agents?ask=' +
         encodeURIComponent((m.name || "") + ", ") + '">Chat with ' +
         esc(m.name || "this agent") + '</a>' +
@@ -745,7 +511,7 @@
       live.innerHTML = '<li><span class="empty">Nothing has run yet.</span></li>';
       return;
     }
-    live.innerHTML = rows.slice(0, 6).map(function (r) {
+    live.innerHTML = rows.slice(0, 8).map(function (r) {
       var st = stateOf(r.id);
       return '<li><i class="dot ' + st.key + '"></i><span><b>' + esc(r.name) + '</b> ' +
         esc(r.a.state === "working" ? "is working" : (r.a.last_status || "finished")) +
@@ -773,7 +539,7 @@
     document.getElementById("panel-office").hidden = TAB !== "office";
     document.getElementById("panel-activity").hidden = TAB !== "activity";
     document.getElementById("strip").hidden = TAB !== "office";
-    if (TAB === "office") { drawStage(); drawLive(); } else { drawActivity(); }
+    if (TAB === "office") { drawRooms(); drawLive(); } else { drawActivity(); }
     drawSide();
   }
 
@@ -800,16 +566,13 @@
     catch (e) { console.warn("[office] stats unavailable", e); }
   }
   async function loadSkills() {
-    // The catalogue ships with the image and is the same for everybody, so it
-    // is read once and never again. Losing it costs the descriptions, not the
-    // list: an id still reads as words.
     try {
       var got = (await getJson("/api/tasks/agents/skills")).skills || [];
       got.forEach(function (s) { SKILLS[s.name] = s; });
     } catch (e) { console.warn("[office] skill catalogue unavailable", e); }
   }
 
-  document.getElementById("stage").addEventListener("click", function (ev) {
+  document.getElementById("rooms").addEventListener("click", function (ev) {
     var who = ev.target.closest(".who");
     if (!who) return;
     SELECTED = who.getAttribute("data-id");

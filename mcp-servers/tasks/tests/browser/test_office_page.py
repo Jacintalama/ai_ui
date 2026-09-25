@@ -213,27 +213,10 @@ def test_the_floor_names_the_rooms_that_are_in_use(page):
     actually fills. Ada holds BOTH code and schedules, and the first matching
     area wins, so she sits in Development rather than Automation; Iris holds
     gdrive and sits at the Knowledge base. An empty room is scenery."""
-    zones = [z.lower() for z in page.locator(".zone span").all_inner_texts()]
+    zones = [z.lower() for z in page.locator(".zone-head > span:first-child").all_inner_texts()]
     assert sorted(zones) == ["development", "knowledge base"], zones
 
 
-def test_an_agent_stands_where_its_tools_are(page):
-    """Iris holds gdrive, so she belongs at the knowledge base and not in
-    development. Position is a percentage of the floor, so the check is that
-    she is inside that zone's box rather than at any exact pixel."""
-    box = page.locator('.who[data-id="agent-iris-a103"]').evaluate(
-        "el => ({ left: parseFloat(el.style.left), top: parseFloat(el.style.top) })")
-    # Knowledge base occupies left 37%..65%, top 52%..94%.
-    assert 37 <= box["left"] <= 65, box
-    assert 52 <= box["top"] <= 94, box
-
-
-def test_two_agents_in_one_area_do_not_stand_on_each_other(page):
-    """Ada holds code and so does any other developer. Sharing a zone must
-    spread them, or the second is invisible under the first."""
-    spots = page.locator(".who").evaluate_all(
-        "els => els.map(e => e.style.left + ':' + e.style.top)")
-    assert len(set(spots)) == len(spots), spots
 
 
 # --- being able to actually use what an agent can do ------------------------
@@ -341,23 +324,6 @@ def test_an_agent_that_truly_never_ran_still_says_so(page):
     assert "running now" in page.locator("#side").inner_text().lower()
 
 
-def test_no_two_agents_are_close_enough_to_cover_each_other(page):
-    """Owner's screenshot 2026-09-25: Ada and Rex sat on top of each other and
-    one name chip was hidden behind the other, so the floor showed six agents
-    where there were seven.
-
-    Distinct coordinates are not enough, because the isometric squash brings
-    rows visually closer than their numbers suggest. This measures the drawn
-    boxes rather than the percentages."""
-    boxes = page.locator(".who").evaluate_all(
-        "els => els.map(e => { const b = e.getBoundingClientRect();"
-        " return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; })")
-    for i in range(len(boxes)):
-        for j in range(i + 1, len(boxes)):
-            dx = boxes[i]["x"] - boxes[j]["x"]
-            dy = boxes[i]["y"] - boxes[j]["y"]
-            assert (dx * dx + dy * dy) ** 0.5 > 60, (boxes[i], boxes[j])
-
 
 # The owner's real seven, with the tools each actually holds on production.
 SEVEN = [
@@ -382,48 +348,6 @@ SEVEN = [
 ]
 
 
-def test_all_seven_of_the_owners_agents_stay_apart(browser):
-    """The collision in the screenshot needed seven, not two: Kai and Rex both
-    hold only `code` so they share Development, and Ada holds code too."""
-    html = (STATIC / "office.html").read_bytes()
-    srv = _serve(html)
-    pg = browser.new_page(viewport={"width": 1500, "height": 1000})
-    pg.set_default_timeout(6000)
-
-    def route(r):
-        url = r.request.url
-        if "/models/list" in url:
-            body = {"items": SEVEN, "total": len(SEVEN)}
-        elif "/agents/activity" in url:
-            body = {"activity": {}}
-        elif "/agents/stats" in url:
-            body = {"stats": {}}
-        elif "/agents/skills" in url:
-            body = {"skills": SKILLS}
-        else:
-            body = {}
-        r.fulfill(status=200, content_type="application/json", body=json.dumps(body))
-
-    pg.route("**/api/**", route)
-    pg.goto("http://127.0.0.1:%d/office.html" % srv.server_address[1])
-    pg.wait_for_selector(".who", state="visible")
-    pg.wait_for_timeout(300)
-    try:
-        assert pg.locator(".who").count() == 7
-        boxes = pg.locator(".who").evaluate_all(
-            "els => els.map(e => { const b = e.getBoundingClientRect();"
-            " return { x: b.x + b.width / 2, y: b.y + b.height / 2,"
-            "          n: e.getAttribute('data-id') }; })")
-        for i in range(len(boxes)):
-            for j in range(i + 1, len(boxes)):
-                dx = boxes[i]["x"] - boxes[j]["x"]
-                dy = boxes[i]["y"] - boxes[j]["y"]
-                gap = (dx * dx + dy * dy) ** 0.5
-                assert gap > 60, (boxes[i]["n"], boxes[j]["n"], round(gap))
-    finally:
-        pg.close()
-        srv.shutdown()
-
 
 # --- a headline per room ----------------------------------------------------
 # From the reference the owner sent: a room is worth a number. Every figure is
@@ -431,7 +355,7 @@ def test_all_seven_of_the_owners_agents_stay_apart(browser):
 # somebody else's runs is the bug that looks perfectly fine.
 
 def test_each_room_with_somebody_in_it_gets_a_card(page):
-    labels = [t.lower() for t in page.locator(".card-room .rn").all_inner_texts()]
+    labels = [t.lower() for t in page.locator(".zone-head > span:first-child").all_inner_texts()]
     assert any("knowledge base" in t for t in labels), labels
     assert len(labels) == 2, labels   # Ada in Automation, Iris at Knowledge base
 
@@ -439,7 +363,7 @@ def test_each_room_with_somebody_in_it_gets_a_card(page):
 def test_an_empty_room_gets_no_card(page):
     """A row of zeroes against a room nobody works in says nothing and makes
     the floor look busy. Only rooms with agents in them get a headline."""
-    labels = " ".join(page.locator(".card-room .rn").all_inner_texts()).lower()
+    labels = " ".join(page.locator(".zone-head > span:first-child").all_inner_texts()).lower()
     assert "meeting room" not in labels, labels
     assert "research" not in labels, labels
 
@@ -447,7 +371,7 @@ def test_an_empty_room_gets_no_card(page):
 def test_a_room_counts_only_its_own_agents_runs(page):
     """Ada is alone in Automation with 801 runs; Iris is alone at the
     knowledge base with 26. Neither card may carry the other's."""
-    cards = page.locator(".card-room").all_inner_texts()
+    cards = page.locator(".zone").all_inner_texts()
     joined = " ".join(cards)
     assert "801" in joined and "26" in joined, cards
     for text in cards:
@@ -459,21 +383,10 @@ def test_the_room_card_weights_success_by_runs(page):
     agents' percentages would let an agent with three runs outvote one with
     eight hundred, so it is weighted back into runs first. Alone in a room,
     an agent's own rate must survive the arithmetic unchanged."""
-    cards = page.locator(".card-room").all_inner_texts()
+    cards = page.locator(".zone").all_inner_texts()
     ada = [c for c in cards if "801" in c][0]
     assert "40%" in ada, ada
 
-
-# --- people, not tokens -----------------------------------------------------
-# The reference the owner kept sending reads as an office because there are
-# people sitting in it. Ours read as coloured discs on a board. The figure is
-# drawn here rather than taken: that repository is PolyForm Noncommercial with
-# terms forbidding its use to front another agent system, so its art is not
-# ours to lift.
-
-def test_every_agent_is_drawn_as_a_person(page):
-    assert page.locator(".who .ring svg").count() == page.locator(".who").count()
-    assert page.locator(".who .ring .seat-head").count() == page.locator(".who").count()
 
 
 def test_the_figure_wears_the_agents_colour(page):
@@ -484,15 +397,6 @@ def test_the_figure_wears_the_agents_colour(page):
     assert len(set(colours)) == len(colours), colours
 
 
-def test_the_initial_still_identifies_the_figure(page):
-    """A name chip sits below, but at this size the initial on the chest is
-    what makes one figure tellable from another mid-glance."""
-    # textContent, not inner_text: an SVG <text> node has no rendered inner
-    # text and Playwright hands back None for every one of them.
-    inits = page.locator(".who .seat-init").evaluate_all(
-        "els => els.map(e => e.textContent)")
-    assert sorted(inits) == ["A", "I"], inits
-
 
 def test_a_working_agent_still_pulses(page):
     """The halo moved from around a disc to around the chair. It has to
@@ -501,31 +405,6 @@ def test_a_working_agent_still_pulses(page):
     assert page.locator('.who[data-state="working"]').count() == 1
 
 
-# --- legible, which is the whole reason the floor went light ----------------
-# "i want them same in the repo image please not the current i can't
-# understand it". Dark navy rooms on a dark shell could not be read, so the
-# office is lit and the furniture is dark, the way the reference does it.
-
-def test_the_floor_is_light_enough_to_read(page):
-    """A guard on the thing that was actually wrong. If somebody restyles
-    this back to dark-on-dark, the office stops being readable again."""
-    bg = page.locator(".stage-wrap").evaluate(
-        "el => getComputedStyle(el).backgroundColor")
-    nums = [int(n) for n in bg.replace("rgb(", "").replace(")", "").split(",")[:3]]
-    assert sum(nums) / 3 > 180, bg
-
-
-def test_the_room_name_reads_against_the_room(page):
-    """The labels were unreadable once already. Dark text on a pale pill now,
-    and this fails if either side of that flips."""
-    # Read back through the browser's own parser rather than by string
-    # surgery: the colour is a color-mix() now, and splitting on commas turned
-    # "rgb(74, 70, 56)" into something int() would not take.
-    lum = page.locator(".zone span").first.evaluate(
-        "el => { const c = getComputedStyle(el).color;"
-        " const m = c.match(/[\d.]+/g).map(Number);"
-        " return (m[0] + m[1] + m[2]) / 3; }")
-    assert lum < 130, lum
 
 
 def test_the_brain_is_on_the_floor_and_goes_somewhere_real(page):
@@ -541,65 +420,6 @@ def test_the_brain_claims_no_note_count(page):
     assert "notes" not in said, said
 
 
-def test_the_rooms_do_not_touch(page):
-    """Six rectangles sharing edges read as one grid. The reference separates
-    departments into islands, and the gap is what makes them countable."""
-    boxes = page.locator(".zone").evaluate_all(
-        "els => els.map(e => ({ l: parseFloat(e.style.left), t: parseFloat(e.style.top),"
-        " w: parseFloat(e.style.width), h: parseFloat(e.style.height) }))")
-    for i in range(len(boxes)):
-        for j in range(i + 1, len(boxes)):
-            a, b = boxes[i], boxes[j]
-            apart = (a["l"] + a["w"] <= b["l"] or b["l"] + b["w"] <= a["l"]
-                     or a["t"] + a["h"] <= b["t"] or b["t"] + b["h"] <= a["t"])
-            assert apart, (a, b)
-
-
-def test_no_room_card_covers_an_agent(browser):
-    """Owner's screenshot 2026-09-25: the Development card said 3 AGENTS and
-    two were visible, because Kai was drawn underneath the card describing
-    him. A card that hides its own subject is worse than no card."""
-    html = (STATIC / "office.html").read_bytes()
-    srv = _serve(html)
-    pg = browser.new_page(viewport={"width": 1500, "height": 1000})
-    pg.set_default_timeout(6000)
-
-    def route(r):
-        url = r.request.url
-        if "/models/list" in url:
-            body = {"items": SEVEN, "total": len(SEVEN)}
-        elif "/agents/stats" in url:
-            body = {"stats": {a["id"]: {"runs": 10, "avg_seconds": 1.0,
-                                        "success_pct": 100, "cost_usd": 0.0}
-                              for a in SEVEN}}
-        elif "/agents/skills" in url:
-            body = {"skills": SKILLS}
-        else:
-            body = {"activity": {}}
-        r.fulfill(status=200, content_type="application/json", body=json.dumps(body))
-
-    pg.route("**/api/**", route)
-    pg.goto("http://127.0.0.1:%d/office.html" % srv.server_address[1])
-    pg.wait_for_selector(".who", state="visible")
-    pg.wait_for_timeout(300)
-    try:
-        boxes = pg.evaluate(
-            "() => ({"
-            " who: [...document.querySelectorAll('.who')].map(e => {"
-            "   const b = e.getBoundingClientRect();"
-            "   return { id: e.dataset.id, l: b.left, r: b.right, t: b.top, b: b.bottom }; }),"
-            " card: [...document.querySelectorAll('.card-room > div')].map(e => {"
-            "   const b = e.getBoundingClientRect();"
-            "   return { l: b.left, r: b.right, t: b.top, b: b.bottom }; })"
-            "})")
-        for w in boxes["who"]:
-            for c in boxes["card"]:
-                overlap = not (w["r"] < c["l"] or c["r"] < w["l"]
-                               or w["b"] < c["t"] or c["b"] < w["t"])
-                assert not overlap, (w["id"], w, c)
-    finally:
-        pg.close()
-        srv.shutdown()
 
 
 def test_a_room_nobody_works_in_is_not_drawn(browser):
@@ -628,7 +448,7 @@ def test_a_room_nobody_works_in_is_not_drawn(browser):
     pg.wait_for_selector(".who", state="visible")
     pg.wait_for_timeout(300)
     try:
-        labels = [t.lower() for t in pg.locator(".zone span").all_inner_texts()]
+        labels = [t.lower() for t in pg.locator(".zone-head > span:first-child").all_inner_texts()]
         assert labels == ["communication"], labels
         assert pg.locator(".zone").count() == 1
     finally:
@@ -636,36 +456,38 @@ def test_a_room_nobody_works_in_is_not_drawn(browser):
         srv.shutdown()
 
 
-def test_every_room_is_a_different_colour(browser):
-    """Owner's screenshot: six identical cream slabs, so Development and
-    Research were indistinguishable. The tint read --tint, which nothing
-    sets, while every zone sets --glow, so they all fell back to one faint
-    default."""
-    html = (STATIC / "office.html").read_bytes()
-    srv = _serve(html)
-    pg = browser.new_page(viewport={"width": 1500, "height": 1000})
-    pg.set_default_timeout(6000)
+# --- departments, which replaced the isometric floor ------------------------
+# The floor was reshaped five times and the owner could not read it either
+# time he looked: "i cant understand!", then "the ui or the page isnt nice".
+# A drawn plate spends the whole screen on a picture and leaves the numbers at
+# 11px inside it. These are the two things the floor was for that the sections
+# still have to do.
 
-    def route(r):
-        url = r.request.url
-        if "/models/list" in url:
-            body = {"items": SEVEN, "total": len(SEVEN)}
-        elif "/agents/skills" in url:
-            body = {"skills": SKILLS}
-        elif "/agents/stats" in url:
-            body = {"stats": {}}
-        else:
-            body = {"activity": {}}
-        r.fulfill(status=200, content_type="application/json", body=json.dumps(body))
+def test_an_agent_sits_in_the_department_its_tools_belong_to(page):
+    """Iris holds gdrive, so she is inside the Knowledge base section and
+    nowhere else. The grouping is the whole idea the floor was carrying."""
+    inside = page.locator(
+        'section.zone:has(.zone-head span:text("Knowledge base")) .card-name'
+    ).all_inner_texts()
+    assert inside == ["Iris"], inside
 
-    pg.route("**/api/**", route)
-    pg.goto("http://127.0.0.1:%d/office.html" % srv.server_address[1])
-    pg.wait_for_selector(".zone", state="visible")
-    pg.wait_for_timeout(300)
-    try:
-        shades = pg.locator(".zone").evaluate_all(
-            "els => els.map(e => getComputedStyle(e).backgroundImage)")
-        assert len(set(shades)) == len(shades), shades
-    finally:
-        pg.close()
-        srv.shutdown()
+
+def test_each_department_is_its_own_colour(page):
+    """Six identical rooms is what made the floor unreadable. The colour now
+    rides the section's left border, and each department keeps its own."""
+    edges = page.locator("section.zone").evaluate_all(
+        "els => els.map(e => getComputedStyle(e).borderLeftColor)")
+    assert len(set(edges)) == len(edges), edges
+
+
+def test_the_page_uses_the_products_own_colours(page):
+    """AIUI Cyan Circuit: #22D3EE on #0B1221, as recorded in
+    webhook-handler/schedule_format.py. The office is part of the product, not
+    a separate thing that happens to live inside it."""
+    got = page.evaluate(
+        "() => { const s = getComputedStyle(document.body);"
+        " return { bg: s.backgroundColor,"
+        "   cyan: getComputedStyle(document.documentElement)"
+        "          .getPropertyValue('--cyan').trim() }; }")
+    assert got["cyan"].lower() == "#22d3ee", got
+    assert got["bg"].replace(" ", "") == "rgb(11,18,33)", got
