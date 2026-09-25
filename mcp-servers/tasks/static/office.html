@@ -253,14 +253,14 @@
   <button class="tab" role="tab" id="tab-activity" aria-selected="false">Activity</button>
   <div class="top-right">
     <input class="search" id="q" type="search" placeholder="Search agents…" aria-label="Search agents">
-    <a class="btn" href="/tasks/agents">+ New agent</a>
+    <a class="btn" target="_top" href="/tasks/agents">+ New agent</a>
   </div>
 </header>
 
 <div class="wrap">
   <main class="main">
     <div class="brain">
-      <a href="/tasks/graph" title="What this platform knows about you, which every agent reads before answering">
+      <a href="/tasks/graph" target="_top" title="What this platform knows about you, which every agent reads before answering">
         <i class="dot working"></i>The Brain
       </a>
     </div>
@@ -506,9 +506,9 @@
                     esc(ago(newest.a.last_run_at))
                   : "nothing has run yet")) + '</span>' +
       '<span class="right">' +
-        '<a class="btn" href="/tasks/agents?ask=' +
+        '<a class="btn" target="_top" href="/tasks/agents?ask=' +
           encodeURIComponent("everyone answer: ") + '">Call a team meeting</a>' +
-        '<a class="btn ghost" href="/tasks/agents">Open the chat</a>' +
+        '<a class="btn ghost" target="_top" href="/tasks/agents">Open the chat</a>' +
       '</span></div>';
 
     document.getElementById("rooms").innerHTML = html;
@@ -535,7 +535,7 @@
       esc(name) + ' for</p><div class="tags">' +
       mine.map(function (s) {
         var msg = name + ", " + saying(s.name);
-        return '<a class="tag skill" href="/tasks/agents?ask=' +
+        return '<a class="tag skill" target="_top" href="/tasks/agents?ask=' +
           encodeURIComponent(msg) + '" title="' + esc(s.description) + '">' +
           esc(saying(s.name)) + '</a>';
       }).join("") + '</div>';
@@ -590,10 +590,10 @@
       '</div>' +
       // Aimed at this agent, not the room: naming it is what the routing
       // ladder matches on, and a named agent answers and may not pass.
-      '<a class="btn chat-with" href="/tasks/agents?ask=' +
+      '<a class="btn chat-with" target="_top" href="/tasks/agents?ask=' +
         encodeURIComponent((m.name || "") + ", ") + '">Chat with ' +
         esc(m.name || "this agent") + '</a>' +
-      '<a class="btn ghost" href="/tasks/agents">Edit agent</a>' +
+      '<a class="btn ghost" target="_top" href="/tasks/agents">Edit agent</a>' +
       '<p class="note">Which tool a run actually used is not recorded, so this ' +
         'is what it may reach, not what it is using. Only the most recent run ' +
         'is kept per agent.</p>';

@@ -537,3 +537,33 @@ def test_an_idle_agent_shows_its_job_instead(page):
     role, which is what tells one agent from another."""
     label = page.locator('.who[data-id="agent-iris-a103"] .who-label').inner_text()
     assert "Drive librarian" in label, label
+
+
+# --- links have to leave the frame ------------------------------------------
+# Owner's screenshot 2026-09-25: the floating office was showing the AGENTS
+# PAGE inside itself, with "everyone answer:" already in its composer. He had
+# clicked Call a team meeting inside the office and the link navigated the
+# iframe rather than the page behind it, so the office replaced itself with
+# the chat. Every link here goes somewhere else in the product, and the office
+# is embedded in two places: the shell pane and the floating window.
+
+def test_every_link_out_of_the_office_leaves_the_frame(page):
+    page.locator('.who[data-id="agent-iris-a103"]').click()
+    page.wait_for_timeout(150)
+    bad = page.evaluate(
+        "() => [...document.querySelectorAll('a[href]')]"
+        "  .filter(a => a.getAttribute('target') !== '_top')"
+        "  .map(a => a.getAttribute('href'))")
+    assert bad == [], bad
+
+
+def test_the_meeting_button_leaves_the_frame(page):
+    """The one that was actually clicked."""
+    assert page.locator(".floor-bar a.btn").first.get_attribute("target") == "_top"
+
+
+def test_the_chat_and_skill_links_leave_the_frame(page):
+    page.locator('.who[data-id="agent-iris-a103"]').click()
+    page.wait_for_timeout(150)
+    assert page.locator("#side a.chat-with").get_attribute("target") == "_top"
+    assert page.locator("#side a.skill").first.get_attribute("target") == "_top"
