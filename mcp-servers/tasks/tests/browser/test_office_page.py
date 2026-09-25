@@ -495,3 +495,54 @@ def test_a_working_agent_still_pulses(page):
     survive the redraw, because it is the only thing on the floor that says
     something is happening right now."""
     assert page.locator('.who[data-state="working"]').count() == 1
+
+
+# --- legible, which is the whole reason the floor went light ----------------
+# "i want them same in the repo image please not the current i can't
+# understand it". Dark navy rooms on a dark shell could not be read, so the
+# office is lit and the furniture is dark, the way the reference does it.
+
+def test_the_floor_is_light_enough_to_read(page):
+    """A guard on the thing that was actually wrong. If somebody restyles
+    this back to dark-on-dark, the office stops being readable again."""
+    bg = page.locator(".stage-wrap").evaluate(
+        "el => getComputedStyle(el).backgroundColor")
+    nums = [int(n) for n in bg.replace("rgb(", "").replace(")", "").split(",")[:3]]
+    assert sum(nums) / 3 > 180, bg
+
+
+def test_the_room_name_reads_against_the_room(page):
+    """The labels were unreadable once already. Dark text on a pale pill now,
+    and this fails if either side of that flips."""
+    got = page.locator(".zone span").first.evaluate(
+        "el => { const s = getComputedStyle(el);"
+        " return { c: s.color, b: s.backgroundColor }; }")
+    text = [int(n) for n in got["c"].replace("rgb(", "").replace(")", "").split(",")[:3]]
+    assert sum(text) / 3 < 120, got
+
+
+def test_the_brain_is_on_the_floor_and_goes_somewhere_real(page):
+    """The reference puts the Brain in the middle. Ours is a real page every
+    agent reads before answering, so it links there rather than decorating."""
+    assert page.locator(".brain a").get_attribute("href") == "/tasks/graph"
+
+
+def test_the_brain_claims_no_note_count(page):
+    """The reference shows "37 NOTES". Nothing on this page counts notes, and
+    a number nobody computed is the one thing this office must not draw."""
+    said = page.locator(".brain").inner_text().lower()
+    assert "notes" not in said, said
+
+
+def test_the_rooms_do_not_touch(page):
+    """Six rectangles sharing edges read as one grid. The reference separates
+    departments into islands, and the gap is what makes them countable."""
+    boxes = page.locator(".zone").evaluate_all(
+        "els => els.map(e => ({ l: parseFloat(e.style.left), t: parseFloat(e.style.top),"
+        " w: parseFloat(e.style.width), h: parseFloat(e.style.height) }))")
+    for i in range(len(boxes)):
+        for j in range(i + 1, len(boxes)):
+            a, b = boxes[i], boxes[j]
+            apart = (a["l"] + a["w"] <= b["l"] or b["l"] + b["w"] <= a["l"]
+                     or a["t"] + a["h"] <= b["t"] or b["t"] + b["h"] <= a["t"])
+            assert apart, (a, b)

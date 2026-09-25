@@ -31,17 +31,23 @@
   this page gets an agent walking to the right desk for real.
 -->
 <style>
+  /* Light on purpose. The floor was dark navy on a dark shell and the owner
+     could not read it: "i want them same in the repo image, i can't
+     understand it". A lit room with dark furniture is legible at a glance in
+     a way that dark-on-dark never was, which is the whole point of drawing an
+     office instead of a table. */
   :root {
-    --bg:        #0a0a0f;
-    --surface:   #101017;
-    --surface-2: #16161f;
-    --border:    #23232e;
-    --border-2:  #2f2f3d;
-    --text:      #ededf2;
-    --muted:     #7a7a8c;
-    --accent:    #7c8cff;
-    --ok:        #3ecf8e;
-    --warn:      #f5a524;
+    --bg:        #f2efe9;
+    --canvas:    #efebe3;
+    --surface:   #ffffff;
+    --surface-2: #f7f5f0;
+    --border:    #e0dbd1;
+    --border-2:  #cfc8ba;
+    --text:      #1b1b22;
+    --muted:     #77736b;
+    --accent:    #5b63d3;
+    --ok:        #1f9d63;
+    --warn:      #c2761a;
     --radius:    8px;
     --radius-lg: 14px;
     --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
@@ -61,7 +67,7 @@
   }
   .mark {
     width: 34px; height: 34px; border-radius: 10px; flex: none;
-    background: linear-gradient(140deg, #6d7cff, #46d0c0);
+    background: linear-gradient(140deg, #5b63d3, #1f9fb8);
     display: grid; place-items: center; font-size: 16px;
   }
   h1 { font-size: 16px; margin: 0; letter-spacing: -.01em; }
@@ -74,7 +80,7 @@
   }
   .search:focus { outline: none; border-color: var(--border-2); }
   .btn {
-    background: var(--accent); color: #0b0b12; border: 0; font: inherit;
+    background: var(--accent); color: #fff; border: 0; font: inherit;
     font-weight: 600; padding: 7px 13px; border-radius: var(--radius);
     cursor: pointer; text-decoration: none; display: inline-block;
   }
@@ -103,97 +109,80 @@
   .stage-wrap {
     flex: 1 1 auto; position: relative; overflow: hidden;
     background:
-      radial-gradient(1100px 500px at 50% 8%, #191a2e 0%, transparent 62%),
-      radial-gradient(800px 420px at 82% 92%, #10202a 0%, transparent 60%),
-      var(--bg);
+      radial-gradient(1200px 600px at 50% 0%, #fbf9f5 0%, transparent 70%),
+      var(--canvas);
     display: grid; place-items: center; padding: 10px 16px;
   }
   .stage {
     position: relative; width: min(1180px, 99%); aspect-ratio: 16 / 9.4;
     transform: rotateX(54deg) rotateZ(-45deg);
     transform-style: preserve-3d;
-    background:
-      linear-gradient(#0e1018, #0e1018) padding-box,
-      linear-gradient(140deg, #3a3f6b, #1d3b44) border-box;
-    border: 1px solid transparent; border-radius: 10px;
-    box-shadow: 0 60px 120px rgba(0,0,0,.65);
+    background: transparent; border: 0; box-shadow: none;
   }
   /* floor grid */
-  .stage::before {
-    content: ""; position: absolute; inset: 0; border-radius: 10px;
-    background-image:
-      linear-gradient(rgba(124,140,255,.07) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(124,140,255,.07) 1px, transparent 1px);
-    background-size: 40px 40px;
-  }
+  .stage::before { content: none; }
   /* A room, not a rectangle. The plate is already rotated, so anything
      inside it that needs to stand up does so by rotating about its own top
      or left edge: the wall is a flat div stood on end. preserve-3d has to
      be repeated here or the walls flatten back into the floor. */
+  /* Each area is its own island with space around it, the way the reference
+     separates departments, instead of six rectangles sharing edges. The gap
+     is what lets you tell one room from the next at a glance. */
   .zone {
-    position: absolute; border-radius: 8px;
-    border: 1px solid rgba(124,140,255,.16);
+    position: absolute; border-radius: 10px;
+    border: 1px solid var(--border-2);
     background:
-      radial-gradient(120% 90% at 30% 20%, var(--glow, rgba(124,140,255,.10)), transparent 70%),
-      rgba(124,140,255,.03);
+      radial-gradient(130% 100% at 25% 15%, var(--tint, rgba(91,99,211,.14)), transparent 72%),
+      #e7e2d8;
     transform-style: preserve-3d;
-    /* Reads as the side of a raised slab: under the plate's rotation an
-       offset shadow runs along the floor diagonal rather than downward. */
-    box-shadow: 13px 13px 0 rgba(8,9,16,.92), 15px 15px 0 1px rgba(124,140,255,.10);
+    /* The slab's side. Under the plate's rotation this offset runs along the
+       floor diagonal, so it reads as thickness rather than a drop shadow. */
+    box-shadow:
+      14px 14px 0 #d4cec1,
+      16px 16px 0 1px var(--border-2),
+      26px 26px 42px rgba(60,52,38,.22);
+  }
+  .zone > span {
+    position: absolute; top: 8px; left: 12px; font-size: 11.5px; font-weight: 700;
+    letter-spacing: .1em; text-transform: uppercase; color: #4a4638;
+    background: rgba(255,255,255,.88); border: 1px solid var(--border);
+    border-radius: 999px; padding: 2px 10px;
+    transform: rotateZ(45deg) rotateX(-54deg); transform-origin: left top;
+    white-space: nowrap;
   }
   .wall {
     position: absolute; left: 0; top: 0;
-    background: linear-gradient(180deg, rgba(38,42,70,.96), rgba(20,22,38,.96));
-    border: 1px solid rgba(124,140,255,.20);
-    border-bottom: 0;
+    background: linear-gradient(180deg, #fbf9f5, #ece7dd);
+    border: 1px solid var(--border-2); border-bottom: 0;
   }
-  .wall.n { width: 100%; height: 34px; transform-origin: top;  transform: rotateX(-90deg); }
-  .wall.w { width: 34px; height: 100%; transform-origin: left; transform: rotateY(90deg); }
-  /* A strip of light where the wall meets the floor, which is what makes a
-     flat plate read as a room rather than a drawing of one. */
+  .wall.n { width: 100%; height: 30px; transform-origin: top;  transform: rotateX(-90deg); }
+  .wall.w { width: 30px; height: 100%; transform-origin: left; transform: rotateY(90deg); }
   .wall::after {
     content: ""; position: absolute; left: 6%; right: 6%; bottom: 0; height: 2px;
-    background: var(--glow, rgba(124,140,255,.5)); filter: blur(1px); opacity: .85;
+    background: var(--glow, rgba(91,99,211,.45)); filter: blur(1px); opacity: .7;
   }
 
-  /* A desk with a monitor on it, so an agent is sitting somewhere rather
-     than floating. Both are raised off the floor; the monitor stands up the
-     same way a wall does. */
   .spot { position: absolute; transform-style: preserve-3d; }
   .desk {
     position: absolute; width: 86px; height: 46px; left: -43px; top: -4px;
     border-radius: 6px; transform: translateZ(7px);
-    background: linear-gradient(160deg, #2a3152, #1b2036);
-    border: 1px solid #39416b;
-    box-shadow: 0 14px 22px rgba(0,0,0,.55);
+    background: linear-gradient(160deg, #cdb08a, #b8966e);
+    border: 1px solid #a5855f;
+    box-shadow: 0 12px 18px rgba(60,52,38,.30);
     transform-style: preserve-3d;
   }
   .mon {
     position: absolute; left: 23px; top: 5px; width: 42px; height: 25px;
     border-radius: 3px; transform-origin: bottom; transform: rotateX(-78deg);
-    background: linear-gradient(180deg, var(--glow, #6d7cff), rgba(10,12,22,.9));
-    border: 1px solid rgba(160,175,255,.35);
-    box-shadow: 0 0 14px var(--glow, rgba(124,140,255,.55));
+    background: linear-gradient(180deg, #ffffff, var(--glow, #8d95e8));
+    border: 1px solid #9a9384;
+    box-shadow: 0 0 10px var(--glow, rgba(91,99,211,.40));
   }
   .chair {
     position: absolute; width: 22px; height: 22px; left: -11px; top: 26px;
     border-radius: 6px; transform: translateZ(5px);
-    background: #262c47; border: 1px solid #39416b;
+    background: #4a4638; border: 1px solid #3a372c;
   }
-  .zone > span {
-    position: absolute; top: 8px; left: 12px; font-size: 12px; font-weight: 600;
-    letter-spacing: .1em; text-transform: uppercase; color: #aab2e8;
-    background: rgba(10,10,18,.72); border: 1px solid rgba(124,140,255,.18);
-    border-radius: 999px; padding: 2px 10px;
-    transform: rotateZ(45deg) rotateX(-54deg); transform-origin: left top;
-    white-space: nowrap;
-  }
-  .desk {
-    position: absolute; width: 54px; height: 30px; border-radius: 5px;
-    background: linear-gradient(180deg, #232a44, #1a1f33);
-    border: 1px solid #2f3757;
-  }
-
   /* an agent standing on the floor */
   .who {
     position: absolute; transform-style: preserve-3d; cursor: pointer;
@@ -213,16 +202,16 @@
   .who .ring {
     width: 54px; height: 54px; position: relative;
     display: grid; place-items: end center;
-    filter: drop-shadow(0 8px 14px rgba(0,0,0,.6));
+    filter: drop-shadow(0 8px 12px rgba(60,52,38,.35));
   }
   .who .ring svg { width: 100%; height: 100%; display: block; overflow: visible; }
   .who .ring .seat-body { fill: currentColor; }
   .who .ring .seat-head { fill: currentColor; }
-  .who .ring .seat-face { fill: rgba(8,9,16,.55); }
+  .who .ring .seat-face { fill: rgba(255,255,255,.55); }
   /* The initial rides on the chest, which keeps the figure identifiable at
      this size without a second label. */
   .who .ring .seat-init {
-    fill: rgba(8,9,16,.82); font: 700 11px var(--font-ui); text-anchor: middle;
+    fill: rgba(255,255,255,.95); font: 700 11px var(--font-ui); text-anchor: middle;
   }
   .who[data-state="working"] .ring::after {
     content: ""; position: absolute; left: 50%; bottom: -6px;
@@ -235,10 +224,10 @@
     100% { transform: scale(1.35); opacity: 0 }
   }
   .chip {
-    background: rgba(12,12,20,.92); border: 1px solid var(--border-2);
+    background: rgba(255,255,255,.96); border: 1px solid var(--border-2);
     border-radius: 999px; padding: 3px 11px; font-size: 12px;
     white-space: nowrap; display: flex; align-items: center; gap: 5px;
-    box-shadow: 0 4px 14px rgba(0,0,0,.5);
+    box-shadow: 0 6px 14px rgba(60,52,38,.22); color: var(--text);
   }
   .who[aria-current="true"] .chip { border-color: var(--accent); }
   .nm { font-weight: 600; }
@@ -253,25 +242,38 @@
   }
   .card-room > div {
     transform: rotateZ(45deg) rotateX(-54deg); transform-origin: left bottom;
-    background: rgba(12,13,22,.90); border: 1px solid var(--glow, rgba(124,140,255,.30));
-    border-radius: 10px; padding: 8px 11px; min-width: 132px;
-    box-shadow: 0 16px 34px rgba(0,0,0,.6);
+    background: #fff; border: 1px solid var(--border);
+    border-left: 3px solid var(--glow, var(--accent));
+    border-radius: 12px; padding: 9px 13px; min-width: 146px;
+    box-shadow: 0 18px 34px rgba(60,52,38,.22);
   }
   .card-room .rn {
     font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
-    color: var(--glow, #aab2e8); display: flex; align-items: center; gap: 6px;
+    color: var(--muted); display: flex; align-items: center; gap: 6px;
   }
-  .card-room .big { font-size: 21px; font-weight: 700; letter-spacing: -.02em; }
-  .card-room .big small { font-size: 10.5px; font-weight: 500; color: var(--muted); letter-spacing: .08em; }
-  .card-room .kv { display: flex; gap: 10px; margin-top: 4px; font-size: 11px; color: var(--muted); }
-  .card-room .kv b { color: var(--text); font-weight: 600; }
+  .card-room .big {
+    font-size: 24px; font-weight: 700; letter-spacing: -.02em; color: var(--text);
+  }
+  .card-room .big small { font-size: 10.5px; font-weight: 600; color: var(--muted); letter-spacing: .1em; }
+  .card-room .kv { display: flex; gap: 11px; margin-top: 3px; font-size: 11px; color: var(--muted); }
+  .card-room .kv b { color: var(--text); font-weight: 700; }
 
-  .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex: none; }
-  .dot.ready { background: var(--ok); }
-  .dot.working { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
-  .dot.waiting { background: var(--warn); }
-  .dot.idle { background: #4a4a58; }
-  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
+  /* The Brain, in the middle, where the reference puts it. It is a real page
+     in this product (/tasks/graph): what the platform knows about this
+     person. No note count is shown because nothing here counts them, and a
+     number nobody computed is the one thing this office does not do. */
+  .brain { position: absolute; left: 50%; top: 50%; transform-style: preserve-3d; }
+  .brain > a {
+    display: block; transform: rotateZ(45deg) rotateX(-54deg) translate(-50%, -50%);
+    transform-origin: left top;
+    background: #fff; border: 1px solid var(--border-2); border-radius: 999px;
+    padding: 7px 15px; text-decoration: none; color: var(--text);
+    font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+    box-shadow: 0 16px 30px rgba(60,52,38,.24); white-space: nowrap;
+    pointer-events: auto;
+  }
+  .brain > a:hover { border-color: var(--accent); color: var(--accent); }
+  .brain .spark { color: var(--accent); margin-right: 6px; }
 
   /* --- bottom strip --- */
   .strip {
@@ -281,7 +283,7 @@
   .strip h2 { font-size: 12px; color: var(--muted); margin: 0 0 9px; font-weight: 500; }
   .feed { list-style: none; margin: 0; padding: 0; display: flex; gap: 10px; overflow-x: auto; }
   .feed li {
-    background: var(--surface-2); border: 1px solid var(--border);
+    background: var(--surface); border: 1px solid var(--border);
     border-radius: var(--radius); padding: 9px 12px; min-width: 210px;
     font-size: 12.5px; display: flex; gap: 8px; align-items: center;
   }
@@ -297,6 +299,8 @@
   .role { color: var(--muted); font-size: 12.5px; }
   .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin: 16px 0 18px; }
   .stat { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 11px; }
+  .btn { box-shadow: 0 2px 0 rgba(60,52,38,.12); }
+  .btn.ghost { background: #fff; }
   .stat .k { color: var(--muted); font-size: 11px; }
   .stat .v { font-size: 18px; font-weight: 600; margin-top: 2px; letter-spacing: -.02em; }
   .section-title { font-size: 12px; color: var(--muted); margin: 0 0 9px; }
@@ -420,7 +424,7 @@
     return '<svg viewBox="0 0 54 54" aria-hidden="true">' +
       // chair back, behind the person
       '<rect x="14" y="20" width="26" height="24" rx="7" ' +
-        'fill="rgba(20,24,42,.95)" stroke="rgba(124,140,255,.22)"/>' +
+        'fill="#4a4638" stroke="rgba(0,0,0,.18)"/>' +
       // torso
       '<path class="seat-body" d="M15 46c0-9 5.4-14 12-14s12 5 12 14z"/>' +
       // the arm that reaches the desk, which is what sells "working"
@@ -449,20 +453,22 @@
   // somebody typed. First match wins, most specific first.
   var ZONES = [
     { key: "comms",     label: "Communication", tools: ["gmail"],
-      box: [4, 6, 30, 40],  glow: "rgba(244,114,182,.55)" },
+      box: [2, 4, 26, 34],   glow: "#e0609b" },
     { key: "research",  label: "Research",      tools: ["server:mcp-proxy", "fusion"],
-      box: [4, 52, 30, 42], glow: "rgba(34,211,238,.55)" },
+      box: [2, 62, 26, 34],  glow: "#1f9fb8" },
     { key: "dev",       label: "Development",   tools: ["code"],
-      box: [37, 6, 28, 40], glow: "rgba(96,165,250,.55)" },
+      box: [37, 2, 26, 30],  glow: "#4a7fd6" },
     { key: "knowledge", label: "Knowledge base", tools: ["gdrive", "documents"],
-      box: [37, 52, 28, 42], glow: "rgba(167,139,250,.55)" },
+      box: [37, 66, 26, 30], glow: "#8b6fd6" },
     { key: "automation", label: "Automation",   tools: ["schedules", "excel_creator", "executive_dashboard"],
-      box: [68, 6, 28, 40], glow: "rgba(251,146,60,.55)" },
+      box: [72, 4, 26, 34],  glow: "#d98330" },
     { key: "meeting",   label: "Meeting room",  tools: ["calendar"],
-      box: [68, 52, 28, 42], glow: "rgba(62,207,142,.55)" },
+      box: [72, 62, 26, 34], glow: "#1f9d63" },
   ];
-  var LOUNGE = { key: "lounge", label: "Lounge", box: [4, 6, 92, 88],
-                 glow: "rgba(124,140,255,.45)" };
+  // Nobody's desk in particular: an agent whose owner picked no tools reaches
+  // everything, so it stands in the open middle rather than being hidden.
+  var LOUNGE = { key: "lounge", label: "Open floor", box: [38, 36, 24, 26],
+                 glow: "#5b63d3" };
 
   function zoneFor(m) {
     var tools = toolsOf(m);
@@ -530,8 +536,10 @@
         if (stateOf(m.id).key === "working") working++;
       });
       var pct = runs ? Math.round(100 * done / runs) : null;
+      // Beside the island rather than on it: on the slab the card covered
+      // the desks it was describing.
       return '<div class="card-room" style="--glow:' + z.glow + ';left:' +
-        z.box[0] + '%;top:' + z.box[1] + '%"><div>' +
+        z.box[0] + '%;top:' + Math.max(0, z.box[1] - 13) + '%"><div>' +
         '<div class="rn"><i class="dot ' + (working ? "working" : "ready") +
           '"></i>' + esc(z.label) + '</div>' +
         '<div class="big">' + of.length + ' <small>' +
@@ -562,6 +570,14 @@
     }).join("");
 
     html += roomCards(placed);
+
+    // The Brain sits in the middle of the floor, as in the reference. It is a
+    // real page here, not an ornament: /tasks/graph is what the platform
+    // knows about this person, and every agent reads from it before it
+    // answers (agent_graph.graph_block).
+    html += '<div class="brain"><a href="/tasks/graph" title="What this ' +
+      'platform knows about you, which every agent reads before answering">' +
+      '<span class="spark">&#9679;</span>The Brain</a></div>';
 
     // A desk, a chair and a lit monitor under each agent, so somebody is
     // sitting in the room rather than hovering over it. Drawn before the
