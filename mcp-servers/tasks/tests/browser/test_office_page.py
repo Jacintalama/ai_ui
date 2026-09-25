@@ -567,3 +567,96 @@ def test_the_chat_and_skill_links_leave_the_frame(page):
     page.wait_for_timeout(150)
     assert page.locator("#side a.chat-with").get_attribute("target") == "_top"
     assert page.locator("#side a.skill").first.get_attribute("target") == "_top"
+
+
+# --- robot faces, and a colour the person picks -----------------------------
+# From the owner's own reference, assets/AI Agent Robots.html, which builds a
+# robot from a triple: body, a darker body2 for the gradient, and an accent
+# for the eyes, hands and antenna. Six palettes ship with it.
+
+def test_every_agent_is_drawn_as_a_robot(page):
+    assert page.locator(".who svg.bot").count() == page.locator(".who").count()
+    assert page.locator(".who .bot-eye").count() >= 2
+
+
+def test_the_robot_carries_the_agents_colour(page):
+    """Two agents, two palettes. A floor of identical robots is a floor you
+    cannot read, which is the thing that keeps going wrong here."""
+    fills = page.locator(".who svg.bot .bot-body").evaluate_all(
+        "els => els.map(e => e.getAttribute('fill'))")
+    assert len(set(fills)) == len(fills), fills
+
+
+def test_a_working_agent_wears_the_thinking_face(page):
+    """The reference has moods. The one that earns its place is thinking,
+    because an agent mid-run is the only thing on this floor that is
+    happening, and a face says it faster than a label."""
+    ada = page.locator('.who[data-id="agent-research-assistant-0001"] svg.bot')
+    # Any mark, not a count: how many shapes make the squint is the drawing's
+    # business, and the idle test below is what proves the mood is a choice.
+    assert ada.locator(".bot-think").count() >= 1
+
+
+def test_an_idle_agent_does_not(page):
+    iris = page.locator('.who[data-id="agent-iris-a103"] svg.bot')
+    assert iris.locator(".bot-think").count() == 0
+
+
+def test_the_panel_offers_colours_to_pick(page):
+    page.locator('.who[data-id="agent-iris-a103"]').click()
+    page.wait_for_timeout(150)
+    assert page.locator("#side .swatch").count() >= 6
+
+
+def test_picking_a_colour_changes_that_agent(page):
+    page.locator('.who[data-id="agent-iris-a103"]').click()
+    page.wait_for_timeout(150)
+    before = page.locator('.who[data-id="agent-iris-a103"] .bot-body'
+                          ).get_attribute("fill")
+    page.locator('#side .swatch[data-hue="orange"]').click()
+    page.wait_for_timeout(200)
+    after = page.locator('.who[data-id="agent-iris-a103"] .bot-body'
+                         ).get_attribute("fill")
+    assert after != before, (before, after)
+
+
+def test_it_only_changes_the_one_you_picked(page):
+    ada_before = page.locator('.who[data-id="agent-research-assistant-0001"] .bot-body'
+                              ).get_attribute("fill")
+    page.locator('.who[data-id="agent-iris-a103"]').click()
+    page.wait_for_timeout(150)
+    page.locator('#side .swatch[data-hue="orange"]').click()
+    page.wait_for_timeout(200)
+    ada_after = page.locator('.who[data-id="agent-research-assistant-0001"] .bot-body'
+                             ).get_attribute("fill")
+    assert ada_after == ada_before
+
+
+def test_the_colour_is_remembered(page):
+    """Per viewer, in localStorage, because it is how this person wants their
+    own office to look rather than a property of the agent. Guarded on read
+    and write: a private window throws and the office must still draw."""
+    page.locator('.who[data-id="agent-iris-a103"]').click()
+    page.wait_for_timeout(150)
+    page.locator('#side .swatch[data-hue="orange"]').click()
+    page.wait_for_timeout(200)
+    saved = page.evaluate("() => localStorage.getItem('aiuiOfficeColours')")
+    assert saved and "agent-iris-a103" in saved, saved
+
+
+def test_the_panel_shows_the_agent_as_a_robot_too(page):
+    """The header used a .ring class that no stylesheet ever defined, so it
+    rendered as a bare coloured bar. The face the floor shows belongs here."""
+    page.locator('.who[data-id="agent-iris-a103"]').click()
+    page.wait_for_timeout(150)
+    assert page.locator("#side .side-head svg.bot").count() == 1
+
+
+def test_two_robots_for_one_agent_do_not_share_a_gradient_id(page):
+    """The floor and the panel both draw Iris. A duplicate SVG id is invalid
+    and the second gradient would never be reached."""
+    page.locator('.who[data-id="agent-iris-a103"]').click()
+    page.wait_for_timeout(150)
+    ids = page.eval_on_selector_all(
+        "svg.bot linearGradient", "els => els.map(e => e.id)")
+    assert len(ids) == len(set(ids)), ids

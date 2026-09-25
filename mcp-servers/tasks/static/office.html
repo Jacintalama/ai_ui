@@ -143,7 +143,7 @@
   .desk {
     position: absolute; width: 92px; height: 54px; margin: -6px 0 0 -46px;
     border: 1px solid #344a68; border-radius: 9px; background: #101f33;
-    box-shadow: 0 8px 18px rgba(0,0,0,.22); z-index: 3;
+    box-shadow: 0 8px 18px rgba(0,0,0,.22); z-index: 14;
   }
   .desk::before {
     content: ""; position: absolute; left: 15px; right: 15px; top: 9px; height: 22px;
@@ -152,27 +152,31 @@
     box-shadow: inset 0 0 12px rgba(79,130,205,.14);
   }
 
+  /* A robot stands rather than sits in a disc, so the tile is taller than it
+     is wide and the anchor point is its feet: an agent belongs to the spot on
+     the floor it is standing on. */
   .who {
-    position: absolute; z-index: 12; width: 46px; height: 46px;
-    margin: -23px 0 0 -23px; border-radius: 50%;
-    display: grid; place-items: center; cursor: pointer;
-    font: inherit; font-size: 12px; font-weight: 800; color: #04121a;
-    border: 2px solid rgba(230,241,255,.22);
-    box-shadow: 0 10px 26px rgba(0,0,0,.45);
+    position: absolute; z-index: 12; width: 76px; height: 100px;
+    margin: -90px 0 0 -38px; background: none; border: 0; padding: 0;
+    cursor: pointer; font: inherit; color: inherit;
   }
-  .who[aria-current="true"] { border-color: var(--cyan); }
+  .who svg.bot { width: 100%; height: 100%; display: block; overflow: visible; }
+  .who[aria-current="true"] svg.bot { filter: drop-shadow(0 0 7px var(--cyan)); }
+  .who .bot-think { animation: blink 2.2s ease-in-out infinite; }
+  @keyframes blink { 0%, 88%, 100% { opacity: 1 } 94% { opacity: .2 } }
   /* the state light, bottom-right, as in the mockup */
   .who .dot {
-    position: absolute; right: -2px; bottom: -1px;
+    position: absolute; right: 6px; top: 18px;
     width: 12px; height: 12px; border: 2px solid var(--base);
   }
   .who[data-state="working"]::after {
-    content: ""; position: absolute; inset: -5px; border-radius: 50%;
-    border: 2px solid currentColor; animation: halo 1.5s ease-out infinite;
+    content: ""; position: absolute; left: 50%; top: 14px;
+    width: 58px; height: 58px; margin-left: -29px; border-radius: 50%;
+    border: 2px solid var(--cyan); animation: halo 1.5s ease-out infinite;
   }
   @keyframes halo { 0% { transform: scale(.9); opacity: .7 } 100% { transform: scale(1.35); opacity: 0 } }
   .who-label {
-    position: absolute; top: 50px; left: 50%; transform: translateX(-50%);
+    position: absolute; top: 142px; left: 50%; transform: translateX(-50%);
     white-space: nowrap; padding: 4px 8px; border: 1px solid var(--border-2);
     border-radius: 8px; background: rgba(7,15,27,.94);
     font-size: 10px; font-weight: 600; color: var(--text); pointer-events: none;
@@ -211,6 +215,12 @@
   }
   a.tag.skill { color: var(--text); border-color: var(--border-2); text-decoration: none; }
   a.tag.skill:hover { border-color: var(--cyan); color: var(--cyan); }
+  .side-bot { width: 54px; flex: 0 0 54px; }
+  .side-bot svg.bot { width: 100%; height: auto; display: block; }
+  .swatches { gap: 8px; }
+  .swatch { width: 28px; height: 28px; border-radius: 50%; cursor: pointer;
+            border: 2px solid transparent; padding: 0; }
+  .swatch[aria-current="true"] { outline: 2px solid var(--cyan); outline-offset: 2px; }
   .rows { list-style: none; margin: 0; padding: 0; }
   .rows li { display: flex; gap: 9px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
   .rows li:last-child { border-bottom: 0; }
@@ -312,17 +322,88 @@
     });
   }
 
-  // Cyan first, because it is the product's own colour. The rest spread
-  // around it so one floor of agents stays tellable apart at a glance.
-  var HUES = ["#22D3EE", "#34d399", "#a78bfa", "#f472b6", "#fbbf24", "#60a5fa", "#fb7185"];
-  function colourOf(id) {
+  // The palettes from the owner's own reference, assets/AI Agent Robots.html:
+  // a body, a darker body2 for the gradient, and an accent for eyes, hands and
+  // antenna. Named so a person can pick one by sight rather than by hex.
+  var PALETTES = [
+    { hue: "violet", accent: "#8b6bff", body: "#6c53d8", body2: "#4a3699" },
+    { hue: "green",  accent: "#3fd08f", body: "#1fa872", body2: "#127653" },
+    { hue: "blue",   accent: "#4d9bee", body: "#2d76c9", body2: "#1c5296" },
+    { hue: "pink",   accent: "#ef6fc9", body: "#c94ea3", body2: "#973b7c" },
+    { hue: "orange", accent: "#f0a24d", body: "#cc7f2b", body2: "#96591b" },
+    { hue: "cyan",   accent: "#3fc7d1", body: "#2597a1", body2: "#186e76" },
+  ];
+
+  var COLOUR_KEY = "aiuiOfficeColours";
+  var CHOSEN = {};
+  try { CHOSEN = JSON.parse(localStorage.getItem(COLOUR_KEY) || "{}") || {}; }
+  catch (e) { CHOSEN = {}; }      // a private window throws; the office still draws
+
+  // The one this person picked, or a stable one from the id so the same agent
+  // is the same robot on every reload without anybody choosing.
+  function paletteOf(id) {
+    var picked = CHOSEN[id];
+    if (picked) {
+      for (var i = 0; i < PALETTES.length; i++) {
+        if (PALETTES[i].hue === picked) return PALETTES[i];
+      }
+    }
     var n = 0;
-    for (var i = 0; i < id.length; i++) n = (n * 31 + id.charCodeAt(i)) >>> 0;
-    return HUES[n % HUES.length];
+    for (var j = 0; j < id.length; j++) n = (n * 31 + id.charCodeAt(j)) >>> 0;
+    return PALETTES[n % PALETTES.length];
   }
-  function initials(name) {
-    var p = String(name || "?").trim().split(/\s+/);
-    return (p[0][0] + (p[1] ? p[1][0] : "")).toUpperCase();
+  function colourOf(id) { return paletteOf(id).accent; }
+
+  function pickColour(id, hue) {
+    CHOSEN[id] = hue;
+    // Per viewer, because it is how this person wants their own office to
+    // look rather than a property of the agent. Making it the agent's would
+    // mean writing the whole model row back through Open WebUI's update
+    // endpoint, and a partial body there can drop tools or instructions.
+    try { localStorage.setItem(COLOUR_KEY, JSON.stringify(CHOSEN)); }
+    catch (e) { /* not worth losing the choice on screen over */ }
+    draw();
+  }
+
+  // The robot, from assets/AI Agent Robots.html. Trimmed to what survives at
+  // this size: head, face, body, arms and feet. The legs and the walking
+  // animation in the reference are for a 220px portrait and turn to mud on a
+  // floor tile.
+  function robot(id, thinking, ns) {
+    var a = paletteOf(id), uid = (ns || "f") + id.replace(/[^a-z0-9]/gi, "");
+    // Thinking is the only mood worth carrying: an agent mid-run is the one
+    // thing on this floor that is happening, and a face says it faster than
+    // a label does.
+    var eyes = thinking
+      ? '<ellipse class="bot-eye bot-think" cx="58" cy="70" rx="8" ry="9" fill="' + a.accent + '"/>' +
+        '<rect class="bot-think" x="74" y="68" width="16" height="4" rx="2" fill="' + a.accent + '"/>'
+      : '<ellipse class="bot-eye" cx="58" cy="70" rx="8" ry="9" fill="' + a.accent + '"/>' +
+        '<ellipse class="bot-eye" cx="82" cy="70" rx="8" ry="9" fill="' + a.accent + '"/>' +
+        '<circle cx="55" cy="67" r="2.4" fill="#fff"/><circle cx="79" cy="67" r="2.4" fill="#fff"/>';
+    // Wide enough for the arms and the floor shadow. A tighter box drew them
+    // only because the tile allowed overflow, which the panel portrait does not.
+    return '<svg class="bot" viewBox="4 0 132 182" aria-hidden="true">' +
+      '<defs><linearGradient id="g' + uid + '" x1="0" y1="0" x2="1" y2="1">' +
+        '<stop offset="0%" stop-color="' + a.body + '"/>' +
+        '<stop offset="100%" stop-color="' + a.body2 + '"/></linearGradient></defs>' +
+      '<ellipse cx="70" cy="170" rx="38" ry="7" fill="#000" opacity=".26"/>' +
+      '<rect class="bot-arm" x="16" y="102" width="15" height="48" rx="7" fill="url(#g' + uid + ')"/>' +
+      '<rect class="bot-arm" x="109" y="102" width="15" height="48" rx="7" fill="url(#g' + uid + ')"/>' +
+      '<circle cx="23" cy="154" r="8" fill="' + a.accent + '"/>' +
+      '<circle cx="117" cy="154" r="8" fill="' + a.accent + '"/>' +
+      '<rect class="bot-body" x="34" y="90" width="72" height="72" rx="18" ' +
+        'fill="' + a.body + '"/>' +
+      '<rect x="46" y="104" width="48" height="30" rx="10" fill="#0c1220"/>' +
+      '<rect x="54" y="140" width="32" height="8" rx="4" fill="#0c1220"/>' +
+      '<circle cx="70" cy="144" r="3" fill="' + a.accent + '"/>' +
+      '<rect x="62" y="14" width="16" height="34" rx="8" fill="url(#g' + uid + ')"/>' +
+      '<line x1="70" y1="6" x2="70" y2="16" stroke="' + a.accent + '" stroke-width="3" stroke-linecap="round"/>' +
+      '<circle cx="70" cy="6" r="5" fill="' + a.accent + '"/>' +
+      '<rect x="30" y="46" width="80" height="46" rx="16" fill="url(#g' + uid + ')"/>' +
+      '<rect x="42" y="58" width="56" height="24" rx="8" fill="#0c1220"/>' + eyes +
+      '<rect x="44" y="15" width="10" height="24" rx="5" fill="' + a.accent + '" opacity=".8"/>' +
+      '<rect x="86" y="15" width="10" height="24" rx="5" fill="' + a.accent + '" opacity=".8"/>' +
+      '</svg>';
   }
   function ago(iso) {
     if (!iso) return "never";
@@ -407,9 +488,11 @@
     return '<div class="desk" style="left:' + x + '%;top:' + (y + 6) + '%"></div>' +
       '<button class="who" data-id="' + esc(m.id) + '" data-state="' + st.key + '"' +
       (SELECTED === m.id ? ' aria-current="true"' : "") +
-      ' style="left:' + x + '%;top:' + y + '%;background:' + c + ';color:' + c + '"' +
+      // No background: the robot IS the avatar now. The colour stays as the
+      // element's own colour so the dot and the label pick it up.
+      ' style="left:' + x + '%;top:' + y + '%;color:' + c + '"' +
       ' title="' + esc(st.label) + '">' +
-      '<span style="color:#04121a">' + esc(initials(m.name)) + '</span>' +
+      robot(m.id, st.key === "working") +
       '<i class="dot ' + st.key + '"></i>' +
       // The role normally, but the STATE the moment there is one worth
       // reading. A dot alone says something is happening without saying
@@ -566,8 +649,7 @@
 
     side.innerHTML =
       '<div class="side-head">' +
-        '<div class="ring" style="background:' + colourOf(m.id) + '">' +
-          esc(initials(m.name)) + '</div>' +
+        '<div class="side-bot">' + robot(m.id, st.key === "working", "p") + '</div>' +
         '<div><h2>' + esc(m.name || m.id) + '</h2>' +
         '<div class="st"><i class="dot ' + st.key + '"></i>' + esc(st.label) + '</div></div>' +
       '</div>' +
@@ -579,6 +661,17 @@
         '<div class="stat"><div class="k">Average run</div><div class="v">' + avg + '</div></div>' +
         '<div class="stat"><div class="k">Finished cleanly</div><div class="v">' + success + '</div></div>' +
         '<div class="stat"><div class="k">Spent</div><div class="v">' + cost + '</div></div>' +
+      '</div>' +
+      '<p class="section-title" style="margin-top:18px">Colour</p>' +
+      '<div class="tags swatches">' +
+        PALETTES.map(function (pal) {
+          return '<button class="swatch" type="button" data-hue="' + pal.hue +
+            '" title="' + pal.hue + '" aria-label="Make ' + esc(m.name || m.id) +
+            ' ' + pal.hue + '" style="background:' + pal.body +
+            ';border-color:' + pal.accent + '"' +
+            (paletteOf(m.id).hue === pal.hue ? ' aria-current="true"' : "") +
+            '></button>';
+        }).join("") +
       '</div>' +
       canDo(m) +
       '<p class="section-title" style="margin-top:18px">Recent activity</p>' + recent +
@@ -680,6 +773,11 @@
     if (!who) return;
     SELECTED = who.getAttribute("data-id");
     draw();
+  });
+  document.getElementById("side").addEventListener("click", function (ev) {
+    var sw = ev.target.closest(".swatch");
+    if (!sw || !SELECTED) return;
+    pickColour(SELECTED, sw.getAttribute("data-hue"));
   });
   document.getElementById("q").addEventListener("input", draw);
   ["office", "activity"].forEach(function (name) {
