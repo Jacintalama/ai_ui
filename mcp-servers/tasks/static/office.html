@@ -137,6 +137,9 @@
       radial-gradient(120% 90% at 30% 20%, var(--glow, rgba(124,140,255,.10)), transparent 70%),
       rgba(124,140,255,.03);
     transform-style: preserve-3d;
+    /* Reads as the side of a raised slab: under the plate's rotation an
+       offset shadow runs along the floor diagonal rather than downward. */
+    box-shadow: 13px 13px 0 rgba(8,9,16,.92), 15px 15px 0 1px rgba(124,140,255,.10);
   }
   .wall {
     position: absolute; left: 0; top: 0;
@@ -158,7 +161,7 @@
      same way a wall does. */
   .spot { position: absolute; transform-style: preserve-3d; }
   .desk {
-    position: absolute; width: 74px; height: 40px; left: -37px; top: -6px;
+    position: absolute; width: 86px; height: 46px; left: -43px; top: -4px;
     border-radius: 6px; transform: translateZ(7px);
     background: linear-gradient(160deg, #2a3152, #1b2036);
     border: 1px solid #39416b;
@@ -166,7 +169,7 @@
     transform-style: preserve-3d;
   }
   .mon {
-    position: absolute; left: 18px; top: 4px; width: 38px; height: 22px;
+    position: absolute; left: 23px; top: 5px; width: 42px; height: 25px;
     border-radius: 3px; transform-origin: bottom; transform: rotateX(-78deg);
     background: linear-gradient(180deg, var(--glow, #6d7cff), rgba(10,12,22,.9));
     border: 1px solid rgba(160,175,255,.35);
@@ -201,15 +204,30 @@
     transform-origin: center bottom;
     display: flex; flex-direction: column; align-items: center; gap: 5px;
   }
+  /* A person, not a disc. The reference reads as an office because there are
+     people sitting in it; ours read as tokens on a board. Drawn rather than
+     taken: the repository the owner pointed at is PolyForm Noncommercial with
+     terms forbidding its use to front another agent system, so its art is not
+     ours to lift. This is a head, shoulders and an arm on the desk, which is
+     all a 54px figure needs to look seated. */
   .who .ring {
-    width: 50px; height: 50px; border-radius: 50%;
-    display: grid; place-items: center; font-weight: 700; font-size: 15px;
-    color: #0b0b12; position: relative;
-    box-shadow: 0 6px 18px rgba(0,0,0,.55);
+    width: 54px; height: 54px; position: relative;
+    display: grid; place-items: end center;
+    filter: drop-shadow(0 8px 14px rgba(0,0,0,.6));
+  }
+  .who .ring svg { width: 100%; height: 100%; display: block; overflow: visible; }
+  .who .ring .seat-body { fill: currentColor; }
+  .who .ring .seat-head { fill: currentColor; }
+  .who .ring .seat-face { fill: rgba(8,9,16,.55); }
+  /* The initial rides on the chest, which keeps the figure identifiable at
+     this size without a second label. */
+  .who .ring .seat-init {
+    fill: rgba(8,9,16,.82); font: 700 11px var(--font-ui); text-anchor: middle;
   }
   .who[data-state="working"] .ring::after {
-    content: ""; position: absolute; inset: -6px; border-radius: 50%;
-    border: 2px solid currentColor; opacity: .55;
+    content: ""; position: absolute; left: 50%; bottom: -6px;
+    width: 46px; height: 46px; margin-left: -23px; border-radius: 50%;
+    border: 2px solid currentColor; opacity: .5;
     animation: halo 1.6s ease-out infinite;
   }
   @keyframes halo {
@@ -394,6 +412,26 @@
     return meta.description || params.system || meta.agent_instructions || "";
   }
 
+  // One seated person, in the agent's own colour. Head, shoulders and an arm
+  // resting on the desk is everything a figure this size needs to read as
+  // sitting; more detail just turns to mud at 54 pixels. currentColor is set
+  // on the wrapper, so the same markup serves every agent.
+  function seated(init) {
+    return '<svg viewBox="0 0 54 54" aria-hidden="true">' +
+      // chair back, behind the person
+      '<rect x="14" y="20" width="26" height="24" rx="7" ' +
+        'fill="rgba(20,24,42,.95)" stroke="rgba(124,140,255,.22)"/>' +
+      // torso
+      '<path class="seat-body" d="M15 46c0-9 5.4-14 12-14s12 5 12 14z"/>' +
+      // the arm that reaches the desk, which is what sells "working"
+      '<path class="seat-body" d="M36 38c5 1.6 8 3.4 10 5.6l-3.4 3.6c-2-2-4.6-3.4-8-4.4z"/>' +
+      // head
+      '<circle class="seat-head" cx="27" cy="22" r="8.2"/>' +
+      '<circle class="seat-face" cx="27" cy="22" r="5.4"/>' +
+      '<text class="seat-init" x="27" y="45">' + esc(init) + '</text>' +
+      '</svg>';
+  }
+
   function stateOf(id) {
     var a = ACTIVITY[id];
     if (!a) return { key: "idle", label: "No runs yet" };
@@ -541,7 +579,7 @@
         (SELECTED === m.id ? ' aria-current="true"' : "") +
         ' style="left:' + s.left.toFixed(1) + '%;top:' + s.top.toFixed(1) + '%">' +
         '<span class="who-inner" style="color:' + c + '">' +
-          '<span class="ring" style="background:' + c + '">' + esc(initials(m.name)) + '</span>' +
+          '<span class="ring">' + seated(initials(m.name)) + '</span>' +
           '<span class="chip"><i class="dot ' + st.key + '"></i>' +
             '<span class="nm card-name">' + esc(m.name || m.id) + '</span>' +
             '<span class="st">' + esc(st.label) + '</span></span>' +

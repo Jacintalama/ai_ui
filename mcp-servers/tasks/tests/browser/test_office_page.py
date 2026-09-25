@@ -458,3 +458,40 @@ def test_the_room_card_weights_success_by_runs(page):
     cards = page.locator(".card-room").all_inner_texts()
     ada = [c for c in cards if "801" in c][0]
     assert "40%" in ada, ada
+
+
+# --- people, not tokens -----------------------------------------------------
+# The reference the owner kept sending reads as an office because there are
+# people sitting in it. Ours read as coloured discs on a board. The figure is
+# drawn here rather than taken: that repository is PolyForm Noncommercial with
+# terms forbidding its use to front another agent system, so its art is not
+# ours to lift.
+
+def test_every_agent_is_drawn_as_a_person(page):
+    assert page.locator(".who .ring svg").count() == page.locator(".who").count()
+    assert page.locator(".who .ring .seat-head").count() == page.locator(".who").count()
+
+
+def test_the_figure_wears_the_agents_colour(page):
+    """One figure per agent in its own colour, so the floor is readable at a
+    glance rather than a row of identical silhouettes."""
+    colours = page.locator(".who .who-inner").evaluate_all(
+        "els => els.map(e => getComputedStyle(e).color)")
+    assert len(set(colours)) == len(colours), colours
+
+
+def test_the_initial_still_identifies_the_figure(page):
+    """A name chip sits below, but at this size the initial on the chest is
+    what makes one figure tellable from another mid-glance."""
+    # textContent, not inner_text: an SVG <text> node has no rendered inner
+    # text and Playwright hands back None for every one of them.
+    inits = page.locator(".who .seat-init").evaluate_all(
+        "els => els.map(e => e.textContent)")
+    assert sorted(inits) == ["A", "I"], inits
+
+
+def test_a_working_agent_still_pulses(page):
+    """The halo moved from around a disc to around the chair. It has to
+    survive the redraw, because it is the only thing on the floor that says
+    something is happening right now."""
+    assert page.locator('.who[data-state="working"]').count() == 1
