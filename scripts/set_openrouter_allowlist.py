@@ -48,13 +48,21 @@ KEY = os.environ.get("OPENWEBUI_API_KEY", "")
 if not KEY:
     sys.exit("OPENWEBUI_API_KEY is required")
 
+#: Must stay in step with OPENAI_API_CONFIGS and AGENT_FREE_MODELS in
+#: docker-compose.unified.yml. The first four are the agent pool, in order.
+#:
+#: 2026-09-28: nex-agi/nex-n2.5-pro:free and nex-agi/nex-n2.5-mini:free were
+#: withdrawn upstream and are gone from here. They were two of the three ids
+#: in the agent pool, which left it with one served model and therefore with
+#: no fallback at all, since an agent is never offered the model it already
+#: runs on. Their replacements were each checked by sending a real tool call
+#: and reading back a valid tool_call.
 WANTED = [
     "nvidia/nemotron-3-super-120b-a12b:free",
-    "nex-agi/nex-n2.5-pro:free",
-    "nex-agi/nex-n2.5-mini:free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "nvidia/nemotron-3.5-lightning:free",
     "cohere/north-mini-code:free",
     "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-    "nvidia/nemotron-3-ultra-550b-a55b:free",
     "google/gemini-2.5-flash-lite",
     "openai/gpt-5-mini",
     "anthropic/claude-haiku-4.5",
