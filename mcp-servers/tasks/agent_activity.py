@@ -171,62 +171,40 @@ async def finish_run(run_id: str | None, status: str,
                        exc_info=True)
 
 
-async def start_step(run_id: str | None, agent_id: str, user_email: str,
-                     tool: str, target_agent_id: str | None = None
-                     ) -> str | None:
-    """Record that a run has started one tool call. Returns the step id.
+async def record_step(run_id: str | None, agent_id: str, user_email: str,
+                      tool: str, status: str,
+                      target_agent_id: str | None = None) -> None:
+    """Record one tool call: what ran, for whom, and how it ended.
 
-    None means it was not recorded, and every caller carries on regardless.
-    A run that was never recorded (start_run returned None) has nothing for
-    a step to hang off, so that returns None too rather than writing an
-    orphan.
+    One write, not a start-then-finish pair. By the time the tool loop calls
+    this the call has already run and its status is already known, so a row
+    opened as 'running' and immediately overwritten describes no in-flight
+    window anyone could ever observe -- it only bought a second round trip
+    and a second commit on a hot path. (There used to be a start_step /
+    finish_step pair here; removed 2026-09-29 for exactly that reason.)
 
-    No arguments and no result are stored, only the tool's name. See the
-    migration for why.
+    Safe to call with no run_id: a run that was never recorded (start_run
+    returned None) has nothing for a step to hang off. No arguments and no
+    result are stored, only the tool's name. See the migration for why.
     """
     if not run_id or not tool:
-        return None
-    step_id = str(uuid.uuid4())
+        return
     try:
         async with session() as s:
             await s.execute(
                 sql_text(
                     "INSERT INTO tasks.agent_step "
                     "(id, run_id, agent_id, user_email, tool, "
-                    "target_agent_id, status) "
+                    "target_agent_id, status, finished_at) "
                     "VALUES (:id, :run_id, :agent_id, :user_email, :tool, "
-                    ":target, 'running')"),
-                {"id": step_id, "run_id": run_id, "agent_id": agent_id,
-                 "user_email": user_email, "tool": tool,
-                 "target": target_agent_id})
-            await s.commit()
-        return step_id
-    except Exception:                                       # noqa: BLE001
-        logger.warning("could not record the start of a tool call",
-                       exc_info=True)
-        return None
-
-
-async def finish_step(step_id: str | None, status: str) -> None:
-    """Close a step out. Safe to call with None.
-
-    A refused call is finished too: a refusal is a fact worth recording, and
-    a row left saying `running` for ever would read as a tool that hung.
-    """
-    if not step_id:
-        return
-    try:
-        async with session() as s:
-            await s.execute(
-                sql_text(
-                    "UPDATE tasks.agent_step "
-                    "SET finished_at = now(), status = :status "
-                    "WHERE id = :id"),
-                {"id": step_id, "status": status})
+                    ":target, :status, now())"),
+                {"id": str(uuid.uuid4()), "run_id": run_id,
+                 "agent_id": agent_id, "user_email": user_email,
+                 "tool": tool, "target": target_agent_id,
+                 "status": status})
             await s.commit()
     except Exception:                                       # noqa: BLE001
-        logger.warning("could not record the end of a tool call",
-                       exc_info=True)
+        logger.warning("could not record a tool call", exc_info=True)
 
 
 async def mark_escalated(run_id: str | None, reason: str | None) -> None:

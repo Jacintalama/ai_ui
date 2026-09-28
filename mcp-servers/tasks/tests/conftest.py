@@ -38,10 +38,31 @@ os.environ.setdefault(
 )
 
 from db import init_db  # noqa: E402
+import agent_activity  # noqa: E402
 
 # Use the same DB as the running app — DATABASE_URL is set in the container env.
 RAW_DB_URL = os.environ["DATABASE_URL"]
 SQLA_DB_URL = RAW_DB_URL.replace("postgresql://", "postgresql+asyncpg://")
+
+
+@pytest.fixture(autouse=True)
+def _no_agent_step_recording(monkeypatch):
+    """Mute agent_activity.record_step everywhere, by default.
+
+    DATABASE_URL above is deliberately a bogus host so DB-less tests can be
+    collected at all. That means any test that drives the agent tool loop
+    without patching agent_activity itself pays a real DNS-lookup timeout
+    (~2s) per tool call for bookkeeping it never asked to exercise — and
+    there are several such files. A test that genuinely wants to verify
+    recording repatches record_step inside its own body; since that runs
+    after this fixture's setup on the same monkeypatch object, its patch
+    simply wins for that test, and monkeypatch unwinds both in the right
+    order afterward.
+    """
+    async def _noop(*args, **kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(agent_activity, "record_step", _noop)
 
 
 @pytest_asyncio.fixture

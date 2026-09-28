@@ -616,10 +616,9 @@ class _Escalation:
 async def _record_step(run_id, agent_id, user_email, call, status) -> None:
     """Write one tool call down, and never let that cost a turn.
 
-    Open and closed in one go rather than around the call itself: the
-    interesting facts are which tool, on whose behalf, and how it ended, and
-    a step that opens before a tool runs would need a second write on every
-    path out of a loop that has several.
+    One write, not a start/finish pair: the tool has already run and status
+    is already known by the time this is called, so there is no in-flight
+    window for an opening write to describe.
 
     A handoff carries who was asked, which is what turns this one table into
     the record of both what an agent is doing and who it is working with.
@@ -635,9 +634,8 @@ async def _record_step(run_id, agent_id, user_email, call, status) -> None:
         if name == HANDOFF_TOOL:
             args = arguments_of(call) or {}
             target = str(args.get("agent") or "") or None
-        step_id = await agent_activity.start_step(
-            run_id, agent_id, user_email, name, target)
-        await agent_activity.finish_step(step_id, status)
+        await agent_activity.record_step(
+            run_id, agent_id, user_email, name, status, target)
     except Exception:                                       # noqa: BLE001
         logger.warning("could not record a tool call", exc_info=True)
 
