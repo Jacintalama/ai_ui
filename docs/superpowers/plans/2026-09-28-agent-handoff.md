@@ -1538,7 +1538,9 @@ cd "C:/All/Work - Code/ai_ui"
 for f in mcp-servers/tasks/agent_access.py mcp-servers/tasks/agent_handoff.py \
          mcp-servers/tasks/agent_activity.py mcp-servers/tasks/agent_tools.py \
          mcp-servers/tasks/agent_runner.py mcp-servers/tasks/routes_agent_turn.py \
-         mcp-servers/tasks/migrations/052_agent_step.sql; do
+         mcp-servers/tasks/migrations/052_agent_step.sql \
+         open-webui-functions/colleague_tool.py \
+         scripts/install_colleague_tool.py; do
   S=$(ssh root@46.224.193.25 "md5sum /root/proxy-server/$f 2>/dev/null | cut -d' ' -f1")
   P=$(git show HEAD~1:$f 2>/dev/null | tr -d '\r' | md5sum | cut -d' ' -f1)
   echo "$f $([ "$S" = "$P" ] && echo SWEEP-OK || echo DRIFT)"
@@ -1546,6 +1548,8 @@ done
 ```
 
 Any `DRIFT` means somebody edited that file on the box. Stop and reconcile before deploying.
+
+`open-webui-functions/colleague_tool.py` and `scripts/install_colleague_tool.py` are in that list because Step 3 runs the installer **on the box** and it reads the tool source from beside itself. Neither is in `deploy_orchestrator.sh`'s watched paths, so both need a manual `scp`.
 
 - [ ] **Step 2: Confirm the migration applied**
 
@@ -1556,10 +1560,34 @@ Expected: `1`
 
 - [ ] **Step 3: Install the tool row and grant it**
 
+Three things, and the grant is not optional. This platform replaced Open WebUI's JSON `access_control` with the `public.access_grant` table, and `scripts/grant_tools_public.py` says what a tool with no grant is: reachable by nobody. A row with no grant looks like a working install and no model will ever offer the tool. `install_colleague_tool.py` now does the row and the grant in one run, so it needs `DATABASE_URL` as well as the API key:
+
 ```bash
-ssh root@46.224.193.25 "cd /root/proxy-server && export OPENWEBUI_API_KEY=\$(grep -m1 '^OPENWEBUI_API_KEY=' .env | cut -d= -f2-) && python3 scripts/install_colleague_tool.py --apply"
+ssh root@46.224.193.25 "cd /root/proxy-server && export OPENWEBUI_API_KEY=\$(grep -m1 '^OPENWEBUI_API_KEY=' .env | tr -d '\r' | cut -d= -f2-) && export DATABASE_URL=\$(grep -m1 '^DATABASE_URL=' .env | tr -d '\r' | cut -d= -f2-) && python3 scripts/install_colleague_tool.py --apply"
 ```
-Expected: `specs: ['ask_colleague']` then `ok`.
+
+Expected, all four lines:
+
+```
+/api/v1/tools/create -> 200          (or .../colleague/update -> 200 on a re-run)
+functions offered to the model: ['ask_colleague']
+public read grant: granted           (or "already there" on a re-run)
+ok. Now add colleague to an agent's meta.toolIds so it can reach the tool.
+```
+
+If this host cannot reach Postgres directly, the script says so and exits non-zero rather than reporting a half install. Do the row alone, then the grant from inside the network:
+
+```bash
+ssh root@46.224.193.25 "cd /root/proxy-server && export OPENWEBUI_API_KEY=\$(grep -m1 '^OPENWEBUI_API_KEY=' .env | tr -d '\r' | cut -d= -f2-) && python3 scripts/install_colleague_tool.py --apply --skip-grant"
+ssh root@46.224.193.25 "docker exec tasks python3 /workspace/ai_ui/scripts/grant_tools_public.py colleague"
+```
+
+Confirm the grant landed whichever way it was done:
+
+```bash
+ssh root@46.224.193.25 "docker exec postgres psql -U openwebui -d openwebui -tAc \"SELECT count(*) FROM public.access_grant WHERE resource_type='tool' AND resource_id='colleague' AND principal_id='*' AND permission='read';\""
+```
+Expected: `1`
 
 Then add `colleague` to one agent's `meta.toolIds` so it can actually reach it.
 
