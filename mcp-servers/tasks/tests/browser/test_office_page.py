@@ -692,3 +692,61 @@ def test_clicking_the_robot_still_selects_it(page):
     page.locator('.who[data-id="agent-iris-a103"]').click()
     page.wait_for_timeout(150)
     assert page.locator("#side h2").inner_text() == "Iris"
+
+
+# --- moving around the floor -------------------------------------------------
+# "can the user zoom in zoom out move inside the agent office. not scroll only"
+#
+# Zoom alone is not enough: zoomed in past the fit, the only way to reach the
+# rest of the floor was the browser's scrollbars, which is a poor way to move
+# around a plan and does not work at all once the floor is scaled inside a
+# card that has its own scrolling.
+
+def _floor_origin(page):
+    return page.locator("#rooms").evaluate(
+        "el => { const r = el.getBoundingClientRect(); return [r.left, r.top]; }")
+
+
+def test_the_floor_can_be_dragged_to_move_around(page):
+    page.locator("#zoom-in").click()
+    page.locator("#zoom-in").click()
+    page.wait_for_timeout(150)
+    before = _floor_origin(page)
+    box = page.locator("#floor-fit").bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(box["x"] + box["width"] / 2 - 120,
+                    box["y"] + box["height"] / 2 - 60, steps=8)
+    page.mouse.up()
+    page.wait_for_timeout(150)
+    after = _floor_origin(page)
+    assert after[0] < before[0] - 40, (before, after)
+    assert after[1] < before[1] - 20, (before, after)
+
+
+def test_fit_puts_it_back(page):
+    """Fit means the whole office, so it has to undo a pan as well as a
+    zoom. Otherwise Fit leaves you looking at an empty corner."""
+    page.locator("#zoom-in").click()
+    page.wait_for_timeout(120)
+    box = page.locator("#floor-fit").bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(box["x"] + 30, box["y"] + 30, steps=6)
+    page.mouse.up()
+    page.wait_for_timeout(150)
+    page.locator("#zoom-fit").click()
+    page.wait_for_timeout(200)
+    assert page.locator("#zoom-fit").inner_text() == "Fit"
+    spill = page.locator("#rooms").evaluate(
+        "el => el.getBoundingClientRect().right"
+        " - document.getElementById('floor-fit').getBoundingClientRect().right")
+    assert spill <= 2, spill
+
+
+def test_dragging_a_robot_is_not_a_pan(page):
+    """The robots are buttons. A click on one has to still select it rather
+    than be swallowed by the thing that moves the floor."""
+    page.locator('.who[data-id="agent-iris-a103"]').click()
+    page.wait_for_timeout(200)
+    assert page.locator("#side h2").inner_text() == "Iris"

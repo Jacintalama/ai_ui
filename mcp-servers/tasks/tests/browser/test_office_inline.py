@@ -427,3 +427,16 @@ def test_the_message_carries_the_conversation_it_belongs_to(page):
     page.wait_for_timeout(200)
     assert page.locator(
         ".ap-composer input[name=agent]").input_value() == "agent-iris-a103"
+
+
+def test_fit_leaves_nothing_hanging_below_the_view(page):
+    """"can you make it small.. so its fit tio the box."
+
+    Measured at 860x470 with seven agents: the floor fitted across but the
+    page was 81px taller than the frame, so the card showed a scrollbar and
+    the bottom of the office was cut off. The fit reserved room for what sits
+    ABOVE the floor and nothing for the live activity strip below it."""
+    over = page.frame_locator("#office-body iframe").locator("body").evaluate(
+        "() => document.documentElement.scrollHeight"
+        " - document.documentElement.clientHeight")
+    assert over <= 4, over

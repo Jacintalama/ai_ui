@@ -115,7 +115,11 @@
   /* Scaled as a whole rather than reflowed. The floor is drawn at one fixed
      size and shrunk to whatever room it is given, so every room, robot and
      label keeps its proportions and the WHOLE office is always visible. */
-  .floor-fit { position: relative; overflow: hidden; }
+  .floor-fit { position: relative; overflow: hidden; cursor: grab; }
+  .floor-fit.panning { cursor: grabbing; }
+  /* While the floor is being dragged, nothing under the pointer should
+     decide it was clicked. */
+  .floor-fit.panning .who, .floor-fit.panning a { pointer-events: none; }
   .floor {
     position: absolute; top: 0; left: 0; transform-origin: 0 0;
     width: 1040px; height: 680px;
@@ -892,6 +896,11 @@
   var CANVAS_W = 1040, CANVAS_H = 680;
   var ZOOM_KEY = "aiuiOfficeZoom";
   var ZOOM = null;                  // null = fit; a number = the person chose
+  //: How far the floor has been dragged from its resting place. Zoom alone
+  //: left the browser's scrollbars as the only way to reach the rest of a
+  //: floor you had zoomed into, which is a poor way to move around a plan
+  //: and does not work at all inside a card that scrolls itself.
+  var PAN_X = 0, PAN_Y = 0;
 
   try {
     var kept = parseFloat(localStorage.getItem(ZOOM_KEY) || "");
@@ -909,7 +918,25 @@
     // enough to be clicked.
     var top = 0, el = fit;
     while (el) { top += el.offsetTop; el = el.offsetParent; }
-    var h = Math.max(160, (window.innerHeight || CANVAS_H) - top - 16);
+    // And what sits BELOW it. Reserving only the space above left the live
+    // activity strip hanging past the bottom: measured at 860x470 with seven
+    // agents the page came out 81px taller than the frame, so the card
+    // scrolled and the bottom of the office was cut off.
+    // Walked UP as well as along: the live activity strip is not a sibling
+    // of the wrapper, it sits outside the panel the wrapper is in, so
+    // looking only at the wrapper's own siblings found nothing and the fit
+    // was still 81px too tall.
+    var below = 0, node = fit;
+    while (node && node !== document.body) {
+      var sib = node.nextElementSibling;
+      while (sib) {
+        if (!sib.hidden) below += sib.offsetHeight || 0;
+        sib = sib.nextElementSibling;
+      }
+      node = node.parentElement;
+    }
+    var h = Math.max(160,
+                     (window.innerHeight || CANVAS_H) - top - below - 16);
     return Math.min(w / CANVAS_W, h / CANVAS_H);
   }
 
@@ -919,7 +946,11 @@
     if (!fit || !floor) return;
     var k = ZOOM == null ? fitScale() : ZOOM;
     k = Math.min(Math.max(k, 0.25), 2);
-    floor.style.transform = "scale(" + k + ")";
+    // Translate before scale, so a drag moves the floor by the number of
+    // screen pixels the pointer moved rather than by that many scaled ones.
+    floor.style.transform =
+      "translate(" + Math.round(PAN_X) + "px," + Math.round(PAN_Y) + "px) " +
+      "scale(" + k + ")";
     // Centred when the height is what limits the fit, which it is in a short
     // dock: the floor would otherwise sit against the left edge with the
     // width it could not use left empty beside it.
@@ -950,6 +981,9 @@
   }
 
   function setZoom(k) {
+    // Back to the whole office means back to the middle of it. Leaving the
+    // pan behind would make Fit show an empty corner at the right scale.
+    if (k == null) { PAN_X = 0; PAN_Y = 0; }
     ZOOM = k;
     try {
       if (k == null) localStorage.removeItem(ZOOM_KEY);
@@ -969,6 +1003,33 @@
     // enough to deserve its own button.
     if (fitBtn) fitBtn.addEventListener("click", function () { setZoom(null); });
     window.addEventListener("resize", drawZoom);
+
+    // Dragging the floor. Pointer events rather than mouse, so a touch or a
+    // pen moves it too, and the capture keeps the drag alive when the
+    // pointer leaves the wrapper mid-move.
+    var fit = document.getElementById("floor-fit");
+    var from = null;
+    if (fit) {
+      fit.addEventListener("pointerdown", function (e) {
+        // The robots are buttons and the room links are links. A drag that
+        // started on one of those is that control's, not the floor's.
+        if (e.target.closest("button, a")) return;
+        from = { x: e.clientX, y: e.clientY, px: PAN_X, py: PAN_Y };
+        fit.classList.add("panning");
+        try { fit.setPointerCapture(e.pointerId); } catch (err) { /* older */ }
+        e.preventDefault();
+      });
+      fit.addEventListener("pointermove", function (e) {
+        if (!from) return;
+        PAN_X = from.px + (e.clientX - from.x);
+        PAN_Y = from.py + (e.clientY - from.y);
+        drawZoom();
+      });
+      function released() { from = null; fit.classList.remove("panning"); }
+      fit.addEventListener("pointerup", released);
+      fit.addEventListener("pointercancel", released);
+    }
+
     drawZoom();
   })();
 
