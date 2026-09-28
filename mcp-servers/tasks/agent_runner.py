@@ -30,7 +30,7 @@ import agent_graph
 import agent_handoff
 import agent_memory
 import agent_routing
-from agent_tools import (arguments_of, execute_tool_call,
+from agent_tools import (HANDOFF_TOOL, arguments_of, execute_tool_call,
                          is_write_call, is_write_tool)
 from owui_token import mint_owui_token
 
@@ -613,6 +613,48 @@ class _Escalation:
         return (content + "\n\n" + note) if note else content
 
 
+async def _record_step(run_id, agent_id, user_email, call, status) -> None:
+    """Write one tool call down, and never let that cost a turn.
+
+    Open and closed in one go rather than around the call itself: the
+    interesting facts are which tool, on whose behalf, and how it ended, and
+    a step that opens before a tool runs would need a second write on every
+    path out of a loop that has several.
+
+    A handoff carries who was asked, which is what turns this one table into
+    the record of both what an agent is doing and who it is working with.
+    """
+    try:
+        fn = (call or {}).get("function")
+        fn = fn if isinstance(fn, dict) else {}
+        name = fn.get("name")
+        name = name.strip() if isinstance(name, str) else ""
+        if not name:
+            return
+        target = None
+        if name == HANDOFF_TOOL:
+            args = arguments_of(call) or {}
+            target = str(args.get("agent") or "") or None
+        step_id = await agent_activity.start_step(
+            run_id, agent_id, user_email, name, target)
+        await agent_activity.finish_step(step_id, status)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not record a tool call", exc_info=True)
+
+
+def _step_status(result) -> str:
+    """How a call ended, read off the result the model will see.
+
+    The loop has only the string it is about to hand back, so that is what
+    decides this: a refusal already says so in words, because the owner has
+    to be able to read it too.
+    """
+    text = result if isinstance(result, str) else ""
+    if text.startswith("Refused:"):
+        return "refused"
+    return "ok"
+
+
 async def _chat(token: str, model: str, messages: list[dict],
                 tool_ids: list[str] | None, user_email: str,
                 tool_mode: str | None,
@@ -861,6 +903,9 @@ async def _chat(token: str, model: str, messages: list[dict],
                         # Held back, not refused. The turn ends below and picks
                         # up again once the owner answers.
                         pending.append(call)
+                        await _record_step(
+                            usage.run_id if usage else None, model, user_email,
+                            call, "held")
                         continue
                     notes.append(
                         "Declined to run " + label + ", because "
@@ -885,6 +930,9 @@ async def _chat(token: str, model: str, messages: list[dict],
                         result[:TOOL_RESULT_EXCERPT_CHARS]
                         + "\n\n[This tool result was shortened. It was longer "
                         "than " + str(TOOL_RESULT_EXCERPT_CHARS) + " characters.]")
+                await _record_step(
+                    usage.run_id if usage else None, model, user_email,
+                    call, _step_status(result))
                 convo.append({"role": "tool", "tool_call_id": call.get("id"),
                               "name": name, "content": result})
 
