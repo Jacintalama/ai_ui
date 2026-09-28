@@ -142,3 +142,60 @@ async def test_an_agent_without_the_tool_cannot_use_it(monkeypatch):
         ["gdrive"], "agent-nora")
     assert ran == []
     assert "not been given" in out.lower() or "was not run" in out.lower()
+
+
+async def test_no_declared_tools_cannot_use_it(monkeypatch):
+    """Fix review finding 2. allowed_native_tools=None must deny this one
+    tool rather than being treated as unscoped: every other native tool has
+    a second gate after None (a row still has to exist and declare the
+    method), but this branch IS the only gate for ask_colleague, so None
+    (no declared tools, or a failure listing them) must not silently mean
+    everything is allowed."""
+    ran = []
+
+    async def fake_turn(user_email, agent_id, question, parent_run_id=None):
+        ran.append(agent_id)
+        return "should not happen"
+
+    monkeypatch.setattr(agent_tools, "_run_colleague_turn", fake_turn)
+    monkeypatch.setattr(agent_tools, "_roster_for",
+                        lambda email: _roster("Iris"))
+    out = await agent_tools.execute_tool_call(
+        _call(agent="Iris", question="hello"), "me@example.com",
+        None, "agent-nora")
+    assert ran == []
+    assert "not been given" in out.lower() or "was not run" in out.lower()
+
+
+async def test_an_agent_with_the_tool_can_use_it(monkeypatch):
+    """Fix review finding 1/4. allowed_native_tools holds public.tool ROW
+    ids (e.g. "colleague"), not the method name ("ask_colleague") --
+    _load_native_tool_source proves the distinction: it queries
+    `id IN :ids` and matches the method name separately. The grant must be
+    checked against agent_tools.HANDOFF_TOOL_ROW, or a properly granted
+    agent is refused identically to one that was never granted the tool at
+    all, which is exactly why a refusal-only test could not catch it."""
+    ran = []
+
+    async def fake_turn(user_email, agent_id, question, parent_run_id=None):
+        ran.append(agent_id)
+        return "The spec is in Drive under Q3."
+
+    monkeypatch.setattr(agent_tools, "_run_colleague_turn", fake_turn)
+    monkeypatch.setattr(agent_tools, "_roster_for",
+                        lambda email: _roster("Iris"))
+    out = await agent_tools.execute_tool_call(
+        _call(agent="Iris", question="hello"), "me@example.com",
+        [agent_tools.HANDOFF_TOOL_ROW], "agent-nora")
+    assert ran == ["agent-iris"]
+    assert "Q3" in out
+
+
+async def test_ask_colleague_is_a_read(monkeypatch):
+    """Fix review finding 3. The spec: "Asking is a read, so is_write_call
+    is false and nothing interrupts"; the owner's chosen rule is "free to
+    hand over, but acting still asks". Left classified as a write (the
+    default for any name the verb rule has no opinion on), every handoff
+    would stop an ask-level agent for approval before the handoff even
+    ran -- the opposite of what was chosen."""
+    assert agent_tools.is_write_call(agent_tools.HANDOFF_TOOL, {}) is False

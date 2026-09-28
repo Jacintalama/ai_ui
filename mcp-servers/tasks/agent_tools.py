@@ -157,6 +157,15 @@ READ_METHODS: frozenset[str] = frozenset({
     # verb and saving to a knowledge base really does write.
     "web-search_web_search",
     "web-search_web_scrape",
+    # Pinned because the verb rule has no opinion: "ask" is neither a write
+    # verb nor a read verb, so this falls through to the write default.
+    # Asking is a read -- the handoff itself changes nothing of the owner's,
+    # only a colleague's own turn might, and that turn is scoped by its own
+    # access level when it runs -- so is_write_call must be False here or
+    # every handoff would stop an ask-level agent for approval before the
+    # handoff even ran, which is backwards: the chosen rule is "free to hand
+    # over, but acting still asks".
+    "ask_colleague",
 })
 
 
@@ -245,6 +254,12 @@ TOOL_TIMEOUT_SECONDS = 60
 #: that row is editable from the web UI, and a depth cap somebody can edit
 #: away is not a depth cap.
 HANDOFF_TOOL = "ask_colleague"
+
+#: The Open WebUI tool ROW this method lives in. allowed_native_tools holds
+#: row ids, not method names -- _load_native_tool_source queries `id IN
+#: :ids` and matches the method separately -- so the grant is checked
+#: against this, while HANDOFF_TOOL is what the model names in its call.
+HANDOFF_TOOL_ROW = "colleague"
 
 
 async def _roster_for(user_email: str) -> list[dict]:
@@ -542,9 +557,19 @@ async def execute_tool_call(
     if name == HANDOFF_TOOL:
         # Scoped like every other native tool: interception must not become
         # a back door around the grant. An agent that was never given this
-        # tool cannot use it just because this branch runs first.
-        if allowed_native_tools is not None and \
-                HANDOFF_TOOL not in allowed_native_tools:
+        # tool cannot use it just because this branch runs first. Checked
+        # against HANDOFF_TOOL_ROW (the tool ROW id), not HANDOFF_TOOL (the
+        # method name) -- allowed_native_tools holds row ids, the same
+        # namespace _load_native_tool_source's `id IN :ids` query uses.
+        #
+        # Unlike the native/proxy paths below, None is refused rather than
+        # treated as unscoped. Every other path has a second gate after
+        # None -- a row still has to exist and declare the method -- but
+        # this branch IS the only gate for this one tool, so None (no
+        # declared tools, or a failure listing them) must deny rather than
+        # silently mean "everything is allowed".
+        if not allowed_native_tools or \
+                HANDOFF_TOOL_ROW not in allowed_native_tools:
             return ("This agent has not been given the tool to ask a "
                     "colleague, so nothing was asked.")
         args = arguments_of(tool_call) or {}
