@@ -37,6 +37,13 @@ MODE_FULL = "full"
 #: asked; a schedule does not.
 SURFACE_CHANNEL = "channel"
 SURFACE_SCHEDULE = "schedule"
+#: One agent asked another. Nobody is watching THIS conversation: the owner
+#: is talking to the agent that asked, so a prompt raised here would ask them
+#: about a conversation they are not in, and answering it would need the
+#: colleague's reply written back into a turn that is paused mid-sentence.
+#: So `ask` narrows here instead of prompting, which makes ApprovalRequired
+#: impossible inside a handoff rather than merely unlikely.
+SURFACE_COLLEAGUE = "colleague"
 
 
 class ApprovalRequired(Exception):
@@ -86,6 +93,15 @@ def effective_mode(level: str | None, tool_mode: str | None,
         # read-only for an agent with no opinion cannot regress anything.
         return MODE_READ_ONLY
 
+    if surface == SURFACE_COLLEAGUE:
+        # Only a level the owner set to `all` acts. tool_mode is ignored
+        # entirely rather than defaulted: reading it here would give a
+        # caller a way to widen a read-only agent, which is the hole this
+        # module exists to close.
+        if level == LEVEL_ALL:
+            return MODE_FULL
+        return MODE_READ_ONLY
+
     schedule_full = (tool_mode or MODE_READ_ONLY) == MODE_FULL
     if level is None:
         # Exactly today's behaviour, so an existing schedule set to full
@@ -112,6 +128,9 @@ def refusal_reason(level: str | None, tool_mode: str | None,
             # had a level chosen at all.
             return "this agent has not been given access to change things"
         return "this agent is set to read only"
+    if surface == SURFACE_COLLEAGUE:
+        return ("another agent asked this one, and it is not set to act on "
+                "its own")
     if level == LEVEL_ASK:
         return "a scheduled run has nobody to ask"
     if level == LEVEL_READ:

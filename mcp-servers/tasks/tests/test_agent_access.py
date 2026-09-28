@@ -131,3 +131,59 @@ def test_approval_required_carries_what_is_needed_to_resume():
     err = aa.ApprovalRequired(convo, calls)
     assert err.conversation == convo
     assert err.calls == calls
+
+
+# --- a colleague asked by another agent ------------------------------------
+# A handoff has nobody watching the way a channel does: the owner is in a
+# conversation with the ASKING agent, so a prompt raised here would ask them
+# about a conversation they are not in.
+
+def test_a_colleague_set_to_all_may_act():
+    assert aa.effective_mode(
+        aa.LEVEL_ALL, None,
+        aa.SURFACE_COLLEAGUE) == aa.MODE_FULL
+
+
+def test_a_colleague_set_to_ask_narrows_to_read_only():
+    """Narrows rather than prompting. This is what makes ApprovalRequired
+    impossible inside a handoff."""
+    assert aa.effective_mode(
+        aa.LEVEL_ASK, None,
+        aa.SURFACE_COLLEAGUE) == aa.MODE_READ_ONLY
+
+
+def test_a_colleague_set_to_read_stays_read_only():
+    assert aa.effective_mode(
+        aa.LEVEL_READ, None,
+        aa.SURFACE_COLLEAGUE) == aa.MODE_READ_ONLY
+
+
+def test_a_colleague_with_no_level_is_read_only():
+    """An absent level is not a default. An agent that predates the feature
+    has expressed no opinion, and a handoff is the one surface where
+    guessing 'full' would let one agent widen another."""
+    assert aa.effective_mode(
+        None, None, aa.SURFACE_COLLEAGUE) == aa.MODE_READ_ONLY
+
+
+def test_a_colleague_is_never_asked():
+    """Review Focus 4. If this can return ask, ApprovalRequired can be
+    raised inside a handoff and the two-level resume problem is back."""
+    for level in (None, aa.LEVEL_READ, aa.LEVEL_ASK,
+                  aa.LEVEL_ALL):
+        assert aa.effective_mode(
+            level, None, aa.SURFACE_COLLEAGUE) != aa.MODE_ASK
+
+
+def test_a_schedules_tool_mode_cannot_widen_a_colleague():
+    """A level is a ceiling. Nothing a caller passes may widen it."""
+    assert aa.effective_mode(
+        aa.LEVEL_READ, aa.MODE_FULL,
+        aa.SURFACE_COLLEAGUE) == aa.MODE_READ_ONLY
+
+
+def test_the_refusal_says_a_colleague_cannot_be_asked():
+    said = aa.refusal_reason(
+        aa.LEVEL_ASK, None, aa.SURFACE_COLLEAGUE)
+    assert "colleague" in said or "another agent" in said
+    assert not said.endswith(".")
