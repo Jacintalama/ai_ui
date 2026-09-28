@@ -10,6 +10,7 @@ import pytest
 from fastapi import HTTPException
 
 import agent_access
+import agent_handoff
 import routes_agent_turn as rt
 
 
@@ -248,3 +249,27 @@ async def test_a_resumed_answer_carries_no_long_dashes(monkeypatch):
     out = await rt.resume(_body(approved=True), x_internal_secret="s")
 
     assert out["answer"] == "Done, I added the page.", out["answer"]
+
+
+async def test_a_resumed_turn_opens_the_handoff_budget(monkeypatch):
+    """_resume_turn runs a full tool loop of its own -- ask_colleague
+    included -- so it has to open agent_handoff's budget itself, the
+    same way _run_turn does, or a colleague asked from a resumed turn
+    would get no parent_run_id, and the MAX_PER_TURN arm of refusal()
+    would never fire on this path."""
+    monkeypatch.setattr(rt.agent_activity, "start_run",
+                        AsyncMock(return_value="run-9"))
+    seen = {}
+
+    async def fake_chat(**kwargs):
+        seen["parent"] = agent_handoff.parent_run()
+        return "Sent it.", []
+
+    monkeypatch.setattr(rt, "_list_agents",
+                        AsyncMock(return_value=([_agent()], False)))
+    monkeypatch.setattr(rt, "_chat", fake_chat)
+    monkeypatch.setattr(rt, "execute_tool_call", AsyncMock(return_value="sent"))
+
+    await rt.resume(_body(approved=True), x_internal_secret="s")
+
+    assert seen["parent"] == "run-9"

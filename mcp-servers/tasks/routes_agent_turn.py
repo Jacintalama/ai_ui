@@ -446,38 +446,46 @@ async def _resume_turn(user_email: str, agent_id: str, conversation: list[dict],
     # model this agent was on for this person, for as long as that lasts.
     usage = agent_escalation.TurnUsage(run_id=run_id)
     outcome = "failed"
-    try:
-        answer, notes = await _chat(
-            token=token, model=agent_id, messages=convo,
-            agent=agent,
-            tool_ids=tools or None, user_email=user_email,
-            tool_mode=mode,
-            refusal_reason=agent_access.refusal_reason(
-                level, None, agent_access.SURFACE_CHANNEL),
-            max_iterations=CHANNEL_MAX_TOOL_ITERATIONS,
-            timeout=CHANNEL_HTTP_TIMEOUT_SECONDS,
-            intent=agent_escalation.Intent(follow_up=True), usage=usage)
-        outcome = "completed"
-        if not answer and notes:
-            # The loop writes a note when it stops at the iteration cap or
-            # refuses a write, and this path used to throw it away and return
-            # an empty string. An empty bubble tells the person nothing and
-            # reads as the agent ignoring them; the note says what happened.
-            # The schedule path has always done this; the chat path did not,
-            # which only surfaced once agents used enough rounds to hit the
-            # cap by looking a skill up first.
-            answer = "\n".join(notes)
-            notes = []
-        # This path returns straight to the approval handler without passing
-        # through _turn_for, and it is where "Done, I added the page" style
-        # replies come from, so it scrubs the same way.
-        return {"answer": agent_routing.scrub_long_dashes(answer),
-                "notes": notes}
-    except agent_access.ApprovalRequired as err:
-        outcome = STATUS_WAITING
-        return _pending_payload(user_email, agent_id, err)
-    finally:
-        await agent_activity.finish_run(run_id, outcome, usage=usage)
+    # Opens the handoff budget for the outermost turn only: began()
+    # no-ops when one is already open. A resumed turn runs a full tool
+    # loop of its own (ask_colleague included), so it has to open this
+    # itself the same way _run_turn does, or a colleague asked from a
+    # resumed turn would get no parent_run_id and spend()/spent() would
+    # stay no-ops here, leaving the MAX_PER_TURN arm of refusal() unable
+    # to fire on this path.
+    async with agent_handoff.began(run_id):
+        try:
+            answer, notes = await _chat(
+                token=token, model=agent_id, messages=convo,
+                agent=agent,
+                tool_ids=tools or None, user_email=user_email,
+                tool_mode=mode,
+                refusal_reason=agent_access.refusal_reason(
+                    level, None, agent_access.SURFACE_CHANNEL),
+                max_iterations=CHANNEL_MAX_TOOL_ITERATIONS,
+                timeout=CHANNEL_HTTP_TIMEOUT_SECONDS,
+                intent=agent_escalation.Intent(follow_up=True), usage=usage)
+            outcome = "completed"
+            if not answer and notes:
+                # The loop writes a note when it stops at the iteration cap or
+                # refuses a write, and this path used to throw it away and return
+                # an empty string. An empty bubble tells the person nothing and
+                # reads as the agent ignoring them; the note says what happened.
+                # The schedule path has always done this; the chat path did not,
+                # which only surfaced once agents used enough rounds to hit the
+                # cap by looking a skill up first.
+                answer = "\n".join(notes)
+                notes = []
+            # This path returns straight to the approval handler without passing
+            # through _turn_for, and it is where "Done, I added the page" style
+            # replies come from, so it scrubs the same way.
+            return {"answer": agent_routing.scrub_long_dashes(answer),
+                    "notes": notes}
+        except agent_access.ApprovalRequired as err:
+            outcome = STATUS_WAITING
+            return _pending_payload(user_email, agent_id, err)
+        finally:
+            await agent_activity.finish_run(run_id, outcome, usage=usage)
 
 
 @router.post("/turn/resume")
