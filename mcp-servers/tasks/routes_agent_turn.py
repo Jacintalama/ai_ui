@@ -614,6 +614,37 @@ async def _clear_pin(key: str) -> None:
 AGENT_PREFIX = "agent-"
 
 
+def own_agents(rows: "list | None", owner_id: str) -> list[dict]:
+    """The rows of an Open WebUI model listing that are this person's agents.
+
+    Two filters, and both matter.
+
+    The PREFIX is why this function exists at all; see AGENT_PREFIX above.
+
+    The OWNER is the one that was missing. For an admin, /api/v1/models/list
+    carries every user's agents whatever their grants, so a name matched
+    against that listing could reach somebody else's agent. It always could,
+    but it took the admin typing the name; now the name can arrive inside text
+    an agent read somewhere, which is exactly the case agent_access's
+    docstring says the levels exist to protect against. The colleague still
+    runs as the admin's own email, so what leaks is another person's persona
+    and its answer rather than their account, and it is worth closing before
+    untrusted text can reach it.
+
+    `user_id` is the field because `/api/v1/models/list` is the only listing
+    that still carries it on the row, which is why every surface needing
+    ownership reads that endpoint: static/agents.html filters
+    `m.user_id === state.me` for the same reason and with the same comparison.
+
+    Compared strictly. A row with no `user_id` is a row whose owner we do not
+    know, and treating unknown as "yours" is how this hole was dug.
+    """
+    return [a for a in rows or [] if isinstance(a, dict)
+            and isinstance(a.get("id"), str)
+            and a["id"].startswith(AGENT_PREFIX)
+            and a.get("user_id") == owner_id]
+
+
 async def _agents_for(user_email: str) -> list[dict]:
     """This person's own agents, or an empty list.
 
@@ -630,9 +661,7 @@ async def _agents_for(user_email: str) -> list[dict]:
         agents, truncated = await _list_agents(token)
         if truncated:
             return []
-        return [a for a in agents if isinstance(a, dict)
-                and isinstance(a.get("id"), str)
-                and a["id"].startswith(AGENT_PREFIX)]
+        return own_agents(agents, owner)
     except Exception:                                       # noqa: BLE001
         logger.warning("could not list agents for routing", exc_info=True)
         return []

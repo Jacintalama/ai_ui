@@ -12,8 +12,14 @@ from fastapi import HTTPException
 
 import routes_agent_turn as rt
 
-ADA = {"id": "agent-a", "name": "Ada", "meta": {"toolIds": ["gmail"]}}
-MIA = {"id": "agent-m", "name": "Mia", "meta": {"toolIds": []}}
+# user_id, because _agents_for filters on it: for an admin the listing
+# carries every user's agents, and reaching one by name is now something
+# text an agent read somewhere can do. "u1" is what _owui_user_id_for is
+# stubbed to return below.
+ADA = {"id": "agent-a", "name": "Ada", "user_id": "u1",
+       "meta": {"toolIds": ["gmail"]}}
+MIA = {"id": "agent-m", "name": "Mia", "user_id": "u1",
+       "meta": {"toolIds": []}}
 
 
 def _body(text, chat_id="chat-1", email="owner@example.com"):
@@ -540,3 +546,60 @@ async def test_a_pending_approval_pauses_the_asker_but_still_names_the_rest(
     # The pin is the asker's, not the last named, so a "yes" reaches Ada.
     assert rt._write_pin.await_args.args[1] == "agent-a"
     rt._run_turn.assert_awaited_once()
+
+
+async def test_agents_for_returns_only_your_own_agents(_wire, monkeypatch):
+    """An admin's /api/v1/models/list carries EVERY user's agents, whatever
+    their grants. Before agents could ask each other, reaching one of those by
+    name took an admin typing it; now the name can arrive inside text an agent
+    read somewhere, which is the case agent_access exists to protect against.
+    The colleague still runs as the caller's own email, so what would leak is
+    somebody else's persona and its answer rather than their account, and it
+    is worth closing before untrusted text can reach it.
+
+    static/agents.html has filtered `m.user_id === state.me` for the same
+    reason; /api/v1/models/list is the only listing that still carries
+    user_id, which is why this reads that endpoint.
+    """
+    theirs = {"id": "agent-someone-else", "name": "Vera", "user_id": "u2",
+              "meta": {}}
+    monkeypatch.setattr(rt, "_list_agents",
+                        AsyncMock(return_value=([ADA, MIA, theirs], False)))
+
+    out = await rt._agents_for("owner@example.com")
+
+    assert {a["id"] for a in out} == {"agent-a", "agent-m"}
+
+
+async def test_a_row_with_no_owner_is_not_treated_as_yours(_wire, monkeypatch):
+    """Unknown ownership is not ownership. Treating a missing user_id as
+    "yours" is how this hole was dug the first time."""
+    orphan = {"id": "agent-orphan", "name": "Orphan", "meta": {}}
+    monkeypatch.setattr(rt, "_list_agents",
+                        AsyncMock(return_value=([ADA, orphan], False)))
+
+    out = await rt._agents_for("owner@example.com")
+
+    assert {a["id"] for a in out} == {"agent-a"}
+
+
+async def test_another_users_agent_is_never_woken_by_name(_wire, monkeypatch):
+    """The routing half of the same rule: an admin saying a name that belongs
+    to somebody else's agent gets IO, not that agent."""
+    theirs = {"id": "agent-vera", "name": "Vera", "user_id": "u2", "meta": {}}
+    monkeypatch.setattr(rt, "_list_agents",
+                        AsyncMock(return_value=([ADA, theirs], False)))
+    monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="unused"))
+
+    out = await rt.chat(_body("hi vera"), x_internal_secret="s")
+
+    assert out["turns"][0]["agent"] is None
+    rt._run_turn.assert_not_awaited()
+
+
+async def test_own_agents_needs_both_the_prefix_and_the_owner():
+    rows = [{"id": "agent-a", "user_id": "u1"},
+            {"id": "fusion", "user_id": "u1"},
+            {"id": "agent-b", "user_id": "u2"},
+            "not a row"]
+    assert rt.own_agents(rows, "u1") == [{"id": "agent-a", "user_id": "u1"}]

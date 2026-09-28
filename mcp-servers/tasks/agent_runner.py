@@ -1071,7 +1071,7 @@ async def run_agent(sched) -> tuple[str, str, dict]:
             # had. Imported here rather than at module scope because
             # routes_agent_turn imports this module, which is the same deferred
             # import scheduler.py uses to reach run_agent.
-            from routes_agent_turn import tools_for_agent
+            from routes_agent_turn import own_agents, tools_for_agent
             tools = await tools_for_agent(sched.user_email, meta)
 
             # Mint a long-lived token immediately before the chat call. The token
@@ -1098,8 +1098,18 @@ async def run_agent(sched) -> tuple[str, str, dict]:
             # agent given meta.skillIds ran its weekly cron without ever being
             # shown the skill, and none of them knew what day it was.
             #
-            # No roster: that sentence says "the other assistants HERE", and on a
-            # cron run nobody else is speaking.
+            # The roster IS passed here now. It used to be left empty on the
+            # reasoning that the brief's sentence says "the other assistants
+            # HERE" and on a cron run nobody else is speaking. That stopped
+            # being true when a scheduled agent kept ask_colleague: told it may
+            # ask a colleague and never told who exists, the model has to guess
+            # a name, and _match_colleague resolves nothing, so the owner's own
+            # grant silently did nothing on this one surface.
+            #
+            # It costs no extra call: `agents` above is the same listing every
+            # other surface pays for, and own_agents only filters it.
+            roster = own_agents(agents, owner)
+            names = [a.get("name") for a in roster if a.get("name")]
             messages = _messages_for(sched)
             try:
                 memory = await agent_memory.recall_block(sched.user_email,
@@ -1121,7 +1131,7 @@ async def run_agent(sched) -> tuple[str, str, dict]:
             # clock the cron matched a minute ago, so it is the clock the run is
             # happening on.
             messages = [agent_brief.build(
-                agent, (), memory=memory, graph=graph,
+                agent, names, memory=memory, roster=roster, graph=graph,
                 now=agent_brief.now_in(getattr(sched, "tz", "") or ""))] + messages
 
             # Keyword arguments on purpose: the tests assert on them by name, and

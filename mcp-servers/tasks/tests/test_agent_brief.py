@@ -74,8 +74,15 @@ import agent_graph                                              # noqa: E402
 import agent_memory                                             # noqa: E402
 import agent_runner                                             # noqa: E402
 
-SKILLED = {"id": "agent-1", "name": "Ada",
+# user_id, because the roster a scheduled run passes into the brief is
+# filtered by routes_agent_turn.own_agents: for an admin the listing carries
+# every user's agents. "u1" is what _owui_user_id_for is stubbed to return.
+SKILLED = {"id": "agent-1", "name": "Ada", "user_id": "u1",
            "meta": {"role": "Project manager", "skillIds": ["weekly-review"]}}
+
+#: A second agent on the same account, for the roster the brief now names.
+COLLEAGUE = {"id": "agent-2", "name": "Iris", "user_id": "u1",
+             "meta": {"role": "Researcher"}}
 
 
 class _Sched:
@@ -89,7 +96,8 @@ class _Sched:
     tz = "Asia/Manila"
 
 
-def _wire_schedule(monkeypatch, agent=None, graph="", memory=""):
+def _wire_schedule(monkeypatch, agent=None, graph="", memory="",
+                   listed=None):
     seen = {}
 
     async def fake_chat(**kwargs):
@@ -98,7 +106,9 @@ def _wire_schedule(monkeypatch, agent=None, graph="", memory=""):
 
     monkeypatch.setattr(agent_runner, "_owui_user_id_for", AsyncMock(return_value="u1"))
     monkeypatch.setattr(agent_runner, "_list_agents",
-                        AsyncMock(return_value=([agent or SKILLED], False)))
+                        AsyncMock(return_value=(listed if listed is not None
+                                                else [agent or SKILLED],
+                                                False)))
     monkeypatch.setattr(agent_runner, "mint_owui_token", lambda *a, **k: "tok")
     monkeypatch.setattr(agent_runner, "_chat", fake_chat)
     monkeypatch.setattr(agent_runner.agent_activity, "start_run",
@@ -146,15 +156,42 @@ async def test_a_schedule_run_sees_what_the_person_has(monkeypatch):
     assert "They have 4 apps." in seen["messages"][0]["content"]
 
 
-async def test_a_schedule_is_not_told_about_a_room_it_is_not_in(monkeypatch):
-    """The roster sentence says "the other assistants HERE". On a cron run
-    nobody else is speaking, so naming a room would be a description of
-    something that is not happening."""
-    seen = _wire_schedule(monkeypatch)
+async def test_a_schedule_is_told_who_its_colleagues_are(monkeypatch):
+    """This used to be left out, on the reasoning that the roster sentence
+    says "the other assistants HERE" and on a cron run nobody else is
+    speaking. That stopped being true when a scheduled agent kept
+    ask_colleague: told it may ask a colleague and never told who exists, the
+    model has to guess a name and _match_colleague resolves nothing, so the
+    tool the owner granted silently did nothing on this one surface.
+
+    It costs no extra call: the listing is already fetched to find the
+    agent itself.
+    """
+    seen = _wire_schedule(monkeypatch, listed=[SKILLED, COLLEAGUE])
 
     await agent_runner.run_agent(_Sched())
 
-    assert "The other assistants here are" not in seen["messages"][0]["content"]
+    said = seen["messages"][0]["content"]
+    assert "The other assistants here are Iris (researcher)" in said
+    assert "Ada (" not in said, "an agent is not on its own roster"
+
+
+async def test_a_schedule_roster_is_only_this_owners_agents(monkeypatch):
+    """Same rule as every other surface: an admin's listing carries every
+    user's agents, and naming somebody else's in the brief would both leak
+    that name and invite a handoff _agents_for would refuse anyway."""
+    theirs = {"id": "agent-9", "name": "Vera", "user_id": "u2", "meta": {}}
+    not_an_agent = {"id": "fusion", "name": "Fusion", "user_id": "u1",
+                    "meta": {}}
+    seen = _wire_schedule(monkeypatch,
+                          listed=[SKILLED, COLLEAGUE, theirs, not_an_agent])
+
+    await agent_runner.run_agent(_Sched())
+
+    said = seen["messages"][0]["content"]
+    assert "Iris" in said
+    assert "Vera" not in said
+    assert "Fusion" not in said
 
 
 async def test_a_schedule_still_sends_the_task_last(monkeypatch):
