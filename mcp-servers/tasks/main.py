@@ -99,6 +99,24 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("graph nightly prebuild NOT started: %s", exc)
 
+    # Says out loud whether the free pool still exists. The router already
+    # copes with a withdrawn id by skipping it, which is why two of the three
+    # in AGENT_FREE_MODELS could be taken down and nothing ever errored: the
+    # pool an agent could fall back to simply became empty. Reported, never
+    # enforced, and never allowed to hold up a boot.
+    async def _report_free_pool() -> None:
+        try:
+            import free_pool
+            r = await free_pool.check()
+            if r["ok"] is False:
+                logger.warning("free models: %s", r["summary"])
+            else:
+                logger.info("free models: %s", r["summary"])
+        except Exception as exc:                            # noqa: BLE001
+            logger.warning("free model check NOT run: %s", exc)
+
+    asyncio.create_task(_report_free_pool())
+
     try:
         from video_worker import video_worker_loop
         asyncio.create_task(video_worker_loop())

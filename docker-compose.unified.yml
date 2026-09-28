@@ -469,7 +469,7 @@ services:
       # thinking into the answer. AGENT_REFLECT_MODEL blank means the first
       # pool id (agent_memory.reflect_model).
       - AGENT_DEFAULT_MODEL=${AGENT_DEFAULT_MODEL:-nvidia/nemotron-3-super-120b-a12b:free}
-      - AGENT_FREE_MODELS=${AGENT_FREE_MODELS:-nvidia/nemotron-3-super-120b-a12b:free,nex-agi/nex-n2.5-pro:free,nex-agi/nex-n2.5-mini:free}
+      - AGENT_FREE_MODELS=${AGENT_FREE_MODELS:-nvidia/nemotron-3-super-120b-a12b:free,nvidia/nemotron-3-ultra-550b-a55b:free,nvidia/nemotron-3.5-lightning:free,cohere/north-mini-code:free}
       - AGENT_FREE_REASONING=${AGENT_FREE_REASONING:-none}
       - AGENT_REFLECT_MODEL=${AGENT_REFLECT_MODEL:-}
       # A free agent moves to the paid model on its own for app builds,
@@ -818,8 +818,21 @@ services:
       # poolside/laguna-m.1:free) and google/gemma-4-26b-a4b-it:free answered
       # 429 on every call. Earlier sweeps dropped nemotron-3.5-content-safety
       # (a moderation classifier, not chat) and poolside/laguna-xs-2.1
-      # (returns empty). The first three ids are the agent pool in order and
-      # must stay in step with AGENT_FREE_MODELS in the tasks service above.
+      # (returns empty).
+      #
+      # 2026-09-28: the two nex-agi ids have now been withdrawn as well, which
+      # left the agent pool with ONE served id. An agent cannot fall back to
+      # the model it already runs on, so the fallback chain had quietly become
+      # nothing: the first provider hiccup told the person every free model was
+      # busy without a second one ever being tried. Nothing errored, because
+      # _fallback_pool drops a withdrawn id rather than dialling it. Replaced
+      # with nemotron-3-ultra, nemotron-3.5-lightning and north-mini-code, each
+      # checked the same day by sending a real tool call and reading back a
+      # valid tool_call. free_pool.py now reports this at boot and on
+      # GET /tasks/agents/free-models, so the next withdrawal is noticed.
+      #
+      # The first four ids are the agent pool in order and must stay in step
+      # with AGENT_FREE_MODELS in the tasks service above.
       # The persisted config in the database (config table, key
       # openai.api_configs) WINS over this environment line, so editing here
       # alone changes nothing on a running box: this is documentation plus
@@ -827,7 +840,7 @@ services:
       # server run scripts/set_openrouter_allowlist.py, which reads
       # /openai/config and posts the same shape back. Change both, or the
       # next fresh volume comes up with the old list.
-      - 'OPENAI_API_CONFIGS={"2":{"enable":true,"model_ids":["nvidia/nemotron-3-super-120b-a12b:free","nex-agi/nex-n2.5-pro:free","nex-agi/nex-n2.5-mini:free","cohere/north-mini-code:free","nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free","nvidia/nemotron-3-ultra-550b-a55b:free","google/gemini-2.5-flash-lite","openai/gpt-5-mini","anthropic/claude-haiku-4.5"]}}'
+      - 'OPENAI_API_CONFIGS={"2":{"enable":true,"model_ids":["nvidia/nemotron-3-super-120b-a12b:free","nvidia/nemotron-3-ultra-550b-a55b:free","nvidia/nemotron-3.5-lightning:free","cohere/north-mini-code:free","nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free","google/gemini-2.5-flash-lite","openai/gpt-5-mini","anthropic/claude-haiku-4.5"]}}'
       # OPENROUTER_API_KEY also used by the auto-router pipe (open-webui-functions/auto_router_pipe.py).
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       # Auto (Smart) pipe escalates hard tasks to a paid OpenAI model with this.

@@ -300,13 +300,24 @@ def _router_gave_up(content) -> bool:
 # And when a completion fails the way a provider fails, the same request is
 # tried on the next id in the pool, posting the base model directly.
 
-#: The pool, in order. The first entry is what new agents start on. Every
-#: id was measured to answer a tool call on 2026-09-15: 1.3s, 3.0s, 7.2s.
+#: The pool, in order. The first entry is what new agents start on.
+#:
+#: Every id was measured to answer a real tool call and return a valid
+#: tool_call: the first on 2026-09-15, the rest on 2026-09-28 when the two
+#: nex-agi ids this list used to name were found withdrawn. That left one
+#: served id, and since an agent cannot fall back to the model it already
+#: runs on, the fallback chain had become nothing while still looking fine:
+#: _fallback_pool drops a withdrawn id rather than dialling it, so nothing
+#: ever errored. free_pool.py reports the state of this list now.
+#:
+#: Must stay in step with AGENT_FREE_MODELS in docker-compose.unified.yml,
+#: which is what actually sets it on the server.
 FREE_MODELS = [m.strip() for m in os.environ.get(
     "AGENT_FREE_MODELS",
     "nvidia/nemotron-3-super-120b-a12b:free,"
-    "nex-agi/nex-n2.5-pro:free,"
-    "nex-agi/nex-n2.5-mini:free").split(",") if m.strip()]
+    "nvidia/nemotron-3-ultra-550b-a55b:free,"
+    "nvidia/nemotron-3.5-lightning:free,"
+    "cohere/north-mini-code:free").split(",") if m.strip()]
 
 #: Sent as reasoning_effort on every free completion. Open WebUI passes it
 #: through untouched for a base model, and for a derived model whose own

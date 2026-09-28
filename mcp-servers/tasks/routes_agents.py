@@ -29,9 +29,10 @@ from sqlalchemy import text as sql_text
 import agent_activity
 import agent_memory
 import agent_skills
+import free_pool
 from agent_runner import _owui_user_id_for
 from agent_templates import TEMPLATES
-from auth import CurrentUser, current_user
+from auth import AdminUser, CurrentUser, current_admin, current_user
 from db import session
 from owui_token import mint_owui_token
 from routes_agent_turn import _agents_for, _pin_key, _turn_for, _write_pin
@@ -772,3 +773,19 @@ async def speak(body: SpeakIn, user: CurrentUser = Depends(current_user)) -> dic
         await _write_pin(_pin_key(body.chat_id, user.email), agent["id"])
         result["pending"] = pending
     return result
+
+
+@router.get("/free-models")
+async def free_models(user: AdminUser = Depends(current_admin)) -> dict:
+    """Whether the free pool this platform is configured with still exists.
+
+    Admin only: it names the ids and the environment variable, which is
+    operational detail rather than anything a person using an agent needs.
+
+    Reports, never enforces. The router already skips a withdrawn id on its
+    own, so nothing here changes what a turn does; the point is that a pool
+    which has quietly shrunk to nothing is something somebody finds out
+    rather than something a user discovers when their agent says every free
+    model is busy.
+    """
+    return await free_pool.check()
