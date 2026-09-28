@@ -84,6 +84,9 @@ STALE_AFTER_SCHEDULE = timedelta(minutes=65)
 
 SOURCE_SCHEDULE = "schedule"
 SOURCE_CHANNEL = "channel"
+#: Another agent asked for this run. The office reads it to say who is
+#: helping whom, which is a fact about a row rather than an animation.
+SOURCE_COLLEAGUE = "colleague"
 
 
 def _stale_after(source: str):
@@ -92,11 +95,16 @@ def _stale_after(source: str):
             else STALE_AFTER_CHANNEL)
 
 
-async def start_run(agent_id: str, user_email: str, source: str) -> str | None:
+async def start_run(agent_id: str, user_email: str, source: str,
+                    parent_run_id: str | None = None) -> str | None:
     """Record that an agent has started working. Returns the run id, or None.
 
     None means the bookkeeping failed, and the caller carries on regardless:
     the run itself matters, this does not.
+
+    `parent_run_id` is the run that asked for this one, for a handoff. None
+    for a run nobody asked for, which is every run that existed before
+    agents could ask each other.
     """
     if not agent_id or not user_email:
         return None
@@ -106,10 +114,12 @@ async def start_run(agent_id: str, user_email: str, source: str) -> str | None:
             await s.execute(
                 sql_text(
                     "INSERT INTO tasks.agent_run "
-                    "(id, agent_id, user_email, source, status) "
-                    "VALUES (:id, :agent_id, :user_email, :source, 'running')"),
+                    "(id, agent_id, user_email, source, status, parent_run_id) "
+                    "VALUES (:id, :agent_id, :user_email, :source, 'running', "
+                    ":parent_run_id)"),
                 {"id": run_id, "agent_id": agent_id,
-                 "user_email": user_email, "source": source})
+                 "user_email": user_email, "source": source,
+                 "parent_run_id": parent_run_id})
             await s.commit()
         return run_id
     except Exception:                                       # noqa: BLE001
@@ -158,6 +168,64 @@ async def finish_run(run_id: str | None, status: str,
             await s.commit()
     except Exception:                                       # noqa: BLE001
         logger.warning("could not record the end of an agent run",
+                       exc_info=True)
+
+
+async def start_step(run_id: str | None, agent_id: str, user_email: str,
+                     tool: str, target_agent_id: str | None = None
+                     ) -> str | None:
+    """Record that a run has started one tool call. Returns the step id.
+
+    None means it was not recorded, and every caller carries on regardless.
+    A run that was never recorded (start_run returned None) has nothing for
+    a step to hang off, so that returns None too rather than writing an
+    orphan.
+
+    No arguments and no result are stored, only the tool's name. See the
+    migration for why.
+    """
+    if not run_id or not tool:
+        return None
+    step_id = str(uuid.uuid4())
+    try:
+        async with session() as s:
+            await s.execute(
+                sql_text(
+                    "INSERT INTO tasks.agent_step "
+                    "(id, run_id, agent_id, user_email, tool, "
+                    "target_agent_id, status) "
+                    "VALUES (:id, :run_id, :agent_id, :user_email, :tool, "
+                    ":target, 'running')"),
+                {"id": step_id, "run_id": run_id, "agent_id": agent_id,
+                 "user_email": user_email, "tool": tool,
+                 "target": target_agent_id})
+            await s.commit()
+        return step_id
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not record the start of a tool call",
+                       exc_info=True)
+        return None
+
+
+async def finish_step(step_id: str | None, status: str) -> None:
+    """Close a step out. Safe to call with None.
+
+    A refused call is finished too: a refusal is a fact worth recording, and
+    a row left saying `running` for ever would read as a tool that hung.
+    """
+    if not step_id:
+        return
+    try:
+        async with session() as s:
+            await s.execute(
+                sql_text(
+                    "UPDATE tasks.agent_step "
+                    "SET finished_at = now(), status = :status "
+                    "WHERE id = :id"),
+                {"id": step_id, "status": status})
+            await s.commit()
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not record the end of a tool call",
                        exc_info=True)
 
 
