@@ -30,7 +30,7 @@ import agent_graph
 import agent_handoff
 import agent_memory
 import agent_routing
-from agent_tools import (HANDOFF_TOOL, arguments_of, execute_tool_call,
+from agent_tools import (ToolOutcome, arguments_of, execute_tool_call,
                          is_write_call, is_write_tool)
 from owui_token import mint_owui_token
 
@@ -613,15 +613,25 @@ class _Escalation:
         return (content + "\n\n" + note) if note else content
 
 
-async def _record_step(run_id, agent_id, user_email, call, status) -> None:
+async def _record_step(run_id, agent_id, user_email, call,
+                       outcome: ToolOutcome) -> None:
     """Write one tool call down, and never let that cost a turn.
 
-    One write, not a start/finish pair: the tool has already run and status
-    is already known by the time this is called, so there is no in-flight
-    window for an opening write to describe.
+    One write, not a start/finish pair: the tool has already run and the
+    outcome is already known by the time this is called, so there is no
+    in-flight window for an opening write to describe.
 
-    A handoff carries who was asked, which is what turns this one table into
-    the record of both what an agent is doing and who it is working with.
+    `outcome` comes from whoever produced the result, so the status is what
+    that code MEANT rather than what its sentence happens to start with. The
+    status used to be pattern-matched off the sentence, which filed every
+    handoff refusal as a success and never wrote `failed` at all.
+
+    A handoff carries who was asked, as the resolved agent id, which is what
+    turns this one table into the record of both what an agent is doing and
+    who it is working with. Only the name the model typed was reaching it
+    before, so the column could not be joined against agent_run.agent_id and
+    a sentence a model put in that argument landed in a table that stores no
+    prose (review, 2026-09-29).
     """
     try:
         fn = (call or {}).get("function")
@@ -630,27 +640,12 @@ async def _record_step(run_id, agent_id, user_email, call, status) -> None:
         name = name.strip() if isinstance(name, str) else ""
         if not name:
             return
-        target = None
-        if name == HANDOFF_TOOL:
-            args = arguments_of(call) or {}
-            target = str(args.get("agent") or "") or None
         await agent_activity.record_step(
-            run_id, agent_id, user_email, name, status, target)
+            run_id, agent_id, user_email, name,
+            getattr(outcome, "status", agent_activity.STEP_OK),
+            getattr(outcome, "target_agent_id", None))
     except Exception:                                       # noqa: BLE001
         logger.warning("could not record a tool call", exc_info=True)
-
-
-def _step_status(result) -> str:
-    """How a call ended, read off the result the model will see.
-
-    The loop has only the string it is about to hand back, so that is what
-    decides this: a refusal already says so in words, because the owner has
-    to be able to read it too.
-    """
-    text = result if isinstance(result, str) else ""
-    if text.startswith("Refused:"):
-        return "refused"
-    return "ok"
 
 
 async def _chat(token: str, model: str, messages: list[dict],
@@ -896,6 +891,10 @@ async def _chat(token: str, model: str, messages: list[dict],
                 # about what it runs: searching the web and creating a ClickUp
                 # task arrive here under the same name.
                 probe = arguments_of(call)
+                # Filled in by whichever branch below produces the result, and
+                # handed to _record_step as the record of what happened. The
+                # status is never read back off the sentence: see ToolOutcome.
+                outcome = ToolOutcome()
                 if is_write_call(name, probe) and not write_allowed:
                     if mode == agent_access.MODE_ASK:
                         # Held back, not refused. The turn ends below and picks
@@ -903,13 +902,15 @@ async def _chat(token: str, model: str, messages: list[dict],
                         pending.append(call)
                         await _record_step(
                             usage.run_id if usage else None, model, user_email,
-                            call, "held")
+                            call,
+                            ToolOutcome(status=agent_activity.STEP_HELD))
                         continue
                     notes.append(
                         "Declined to run " + label + ", because "
                         + refusal_reason + ".")
-                    result = ("Refused: " + refusal_reason + ", so "
-                              + label + " was not run.")
+                    result = outcome.refused(
+                        "Refused: " + refusal_reason + ", so "
+                        + label + " was not run.")
                 else:
                     # tool_ids scopes which native tools this agent is even
                     # allowed to run, not only which ones the model was told
@@ -922,7 +923,7 @@ async def _chat(token: str, model: str, messages: list[dict],
                     # always empty and a schedule an agent makes cannot run as
                     # that agent.
                     result = await execute_tool_call(call, user_email, tool_ids,
-                                                     model)
+                                                     model, outcome=outcome)
                 if isinstance(result, str) and len(result) > TOOL_RESULT_EXCERPT_CHARS:
                     result = (
                         result[:TOOL_RESULT_EXCERPT_CHARS]
@@ -930,7 +931,7 @@ async def _chat(token: str, model: str, messages: list[dict],
                         "than " + str(TOOL_RESULT_EXCERPT_CHARS) + " characters.]")
                 await _record_step(
                     usage.run_id if usage else None, model, user_email,
-                    call, _step_status(result))
+                    call, outcome)
                 convo.append({"role": "tool", "tool_call_id": call.get("id"),
                               "name": name, "content": result})
 

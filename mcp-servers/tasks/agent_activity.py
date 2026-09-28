@@ -88,6 +88,25 @@ SOURCE_CHANNEL = "channel"
 #: helping whom, which is a fact about a row rather than an animation.
 SOURCE_COLLEAGUE = "colleague"
 
+#: The four values tasks.agent_step.status may hold, named so the code that
+#: produces an outcome can say which one it means.
+#:
+#: These matter more than status columns usually do. The design commissions
+#: this table to answer one question a week from now -- "how often a handoff
+#: happened, how often it ended ok" -- so a status that is wrong is a wrong
+#: answer to the only question the table exists for. It was: the status used
+#: to be read back off the sentence the model sees, matching the prefix
+#: "Refused:", and no handoff refusal starts with that word, so every refusal
+#: was filed as ok and `failed` was never written at all (review,
+#: 2026-09-29). Nothing reads prose for this now.
+STEP_OK = "ok"
+#: The tool ran and failed, or could not be reached.
+STEP_FAILED = "failed"
+#: The tool was not run, on purpose, and the agent was told why.
+STEP_REFUSED = "refused"
+#: The tool is waiting on the owner to say yes.
+STEP_HELD = "held"
+
 
 def _stale_after(source: str):
     """How long a run of this kind may go unfinished before it is a failure."""

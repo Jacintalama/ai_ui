@@ -13,6 +13,7 @@ from sqlalchemy import bindparam
 from sqlalchemy import text as sql_text
 
 import agent_access
+import agent_activity
 import agent_handoff
 from db import session
 
@@ -262,6 +263,48 @@ HANDOFF_TOOL = "ask_colleague"
 HANDOFF_TOOL_ROW = "colleague"
 
 
+class ToolOutcome:
+    """What a tool call did, beside the sentence the model reads.
+
+    Two different readers want two different things out of one tool call. The
+    model gets a sentence it can write around. tasks.agent_step gets a status
+    and, for a handoff, who was actually asked.
+
+    They cannot be the same value, and deriving one from the other is what
+    broke: the status used to be read back off the sentence by matching the
+    prefix "Refused:", so every handoff refusal ("There is no colleague
+    called...", "That would be too many agents deep...") was filed as ok, and
+    a garbage name the model typed was stored as the target because the
+    resolved id never came back out of here (review, 2026-09-29).
+
+    So the code that writes the sentence sets the status at the point where it
+    knows, through refused()/failed()/ok(), which hand the sentence straight
+    back so the two cannot drift apart on the next edit.
+
+    Optional everywhere. A caller that does not record anything passes nothing
+    and every tool behaves exactly as it did before this existed.
+    """
+
+    __slots__ = ("status", "target_agent_id")
+
+    def __init__(self, status: str = agent_activity.STEP_OK,
+                 target_agent_id: str | None = None) -> None:
+        self.status = status
+        self.target_agent_id = target_agent_id
+
+    def ok(self, sentence: str) -> str:
+        self.status = agent_activity.STEP_OK
+        return sentence
+
+    def failed(self, sentence: str) -> str:
+        self.status = agent_activity.STEP_FAILED
+        return sentence
+
+    def refused(self, sentence: str) -> str:
+        self.status = agent_activity.STEP_REFUSED
+        return sentence
+
+
 async def _roster_for(user_email: str) -> list[dict]:
     """This person's own agents. A module-level seam so tests never call
     Open WebUI."""
@@ -308,15 +351,24 @@ def _match_colleague(roster: list[dict], wanted: str) -> dict | None:
 
 
 async def run_handoff(caller_id: str, user_email: str, target_name: str,
-                      question: str) -> str:
+                      question: str,
+                      outcome: "ToolOutcome | None" = None) -> str:
     """One agent asking another, as a tool result.
 
     Never raises and never returns an empty string: the caller shows this to
     its owner, so every outcome has to be a sentence they can act on.
+
+    `outcome` is filled in with how this ended and WHICH agent was asked. The
+    resolved id, never the name the model typed: the column is meant to join
+    against agent_run.agent_id, and a sentence a model put in the `agent`
+    argument is prose, which this table stores none of. A handoff refused
+    before the name resolves records no target at all.
     """
+    outcome = outcome if outcome is not None else ToolOutcome()
     asked = (question or "").strip()
     if not asked:
-        return "There was nothing to ask, so no colleague was asked."
+        return outcome.refused(
+            "There was nothing to ask, so no colleague was asked.")
 
     # Await only if awaitable, the same pattern _run_native uses below: the
     # real seam is `async def`, but a test may stand in a plain callable, and
@@ -326,13 +378,17 @@ async def run_handoff(caller_id: str, user_email: str, target_name: str,
         roster = await roster
     target = _match_colleague(roster, target_name)
     if not target:
-        return ("There is no colleague called %r on this account, so nothing "
-                "was asked." % (target_name or ""))
+        return outcome.refused(
+            "There is no colleague called %r on this account, so nothing "
+            "was asked." % (target_name or ""))
 
     target_id = str(target.get("id") or "")
+    # Recorded the moment it is known, and only then: every refusal above this
+    # line names nobody real, so there is nothing to write down for it.
+    outcome.target_agent_id = target_id or None
     refused = agent_handoff.refusal(caller_id, target_id)
     if refused:
-        return refused
+        return outcome.refused(refused)
 
     name = str(target.get("name") or target_id)
     # Counted BEFORE the turn, not after: a colleague that fails still cost
@@ -340,18 +396,22 @@ async def run_handoff(caller_id: str, user_email: str, target_name: str,
     # asked for ever.
     agent_handoff.spend()
     try:
-        async with agent_handoff.entered(target_id):
+        # Both agents go on the stack, not only the one being asked: that is
+        # what refuses Iris asking Nora back while Nora waits on Iris.
+        async with agent_handoff.entered(caller_id, target_id):
             answer = await _run_colleague_turn(
                 user_email, target_id, asked,
                 parent_run_id=agent_handoff.parent_run())
     except Exception:                                       # noqa: BLE001
         logger.exception("a colleague's turn failed")
-        return ("%s could not answer just now, so carry on with what you "
-                "have." % name)
+        return outcome.failed(
+            "%s could not answer just now, so carry on with what you "
+            "have." % name)
     answer = (answer or "").strip()
     if not answer:
-        return "%s had nothing to add." % name
-    return "%s says: %s" % (name, answer)
+        # An agent with nothing to add answered. The handoff worked.
+        return outcome.ok("%s had nothing to add." % name)
+    return outcome.ok("%s says: %s" % (name, answer))
 
 
 def _proxy_url() -> str:
@@ -499,6 +559,7 @@ async def execute_tool_call(
     tool_call: dict, user_email: str,
     allowed_native_tools: list[str] | None = None,
     agent_id: str | None = None,
+    outcome: "ToolOutcome | None" = None,
 ) -> str:
     """Run one tool call as `user_email` and return a string for the model.
 
@@ -514,10 +575,19 @@ async def execute_tool_call(
     and without it a tool that wants to act as the agent has nothing to act
     as. Left None by callers that are not an agent.
 
+    `outcome` is a ToolOutcome the caller wants filled in with how this ended,
+    for tasks.agent_step. Every path below sets it, because the only other way
+    to know is to read the sentence, and that is what filed every refusal as
+    a success. Left None by callers that record nothing.
+
     Never raises. A tool that fails returns its failure as the tool result so
     the agent can say what went wrong, which is far more useful to the owner
     than a run that dies with nothing.
     """
+    # Never left None past here, so no path has to remember to check it. A
+    # caller that passed one gets its own object mutated; a caller that did not
+    # gets a throwaway, and both paths run exactly the same code.
+    outcome = outcome if outcome is not None else ToolOutcome()
     # Shape checks before anything is read off these, and note that they sit
     # OUTSIDE the try below. `(tool_call or {})` only substitutes for a FALSY
     # value, so a truthy non-mapping (a bare string, an int, a list) used to
@@ -527,15 +597,18 @@ async def execute_tool_call(
     # the malformation to expect.
     if not isinstance(tool_call, dict):
         logger.error("tool call was not an object")
-        return "That tool call was malformed, so nothing was run."
+        return outcome.failed(
+            "That tool call was malformed, so nothing was run.")
     fn = tool_call.get("function")
     if not isinstance(fn, dict):
         logger.error("tool call carried no function object")
-        return "That tool call named no tool, so nothing was run."
+        return outcome.failed(
+            "That tool call named no tool, so nothing was run.")
     name = fn.get("name")
     if not isinstance(name, str):
         logger.error("tool call named no tool, or named one that was not text")
-        return "That tool call named no tool, so nothing was run."
+        return outcome.failed(
+            "That tool call named no tool, so nothing was run.")
     name = name.strip()
     raw_args = fn.get("arguments") or "{}"
     try:
@@ -552,7 +625,8 @@ async def execute_tool_call(
         params = {}
 
     if not name:
-        return "That tool call named no tool, so nothing was run."
+        return outcome.failed(
+            "That tool call named no tool, so nothing was run.")
 
     if name == HANDOFF_TOOL:
         # Scoped like every other native tool: interception must not become
@@ -570,20 +644,23 @@ async def execute_tool_call(
         # silently mean "everything is allowed".
         if not allowed_native_tools or \
                 HANDOFF_TOOL_ROW not in allowed_native_tools:
-            return ("This agent has not been given the tool to ask a "
-                    "colleague, so nothing was asked.")
+            return outcome.refused(
+                "This agent has not been given the tool to ask a "
+                "colleague, so nothing was asked.")
         args = arguments_of(tool_call) or {}
         try:
             return await run_handoff(
                 agent_id or "", user_email,
-                str(args.get("agent") or ""), str(args.get("question") or ""))
+                str(args.get("agent") or ""), str(args.get("question") or ""),
+                outcome=outcome)
         except Exception:                                   # noqa: BLE001
             # run_handoff's own try/except covers a colleague's turn blowing
             # up; this covers everything before that point (fetching the
             # roster, say) so this branch keeps execute_tool_call's contract
             # of never raising, the same as the native and proxy paths below.
             logger.error("tool call %s failed", name, exc_info=True)
-            return "The tool " + name + " could not be run this time."
+            return outcome.failed(
+                "The tool " + name + " could not be run this time.")
 
     try:
         # The native path is the one with teeth: it execs the tool source
@@ -605,19 +682,26 @@ async def execute_tool_call(
         # per-user access control on /meta/call_tool.
         if name.startswith("_"):
             logger.error("tool call requested a non-public method name %r", name)
-            return "The tool " + name + " is not available."
+            return outcome.refused(
+                "The tool " + name + " is not available.")
 
         source = None
         if name.isidentifier():
             source = await _load_native_tool_source(name, allowed_native_tools)
         if source:
-            return await _run_native(source, name, params, user_email,
-                                     agent_id)
+            # A native tool that raises lands in the catch-all below, which
+            # files it as failed. One that returns a string ran, whatever the
+            # string says: this layer cannot tell a tool reporting a problem
+            # in its own words from one answering, and guessing from the words
+            # is the mistake this whole change removes.
+            return outcome.ok(
+                await _run_native(source, name, params, user_email, agent_id))
 
         if name in PROXY_META_ABSENT:
-            return ("There is no tool called " + name + ". To find one, call "
-                    "search_tools with what you are trying to do, then "
-                    "call_tool to run what it returns.")
+            return outcome.failed(
+                "There is no tool called " + name + ". To find one, call "
+                "search_tools with what you are trying to do, then "
+                "call_tool to run what it returns.")
 
         if name in PROXY_META_METHODS:
             # Straight at the route, carrying the model's own arguments. These
@@ -635,15 +719,20 @@ async def execute_tool_call(
                 headers={"X-User-Email": user_email},
                 timeout=TOOL_TIMEOUT_SECONDS)
         if response.status_code == 403:
-            return ("You do not have access to the service behind the tool "
-                    + name + ".")
+            return outcome.refused(
+                "You do not have access to the service behind the tool "
+                + name + ".")
         if response.status_code == 404:
-            return "The tool " + name + " is not available."
+            return outcome.failed(
+                "The tool " + name + " is not available.")
         if response.status_code >= 400:
-            return "The tool " + name + " could not be run this time."
+            return outcome.failed(
+                "The tool " + name + " could not be run this time.")
         payload = response.json()
-        return payload if isinstance(payload, str) else json.dumps(payload)
+        return outcome.ok(
+            payload if isinstance(payload, str) else json.dumps(payload))
     except Exception:                                       # noqa: BLE001
         # Never surface the exception text: an httpx error carries the URL.
         logger.error("tool call %s failed", name, exc_info=True)
-        return "The tool " + name + " could not be run this time."
+        return outcome.failed(
+            "The tool " + name + " could not be run this time.")

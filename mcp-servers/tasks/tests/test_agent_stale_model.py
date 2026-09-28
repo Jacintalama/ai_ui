@@ -286,7 +286,11 @@ async def test_running_out_of_rounds_says_so_instead_of_nothing(monkeypatch):
     assert notes and "stopped after" in notes[0].lower()
 
 
-async def _fake_tool_result(tool_call, user_email, allowed=None, agent_id=None):
+async def _fake_tool_result(tool_call, user_email, allowed=None, agent_id=None,
+                            outcome=None):
+    # outcome is the ToolOutcome the loop hands every tool call so the row it
+    # writes says what happened rather than guessing from this string. Nothing
+    # here needs to set it; it must simply be accepted.
     return "nothing to report"
 
 
