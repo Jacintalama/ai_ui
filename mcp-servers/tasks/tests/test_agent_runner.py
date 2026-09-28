@@ -12,6 +12,7 @@ import httpx
 import pytest
 import respx
 
+import agent_handoff
 import agent_memory
 import agent_runner
 
@@ -701,3 +702,26 @@ async def test_the_router_busy_sentence_is_a_failed_run_too(wired):
 
     assert status == "failed", (status, result)
     assert result == agent_runner.ROUTER_EXHAUSTED
+
+
+async def test_a_scheduled_run_opens_the_handoff_budget(wired, monkeypatch):
+    """run_agent calls _chat directly rather than through _run_turn, so
+    it has to open agent_handoff's own budget -- otherwise spend() and
+    spent() would stay no-ops on every scheduled run, a colleague asked
+    from a schedule would get no parent_run_id, and the per-turn handoff
+    cap would never bite on an unattended run, which is exactly where an
+    unbounded number of handoffs is most expensive: nobody is watching
+    it."""
+    monkeypatch.setattr(agent_runner.agent_activity, "start_run",
+                        AsyncMock(return_value="run-9"))
+    seen = {}
+
+    async def chat(**kw):
+        seen["parent"] = agent_handoff.parent_run()
+        return ("Two need a reply today.", [])
+
+    monkeypatch.setattr(agent_runner, "_chat", chat)
+
+    await agent_runner.run_agent(_sched())
+
+    assert seen["parent"] == "run-9"

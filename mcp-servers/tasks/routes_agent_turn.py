@@ -28,6 +28,7 @@ import agent_activity
 import agent_brief
 import agent_escalation
 import agent_graph
+import agent_handoff
 import agent_memory
 import agent_routing
 import routes_prefs
@@ -60,6 +61,11 @@ STATUS_WAITING = "waiting"
 #: The shape of an agent id this service mints, and the only shape the
 #: turn marker will carry. See turns_marker.
 _MARKER_ID_RE = re.compile(r"agent-[A-Za-z0-9_-]+")
+
+#: A colleague's turn is shorter than a top-level one because somebody is
+#: waiting mid-sentence for it, and agents run one at a time on this box.
+COLLEAGUE_HTTP_TIMEOUT_SECONDS = max(30, CHANNEL_HTTP_TIMEOUT_SECONDS // 2)
+COLLEAGUE_MAX_TOOL_ITERATIONS = max(1, CHANNEL_MAX_TOOL_ITERATIONS // 2)
 
 
 class TurnIn(BaseModel):
@@ -279,7 +285,9 @@ def _pending_payload(user_email: str, agent_id: str,
 
 
 async def _run_turn(user_email: str, agent_id: str, messages: list[dict],
-                    brief: bool = False) -> dict:
+                    brief: bool = False,
+                    surface: str = agent_access.SURFACE_CHANNEL,
+                    parent_run_id: str | None = None) -> dict:
     """Run one turn as this user's agent, tools and all.
 
     Split out of the endpoint so /agents/chat can reuse it without going back
@@ -291,16 +299,28 @@ async def _run_turn(user_email: str, agent_id: str, messages: list[dict],
     gateway has no such round, and the row and roster a brief needs are
     resolved here anyway, so asking for it here is what stops that endpoint
     fetching the same listing a second time.
+
+    `surface` is where this turn is running, which decides what its tools
+    may do. A handoff passes SURFACE_COLLEAGUE, which narrows `ask` to read
+    only: the owner is in a conversation with the agent that ASKED, so a
+    prompt raised here would ask them about a conversation they are not in.
+
+    `parent_run_id` is the run that asked for this one, so the office can
+    say who is helping whom as a fact rather than an animation.
     """
     token, tools, level, agent, roster = await _resolve_agent_row(
         user_email, agent_id)
     if brief:
         made = await _brief_for(user_email, agent, roster, messages)
         messages = [made] + messages
-    mode = agent_access.effective_mode(level, None, agent_access.SURFACE_CHANNEL)
+    mode = agent_access.effective_mode(level, None, surface)
 
     run_id = await agent_activity.start_run(
-        agent_id, user_email, agent_activity.SOURCE_CHANNEL)
+        agent_id, user_email,
+        (agent_activity.SOURCE_COLLEAGUE
+         if surface == agent_access.SURFACE_COLLEAGUE
+         else agent_activity.SOURCE_CHANNEL),
+        parent_run_id=parent_run_id)
     # Who is asking. The room says so through agent_escalation.asking,
     # because only it can tell the person's words from its own PASS
     # instruction; every other chat surface hands this the person's own
@@ -309,38 +329,47 @@ async def _run_turn(user_email: str, agent_id: str, messages: list[dict],
               or agent_escalation.Intent(person_text=_last_user_text(messages)))
     usage = agent_escalation.TurnUsage(run_id=run_id)
     outcome = "failed"
-    try:
-        answer, notes = await _chat(
-            token=token, model=agent_id, messages=messages,
-            agent=agent,
-            tool_ids=tools or None, user_email=user_email,
-            tool_mode=mode,
-            refusal_reason=agent_access.refusal_reason(
-                level, None, agent_access.SURFACE_CHANNEL),
-            max_iterations=CHANNEL_MAX_TOOL_ITERATIONS,
-            timeout=CHANNEL_HTTP_TIMEOUT_SECONDS,
-            intent=intent, usage=usage)
-        outcome = "completed"
-        if not answer and notes:
-            # The loop writes a note when it stops at the iteration cap or
-            # refuses a write, and this path used to throw it away and return
-            # an empty string. An empty bubble tells the person nothing and
-            # reads as the agent ignoring them; the note says what happened.
-            # The schedule path has always done this; the chat path did not,
-            # which only surfaced once agents used enough rounds to hit the
-            # cap by looking a skill up first.
-            answer = "\n".join(notes)
-            notes = []
-        # The subconscious: after a real answer, one detached completion
-        # writes down what was settled. Fire and forget, never awaited here.
-        agent_memory.schedule_reflection(
-            user_email, agent, token, _last_user_text(messages), answer)
-        return {"answer": answer, "notes": notes}
-    except agent_access.ApprovalRequired as err:
-        outcome = STATUS_WAITING
-        return _pending_payload(user_email, agent_id, err)
-    finally:
-        await agent_activity.finish_run(run_id, outcome, usage=usage)
+    # Opens the handoff budget for the outermost turn only: began() no-ops
+    # when one is already open, so a colleague's turn spends its caller's
+    # budget rather than getting a fresh one of its own.
+    async with agent_handoff.began(run_id):
+        try:
+            answer, notes = await _chat(
+                token=token, model=agent_id, messages=messages,
+                agent=agent,
+                tool_ids=tools or None, user_email=user_email,
+                tool_mode=mode,
+                refusal_reason=agent_access.refusal_reason(
+                    level, None, surface),
+                max_iterations=(COLLEAGUE_MAX_TOOL_ITERATIONS
+                                if surface == agent_access.SURFACE_COLLEAGUE
+                                else CHANNEL_MAX_TOOL_ITERATIONS),
+                timeout=(COLLEAGUE_HTTP_TIMEOUT_SECONDS
+                         if surface == agent_access.SURFACE_COLLEAGUE
+                         else CHANNEL_HTTP_TIMEOUT_SECONDS),
+                intent=intent, usage=usage)
+            outcome = "completed"
+            if not answer and notes:
+                # The loop writes a note when it stops at the iteration cap or
+                # refuses a write, and this path used to throw it away and
+                # return an empty string. An empty bubble tells the person
+                # nothing and reads as the agent ignoring them; the note says
+                # what happened. The schedule path has always done this; the
+                # chat path did not, which only surfaced once agents used
+                # enough rounds to hit the cap by looking a skill up first.
+                answer = "\n".join(notes)
+                notes = []
+            # The subconscious: after a real answer, one detached completion
+            # writes down what was settled. Fire and forget, never awaited
+            # here.
+            agent_memory.schedule_reflection(
+                user_email, agent, token, _last_user_text(messages), answer)
+            return {"answer": answer, "notes": notes}
+        except agent_access.ApprovalRequired as err:
+            outcome = STATUS_WAITING
+            return _pending_payload(user_email, agent_id, err)
+        finally:
+            await agent_activity.finish_run(run_id, outcome, usage=usage)
 
 
 @router.post("/turn")

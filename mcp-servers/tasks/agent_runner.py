@@ -27,6 +27,7 @@ import agent_activity
 import agent_brief
 import agent_escalation
 import agent_graph
+import agent_handoff
 import agent_memory
 import agent_routing
 from agent_tools import (arguments_of, execute_tool_call,
@@ -973,173 +974,181 @@ async def run_agent(sched) -> tuple[str, str, dict]:
         agent_activity.SOURCE_SCHEDULE)
     usage = agent_escalation.TurnUsage(run_id=run_id)
     outcome = "failed"
-    try:
-        owner = await _owui_user_id_for(sched.user_email)
-        if not owner:
-            outcome = "failed"
-            return ("failed",
-                    "This schedule could not run: its owner has no account on "
-                    "this platform any more.", {})
-
-        # Mint a token for the listing phase. Same lifetime as the chat mint
-        # below, not the 60s this used to carry: the listing loop itself can
-        # make up to 5 sequential 30s-timeout requests, a worst case longer
-        # than 60s, and a token expiring mid-loop would surface as a wrong
-        # "agent no longer exists" rather than the auth failure it actually is.
-        list_token = mint_owui_token(owner, ttl_seconds=CHAT_TOKEN_TTL_SECONDS)
-        agents, truncated = await _list_agents(list_token)
-        agent = next((a for a in agents
-                      if isinstance(a, dict) and a.get("id") == sched.agent_id), None)
-        if agent is None:
-            if truncated:
-                # Not in what we fetched is not the same as not existing: the
-                # listing was cut short before it could see every agent, so
-                # this may simply be further down a page we never reached.
+    # Opens the handoff budget for the outermost turn only: began()
+    # no-ops when one is already open. run_agent calls _chat directly
+    # rather than through _run_turn, so it has to open this itself, or
+    # spend() and spent() would stay no-ops on every scheduled run and a
+    # colleague asked from a schedule would get no parent_run_id -- and
+    # an unattended run is exactly where an unbounded number of handoffs
+    # is most expensive, because nobody is watching it.
+    async with agent_handoff.began(run_id):
+        try:
+            owner = await _owui_user_id_for(sched.user_email)
+            if not owner:
                 outcome = "failed"
                 return ("failed",
-                        "This schedule's agent could not be checked this "
-                        "time. It will try again at the next scheduled "
-                        "time.", {})
-            outcome = "failed"
-            return ("failed",
-                    "This schedule is set to run as an agent that no longer "
-                    "exists. Delete this schedule and create it again with "
-                    "a different agent.", {})
+                        "This schedule could not run: its owner has no account on "
+                        "this platform any more.", {})
 
-        meta = agent.get("meta") if isinstance(agent.get("meta"), dict) else {}
-        # The same resolution the chat path uses, not meta["toolIds"] read
-        # raw. Measured 2026-09-10: reading it raw gave this agent one tool on
-        # a schedule against twelve in chat, and the one was the connected
-        # apps umbrella with nothing behind it, so a scheduled run could read
-        # nothing at all while its card still promised every tool the owner
-        # had. Imported here rather than at module scope because
-        # routes_agent_turn imports this module, which is the same deferred
-        # import scheduler.py uses to reach run_agent.
-        from routes_agent_turn import tools_for_agent
-        tools = await tools_for_agent(sched.user_email, meta)
+            # Mint a token for the listing phase. Same lifetime as the chat mint
+            # below, not the 60s this used to carry: the listing loop itself can
+            # make up to 5 sequential 30s-timeout requests, a worst case longer
+            # than 60s, and a token expiring mid-loop would surface as a wrong
+            # "agent no longer exists" rather than the auth failure it actually is.
+            list_token = mint_owui_token(owner, ttl_seconds=CHAT_TOKEN_TTL_SECONDS)
+            agents, truncated = await _list_agents(list_token)
+            agent = next((a for a in agents
+                          if isinstance(a, dict) and a.get("id") == sched.agent_id), None)
+            if agent is None:
+                if truncated:
+                    # Not in what we fetched is not the same as not existing: the
+                    # listing was cut short before it could see every agent, so
+                    # this may simply be further down a page we never reached.
+                    outcome = "failed"
+                    return ("failed",
+                            "This schedule's agent could not be checked this "
+                            "time. It will try again at the next scheduled "
+                            "time.", {})
+                outcome = "failed"
+                return ("failed",
+                        "This schedule is set to run as an agent that no longer "
+                        "exists. Delete this schedule and create it again with "
+                        "a different agent.", {})
 
-        # Mint a long-lived token immediately before the chat call. The token
-        # must outlive the WHOLE tool loop, not one call: up to
-        # MAX_TOOL_ITERATIONS sequential completions of up to
-        # HTTP_TIMEOUT_SECONDS each, plus tool time in between, or it expires
-        # mid run, surfacing as the agent refusing rather than as an auth
-        # error.
-        chat_token = mint_owui_token(owner, ttl_seconds=CHAT_TOKEN_TTL_SECONDS)
+            meta = agent.get("meta") if isinstance(agent.get("meta"), dict) else {}
+            # The same resolution the chat path uses, not meta["toolIds"] read
+            # raw. Measured 2026-09-10: reading it raw gave this agent one tool on
+            # a schedule against twelve in chat, and the one was the connected
+            # apps umbrella with nothing behind it, so a scheduled run could read
+            # nothing at all while its card still promised every tool the owner
+            # had. Imported here rather than at module scope because
+            # routes_agent_turn imports this module, which is the same deferred
+            # import scheduler.py uses to reach run_agent.
+            from routes_agent_turn import tools_for_agent
+            tools = await tools_for_agent(sched.user_email, meta)
 
-        # The agent's own level is a ceiling over the schedule's tool_mode.
-        # A schedule may narrow what its agent may do and may never widen it;
-        # see agent_access. An agent with no level set falls through to
-        # exactly the behaviour this had before the setting existed.
-        level = agent_access.level_of(meta)
-        mode = agent_access.effective_mode(
-            level, getattr(sched, "tool_mode", None),
-            agent_access.SURFACE_SCHEDULE)
+            # Mint a long-lived token immediately before the chat call. The token
+            # must outlive the WHOLE tool loop, not one call: up to
+            # MAX_TOOL_ITERATIONS sequential completions of up to
+            # HTTP_TIMEOUT_SECONDS each, plus tool time in between, or it expires
+            # mid run, surfacing as the agent refusing rather than as an auth
+            # error.
+            chat_token = mint_owui_token(owner, ttl_seconds=CHAT_TOKEN_TTL_SECONDS)
 
-        # The same brief the chat surfaces carry, in front of the task.
-        #
-        # This used to be the memory block alone. Everything else the brief
-        # holds reached exactly one of the four ways an agent runs, so an
-        # agent given meta.skillIds ran its weekly cron without ever being
-        # shown the skill, and none of them knew what day it was.
-        #
-        # No roster: that sentence says "the other assistants HERE", and on a
-        # cron run nobody else is speaking.
-        messages = _messages_for(sched)
-        try:
-            memory = await agent_memory.recall_block(sched.user_email,
-                                                     sched.agent_id)
-        except Exception:                                   # noqa: BLE001
-            # Optional by definition, and the same arm both chat sites give
-            # it. recall_block already fails open, so this only catches a bug
-            # in it, and a bug there must cost the memory rather than the run.
-            # Without the arm it lands in run_agent's own catch-all, which
-            # delivers "could not finish this run" and waits a week: the one
-            # surface where nobody is there to try again.
-            logger.warning("could not read agent memory for %s",
-                           getattr(sched, "agent_id", None), exc_info=True)
-            memory = ""
-        # The prompt is the question the graph is read against, the same way
-        # the chat path reads it against what the person just typed.
-        graph = await agent_graph.graph_block(sched.user_email, sched.prompt)
-        # The schedule's own zone, not the owner's current one: this is the
-        # clock the cron matched a minute ago, so it is the clock the run is
-        # happening on.
-        messages = [agent_brief.build(
-            agent, (), memory=memory, graph=graph,
-            now=agent_brief.now_in(getattr(sched, "tz", "") or ""))] + messages
-
-        # Keyword arguments on purpose: the tests assert on them by name, and
-        # a positional call here would silently drift from those assertions.
-        answer, notes = await _chat(
-            token=chat_token, model=sched.agent_id,
-            agent=agent,
-            messages=messages, tool_ids=tools or None,
-            user_email=sched.user_email,
-            tool_mode=mode,
-            refusal_reason=agent_access.refusal_reason(
+            # The agent's own level is a ceiling over the schedule's tool_mode.
+            # A schedule may narrow what its agent may do and may never widen it;
+            # see agent_access. An agent with no level set falls through to
+            # exactly the behaviour this had before the setting existed.
+            level = agent_access.level_of(meta)
+            mode = agent_access.effective_mode(
                 level, getattr(sched, "tool_mode", None),
-                agent_access.SURFACE_SCHEDULE),
-            # The schedule's own prompt is what its owner asked for. The
-            # reminder of the last run in front of it is ours, not theirs.
-            intent=agent_escalation.Intent(
-                person_text=getattr(sched, "prompt", "") or ""),
-            usage=usage)
-        if not answer and not notes:
-            outcome = "failed"
-            return ("failed", "The agent returned an empty answer.", {})
-        # A run that spent every round and produced no answer is a failed run,
-        # whatever the loop called it. It used to come back "completed"
-        # carrying only the note about stopping early, which on a schedule
-        # means the delivered report IS that sentence: 69 characters, once a
-        # week, with a green card. Measured on the first real weekly review.
-        if not answer and any(n.startswith("Stopped after") for n in notes):
+                agent_access.SURFACE_SCHEDULE)
+
+            # The same brief the chat surfaces carry, in front of the task.
+            #
+            # This used to be the memory block alone. Everything else the brief
+            # holds reached exactly one of the four ways an agent runs, so an
+            # agent given meta.skillIds ran its weekly cron without ever being
+            # shown the skill, and none of them knew what day it was.
+            #
+            # No roster: that sentence says "the other assistants HERE", and on a
+            # cron run nobody else is speaking.
+            messages = _messages_for(sched)
+            try:
+                memory = await agent_memory.recall_block(sched.user_email,
+                                                         sched.agent_id)
+            except Exception:                                   # noqa: BLE001
+                # Optional by definition, and the same arm both chat sites give
+                # it. recall_block already fails open, so this only catches a bug
+                # in it, and a bug there must cost the memory rather than the run.
+                # Without the arm it lands in run_agent's own catch-all, which
+                # delivers "could not finish this run" and waits a week: the one
+                # surface where nobody is there to try again.
+                logger.warning("could not read agent memory for %s",
+                               getattr(sched, "agent_id", None), exc_info=True)
+                memory = ""
+            # The prompt is the question the graph is read against, the same way
+            # the chat path reads it against what the person just typed.
+            graph = await agent_graph.graph_block(sched.user_email, sched.prompt)
+            # The schedule's own zone, not the owner's current one: this is the
+            # clock the cron matched a minute ago, so it is the clock the run is
+            # happening on.
+            messages = [agent_brief.build(
+                agent, (), memory=memory, graph=graph,
+                now=agent_brief.now_in(getattr(sched, "tz", "") or ""))] + messages
+
+            # Keyword arguments on purpose: the tests assert on them by name, and
+            # a positional call here would silently drift from those assertions.
+            answer, notes = await _chat(
+                token=chat_token, model=sched.agent_id,
+                agent=agent,
+                messages=messages, tool_ids=tools or None,
+                user_email=sched.user_email,
+                tool_mode=mode,
+                refusal_reason=agent_access.refusal_reason(
+                    level, getattr(sched, "tool_mode", None),
+                    agent_access.SURFACE_SCHEDULE),
+                # The schedule's own prompt is what its owner asked for. The
+                # reminder of the last run in front of it is ours, not theirs.
+                intent=agent_escalation.Intent(
+                    person_text=getattr(sched, "prompt", "") or ""),
+                usage=usage)
+            if not answer and not notes:
+                outcome = "failed"
+                return ("failed", "The agent returned an empty answer.", {})
+            # A run that spent every round and produced no answer is a failed run,
+            # whatever the loop called it. It used to come back "completed"
+            # carrying only the note about stopping early, which on a schedule
+            # means the delivered report IS that sentence: 69 characters, once a
+            # week, with a green card. Measured on the first real weekly review.
+            if not answer and any(n.startswith("Stopped after") for n in notes):
+                outcome = "failed"
+                return ("failed",
+                        "The agent ran out of tool rounds before it could answer. "
+                        "Nothing was delivered for this run.", {})
+            # The busy sentence is not a report. Delivered as "completed" it goes
+            # out as the week's output, and _messages_for only carries
+            # last_result forward from a completed run, so it also comes back as
+            # "this is what you produced on the previous run" and the agent
+            # repeats it. That is the poisoning _messages_for's docstring
+            # describes. Same reasoning as the out-of-rounds check above. This
+            # also changes ROUTER_EXHAUSTED, which shipped as completed before.
+            if answer in (FREE_POOL_EXHAUSTED, ROUTER_EXHAUSTED):
+                outcome = "failed"
+                return ("failed", answer, {})
+            if notes:
+                # Say what was refused or stopped early, even when the model's
+                # own final content is empty. A run that quietly skipped part of
+                # its job, or stopped at the iteration cap, and reported nothing
+                # at all would be worse than one that said so.
+                note_text = "\n".join(notes)
+                answer = (answer + "\n\n" + note_text) if answer else note_text
+            outcome = "completed"
+            # Guaranteed rather than requested. The brief asks for no long dashes
+            # and the model used one in 25 of 36 replies anyway, so a report that
+            # lands in the owner's Discord is cleaned on the way out.
+            from agent_routing import scrub_long_dashes
+            return ("completed", scrub_long_dashes(answer), {})
+        except agent_access.ApprovalRequired:
+            # Unreachable today: effective_mode never gives a schedule "ask".
+            # Kept so that if it ever becomes reachable the owner is told the
+            # cause instead of the generic "could not finish this run", which
+            # would send somebody hunting for an outage that is not there.
+            logger.warning("an agent asked for approval on a schedule, "
+                           "which has nobody to ask")
             outcome = "failed"
             return ("failed",
-                    "The agent ran out of tool rounds before it could answer. "
-                    "Nothing was delivered for this run.", {})
-        # The busy sentence is not a report. Delivered as "completed" it goes
-        # out as the week's output, and _messages_for only carries
-        # last_result forward from a completed run, so it also comes back as
-        # "this is what you produced on the previous run" and the agent
-        # repeats it. That is the poisoning _messages_for's docstring
-        # describes. Same reasoning as the out-of-rounds check above. This
-        # also changes ROUTER_EXHAUSTED, which shipped as completed before.
-        if answer in (FREE_POOL_EXHAUSTED, ROUTER_EXHAUSTED):
+                    "This agent is set to ask before it changes anything, and a "
+                    "scheduled run has nobody to ask. Set it to All access, or "
+                    "run it from a chat.", {})
+        except Exception:                                   # noqa: BLE001
+            # Never include the exception's own text blindly: an httpx error can
+            # carry the request URL, and this project has already leaked a token
+            # that way.
+            logger.error("agent schedule run failed", exc_info=True)
             outcome = "failed"
-            return ("failed", answer, {})
-        if notes:
-            # Say what was refused or stopped early, even when the model's
-            # own final content is empty. A run that quietly skipped part of
-            # its job, or stopped at the iteration cap, and reported nothing
-            # at all would be worse than one that said so.
-            note_text = "\n".join(notes)
-            answer = (answer + "\n\n" + note_text) if answer else note_text
-        outcome = "completed"
-        # Guaranteed rather than requested. The brief asks for no long dashes
-        # and the model used one in 25 of 36 replies anyway, so a report that
-        # lands in the owner's Discord is cleaned on the way out.
-        from agent_routing import scrub_long_dashes
-        return ("completed", scrub_long_dashes(answer), {})
-    except agent_access.ApprovalRequired:
-        # Unreachable today: effective_mode never gives a schedule "ask".
-        # Kept so that if it ever becomes reachable the owner is told the
-        # cause instead of the generic "could not finish this run", which
-        # would send somebody hunting for an outage that is not there.
-        logger.warning("an agent asked for approval on a schedule, "
-                       "which has nobody to ask")
-        outcome = "failed"
-        return ("failed",
-                "This agent is set to ask before it changes anything, and a "
-                "scheduled run has nobody to ask. Set it to All access, or "
-                "run it from a chat.", {})
-    except Exception:                                   # noqa: BLE001
-        # Never include the exception's own text blindly: an httpx error can
-        # carry the request URL, and this project has already leaked a token
-        # that way.
-        logger.error("agent schedule run failed", exc_info=True)
-        outcome = "failed"
-        return ("failed",
-                "The agent could not finish this run. It will try again at the "
-                "next scheduled time.", {})
-    finally:
-        await agent_activity.finish_run(run_id, outcome, usage=usage)
+            return ("failed",
+                    "The agent could not finish this run. It will try again at the "
+                    "next scheduled time.", {})
+        finally:
+            await agent_activity.finish_run(run_id, outcome, usage=usage)
