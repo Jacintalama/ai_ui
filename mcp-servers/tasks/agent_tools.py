@@ -12,6 +12,8 @@ import httpx
 from sqlalchemy import bindparam
 from sqlalchemy import text as sql_text
 
+import agent_access
+import agent_handoff
 from db import session
 
 logger = logging.getLogger(__name__)
@@ -237,6 +239,105 @@ def is_write_tool(method_name: str) -> bool:
 #: needed before the agent can answer.
 TOOL_TIMEOUT_SECONDS = 60
 
+#: The one tool this module runs itself rather than exec'ing a native row.
+#: The row exists so the model can SEE the tool -- a tool without a
+#: generated spec is invisible to every model -- but its body is never run:
+#: that row is editable from the web UI, and a depth cap somebody can edit
+#: away is not a depth cap.
+HANDOFF_TOOL = "ask_colleague"
+
+
+async def _roster_for(user_email: str) -> list[dict]:
+    """This person's own agents. A module-level seam so tests never call
+    Open WebUI."""
+    import routes_agent_turn
+    return await routes_agent_turn._agents_for(user_email)
+
+
+async def _run_colleague_turn(user_email: str, agent_id: str, question: str,
+                              parent_run_id: str | None = None) -> str:
+    """Run one turn as the colleague and return its answer.
+
+    A module-level seam, so the tests above drive the handoff without
+    running a browser, a model or a database -- the same pattern
+    tests/test_autofix_loop.py uses.
+    """
+    import routes_agent_turn
+    out = await routes_agent_turn._run_turn(
+        user_email, agent_id, [{"role": "user", "content": question}],
+        brief=True, surface=agent_access.SURFACE_COLLEAGUE,
+        parent_run_id=parent_run_id)
+    answer = (out or {}).get("answer") or ""
+    notes = [n for n in ((out or {}).get("notes") or []) if isinstance(n, str)]
+    if not answer and notes:
+        answer = "\n".join(notes)
+    return answer
+
+
+def _match_colleague(roster: list[dict], wanted: str) -> dict | None:
+    """The agent this name means, or None.
+
+    Matched against the OWNER'S OWN roster and never trusted from the
+    model's argument: the name arrives in text an agent read somewhere, and
+    an id taken at face value would let a prompt-injected document address
+    somebody else's agent.
+    """
+    want = (wanted or "").strip().lower()
+    if not want:
+        return None
+    for a in roster or []:
+        name = str(a.get("name") or "").strip().lower()
+        if name == want or str(a.get("id") or "").strip().lower() == want:
+            return a
+    return None
+
+
+async def run_handoff(caller_id: str, user_email: str, target_name: str,
+                      question: str) -> str:
+    """One agent asking another, as a tool result.
+
+    Never raises and never returns an empty string: the caller shows this to
+    its owner, so every outcome has to be a sentence they can act on.
+    """
+    asked = (question or "").strip()
+    if not asked:
+        return "There was nothing to ask, so no colleague was asked."
+
+    # Await only if awaitable, the same pattern _run_native uses below: the
+    # real seam is `async def`, but a test may stand in a plain callable, and
+    # `await` on its already-resolved return value would raise TypeError.
+    roster = _roster_for(user_email)
+    if inspect.isawaitable(roster):
+        roster = await roster
+    target = _match_colleague(roster, target_name)
+    if not target:
+        return ("There is no colleague called %r on this account, so nothing "
+                "was asked." % (target_name or ""))
+
+    target_id = str(target.get("id") or "")
+    refused = agent_handoff.refusal(caller_id, target_id)
+    if refused:
+        return refused
+
+    name = str(target.get("name") or target_id)
+    # Counted BEFORE the turn, not after: a colleague that fails still cost
+    # the turn it took, and not counting it would let a failing agent be
+    # asked for ever.
+    agent_handoff.spend()
+    try:
+        async with agent_handoff.entered(target_id):
+            answer = await _run_colleague_turn(
+                user_email, target_id, asked,
+                parent_run_id=agent_handoff.parent_run())
+    except Exception:                                       # noqa: BLE001
+        logger.exception("a colleague's turn failed")
+        return ("%s could not answer just now, so carry on with what you "
+                "have." % name)
+    answer = (answer or "").strip()
+    if not answer:
+        return "%s had nothing to add." % name
+    return "%s says: %s" % (name, answer)
+
 
 def _proxy_url() -> str:
     return os.environ.get("MCP_PROXY_URL", "http://mcp-proxy:8000").rstrip("/")
@@ -437,6 +538,27 @@ async def execute_tool_call(
 
     if not name:
         return "That tool call named no tool, so nothing was run."
+
+    if name == HANDOFF_TOOL:
+        # Scoped like every other native tool: interception must not become
+        # a back door around the grant. An agent that was never given this
+        # tool cannot use it just because this branch runs first.
+        if allowed_native_tools is not None and \
+                HANDOFF_TOOL not in allowed_native_tools:
+            return ("This agent has not been given the tool to ask a "
+                    "colleague, so nothing was asked.")
+        args = arguments_of(tool_call) or {}
+        try:
+            return await run_handoff(
+                agent_id or "", user_email,
+                str(args.get("agent") or ""), str(args.get("question") or ""))
+        except Exception:                                   # noqa: BLE001
+            # run_handoff's own try/except covers a colleague's turn blowing
+            # up; this covers everything before that point (fetching the
+            # roster, say) so this branch keeps execute_tool_call's contract
+            # of never raising, the same as the native and proxy paths below.
+            logger.error("tool call %s failed", name, exc_info=True)
+            return "The tool " + name + " could not be run this time."
 
     try:
         # The native path is the one with teeth: it execs the tool source
