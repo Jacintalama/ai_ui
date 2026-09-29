@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Test — Pure Mountain Drinking Water</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles/main.css" />
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased">
+
+  <header class="fixed top-0 inset-x-0 z-50 backdrop-blur bg-white/70 border-b border-slate-200">
+    <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+      <a href="#" class="flex items-center gap-2 font-bold text-sky-700 text-xl">
+        <span class="droplet">💧</span> Test Water
+      </a>
+      <nav class="hidden md:flex gap-8 text-sm font-medium text-slate-600">
+        <a href="#about" class="hover:text-sky-600">About</a>
+        <a href="#source" class="hover:text-sky-600">Our Source</a>
+        <a href="#products" class="hover:text-sky-600">Products</a>
+        <a href="#quality" class="hover:text-sky-600">Quality</a>
+        <a href="#sustainability" class="hover:text-sky-600">Sustainability</a>
+        <a href="#contact" class="hover:text-sky-600">Contact</a>
+      </nav>
+      <a href="#contact" class="hidden md:inline-block bg-sky-600 hover:bg-sky-700 text-white text-sm font-medium px-4 py-2 rounded-full">Order Now</a>
+    </div>
+  </header>
+
+  <section id="hero" class="hero-bg pt-32 pb-24">
+    <div class="max-w-6xl mx-auto px-6 grid md:grid-cols-2 gap-12 items-center">
+      <div>
+        <p class="uppercase tracking-widest text-sky-700 text-sm font-semibold mb-4">Naturally sourced · pH 7.6</p>
+        <h1 class="text-5xl md:text-6xl font-bold leading-tight text-slate-900 mb-6">Water in its purest form.</h1>
+        <p class="text-lg text-slate-600 mb-8 max-w-lg">Test is bottled at the source — drawn from a protected alpine aquifer that has filtered our water through layers of ancient limestone for over 3,000 years.</p>
+        <div class="flex flex-wrap gap-4">
+          <a href="#products" class="bg-sky-600 hover:bg-sky-700 text-white font-medium px-6 py-3 rounded-full shadow-lg shadow-sky-200">Shop Bottles</a>
+          <a href="#about" class="border border-slate-300 hover:border-sky-500 text-slate-700 font-medium px-6 py-3 rounded-full">Learn More</a>
+        </div>
+      </div>
+      <div class="flex justify-center">
+        <div class="bottle-card">
+          <div class="bottle">
+            <div class="bottle-cap"></div>
+            <div class="bottle-neck"></div>
+            <div class="bottle-body">
+              <div class="bottle-label">
+                <div class="text-xs tracking-widest text-sky-700">PURE · NATURAL</div>
+                <div class="text-2xl font-bold text-sky-800 mt-1">TEST</div>
+                <div class="text-[10px] text-slate-500 mt-1">SPRING WATER · 500ml</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="about" class="py-24 bg-white">
+    <div class="max-w-4xl mx-auto px-6">
+      <h2 class="text-3xl md:text-4xl font-bold text-slate-900 mb-8 text-center">About Test Water</h2>
+      <div class="space-y-6 text-lg text-slate-700 leading-relaxed">
+        <p>Test was founded in 2014 by a small team of hydrologists and outdoor enthusiasts who believed that the water you drink every day should be as clean, balanced, and refreshing as the water they grew up drinking straight from mountain streams. We set out to build a brand that put source quality first — no industrial processing, no shortcuts, just water as nature delivers it.</p>
+        <p>Today, Test is sold in over 1,200 grocery stores, cafés, and gyms across the country. Every bottle is filled within 60 metres of the spring it comes from, sealed without contact with the open air, and shipped in 100% recycled PET that uses 40% less plastic than industry standard bottles.</p>
+        <p>We believe great drinking water shouldn't be a luxury. It should be the easy, obvious, healthy choice — every single day.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="source" class="py-24 bg-slate-50">
+    <div class="max-w-6xl mx-auto px-6">
+      <h2 class="text-3xl md:text-4xl font-bold text-slate-900 mb-4 text-center">From spring to bottle</h2>
+      <p class="text-center text-slate-600 mb-14 max-w-2xl mx-auto">Our water travels less than 100 metres from where it emerges from the earth to where it's sealed in your bottle. Here's how it gets there.</p>
+      <div class="grid md:grid-cols-4 gap-6">
+        <div class="step-card">
+          <div class="step-num">01</div>
+          <h3 class="font-bold text-lg mb-2">Rainfall</h3>
+          <p class="text-sm text-slate-600">Rain and snowmelt collect high in the alpine watershed, untouched by farms or industry.</p>
+        </div>
+        <div class="step-card">
+          <div class="step-num">02</div>
+          <h3 class="font-bold text-lg mb-2">Natural filtration</h3>
+          <p class="text-sm text-slate-600">Water seeps through 800m of limestone and granite over 30+ years, picking up natural minerals.</p>
+        </div>
+        <div class="step-card">
+          <div class="step-num">03</div>
+          <h3 class="font-bold text-lg mb-2">Spring emergence</h3>
+          <p class="text-sm text-slate-600">It surfaces at our protected spring at a constant 8°C — crisp, clean, and rich in electrolytes.</p>
+        </div>
+        <div class="step-card">
+          <div class="step-num">04</div>
+          <h3 class="font-bold text-lg mb-2">Sealed bottling</h3>
+          <p class="text-sm text-slate-600">Drawn directly into bottles within 60 metres of the source, never exposed to open air.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="products" class="py-24 bg-white" x-data="products">
+    <div class="max-w-6xl mx-auto px-6">
+      <h2 class="text-3xl md:text-4xl font-bold text-slate-900 mb-4 text-center">Our bottles</h2>
+      <p class="text-center text-slate-600 mb-14">Choose the size that fits your day.</p>
+      <div class="grid md:grid-cols-3 gap-8">
+        <template x-for="p in items" :key="p.name">
+          <div class="product-card">
+            <div class="product-img" :class="p.tone"></div>
+            <h3 class="font-bold text-xl mt-6 mb-1" x-text="p.name"></h3>
+            <p class="text-sm text-slate-500 mb-3" x-text="p.size"></p>
+            <p class="text-slate-600 text-sm mb-4" x-text="p.desc"></p>
+            <div class="flex items-center justify-between">
+              <span class="text-2xl font-bold text-sky-700" x-text="p.price"></span>
+              <button class="bg-slate-900 hover:bg-sky-700 text-white text-sm font-medium px-4 py-2 rounded-full">Add to cart</button>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </section>
+
+  <section id="quality" class="py-24 bg-sky-700 text-white">
+    <div class="max-w-6xl mx-auto px-6">
+      <h2 class="text-3xl md:text-4xl font-bold mb-4 text-center">Mineral composition</h2>
+      <p class="text-center text-sky-100 mb-14 max-w-2xl mx-auto">Independently tested every quarter. Naturally balanced — nothing added, nothing taken away.</p>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-6">
+        <div class="mineral-card"><div class="text-3xl font-bold">7.6</div><div class="text-sky-200 text-sm mt-1">pH balance</div></div>
+        <div class="mineral-card"><div class="text-3xl font-bold">82<span class="text-base">mg/L</span></div><div class="text-sky-200 text-sm mt-1">Calcium</div></div>
+        <div class="mineral-card"><div class="text-3xl font-bold">24<span class="text-base">mg/L</span></div><div class="text-sky-200 text-sm mt-1">Magnesium</div></div>
+        <div class="mineral-card"><div class="text-3xl font-bold">3<span class="text-base">mg/L</span></div><div class="text-sky-200 text-sm mt-1">Sodium</div></div>
+        <div class="mineral-card"><div class="text-3xl font-bold">1.2<span class="text-base">mg/L</span></div><div class="text-sky-200 text-sm mt-1">Potassium</div></div>
+        <div class="mineral-card"><div class="text-3xl font-bold">240<span class="text-base">mg/L</span></div><div class="text-sky-200 text-sm mt-1">Bicarbonates</div></div>
+        <div class="mineral-card"><div class="text-3xl font-bold">8°C</div><div class="text-sky-200 text-sm mt-1">Source temp</div></div>
+        <div class="mineral-card"><div class="text-3xl font-bold">0</div><div class="text-sky-200 text-sm mt-1">Additives</div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="sustainability" class="py-24 bg-white">
+    <div class="max-w-6xl mx-auto px-6">
+      <h2 class="text-3xl md:text-4xl font-bold text-slate-900 mb-4 text-center">Bottled responsibly</h2>
+      <p class="text-center text-slate-600 mb-14 max-w-2xl mx-auto">We're committed to delivering pure water without leaving a trail of waste behind. Here's what that looks like in practice.</p>
+      <div class="grid md:grid-cols-3 gap-8">
+        <div class="sustain-card">
+          <div class="text-4xl mb-3">♻️</div>
+          <h3 class="font-bold text-lg mb-2">100% recycled PET</h3>
+          <p class="text-slate-600 text-sm">Every bottle is made from rPET — recycled bottles given a second life — and is fully recyclable again after use.</p>
+        </div>
+        <div class="sustain-card">
+          <div class="text-4xl mb-3">🌱</div>
+          <h3 class="font-bold text-lg mb-2">Carbon-neutral shipping</h3>
+          <p class="text-slate-600 text-sm">We offset 100% of transportation emissions through verified reforestation projects in the watershed we draw from.</p>
+        </div>
+        <div class="sustain-card">
+          <div class="text-4xl mb-3">💧</div>
+          <h3 class="font-bold text-lg mb-2">Watershed protection</h3>
+          <p class="text-slate-600 text-sm">We protect 1,800 hectares of land around our spring through a partnership with the regional conservation trust.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="contact" class="py-24 bg-slate-900 text-white" x-data="contactForm">
+    <div class="max-w-3xl mx-auto px-6">
+      <h2 class="text-3xl md:text-4xl font-bold mb-4 text-center">Get in touch</h2>
+      <p class="text-center text-slate-300 mb-12">Wholesale orders, event sponsorship, or just curious about the source — drop us a line.</p>
+      <form @submit.prevent="submit" class="space-y-4">
+        <div class="grid md:grid-cols-2 gap-4">
+          <input x-model="name" type="text" placeholder="Your name" required class="bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 focus:outline-none focus:border-sky-500" />
+          <input x-model="email" type="email" placeholder="Email address" required class="bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 focus:outline-none focus:border-sky-500" />
+        </div>
+        <textarea x-model="message" rows="4" placeholder="How can we help?" required class="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 focus:outline-none focus:border-sky-500"></textarea>
+        <button type="submit" class="w-full bg-sky-600 hover:bg-sky-700 text-white font-medium py-3 rounded-lg">Send message</button>
+        <p x-show="sent" class="text-emerald-400 text-center text-sm">Thanks! We'll be in touch within one business day.</p>
+      </form>
+      <div class="mt-12 grid md:grid-cols-3 gap-6 text-sm text-slate-300 text-center">
+        <div><div class="font-semibold text-white mb-1">Email</div>hello@testwater.com</div>
+        <div><div class="font-semibold text-white mb-1">Phone</div>+1 (555) 014-2208</div>
+        <div><div class="font-semibold text-white mb-1">HQ</div>1812 Spring Valley Rd<br/>Highland, CO 80435</div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="bg-slate-950 text-slate-400 py-8 text-center text-sm">
+    <div class="max-w-6xl mx-auto px-6">
+      © 2026 Test Water Co. · Bottled at the source · All rights reserved.
+    </div>
+  </footer>
+
+</body>
+</html>

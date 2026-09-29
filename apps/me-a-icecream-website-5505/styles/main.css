@@ -1,0 +1,12 @@
+html { scroll-behavior: smooth; }
+body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+
+section { scroll-margin-top: 80px; }
+
+@keyframes floaty {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-12px); }
+}
+section:first-of-type div.text-\[14rem\] {
+  animation: floaty 5s ease-in-out infinite;
+}

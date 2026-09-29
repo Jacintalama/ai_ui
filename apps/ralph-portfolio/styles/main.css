@@ -1,0 +1,109 @@
+[x-cloak] { display: none !important; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* Subtle grain on dark backgrounds */
+.dark body {
+  background-image: radial-gradient(circle at 20% 0%, rgba(99, 102, 241, 0.08), transparent 40%);
+}
+
+/* Image fade-in */
+img { transition: transform 0.3s ease, opacity 0.2s ease; }
+
+/* ---- Scroll-reveal ---- */
+.reveal {
+  opacity: 0;
+  transform: translateY(28px);
+  transition: opacity 0.55s ease, transform 0.55s ease;
+}
+.reveal.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Stagger children inside a reveal container */
+.reveal-stagger > * {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+.reveal-stagger.visible > *:nth-child(1) { transition-delay: 0.05s; }
+.reveal-stagger.visible > *:nth-child(2) { transition-delay: 0.13s; }
+.reveal-stagger.visible > *:nth-child(3) { transition-delay: 0.21s; }
+.reveal-stagger.visible > *:nth-child(4) { transition-delay: 0.29s; }
+.reveal-stagger.visible > *:nth-child(5) { transition-delay: 0.37s; }
+.reveal-stagger.visible > *:nth-child(6) { transition-delay: 0.45s; }
+.reveal-stagger.visible > * {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ---- Hero entrance ---- */
+@keyframes heroFadeUp {
+  from { opacity: 0; transform: translateY(32px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.hero-line-1 { animation: heroFadeUp 0.6s ease both; }
+.hero-line-2 { animation: heroFadeUp 0.6s 0.1s ease both; }
+.hero-line-3 { animation: heroFadeUp 0.6s 0.2s ease both; }
+.hero-line-4 { animation: heroFadeUp 0.6s 0.3s ease both; }
+
+/* ---- Sticky nav shadow on scroll ---- */
+.nav-scrolled {
+  box-shadow: 0 1px 12px rgba(0,0,0,.08);
+}
+.dark .nav-scrolled {
+  box-shadow: 0 1px 12px rgba(0,0,0,.4);
+}
+
+/* ---- Filter button transition ---- */
+.filter-btn {
+  transition: background-color 0.2s ease, color 0.2s ease, transform 0.15s ease;
+}
+.filter-btn:active { transform: scale(0.95); }
+
+/* ---- Project card lift ---- */
+.project-card {
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+.project-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.12);
+}
+.dark .project-card:hover {
+  box-shadow: 0 12px 32px rgba(0,0,0,0.4);
+}
+
+/* ---- Skill pill pulse on hover ---- */
+.skill-pill {
+  transition: background-color 0.2s ease, transform 0.15s ease;
+}
+.skill-pill:hover {
+  transform: scale(1.05);
+}
+
+/* ---- Mobile menu ---- */
+.mobile-menu {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.35s ease;
+}
+.mobile-menu.open {
+  max-height: 300px;
+}
+
+/* ---- Stat counter animate ---- */
+@keyframes countUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.stat-item {
+  opacity: 0;
+}
+.stats-visible .stat-item:nth-child(1) { animation: countUp 0.5s 0.0s ease forwards; }
+.stats-visible .stat-item:nth-child(2) { animation: countUp 0.5s 0.12s ease forwards; }
+.stats-visible .stat-item:nth-child(3) { animation: countUp 0.5s 0.24s ease forwards; }

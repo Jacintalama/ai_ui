@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Skylane — Flight Booking</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles/main.css" />
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body x-data="appState()" x-init="init()" class="bg-[var(--bg)] text-[var(--text)] font-sans">
+
+  <!-- Header (compact, sticky) -->
+  <header
+    x-data="{ scrolled: false }"
+    x-init="window.addEventListener('scroll', () => { scrolled = window.scrollY > 32; }, { passive: true })"
+    :class="scrolled ? 'h-12 shadow-sm' : 'h-14 shadow-none'"
+    class="sticky top-0 z-30 bg-[var(--bg-card)] backdrop-blur transition-all duration-150 flex items-center px-4 sm:px-6 border-b border-[var(--border)]"
+  >
+    <a href="#" @click.prevent="setView('search')" class="flex items-center gap-2 font-semibold text-[var(--text)]">
+      <span class="inline-block w-6 h-6 rounded bg-[var(--accent)]"></span>
+      <span>Skylane</span>
+    </a>
+    <nav class="ml-auto flex items-center gap-4 text-sm text-[var(--text-muted)]">
+      <button @click="setView('search')" class="hidden sm:inline-block hover:text-[var(--text)]">Search</button>
+      <button @click="setView('saved')" class="hidden sm:inline-block hover:text-[var(--text)]">
+        Saved <span x-text="savedTrips.length ? `(${savedTrips.length})` : ''"></span>
+      </button>
+      <div class="w-8 h-8 rounded-full bg-[var(--border)] flex items-center justify-center text-xs font-medium">U</div>
+    </nav>
+  </header>
+
+  <!-- ===================== SEARCH VIEW ===================== -->
+  <section x-show="view === 'search'" x-transition.duration.200ms class="max-w-5xl mx-auto px-4 sm:px-6 py-12">
+    <h1 class="text-3xl sm:text-4xl font-bold text-[var(--text)] mb-2">Where to next?</h1>
+    <p class="text-[var(--text-muted)] mb-8">Search non-stop and connecting flights across 8 cities.</p>
+
+    <form @submit.prevent="runSearch()" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-[var(--bg-card)] border border-[var(--border)] shadow-sm rounded-xl p-4">
+      <label class="flex flex-col text-xs text-[var(--text-muted)]">
+        From
+        <select x-model="searchForm.origin" class="mt-1 bg-transparent border border-[var(--border)] rounded px-3 py-2 text-[var(--text)]">
+          <template x-for="c in cities" :key="c.code">
+            <option :value="c.code" x-text="c.label"></option>
+          </template>
+        </select>
+      </label>
+      <label class="flex flex-col text-xs text-[var(--text-muted)]">
+        To
+        <select x-model="searchForm.destination" class="mt-1 bg-transparent border border-[var(--border)] rounded px-3 py-2 text-[var(--text)]">
+          <template x-for="c in cities" :key="c.code">
+            <option :value="c.code" x-text="c.label"></option>
+          </template>
+        </select>
+      </label>
+      <label class="flex flex-col text-xs text-[var(--text-muted)]">
+        Depart
+        <input type="date" x-model="searchForm.depart" class="mt-1 bg-transparent border border-[var(--border)] rounded px-3 py-2 text-[var(--text)]" />
+      </label>
+      <label class="flex flex-col text-xs text-[var(--text-muted)]">
+        Return
+        <input type="date" x-model="searchForm.returnDate" class="mt-1 bg-transparent border border-[var(--border)] rounded px-3 py-2 text-[var(--text)]" />
+      </label>
+      <label class="flex flex-col text-xs text-[var(--text-muted)]">
+        Passengers
+        <input type="number" min="1" max="9" x-model.number="searchForm.pax" class="mt-1 bg-transparent border border-[var(--border)] rounded px-3 py-2 text-[var(--text)]" />
+      </label>
+      <label class="flex flex-col text-xs text-[var(--text-muted)] lg:col-span-2">
+        Cabin
+        <select x-model="searchForm.cabin" class="mt-1 bg-transparent border border-[var(--border)] rounded px-3 py-2 text-[var(--text)]">
+          <option>Economy</option>
+          <option>Premium Economy</option>
+          <option>Business</option>
+          <option>First</option>
+        </select>
+      </label>
+      <button type="submit" class="lg:col-span-1 bg-[var(--accent)] text-white font-semibold rounded px-4 py-2 hover:opacity-90 transition">
+        Search flights
+      </button>
+    </form>
+
+    <p class="mt-6 text-sm text-[var(--text-muted)]">Showing all <span x-text="allFlights.length"></span> flights in the catalog. Real filtering happens on the next view.</p>
+  </section>
+
+  <!-- ===================== RESULTS VIEW ===================== -->
+  <section x-show="view === 'results'" x-transition.duration.200ms class="max-w-6xl mx-auto px-4 sm:px-6 py-8" x-cloak>
+    <div class="flex items-center mb-6">
+      <button @click="back()" class="text-[var(--text-muted)] hover:text-[var(--text)]">← Modify search</button>
+      <h2 class="text-xl font-semibold text-[var(--text)] ml-6" x-text="`${searchForm.origin} → ${searchForm.destination}`"></h2>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-6">
+      <!-- Filter sidebar -->
+      <aside class="bg-[var(--bg-card)] border border-[var(--border)] shadow-sm rounded-xl p-4 space-y-5 h-fit lg:sticky lg:top-20">
+        <div>
+          <label class="text-xs uppercase tracking-wide text-[var(--text-muted)]">Max price</label>
+          <input type="range" min="400" max="2000" step="50" x-model.number="filters.maxPrice" @input="applyFilters()" class="w-full mt-2 accent-[var(--accent)]" />
+          <div class="text-sm text-[var(--text)] mt-1">Up to $<span x-text="filters.maxPrice"></span></div>
+        </div>
+        <div>
+          <label class="text-xs uppercase tracking-wide text-[var(--text-muted)]">Stops</label>
+          <div class="flex gap-2 mt-2">
+            <template x-for="opt in [['any','Any'],['0','Non-stop'],['1','1+']]" :key="opt[0]">
+              <button @click="filters.stops = opt[0]; applyFilters()"
+                :class="filters.stops === opt[0] ? 'bg-[var(--accent)] text-white' : 'bg-[var(--bg-card)] border border-[var(--border)] text-[var(--text-muted)]'"
+                class="px-3 py-1 rounded-full text-xs" x-text="opt[1]"></button>
+            </template>
+          </div>
+        </div>
+        <div>
+          <label class="text-xs uppercase tracking-wide text-[var(--text-muted)]">Time of day</label>
+          <div class="grid grid-cols-2 gap-2 mt-2">
+            <template x-for="opt in [['any','Any'],['early','Early'],['morning','Morning'],['afternoon','Afternoon'],['evening','Evening']]" :key="opt[0]">
+              <button @click="filters.timeOfDay = opt[0]; applyFilters()"
+                :class="filters.timeOfDay === opt[0] ? 'bg-[var(--accent)] text-white' : 'bg-[var(--bg-card)] border border-[var(--border)] text-[var(--text-muted)]'"
+                class="px-3 py-1 rounded text-xs" x-text="opt[1]"></button>
+            </template>
+          </div>
+        </div>
+        <div>
+          <label class="text-xs uppercase tracking-wide text-[var(--text-muted)]">Max duration</label>
+          <input type="range" min="300" max="1000" step="30" x-model.number="filters.maxDuration" @input="applyFilters()" class="w-full mt-2 accent-[var(--accent)]" />
+          <div class="text-sm text-[var(--text)] mt-1" x-text="formatDuration(filters.maxDuration)"></div>
+        </div>
+        <div>
+          <label class="text-xs uppercase tracking-wide text-[var(--text-muted)]">Airlines</label>
+          <div class="flex flex-wrap gap-1 mt-2">
+            <template x-for="a in airlines" :key="a">
+              <button @click="toggleAirline(a)"
+                :class="filters.airlines.includes(a) ? 'bg-[var(--accent)] text-white' : 'bg-[var(--bg-card)] border border-[var(--border)] text-[var(--text-muted)]'"
+                class="px-2 py-1 rounded text-xs" x-text="a"></button>
+            </template>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Result list -->
+      <div>
+        <p class="text-sm text-[var(--text-muted)] mb-3">
+          <span x-text="filteredFlights.length"></span> of <span x-text="allFlights.length"></span> flights match
+        </p>
+
+        <template x-if="isLoading">
+          <div class="space-y-3" aria-live="polite" aria-busy="true">
+            <div class="h-20 bg-[var(--border)] rounded animate-pulse"></div>
+            <div class="h-20 bg-[var(--border)] rounded animate-pulse"></div>
+            <div class="h-20 bg-[var(--border)] rounded animate-pulse"></div>
+            <div class="h-20 bg-[var(--border)] rounded animate-pulse"></div>
+          </div>
+        </template>
+
+        <template x-if="!isLoading">
+          <div class="space-y-3">
+            <template x-for="f in filteredFlights" :key="f.id">
+              <article @click="openDetail(f.id)"
+                class="bg-[var(--bg-card)] border border-[var(--border)] hover:bg-[var(--border)] rounded-xl p-4 grid grid-cols-[1fr_auto] gap-4 cursor-pointer transition hover:-translate-y-0.5">
+                <div>
+                  <div class="text-xs text-[var(--text-muted)]" x-text="f.airline + ' · ' + f.cabin"></div>
+                  <div class="text-lg font-semibold text-[var(--text)] mt-1" x-text="`${f.origin} → ${f.destination}`"></div>
+                  <div class="text-sm text-[var(--text-muted)] mt-1">
+                    <span x-text="`${f.departureLabel} – ${f.arrivalLabel}`"></span>
+                    <span class="mx-2">·</span>
+                    <span x-text="formatDuration(f.duration)"></span>
+                    <span class="mx-2">·</span>
+                    <span x-text="f.stops === 0 ? 'Non-stop' : f.stops + ' stop' + (f.stops > 1 ? 's' : '')"></span>
+                  </div>
+                </div>
+                <div class="text-right">
+                  <div class="text-2xl font-bold text-[var(--accent)]" x-text="`$${f.price}`"></div>
+                  <div class="text-xs text-[var(--text-muted)] mt-1">per passenger</div>
+                </div>
+              </article>
+            </template>
+            <template x-if="filteredFlights.length === 0">
+              <p class="text-[var(--text-muted)] text-center py-12">No flights match these filters. Try widening the price or duration.</p>
+            </template>
+          </div>
+        </template>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== DETAIL VIEW ===================== -->
+  <section x-show="view === 'detail'" x-transition.duration.200ms class="max-w-4xl mx-auto px-4 sm:px-6 py-8" x-cloak>
+    <button @click="back()" class="text-[var(--text-muted)] hover:text-[var(--text)] mb-6">← Back to results</button>
+
+    <template x-if="selectedFlight">
+      <div>
+        <div class="bg-[var(--bg-card)] border border-[var(--border)] shadow-sm rounded-xl p-6">
+          <div class="text-xs text-[var(--text-muted)]" x-text="selectedFlight.airline + ' · ' + selectedFlight.cabin"></div>
+          <h2 class="text-3xl font-bold text-[var(--text)] mt-1" x-text="`${selectedFlight.origin} → ${selectedFlight.destination}`"></h2>
+          <div class="mt-2 text-[var(--text-muted)]">
+            <span x-text="`${selectedFlight.departureLabel} – ${selectedFlight.arrivalLabel}`"></span>
+            <span class="mx-2">·</span>
+            <span x-text="formatDuration(selectedFlight.duration)"></span>
+            <span class="mx-2">·</span>
+            <span x-text="selectedFlight.stops === 0 ? 'Non-stop' : selectedFlight.stops + ' stop' + (selectedFlight.stops > 1 ? 's' : '')"></span>
+          </div>
+          <div class="mt-6 grid grid-cols-2 gap-4 text-sm">
+            <div class="bg-[var(--bg)] rounded p-3">
+              <div class="text-[var(--text-muted)] text-xs">Baggage</div>
+              <div class="text-[var(--text)] mt-1" x-text="selectedFlight.baggage"></div>
+            </div>
+            <div class="bg-[var(--bg)] rounded p-3">
+              <div class="text-[var(--text-muted)] text-xs">Total</div>
+              <div class="text-[var(--text)] mt-1 text-xl font-semibold" x-text="`$${selectedFlight.price * searchForm.pax}`"></div>
+            </div>
+          </div>
+
+          <!-- Decorative seat-map SVG (illustrative only) -->
+          <div class="mt-6">
+            <div class="text-xs text-[var(--text-muted)] mb-2">Seat map preview</div>
+            <svg viewBox="0 0 400 100" class="w-full h-20" aria-hidden="true">
+              <rect width="400" height="100" fill="var(--bg)" rx="8"/>
+              <g fill="var(--text-muted)">
+                <rect x="20" y="20" width="14" height="14" rx="2"/><rect x="40" y="20" width="14" height="14" rx="2"/>
+                <rect x="76" y="20" width="14" height="14" rx="2"/><rect x="96" y="20" width="14" height="14" rx="2"/>
+                <rect x="132" y="20" width="14" height="14" rx="2"/><rect x="152" y="20" width="14" height="14" rx="2"/>
+                <rect x="188" y="20" width="14" height="14" rx="2"/><rect x="208" y="20" width="14" height="14" rx="2"/>
+                <rect x="244" y="20" width="14" height="14" rx="2"/><rect x="264" y="20" width="14" height="14" rx="2"/>
+                <rect x="300" y="20" width="14" height="14" rx="2"/><rect x="320" y="20" width="14" height="14" rx="2"/>
+                <rect x="356" y="20" width="14" height="14" rx="2"/><rect x="376" y="20" width="14" height="14" rx="2"/>
+              </g>
+            </svg>
+          </div>
+
+          <div class="mt-6 flex gap-3">
+            <button @click="saveTrip()" class="bg-[var(--bg-card)] border border-[var(--border)] hover:bg-[var(--border)] text-[var(--text)] rounded px-4 py-2 transition">Save trip</button>
+            <button @click="goReview()" class="bg-[var(--accent)] hover:opacity-90 text-white rounded px-4 py-2 font-semibold transition">Continue to review</button>
+          </div>
+        </div>
+      </div>
+    </template>
+  </section>
+
+  <!-- ===================== REVIEW VIEW ===================== -->
+  <section x-show="view === 'review'" x-transition.duration.200ms class="max-w-3xl mx-auto px-4 sm:px-6 py-8" x-cloak>
+    <button @click="back()" class="text-[var(--text-muted)] hover:text-[var(--text)] mb-6">← Back to detail</button>
+    <h2 class="text-2xl font-bold text-[var(--text)] mb-6">Review and confirm</h2>
+
+    <template x-if="selectedFlight">
+      <form @submit.prevent="confirmBooking()" class="space-y-6">
+        <div class="bg-[var(--bg-card)] border border-[var(--border)] shadow-sm rounded-xl p-5">
+          <div class="text-sm text-[var(--text-muted)]">Passenger details</div>
+          <template x-for="(name, i) in passengerNames" :key="i">
+            <input type="text" required x-model="passengerNames[i]"
+              :placeholder="`Passenger ${i + 1} full name`"
+              class="mt-3 w-full bg-transparent border border-[var(--border)] rounded px-3 py-2 text-[var(--text)]" />
+          </template>
+        </div>
+        <div class="bg-[var(--bg-card)] border border-[var(--border)] shadow-sm rounded-xl p-5 flex items-center justify-between">
+          <div>
+            <div class="text-sm text-[var(--text-muted)]">Total</div>
+            <div class="text-2xl font-bold text-[var(--accent)]" x-text="`$${selectedFlight.price * searchForm.pax}`"></div>
+          </div>
+          <button type="submit" class="bg-[var(--accent)] hover:opacity-90 text-white rounded px-5 py-3 font-semibold transition">Confirm booking</button>
+        </div>
+      </form>
+    </template>
+  </section>
+
+  <!-- ===================== SAVED VIEW ===================== -->
+  <section x-show="view === 'saved'" x-transition.duration.200ms class="max-w-4xl mx-auto px-4 sm:px-6 py-8" x-cloak>
+    <button @click="setView('search')" class="text-[var(--text-muted)] hover:text-[var(--text)] mb-6">← Back to search</button>
+    <h2 class="text-2xl font-bold text-[var(--text)] mb-6">Saved trips</h2>
+
+    <template x-if="savedTrips.length === 0">
+      <p class="text-[var(--text-muted)] text-center py-12">No saved trips yet — save a flight from its detail page.</p>
+    </template>
+
+    <div class="space-y-3">
+      <template x-for="f in savedTrips" :key="f.id">
+        <article @click="openDetail(f.id)"
+          class="bg-[var(--bg-card)] border border-[var(--border)] hover:bg-[var(--border)] rounded-xl p-4 grid grid-cols-[1fr_auto] gap-4 cursor-pointer transition hover:-translate-y-0.5">
+          <div>
+            <div class="text-xs text-[var(--text-muted)]" x-text="f.airline + ' · ' + f.cabin"></div>
+            <div class="text-lg font-semibold text-[var(--text)] mt-1" x-text="`${f.origin} → ${f.destination}`"></div>
+            <div class="text-sm text-[var(--text-muted)] mt-1">
+              <span x-text="`${f.departureLabel} – ${f.arrivalLabel}`"></span>
+              <span class="mx-2">·</span>
+              <span x-text="formatDuration(f.duration)"></span>
+              <span class="mx-2">·</span>
+              <span x-text="f.stops === 0 ? 'Non-stop' : f.stops + ' stop' + (f.stops > 1 ? 's' : '')"></span>
+            </div>
+          </div>
+          <div class="text-right flex flex-col items-end justify-between">
+            <div class="text-2xl font-bold text-[var(--accent)]" x-text="`$${f.price}`"></div>
+            <button @click.stop="removeTrip(f.id)"
+              class="text-xs text-[var(--text-muted)] hover:text-[var(--text)] underline">Remove</button>
+          </div>
+        </article>
+      </template>
+    </div>
+  </section>
+
+  <!-- Toast -->
+  <div x-show="toastMsg" x-transition.opacity.duration.200ms
+    class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded bg-[var(--text)] text-white text-sm shadow-lg"
+    role="status" aria-live="polite" x-text="toastMsg"></div>
+
+
+</body>
+</html>

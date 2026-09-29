@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nice — Sneakers that feel as good as they look</title>
+  <meta name="description" content="Nice makes cloud-soft sneakers from recycled materials. Designed in Copenhagen, built to last 800+ miles. Free shipping and 30-day returns." />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles/main.css" />
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+</head>
+<body class="bg-white text-slate-900 antialiased">
+  <div x-data="landingPage" x-init="init()">
+
+    <!-- Header -->
+    <header class="sticky top-0 z-40 backdrop-blur bg-white/80 border-b border-slate-200">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <a href="#" class="flex items-center gap-2 font-semibold text-slate-900">
+          <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-white">
+            <i data-lucide="sparkles" class="w-4 h-4"></i>
+          </span>
+          <span>Nice</span>
+        </a>
+        <nav class="hidden md:flex items-center gap-8 text-sm text-slate-600">
+          <a href="#features" class="hover:text-slate-900">Why Nice</a>
+          <a href="#how" class="hover:text-slate-900">How it works</a>
+          <a href="#pricing" class="hover:text-slate-900">Shop</a>
+          <a href="#faq" class="hover:text-slate-900">FAQ</a>
+        </nav>
+        <div class="flex items-center gap-3">
+          <a href="#" class="hidden sm:inline text-sm text-slate-600 hover:text-slate-900">Account</a>
+          <a href="#cta" class="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
+            Shop now <i data-lucide="arrow-right" class="w-4 h-4"></i>
+          </a>
+          <button @click="mobileMenu = !mobileMenu" class="md:hidden p-2 rounded-md hover:bg-slate-100" aria-label="Toggle menu">
+            <i data-lucide="menu" class="w-5 h-5" x-show="!mobileMenu"></i>
+            <i data-lucide="x" class="w-5 h-5" x-show="mobileMenu" x-cloak></i>
+          </button>
+        </div>
+      </div>
+      <div x-show="mobileMenu" x-cloak class="md:hidden border-t border-slate-200 px-4 py-3 space-y-2 bg-white">
+        <a href="#features" @click="mobileMenu = false" class="block py-2 text-slate-700">Why Nice</a>
+        <a href="#how" @click="mobileMenu = false" class="block py-2 text-slate-700">How it works</a>
+        <a href="#pricing" @click="mobileMenu = false" class="block py-2 text-slate-700">Shop</a>
+        <a href="#faq" @click="mobileMenu = false" class="block py-2 text-slate-700">FAQ</a>
+      </div>
+    </header>
+
+    <!-- Hero -->
+    <section class="relative overflow-hidden">
+      <div class="absolute inset-0 -z-10 bg-gradient-to-b from-indigo-50 via-white to-white"></div>
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-20 lg:py-28 grid lg:grid-cols-2 gap-12 items-center">
+        <div>
+          <span class="inline-flex items-center gap-2 rounded-full bg-indigo-100 px-3 py-1 text-xs font-medium text-indigo-700">
+            <span class="h-1.5 w-1.5 rounded-full bg-indigo-600"></span>
+            New: Spring 2026 colorways now shipping
+          </span>
+          <h1 class="mt-6 text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-slate-900 leading-tight">
+            Sneakers that feel<br/>
+            as good<br/>
+            <span class="text-indigo-600">as they look.</span>
+          </h1>
+          <p class="mt-6 text-lg text-slate-600 max-w-xl">
+            Nice makes cloud-soft, all-day sneakers from recycled materials. Designed in Copenhagen, built to last 800+ miles, and quietly perfect with everything in your closet.
+          </p>
+          <div class="mt-8 flex flex-col sm:flex-row gap-3">
+            <a href="#pricing" class="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-6 py-3 text-sm font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
+              Shop the collection <i data-lucide="arrow-right" class="w-4 h-4"></i>
+            </a>
+            <a href="#how" class="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-6 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
+              <i data-lucide="play" class="w-4 h-4"></i> How they're made
+            </a>
+          </div>
+          <p class="mt-4 text-sm text-slate-500">Free shipping · 30-day try-on · Carbon-neutral delivery</p>
+        </div>
+        <div class="relative">
+          <div class="rounded-3xl bg-gradient-to-br from-indigo-100 via-slate-50 to-white shadow-xl border border-slate-200 overflow-hidden aspect-square flex items-center justify-center">
+            <svg viewBox="0 0 400 300" class="w-full h-full p-8" xmlns="http://www.w3.org/2000/svg" aria-label="The Nice Runner sneaker, side profile">
+              <defs>
+                <linearGradient id="sole" x1="0" x2="0" y1="0" y2="1">
+                  <stop offset="0" stop-color="#ffffff"/>
+                  <stop offset="1" stop-color="#e2e8f0"/>
+                </linearGradient>
+                <linearGradient id="upper" x1="0" x2="1" y1="0" y2="1">
+                  <stop offset="0" stop-color="#4f46e5"/>
+                  <stop offset="1" stop-color="#6366f1"/>
+                </linearGradient>
+              </defs>
+              <ellipse cx="200" cy="260" rx="170" ry="10" fill="#000" opacity="0.08"/>
+              <path d="M40 215 Q 45 200 70 198 L 160 195 Q 175 175 200 165 Q 240 152 290 158 Q 330 162 350 185 Q 365 200 360 220 L 355 235 Q 350 245 335 245 L 65 245 Q 45 245 40 230 Z" fill="url(#upper)"/>
+              <path d="M40 230 L 360 230 Q 365 245 355 252 L 60 252 Q 38 252 40 230 Z" fill="url(#sole)" stroke="#cbd5e1" stroke-width="1"/>
+              <path d="M155 200 Q 175 178 205 170" stroke="#fff" stroke-width="2" fill="none" opacity="0.5"/>
+              <path d="M180 195 Q 205 175 240 170" stroke="#fff" stroke-width="2" fill="none" opacity="0.4"/>
+              <circle cx="200" cy="195" r="3" fill="#fff"/>
+              <circle cx="220" cy="190" r="3" fill="#fff"/>
+              <circle cx="240" cy="186" r="3" fill="#fff"/>
+              <circle cx="260" cy="184" r="3" fill="#fff"/>
+              <path d="M75 245 L 80 252 M 110 245 L 115 252 M 150 245 L 155 252 M 200 245 L 205 252 M 250 245 L 255 252 M 300 245 L 305 252 M 335 245 L 340 252" stroke="#94a3b8" stroke-width="1.5"/>
+              <text x="285" y="215" font-family="ui-sans-serif" font-size="11" font-weight="700" fill="#ffffff" opacity="0.9">nice.</text>
+            </svg>
+          </div>
+          <div class="hidden lg:block absolute -top-4 -right-4 rounded-xl bg-white shadow-lg border border-slate-200 p-3 w-56">
+            <div class="flex items-center gap-2">
+              <i data-lucide="leaf" class="w-4 h-4 text-emerald-600"></i>
+              <span class="text-sm font-medium">8 bottles recycled</span>
+            </div>
+            <p class="mt-1 text-xs text-slate-500">Every pair diverts plastic waste from the ocean.</p>
+          </div>
+          <div class="hidden lg:block absolute -bottom-4 -left-4 rounded-xl bg-white shadow-lg border border-slate-200 p-3 w-52">
+            <div class="flex items-center gap-2">
+              <i data-lucide="star" class="w-4 h-4 text-amber-500"></i>
+              <span class="text-sm font-medium">4.9 / 5 · 12,400 reviews</span>
+            </div>
+            <p class="mt-1 text-xs text-slate-500">"Most comfortable shoes I own."</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Logo strip -->
+    <section class="border-y border-slate-200 bg-slate-50">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-10">
+        <p class="text-center text-sm font-medium text-slate-500 uppercase tracking-wider">As seen in</p>
+        <div class="mt-6 flex flex-wrap items-center justify-center gap-3 sm:gap-6">
+          <template x-for="brand in brands" :key="brand">
+            <span class="px-4 py-2 rounded-full bg-white border border-slate-200 text-slate-600 text-sm font-medium" x-text="brand"></span>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section id="features" class="py-20 lg:py-28">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="max-w-2xl">
+          <h2 class="text-3xl sm:text-4xl font-bold tracking-tight">Designed around how you actually wear them</h2>
+          <p class="mt-4 text-lg text-slate-600">Every detail of a Nice shoe — from the foam in the midsole to the dye in the laces — is chosen for comfort, longevity, and a lighter footprint.</p>
+        </div>
+        <div class="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          <template x-for="f in features" :key="f.title">
+            <div class="rounded-xl border border-slate-200 p-6 hover:shadow-md hover:border-indigo-200 transition">
+              <div class="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-100 text-indigo-600">
+                <i :data-lucide="f.icon" class="w-5 h-5"></i>
+              </div>
+              <h3 class="mt-4 font-semibold text-lg" x-text="f.title"></h3>
+              <p class="mt-2 text-slate-600 text-sm leading-relaxed" x-text="f.description"></p>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- How it works -->
+    <section id="how" class="bg-slate-50 py-20 lg:py-28">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="text-center max-w-2xl mx-auto">
+          <h2 class="text-3xl sm:text-4xl font-bold tracking-tight">From doorstep to favorite pair</h2>
+          <p class="mt-4 text-lg text-slate-600">Three steps. Thirty days to fall in love. Free returns if you don't.</p>
+        </div>
+        <div class="mt-14 grid gap-8 md:grid-cols-3">
+          <template x-for="(step, i) in steps" :key="step.title">
+            <div class="relative">
+              <div class="inline-flex h-10 w-10 items-center justify-center rounded-full bg-indigo-600 text-white font-semibold" x-text="i + 1"></div>
+              <h3 class="mt-4 text-lg font-semibold" x-text="step.title"></h3>
+              <p class="mt-2 text-slate-600 text-sm leading-relaxed" x-text="step.description"></p>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- Testimonials -->
+    <section class="py-20 lg:py-28">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="max-w-2xl">
+          <h2 class="text-3xl sm:text-4xl font-bold tracking-tight">12,000 five-star pairs and counting</h2>
+          <p class="mt-4 text-lg text-slate-600">Real reviews from people who walk, run, commute, and pretty much live in their Nice sneakers.</p>
+        </div>
+        <div class="mt-12 grid gap-6 md:grid-cols-3">
+          <template x-for="t in testimonials" :key="t.name">
+            <figure class="rounded-xl border border-slate-200 p-6 bg-white">
+              <blockquote class="text-slate-700 text-sm leading-relaxed">
+                <span x-text="`“${t.quote}”`"></span>
+              </blockquote>
+              <figcaption class="mt-4 flex items-center gap-3">
+                <img :src="t.avatar" :alt="t.name" class="h-10 w-10 rounded-full" />
+                <div>
+                  <div class="text-sm font-medium" x-text="t.name"></div>
+                  <div class="text-xs text-slate-500" x-text="t.role"></div>
+                </div>
+              </figcaption>
+            </figure>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- Pricing -->
+    <section id="pricing" class="bg-slate-50 py-20 lg:py-28">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="text-center max-w-2xl mx-auto">
+          <h2 class="text-3xl sm:text-4xl font-bold tracking-tight">Three silhouettes. One promise.</h2>
+          <p class="mt-4 text-lg text-slate-600">Pick the pair that fits your life. Free shipping, free returns, and a 2-year wear-down guarantee on every order.</p>
+        </div>
+        <div class="mt-12 grid gap-6 md:grid-cols-3 max-w-5xl mx-auto">
+          <template x-for="plan in plans" :key="plan.name">
+            <div class="rounded-2xl border bg-white p-8 flex flex-col" :class="plan.featured ? 'border-indigo-600 shadow-lg ring-1 ring-indigo-100' : 'border-slate-200'">
+              <div class="flex items-center justify-between">
+                <h3 class="text-lg font-semibold" x-text="plan.name"></h3>
+                <span x-show="plan.featured" class="text-xs px-2 py-0.5 rounded bg-indigo-600 text-white">Most popular</span>
+              </div>
+              <div class="mt-4 flex items-baseline gap-1">
+                <span class="text-4xl font-bold" x-text="plan.price"></span>
+                <span class="text-slate-500 text-sm" x-text="plan.cadence"></span>
+              </div>
+              <p class="mt-2 text-sm text-slate-600" x-text="plan.description"></p>
+              <ul class="mt-6 space-y-2 text-sm flex-1">
+                <template x-for="feat in plan.features" :key="feat">
+                  <li class="flex items-start gap-2">
+                    <i data-lucide="check" class="w-4 h-4 text-indigo-600 mt-0.5"></i>
+                    <span x-text="feat"></span>
+                  </li>
+                </template>
+              </ul>
+              <a href="#cta" class="mt-8 inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+                :class="plan.featured ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'border border-slate-300 text-slate-700 hover:bg-slate-50'">
+                <span x-text="plan.cta"></span>
+              </a>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section id="faq" class="py-20 lg:py-28">
+      <div class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
+        <h2 class="text-3xl sm:text-4xl font-bold tracking-tight text-center">Frequently asked questions</h2>
+        <div class="mt-12 divide-y divide-slate-200 border-y border-slate-200">
+          <template x-for="(item, i) in faqs" :key="item.q">
+            <div class="py-5">
+              <button @click="openFaq = openFaq === i ? null : i" class="w-full flex items-center justify-between text-left gap-4 group focus:outline-none">
+                <span class="font-medium text-slate-900 group-hover:text-indigo-700" x-text="item.q"></span>
+                <i data-lucide="chevron-down" class="w-5 h-5 text-slate-400 transition-transform" :class="openFaq === i ? 'rotate-180' : ''"></i>
+              </button>
+              <div x-show="openFaq === i" x-collapse class="mt-3 text-slate-600 text-sm leading-relaxed" x-text="item.a"></div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA band -->
+    <section id="cta" class="relative overflow-hidden bg-gradient-to-br from-indigo-600 via-indigo-700 to-purple-700">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-16 lg:py-24 text-center text-white">
+        <h2 class="text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight">Your feet deserve Nice.</h2>
+        <p class="mt-4 text-lg text-indigo-100 max-w-2xl mx-auto">Free shipping, 30-day try-on, and carbon-neutral delivery on every order. Join 12,000+ happy walkers, runners, and commuters.</p>
+        <a href="#pricing" class="mt-8 inline-flex items-center gap-2 rounded-lg bg-white px-6 py-3 text-sm font-medium text-indigo-700 hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-indigo-700">
+          Shop the collection <i data-lucide="arrow-right" class="w-4 h-4"></i>
+        </a>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-200 bg-white">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12 grid gap-8 md:grid-cols-4">
+        <div>
+          <div class="flex items-center gap-2 font-semibold">
+            <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-white">
+              <i data-lucide="sparkles" class="w-4 h-4"></i>
+            </span>
+            <span>Nice</span>
+          </div>
+          <p class="mt-3 text-sm text-slate-500">Cloud-soft sneakers, made from recycled materials. Designed in Copenhagen.</p>
+        </div>
+        <div>
+          <h4 class="text-sm font-semibold text-slate-900">Shop</h4>
+          <ul class="mt-3 space-y-2 text-sm text-slate-600">
+            <li><a href="#pricing" class="hover:text-slate-900">The Daily</a></li>
+            <li><a href="#pricing" class="hover:text-slate-900">The Runner</a></li>
+            <li><a href="#pricing" class="hover:text-slate-900">The Trail</a></li>
+            <li><a href="#" class="hover:text-slate-900">Gift cards</a></li>
+          </ul>
+        </div>
+        <div>
+          <h4 class="text-sm font-semibold text-slate-900">Company</h4>
+          <ul class="mt-3 space-y-2 text-sm text-slate-600">
+            <li><a href="#" class="hover:text-slate-900">Our story</a></li>
+            <li><a href="#" class="hover:text-slate-900">Sustainability</a></li>
+            <li><a href="#" class="hover:text-slate-900">Materials</a></li>
+            <li><a href="#" class="hover:text-slate-900">Press</a></li>
+          </ul>
+        </div>
+        <div>
+          <h4 class="text-sm font-semibold text-slate-900">Help</h4>
+          <ul class="mt-3 space-y-2 text-sm text-slate-600">
+            <li><a href="#" class="hover:text-slate-900">Sizing guide</a></li>
+            <li><a href="#" class="hover:text-slate-900">Shipping & returns</a></li>
+            <li><a href="#faq" class="hover:text-slate-900">FAQ</a></li>
+            <li><a href="mailto:hello@nice.shoes" class="hover:text-slate-900">Contact us</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="border-t border-slate-200">
+        <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-slate-500">
+          <p>&copy; <span x-text="new Date().getFullYear()"></span> Nice. All rights reserved.</p>
+          <div class="flex items-center gap-4">
+            <a href="#" class="hover:text-slate-700">Privacy</a>
+            <a href="#" class="hover:text-slate-700">Terms</a>
+            <a href="#" class="hover:text-slate-700">Security</a>
+          </div>
+        </div>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

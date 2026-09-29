@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Scoops & Sprinkles — Artisan Ice Cream</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles/main.css" />
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-pink-50 text-slate-800">
+  <div x-data="iceCreamApp">
+    <header class="sticky top-0 z-20 bg-white/80 backdrop-blur border-b border-pink-100">
+      <nav class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+        <a href="#" class="text-2xl font-extrabold tracking-tight text-pink-600">🍦 Scoops &amp; Sprinkles</a>
+        <ul class="hidden md:flex gap-8 text-sm font-medium">
+          <li><a href="#flavors" class="hover:text-pink-600">Flavors</a></li>
+          <li><a href="#order" class="hover:text-pink-600">Build a Sundae</a></li>
+          <li><a href="#story" class="hover:text-pink-600">Our Story</a></li>
+          <li><a href="#visit" class="hover:text-pink-600">Visit</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <section class="relative overflow-hidden">
+      <div class="max-w-6xl mx-auto px-6 py-20 grid md:grid-cols-2 gap-10 items-center">
+        <div>
+          <p class="uppercase tracking-widest text-pink-500 font-semibold mb-3">Hand-churned daily</p>
+          <h1 class="text-5xl md:text-6xl font-extrabold leading-tight mb-6">
+            Tiny-batch ice cream, made with stupidly good ingredients.
+          </h1>
+          <p class="text-lg text-slate-600 mb-8">
+            We churn fourteen flavors a week from local cream, real vanilla beans,
+            and fruit hauled in from farms an hour up the road. No gums, no powders,
+            just cold spoonfuls of joy.
+          </p>
+          <div class="flex gap-3">
+            <a href="#order" class="bg-pink-600 hover:bg-pink-700 text-white px-6 py-3 rounded-full font-semibold shadow-lg shadow-pink-200">Build a sundae</a>
+            <a href="#flavors" class="bg-white border border-pink-200 hover:border-pink-400 px-6 py-3 rounded-full font-semibold">See flavors</a>
+          </div>
+        </div>
+        <div class="text-[14rem] text-center select-none drop-shadow-2xl">🍨</div>
+      </div>
+    </section>
+
+    <section id="flavors" class="bg-white py-20">
+      <div class="max-w-6xl mx-auto px-6">
+        <h2 class="text-4xl font-extrabold mb-3 text-center">This Week's Flavors</h2>
+        <p class="text-center text-slate-500 mb-12">Rotating menu. When it's gone, it's gone.</p>
+        <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          <template x-for="f in flavors" :key="f.name">
+            <div class="rounded-2xl p-6 border border-pink-100 hover:border-pink-300 hover:-translate-y-1 transition shadow-sm bg-pink-50/40">
+              <div class="text-5xl mb-3" x-text="f.emoji"></div>
+              <h3 class="text-xl font-bold mb-1" x-text="f.name"></h3>
+              <p class="text-sm text-slate-600 mb-3" x-text="f.description"></p>
+              <div class="flex items-center justify-between">
+                <span class="inline-block text-xs font-semibold px-2 py-1 rounded-full"
+                      :class="f.tag === 'Vegan' ? 'bg-green-100 text-green-700' : f.tag === 'Classic' ? 'bg-amber-100 text-amber-700' : 'bg-pink-100 text-pink-700'"
+                      x-text="f.tag"></span>
+                <span class="font-bold text-pink-600" x-text="'$' + f.price.toFixed(2)"></span>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <section id="order" class="py-20">
+      <div class="max-w-4xl mx-auto px-6">
+        <h2 class="text-4xl font-extrabold mb-3 text-center">Build Your Sundae</h2>
+        <p class="text-center text-slate-500 mb-12">Pick a base, stack your scoops, drown it in toppings.</p>
+
+        <div class="grid md:grid-cols-2 gap-8 bg-white rounded-3xl shadow-xl shadow-pink-100 p-8">
+          <div>
+            <h3 class="font-bold mb-3">1. Pick your vessel</h3>
+            <div class="space-y-2 mb-6">
+              <template x-for="b in bases" :key="b">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" name="base" :value="b" x-model="order.base" class="accent-pink-600" />
+                  <span x-text="b"></span>
+                </label>
+              </template>
+            </div>
+
+            <h3 class="font-bold mb-3">2. Choose scoops (up to 3)</h3>
+            <div class="space-y-2 mb-6 max-h-56 overflow-y-auto pr-2">
+              <template x-for="f in flavors" :key="f.name">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" :value="f.name" x-model="order.scoops"
+                         :disabled="!order.scoops.includes(f.name) && order.scoops.length >= 3"
+                         class="accent-pink-600" />
+                  <span x-text="f.emoji + ' ' + f.name"></span>
+                </label>
+              </template>
+            </div>
+
+            <h3 class="font-bold mb-3">3. Pile on toppings</h3>
+            <div class="grid grid-cols-2 gap-2">
+              <template x-for="t in toppings" :key="t">
+                <label class="flex items-center gap-2 cursor-pointer text-sm">
+                  <input type="checkbox" :value="t" x-model="order.toppings" class="accent-pink-600" />
+                  <span x-text="t"></span>
+                </label>
+              </template>
+            </div>
+          </div>
+
+          <div class="bg-pink-50 rounded-2xl p-6 flex flex-col">
+            <h3 class="font-bold mb-4 text-lg">Your sundae</h3>
+            <p class="text-sm text-slate-600 mb-2"><strong>Vessel:</strong> <span x-text="order.base || '—'"></span></p>
+            <p class="text-sm text-slate-600 mb-2"><strong>Scoops:</strong> <span x-text="order.scoops.length ? order.scoops.join(', ') : '—'"></span></p>
+            <p class="text-sm text-slate-600 mb-4"><strong>Toppings:</strong> <span x-text="order.toppings.length ? order.toppings.join(', ') : '—'"></span></p>
+            <div class="mt-auto">
+              <p class="text-2xl font-extrabold text-pink-600 mb-3">Total: $<span x-text="total().toFixed(2)"></span></p>
+              <button @click="placeOrder" class="w-full bg-pink-600 hover:bg-pink-700 text-white py-3 rounded-full font-semibold">
+                Save my sundae
+              </button>
+              <p x-show="message" x-text="message" class="text-sm text-green-700 mt-3 text-center"></p>
+            </div>
+          </div>
+        </div>
+
+        <div x-show="savedOrders.length" class="mt-10">
+          <h3 class="font-bold mb-3">Saved sundaes</h3>
+          <ul class="space-y-2">
+            <template x-for="(o, i) in savedOrders" :key="i">
+              <li class="bg-white rounded-xl p-4 flex justify-between items-start border border-pink-100">
+                <div class="text-sm">
+                  <div class="font-semibold" x-text="o.base + ' — $' + o.total.toFixed(2)"></div>
+                  <div class="text-slate-500" x-text="o.scoops.join(', ') + (o.toppings.length ? ' + ' + o.toppings.join(', ') : '')"></div>
+                </div>
+                <button @click="removeOrder(i)" class="text-pink-600 text-sm hover:underline">Remove</button>
+              </li>
+            </template>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="story" class="bg-white py-20">
+      <div class="max-w-4xl mx-auto px-6 grid md:grid-cols-2 gap-10 items-center">
+        <div class="text-9xl text-center">👩‍🍳</div>
+        <div>
+          <h2 class="text-4xl font-extrabold mb-4">Our Story</h2>
+          <p class="text-slate-600 mb-4">
+            Scoops &amp; Sprinkles started in 2017 as a single push-cart at the Saturday
+            farmers' market. Maya, our founder, was a pastry cook who got obsessed with
+            the question: <em>why does so much ice cream taste like sweetened air?</em>
+          </p>
+          <p class="text-slate-600 mb-4">
+            The answer, mostly, was stabilizers and overrun. So we ditched both. Our
+            base is just whole milk, heavy cream, egg yolks, and cane sugar — churned
+            slowly enough that you can taste the dairy.
+          </p>
+          <p class="text-slate-600">
+            Today we run one tiny shop on Mulberry Street and ship pints anywhere in
+            the lower 48. Same recipes. Same farmers. Same stubborn opinions about
+            sprinkles (the long ones, never the round ones).
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section id="visit" class="py-20">
+      <div class="max-w-5xl mx-auto px-6">
+        <h2 class="text-4xl font-extrabold mb-10 text-center">Come See Us</h2>
+        <div class="grid md:grid-cols-3 gap-6">
+          <div class="bg-white rounded-2xl p-6 shadow-sm">
+            <h3 class="font-bold mb-2">📍 Address</h3>
+            <p class="text-slate-600 text-sm">412 Mulberry Street<br/>Brooklyn, NY 11211</p>
+          </div>
+          <div class="bg-white rounded-2xl p-6 shadow-sm">
+            <h3 class="font-bold mb-2">🕒 Hours</h3>
+            <p class="text-slate-600 text-sm">
+              Mon–Thu · 12pm – 9pm<br/>
+              Fri–Sat · 12pm – 11pm<br/>
+              Sun · 1pm – 8pm
+            </p>
+          </div>
+          <div class="bg-white rounded-2xl p-6 shadow-sm">
+            <h3 class="font-bold mb-2">✉️ Get in touch</h3>
+            <p class="text-slate-600 text-sm">
+              hello@scoopsandsprinkles.shop<br/>
+              (718) 555-0142<br/>
+              <a href="#" class="text-pink-600 hover:underline">@scoopsandsprinkles</a>
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="bg-pink-600 text-pink-50 py-8 text-center text-sm">
+      Made with cream, sugar, and stubbornness. © 2026 Scoops &amp; Sprinkles.
+    </footer>
+  </div>
+</body>
+</html>

@@ -1,0 +1,70 @@
+html { scroll-behavior: smooth; }
+
+.hero-bg {
+  background:
+    radial-gradient(ellipse at top left, rgba(125,211,252,0.35), transparent 60%),
+    radial-gradient(ellipse at bottom right, rgba(186,230,253,0.4), transparent 60%),
+    linear-gradient(180deg, #f0f9ff 0%, #ffffff 100%);
+}
+
+.droplet { display:inline-block; animation: drip 3s ease-in-out infinite; }
+@keyframes drip { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-4px)} }
+
+/* Stylized bottle illustration */
+.bottle-card {
+  background: linear-gradient(160deg, #e0f2fe, #ffffff);
+  padding: 3rem; border-radius: 2rem;
+  box-shadow: 0 30px 60px -20px rgba(14,165,233,0.3);
+}
+.bottle { display:flex; flex-direction:column; align-items:center; }
+.bottle-cap { width: 50px; height: 24px; background: #0369a1; border-radius: 6px 6px 2px 2px; }
+.bottle-neck { width: 36px; height: 28px; background: linear-gradient(180deg,#bae6fd,#7dd3fc); }
+.bottle-body {
+  width: 150px; height: 280px;
+  background: linear-gradient(180deg, #bae6fd 0%, #7dd3fc 50%, #38bdf8 100%);
+  border-radius: 20px 20px 30px 30px;
+  position: relative;
+  box-shadow: inset -10px 0 30px rgba(255,255,255,0.4), inset 10px 0 20px rgba(2,132,199,0.2);
+}
+.bottle-label {
+  position: absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+  background:#fff; padding: 1rem 1.25rem; border-radius: 8px;
+  text-align:center; width: 80%;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+.step-card {
+  background:#fff; padding: 2rem 1.5rem; border-radius: 1rem;
+  border: 1px solid #e2e8f0; transition: transform .2s, box-shadow .2s;
+}
+.step-card:hover { transform: translateY(-4px); box-shadow: 0 12px 24px -8px rgba(14,165,233,0.25); }
+.step-num { font-size: 2rem; font-weight:800; color:#0ea5e9; margin-bottom:.75rem; }
+
+.product-card {
+  background: linear-gradient(180deg,#f8fafc,#fff);
+  padding: 2rem; border-radius: 1.5rem; border: 1px solid #e2e8f0;
+  transition: transform .2s, box-shadow .2s;
+}
+.product-card:hover { transform: translateY(-6px); box-shadow: 0 20px 40px -10px rgba(14,165,233,0.3); }
+.product-img {
+  height: 180px; border-radius: 1rem;
+  background: linear-gradient(180deg,#bae6fd,#38bdf8);
+  position: relative;
+}
+.product-img::after {
+  content:''; position:absolute; inset:30% 38%;
+  background: rgba(255,255,255,0.85); border-radius: 4px;
+}
+.product-img.tone-mid { background: linear-gradient(180deg,#7dd3fc,#0284c7); }
+.product-img.tone-dark { background: linear-gradient(180deg,#0ea5e9,#075985); }
+
+.mineral-card {
+  background: rgba(255,255,255,0.1); backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,0.2);
+  padding: 1.5rem; border-radius: 1rem; text-align:center;
+}
+
+.sustain-card {
+  background:#f0f9ff; padding: 2rem; border-radius: 1rem;
+  border: 1px solid #e0f2fe;
+}

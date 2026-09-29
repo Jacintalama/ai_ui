@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Scoop & Churn — Small-batch ice cream, delivered frozen.</title>
+  <meta name="description" content="Scoop & Churn churns small-batch French custard ice cream in Brooklyn and ships it overnight on dry ice — limited Friday flavors, real ingredients, no junk." />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles/main.css" />
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 antialiased">
+  <div x-data="landingPage" x-init="init()">
+
+    <!-- Header -->
+    <header class="sticky top-0 z-40 backdrop-blur bg-slate-950/80 border-b border-slate-800">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <a href="#" class="flex items-center gap-2 font-semibold text-slate-100">
+          <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-rose-500 text-white">
+            <i data-lucide="ice-cream-cone" class="w-4 h-4"></i>
+          </span>
+          <span>Scoop & Churn</span>
+        </a>
+        <nav class="hidden md:flex items-center gap-8 text-sm text-slate-400">
+          <a href="#features" class="hover:text-white">Our story</a>
+          <a href="#how" class="hover:text-white">How it works</a>
+          <a href="#pricing" class="hover:text-white">Boxes</a>
+          <a href="#faq" class="hover:text-white">FAQ</a>
+        </nav>
+        <div class="flex items-center gap-3">
+          <a href="#" class="hidden sm:inline text-sm text-slate-400 hover:text-white">Sign in</a>
+          <a href="#pricing" class="inline-flex items-center gap-1.5 rounded-lg bg-rose-500 px-4 py-2 text-sm font-medium text-white hover:bg-rose-600 focus:outline-none focus:ring-2 focus:ring-rose-400 focus:ring-offset-2">
+            Shop pints <i data-lucide="arrow-right" class="w-4 h-4"></i>
+          </a>
+          <button @click="mobileMenu = !mobileMenu" class="md:hidden p-2 rounded-md hover:bg-slate-800" aria-label="Toggle menu">
+            <i data-lucide="menu" class="w-5 h-5" x-show="!mobileMenu"></i>
+            <i data-lucide="x" class="w-5 h-5" x-show="mobileMenu" x-cloak></i>
+          </button>
+        </div>
+      </div>
+      <div x-show="mobileMenu" x-cloak class="md:hidden border-t border-slate-800 px-4 py-3 space-y-2 bg-slate-950">
+        <a href="#features" @click="mobileMenu = false" class="block py-2 text-slate-300">Our story</a>
+        <a href="#how" @click="mobileMenu = false" class="block py-2 text-slate-300">How it works</a>
+        <a href="#pricing" @click="mobileMenu = false" class="block py-2 text-slate-300">Boxes</a>
+        <a href="#faq" @click="mobileMenu = false" class="block py-2 text-slate-300">FAQ</a>
+      </div>
+    </header>
+
+    <!-- Hero -->
+    <section class="relative overflow-hidden">
+      <div class="absolute inset-0 -z-10 bg-gradient-to-b from-rose-950/40 via-slate-950 to-slate-950"></div>
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-20 lg:py-28 grid lg:grid-cols-2 gap-12 items-center">
+        <div>
+          <span class="inline-flex items-center gap-2 rounded-full bg-rose-500/10 ring-1 ring-rose-500/30 px-3 py-1 text-xs font-medium text-rose-300">
+            <span class="h-1.5 w-1.5 rounded-full bg-rose-500"></span>
+            New Friday flavor: Honeycomb Lavender
+          </span>
+          <h1 class="mt-6 text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-white leading-tight">
+            Tiny batches.<br/>
+            Real cream.<br/>
+            <span class="text-rose-400">Delivered frozen.</span>
+          </h1>
+          <p class="mt-6 text-lg text-slate-300 max-w-xl">
+            Scoop & Churn is a Brooklyn creamery making 24-hour aged French custard ice cream from a single Hudson Valley dairy. Order a box of pints — we ship overnight on dry ice, anywhere in the country.
+          </p>
+          <div class="mt-8 flex flex-col sm:flex-row gap-3">
+            <a href="#pricing" class="inline-flex items-center justify-center gap-2 rounded-lg bg-rose-500 px-6 py-3 text-sm font-medium text-white hover:bg-rose-600 focus:outline-none focus:ring-2 focus:ring-rose-400 focus:ring-offset-2">
+              Order a box <i data-lucide="arrow-right" class="w-4 h-4"></i>
+            </a>
+            <a href="#how" class="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-6 py-3 text-sm font-medium text-slate-200 hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-rose-400 focus:ring-offset-2 focus:ring-offset-slate-950">
+              <i data-lucide="play" class="w-4 h-4"></i> See how it works
+            </a>
+          </div>
+          <p class="mt-4 text-sm text-slate-400">Free NYC delivery · Overnight nationwide · 100% Frozen Guarantee</p>
+        </div>
+        <div class="relative">
+          <div class="rounded-2xl bg-slate-900 shadow-xl border border-slate-800 overflow-hidden">
+            <div class="bg-slate-800/60 border-b border-slate-800 px-4 py-2 flex items-center gap-2">
+              <span class="h-3 w-3 rounded-full bg-rose-400"></span>
+              <span class="h-3 w-3 rounded-full bg-amber-400"></span>
+              <span class="h-3 w-3 rounded-full bg-emerald-400"></span>
+              <span class="ml-3 text-xs text-slate-400">scoopandchurn.com/this-weeks-box</span>
+            </div>
+            <div class="p-5 space-y-4">
+              <div class="flex items-center justify-between">
+                <h3 class="font-semibold">This week’s box</h3>
+                <span class="text-xs px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300">Ships Friday</span>
+              </div>
+              <div class="grid grid-cols-3 gap-3">
+                <div class="rounded-lg bg-rose-500/10 ring-1 ring-rose-500/20 p-3 text-center">
+                  <div class="text-2xl">🍓</div>
+                  <div class="mt-1 text-xs font-medium text-slate-200">Strawberry Basil</div>
+                </div>
+                <div class="rounded-lg bg-amber-500/10 ring-1 ring-amber-500/20 p-3 text-center">
+                  <div class="text-2xl">🍯</div>
+                  <div class="mt-1 text-xs font-medium text-slate-200">Honeycomb Lavender</div>
+                </div>
+                <div class="rounded-lg bg-stone-500/10 ring-1 ring-stone-500/20 p-3 text-center">
+                  <div class="text-2xl">🍫</div>
+                  <div class="mt-1 text-xs font-medium text-slate-200">Dark Chocolate Sea Salt</div>
+                </div>
+              </div>
+              <div class="space-y-2">
+                <div class="flex items-center gap-3 text-sm p-2 rounded hover:bg-slate-800 text-slate-200">
+                  <span class="h-2 w-2 rounded-full bg-rose-500"></span>
+                  <span class="flex-1">Brown Butter Pecan</span>
+                  <span class="text-xs text-slate-500">classic</span>
+                </div>
+                <div class="flex items-center gap-3 text-sm p-2 rounded hover:bg-slate-800 text-slate-200">
+                  <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
+                  <span class="flex-1">Matcha Mochi Crunch</span>
+                  <span class="text-xs text-slate-500">new</span>
+                </div>
+                <div class="flex items-center gap-3 text-sm p-2 rounded hover:bg-slate-800 text-slate-200">
+                  <span class="h-2 w-2 rounded-full bg-amber-500"></span>
+                  <span class="flex-1">Salted Caramel Pretzel</span>
+                  <span class="text-xs text-slate-500">top seller</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="hidden lg:block absolute -top-4 -right-4 rounded-xl bg-slate-900 shadow-lg border border-slate-800 p-3 w-56">
+            <div class="flex items-center gap-2">
+              <i data-lucide="snowflake" class="w-4 h-4 text-rose-400"></i>
+              <span class="text-sm font-medium text-slate-100">Arrives frozen</span>
+            </div>
+            <p class="mt-1 text-xs text-slate-400">Overnight on dry ice — or your next box is on us.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Logo strip -->
+    <section class="border-y border-slate-800 bg-slate-900/50">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-10">
+        <p class="text-center text-sm font-medium text-slate-400 uppercase tracking-wider">Trusted by teams at</p>
+        <div class="mt-6 flex flex-wrap items-center justify-center gap-3 sm:gap-6">
+          <template x-for="brand in brands" :key="brand">
+            <span class="px-4 py-2 rounded-full bg-slate-900 border border-slate-800 text-slate-300 text-sm font-medium" x-text="brand"></span>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section id="features" class="py-20 lg:py-28">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="max-w-2xl">
+          <h2 class="text-3xl sm:text-4xl font-bold tracking-tight text-white">Better ice cream, on purpose.</h2>
+          <p class="mt-4 text-lg text-slate-400">We obsess over the boring stuff — the dairy, the timing, the temperature — so every spoonful tastes like the best version of itself.</p>
+        </div>
+        <div class="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          <template x-for="f in features" :key="f.title">
+            <div class="rounded-xl border border-slate-800 bg-slate-900/40 p-6 hover:shadow-md hover:border-rose-500/40 transition">
+              <div class="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-rose-500/15 text-rose-400">
+                <i :data-lucide="f.icon" class="w-5 h-5"></i>
+              </div>
+              <h3 class="mt-4 font-semibold text-lg text-slate-100" x-text="f.title"></h3>
+              <p class="mt-2 text-slate-400 text-sm leading-relaxed" x-text="f.description"></p>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- How it works -->
+    <section id="how" class="bg-slate-900/50 py-20 lg:py-28">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="text-center max-w-2xl mx-auto">
+          <h2 class="text-3xl sm:text-4xl font-bold tracking-tight text-white">From our churn to your freezer</h2>
+          <p class="mt-4 text-lg text-slate-400">Three simple steps. No melting, no fuss — just very good ice cream on your doorstep.</p>
+        </div>
+        <div class="mt-14 grid gap-8 md:grid-cols-3">
+          <template x-for="(step, i) in steps" :key="step.title">
+            <div class="relative">
+              <div class="inline-flex h-10 w-10 items-center justify-center rounded-full bg-rose-500 text-white font-semibold" x-text="i + 1"></div>
+              <h3 class="mt-4 text-lg font-semibold text-slate-100" x-text="step.title"></h3>
+              <p class="mt-2 text-slate-400 text-sm leading-relaxed" x-text="step.description"></p>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- Testimonials -->
+    <section class="py-20 lg:py-28">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="max-w-2xl">
+          <h2 class="text-3xl sm:text-4xl font-bold tracking-tight text-white">A small, passionate fan club.</h2>
+          <p class="mt-4 text-lg text-slate-400">Real customers, real freezer-emptying enthusiasm.</p>
+        </div>
+        <div class="mt-12 grid gap-6 md:grid-cols-3">
+          <template x-for="t in testimonials" :key="t.name">
+            <figure class="rounded-xl border border-slate-800 p-6 bg-slate-900/40">
+              <blockquote class="text-slate-300 text-sm leading-relaxed">
+                <span x-text="`“${t.quote}”`"></span>
+              </blockquote>
+              <figcaption class="mt-4 flex items-center gap-3">
+                <img :src="t.avatar" :alt="t.name" class="h-10 w-10 rounded-full" />
+                <div>
+                  <div class="text-sm font-medium text-slate-100" x-text="t.name"></div>
+                  <div class="text-xs text-slate-400" x-text="t.role"></div>
+                </div>
+              </figcaption>
+            </figure>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- Pricing -->
+    <section id="pricing" class="bg-slate-900/50 py-20 lg:py-28">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="text-center max-w-2xl mx-auto">
+          <h2 class="text-3xl sm:text-4xl font-bold tracking-tight text-white">Order once, or never run out.</h2>
+          <p class="mt-4 text-lg text-slate-400">Skip a month, swap flavors, cancel any time. Subscribers get first dibs on Friday drops.</p>
+        </div>
+        <div class="mt-12 grid gap-6 md:grid-cols-3 max-w-5xl mx-auto">
+          <template x-for="plan in plans" :key="plan.name">
+            <div class="rounded-2xl border bg-slate-900 p-8 flex flex-col" :class="plan.featured ? 'border-rose-500 shadow-lg ring-1 ring-rose-500/30' : 'border-slate-800'">
+              <div class="flex items-center justify-between">
+                <h3 class="text-lg font-semibold text-slate-100" x-text="plan.name"></h3>
+                <span x-show="plan.featured" class="text-xs px-2 py-0.5 rounded bg-rose-500 text-white">Most popular</span>
+              </div>
+              <div class="mt-4 flex items-baseline gap-1">
+                <span class="text-4xl font-bold text-white" x-text="plan.price"></span>
+                <span class="text-slate-400 text-sm" x-text="plan.cadence"></span>
+              </div>
+              <p class="mt-2 text-sm text-slate-400" x-text="plan.description"></p>
+              <ul class="mt-6 space-y-2 text-sm flex-1 text-slate-300">
+                <template x-for="feat in plan.features" :key="feat">
+                  <li class="flex items-start gap-2">
+                    <i data-lucide="check" class="w-4 h-4 text-rose-400 mt-0.5"></i>
+                    <span x-text="feat"></span>
+                  </li>
+                </template>
+              </ul>
+              <a href="#cta" class="mt-8 inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-rose-400 focus:ring-offset-2 focus:ring-offset-slate-950"
+                :class="plan.featured ? 'bg-rose-500 text-white hover:bg-rose-600' : 'border border-slate-700 text-slate-200 hover:bg-slate-800'">
+                <span x-text="plan.cta"></span>
+              </a>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section id="faq" class="py-20 lg:py-28">
+      <div class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
+        <h2 class="text-3xl sm:text-4xl font-bold tracking-tight text-center text-white">Frequently asked questions</h2>
+        <div class="mt-12 divide-y divide-slate-800 border-y border-slate-800">
+          <template x-for="(item, i) in faqs" :key="item.q">
+            <div class="py-5">
+              <button @click="openFaq = openFaq === i ? null : i" class="w-full flex items-center justify-between text-left gap-4 group focus:outline-none">
+                <span class="font-medium text-slate-100 group-hover:text-rose-400" x-text="item.q"></span>
+                <i data-lucide="chevron-down" class="w-5 h-5 text-slate-500 transition-transform" :class="openFaq === i ? 'rotate-180' : ''"></i>
+              </button>
+              <div x-show="openFaq === i" x-collapse class="mt-3 text-slate-400 text-sm leading-relaxed" x-text="item.a"></div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA band -->
+    <section id="cta" class="relative overflow-hidden bg-gradient-to-br from-rose-500 via-pink-500 to-amber-400">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-16 lg:py-24 text-center text-white">
+        <h2 class="text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight">Your freezer is calling.</h2>
+        <p class="mt-4 text-lg text-rose-50 max-w-2xl mx-auto">Friday flavor drop closes Thursday at midnight. Order now and we will pack your box first thing in the morning.</p>
+        <a href="#pricing" class="mt-8 inline-flex items-center gap-2 rounded-lg bg-slate-950 px-6 py-3 text-sm font-medium text-rose-300 hover:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-rose-600">
+          Build my box <i data-lucide="arrow-right" class="w-4 h-4"></i>
+        </a>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-800 bg-slate-950">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12 grid gap-8 md:grid-cols-4">
+        <div>
+          <div class="flex items-center gap-2 font-semibold text-slate-100">
+            <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-rose-500 text-white">
+              <i data-lucide="ice-cream-cone" class="w-4 h-4"></i>
+            </span>
+            <span>Scoop & Churn</span>
+          </div>
+          <p class="mt-3 text-sm text-slate-400">Small-batch French custard ice cream, churned in Brooklyn. Delivered frozen, eaten happily.</p>
+        </div>
+        <div>
+          <h4 class="text-sm font-semibold text-slate-100">Shop</h4>
+          <ul class="mt-3 space-y-2 text-sm text-slate-400">
+            <li><a href="#pricing" class="hover:text-white">Pint boxes</a></li>
+            <li><a href="#pricing" class="hover:text-white">Pint Club</a></li>
+            <li><a href="#" class="hover:text-white">Gift cards</a></li>
+            <li><a href="#" class="hover:text-white">This week’s flavor</a></li>
+          </ul>
+        </div>
+        <div>
+          <h4 class="text-sm font-semibold text-slate-100">Creamery</h4>
+          <ul class="mt-3 space-y-2 text-sm text-slate-400">
+            <li><a href="#features" class="hover:text-white">Our story</a></li>
+            <li><a href="#" class="hover:text-white">The dairy</a></li>
+            <li><a href="#" class="hover:text-white">Wholesale</a></li>
+            <li><a href="mailto:hello@scoopandchurn.com" class="hover:text-white">Contact</a></li>
+          </ul>
+        </div>
+        <div>
+          <h4 class="text-sm font-semibold text-slate-100">Help</h4>
+          <ul class="mt-3 space-y-2 text-sm text-slate-400">
+            <li><a href="#faq" class="hover:text-white">FAQ</a></li>
+            <li><a href="#" class="hover:text-white">Shipping & returns</a></li>
+            <li><a href="#" class="hover:text-white">Allergens</a></li>
+            <li><a href="#" class="hover:text-white">Track my box</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="border-t border-slate-800">
+        <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-slate-500">
+          <p>&copy; <span x-text="new Date().getFullYear()"></span> Scoop & Churn. All rights reserved.</p>
+          <div class="flex items-center gap-4">
+            <a href="#" class="hover:text-slate-300">Privacy</a>
+            <a href="#" class="hover:text-slate-300">Terms</a>
+            <a href="#" class="hover:text-slate-300">Security</a>
+          </div>
+        </div>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>
