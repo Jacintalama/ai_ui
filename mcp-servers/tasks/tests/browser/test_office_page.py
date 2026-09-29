@@ -53,6 +53,11 @@ ACTIVITY = {
         "source": "schedule"},
 }
 
+#: What the floor draws a collaboration from. Every entry is a tool call
+#: that really happened: agent_step rows with the colleague's RESOLVED id.
+#: Empty by default, so the default fixture proves the floor invents nothing.
+HANDOFFS = []
+
 STATS = {
     "agent-research-assistant-0001": {
         "runs": 801, "avg_seconds": 30.4, "success_pct": 40,
@@ -104,7 +109,7 @@ def page(browser, request):
         if "/models/list" in url:
             body = {"items": AGENTS, "total": len(AGENTS)}
         elif "/agents/activity" in url:
-            body = {"activity": ACTIVITY}
+            body = {"activity": ACTIVITY, "handoffs": HANDOFFS}
         elif "/agents/stats" in url:
             body = {"stats": stats}
         elif "/agents/skills" in url:
@@ -750,3 +755,126 @@ def test_dragging_a_robot_is_not_a_pan(page):
     page.locator('.who[data-id="agent-iris-a103"]').click()
     page.wait_for_timeout(200)
     assert page.locator("#side h2").inner_text() == "Iris"
+
+
+# --- collaboration the floor is allowed to draw ------------------------------
+# "add animation if they talk to each other... like a message popup in the
+# head of them when they chat."
+#
+# The office's founding rule still stands: it draws what happened and never
+# pretends. What changed is that handoffs are now real and recorded, so two
+# robots standing together is a fact from tasks.agent_step rather than an
+# animation somebody liked the look of.
+
+def test_nothing_is_talking_when_nothing_happened(page):
+    """The default fixture has no handoffs. If a bubble or a link appears
+    here, the floor is inventing one."""
+    assert page.locator(".talk-line").count() == 0
+    assert page.locator(".say").count() == 0
+
+
+def test_a_robot_is_small_enough_to_share_a_room(page):
+    """"can you make the robots small." Two agents in one room used to put
+    their labels within about 108px of each other."""
+    box = page.locator('.who[data-id="agent-iris-a103"]').bounding_box()
+    assert box["width"] <= 52, box
+    assert box["height"] <= 72, box
+
+
+def test_everyone_is_breathing(page):
+    """Idle motion claims nothing, so it needs no evidence. It is the one
+    animation here that is decoration rather than a statement."""
+    assert page.locator(".who .bot").first.evaluate(
+        "el => getComputedStyle(el).animationName") != "none"
+
+
+# --- with a real handoff in the data ----------------------------------------
+
+def _with_handoff(page, status="ok"):
+    """Serve one real-shaped handoff row and let the floor redraw from it.
+
+    The timestamp is NOW because the floor deliberately drops anything older
+    than its freshness window: a handoff from this morning must not leave two
+    robots still standing together at teatime. A fixed date here failed for
+    exactly that reason, which is the guard working."""
+    import datetime
+    import json
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    page.route("**/agents/activity**", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({
+            "activity": ACTIVITY,
+            "handoffs": [{"from": "agent-research-assistant-0001",
+                          "to": "agent-iris-a103", "status": status,
+                          "at": now}]})))
+    page.evaluate("() => window.aiuiRefreshOffice()")
+    page.wait_for_timeout(500)
+
+
+def test_a_handoff_draws_a_line_between_the_two(page):
+    _with_handoff(page)
+    assert page.locator(".talk-line").count() == 1
+
+
+def test_the_asking_robot_says_something_over_its_head(page):
+    """The popup is the point: you should be able to see WHO is talking to
+    WHOM without reading a table."""
+    _with_handoff(page)
+    said = page.locator(".say").first.inner_text()
+    assert "Iris" in said
+
+
+def test_a_refused_handoff_is_drawn_too(page):
+    """Showing only the ones that worked would be the flattering half of the
+    truth."""
+    _with_handoff(page, status="refused")
+    assert page.locator(".talk-line").count() == 1
+    assert page.locator(".talk-line.refused").count() == 1
+
+
+def test_the_line_joins_the_right_two_robots(page):
+    """A line drawn between the wrong pair is worse than no line: it states
+    a collaboration that did not happen."""
+    _with_handoff(page)
+    ends = page.locator(".talk-line").first.evaluate(
+        "el => [el.dataset.from, el.dataset.to]")
+    assert ends == ["agent-research-assistant-0001", "agent-iris-a103"]
+
+
+def test_the_asking_robot_walks_toward_its_colleague(page):
+    """"add walking animation." It walks only when a handoff is in the data,
+    so the movement is a fact rather than scenery: a robot crossing the floor
+    says these two worked together."""
+    before = page.locator('.who[data-id="agent-research-assistant-0001"]'
+                          ).evaluate("el => getComputedStyle(el).transform")
+    _with_handoff(page)
+    after = page.locator('.who[data-id="agent-research-assistant-0001"]'
+                         ).evaluate("el => getComputedStyle(el).transform")
+    assert after != before
+    assert after != "none"
+
+
+def test_a_robot_nobody_asked_stays_put(page):
+    """The colleague being asked does not walk, and neither does anyone
+    uninvolved. Everyone drifting would turn a claim into decoration."""
+    _with_handoff(page)
+    assert page.locator('.who[data-id="agent-iris-a103"]').evaluate(
+        "el => getComputedStyle(el).transform") == "none"
+
+
+def test_the_walk_is_undone_when_the_handoff_goes_stale(page):
+    """The floor shows what is happening. A robot left standing next to a
+    colleague long after the handoff finished is the staleness lie."""
+    _with_handoff(page)
+    moved = page.locator('.who[data-id="agent-research-assistant-0001"]'
+                         ).evaluate("el => getComputedStyle(el).transform")
+    assert moved != "none"
+    import json
+    page.route("**/agents/activity**", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"activity": ACTIVITY, "handoffs": []})))
+    page.evaluate("() => window.aiuiRefreshOffice()")
+    page.wait_for_timeout(400)
+    assert page.locator('.who[data-id="agent-research-assistant-0001"]'
+                        ).evaluate("el => getComputedStyle(el).transform") == "none"
+    assert page.locator(".talk-line").count() == 0

@@ -168,10 +168,15 @@
   /* A robot stands rather than sits in a disc, so the tile is taller than it
      is wide and the anchor point is its feet: an agent belongs to the spot on
      the floor it is standing on. */
+  /* Smaller than they were. Two agents in one room used to put their name
+     labels within about 108px of each other, and the floor reads as a plan
+     rather than a toy shelf when the robots are the size of the furniture
+     instead of the room. */
   .who {
-    position: absolute; z-index: 12; width: 76px; height: 100px;
-    margin: -90px 0 0 -38px; background: none; border: 0; padding: 0;
+    position: absolute; z-index: 12; width: 48px; height: 66px;
+    margin: -60px 0 0 -24px; background: none; border: 0; padding: 0;
     cursor: pointer; font: inherit; color: inherit;
+    transition: transform .9s cubic-bezier(.34,.1,.3,1);
   }
   .who svg.bot { width: 100%; height: 100%; display: block; overflow: visible; }
   .who[aria-current="true"] svg.bot { filter: drop-shadow(0 0 7px var(--cyan)); }
@@ -179,17 +184,17 @@
   @keyframes blink { 0%, 88%, 100% { opacity: 1 } 94% { opacity: .2 } }
   /* the state light, bottom-right, as in the mockup */
   .who .dot {
-    position: absolute; right: 6px; top: 18px;
+    position: absolute; right: 2px; top: 10px;
     width: 12px; height: 12px; border: 2px solid var(--base);
   }
   .who[data-state="working"]::after {
-    content: ""; position: absolute; left: 50%; top: 14px;
-    width: 58px; height: 58px; margin-left: -29px; border-radius: 50%;
+    content: ""; position: absolute; left: 50%; top: 8px;
+    width: 40px; height: 40px; margin-left: -20px; border-radius: 50%;
     border: 2px solid var(--cyan); animation: halo 1.5s ease-out infinite;
   }
   @keyframes halo { 0% { transform: scale(.9); opacity: .7 } 100% { transform: scale(1.35); opacity: 0 } }
   .who-label {
-    position: absolute; top: 142px; left: 50%; transform: translateX(-50%);
+    position: absolute; top: 96px; left: 50%; transform: translateX(-50%);
     white-space: nowrap; padding: 4px 8px; border: 1px solid var(--border-2);
     border-radius: 8px; background: rgba(7,15,27,.94);
     font-size: 10px; font-weight: 600; color: var(--text); pointer-events: none;
@@ -200,13 +205,77 @@
      invalid and the browser resolves it by dropping one of the two. It sits
      just under the name label, which ends about 73px past the anchor. */
   .who-chat {
-    position: absolute; z-index: 13; margin-top: 78px;
+    position: absolute; z-index: 13; margin-top: 52px;
+    transition: transform .9s cubic-bezier(.34,.1,.3,1);
     transform: translateX(-50%); text-decoration: none; white-space: nowrap;
     padding: 3px 10px; border-radius: 999px;
     border: 1px solid var(--border-2); background: rgba(7,15,27,.94);
     font-size: 10px; font-weight: 600; color: var(--muted);
   }
   .who-chat:hover { border-color: var(--cyan); color: var(--cyan); }
+
+  /* Idle motion is the one animation here that states nothing, so it is the
+     one that needs no evidence behind it. Everything else on this floor has
+     to come from a row in the database. */
+  .who .bot { animation: breathe 3.4s ease-in-out infinite; }
+  .who[data-state="working"] .bot { animation: bustle .9s ease-in-out infinite; }
+  @keyframes breathe {
+    0%, 100% { transform: translateY(0) }
+    50%      { transform: translateY(-2.5px) }
+  }
+  /* A working agent moves like it is doing something, not like it is asleep.
+     Still a statement about nothing more than "this one is running", which
+     the status dot already says. */
+  @keyframes bustle {
+    0%, 100% { transform: translateY(0) rotate(0deg) }
+    25%      { transform: translateY(-3px) rotate(-2.5deg) }
+    75%      { transform: translateY(-3px) rotate(2.5deg) }
+  }
+
+  /* --- collaboration, drawn only from what happened ----------------------
+     A line between two robots CLAIMS they worked together, so it is drawn
+     only from a tasks.agent_step row with the colleague's resolved id in it.
+     The office was built refusing to fake exactly this; it is allowed now
+     because it is no longer a fake. */
+  .talk-line {
+    position: absolute; z-index: 8; height: 2px; transform-origin: 0 50%;
+    background: linear-gradient(90deg,
+      color-mix(in srgb, var(--cyan) 15%, transparent),
+      var(--cyan),
+      color-mix(in srgb, var(--cyan) 15%, transparent));
+    background-size: 220% 100%; pointer-events: none; border-radius: 2px;
+    animation: along 1.6s linear infinite;
+  }
+  .talk-line.refused {
+    background: linear-gradient(90deg, transparent, #fb7185, transparent);
+    background-size: 220% 100%; opacity: .75; animation-duration: 2.6s;
+  }
+  @keyframes along {
+    from { background-position: 120% 0 }
+    to   { background-position: -120% 0 }
+  }
+
+  /* What one robot is saying to another, over its head. */
+  .say {
+    position: absolute; z-index: 30; transform: translate(-50%, -100%);
+    max-width: 150px; padding: 5px 9px; border-radius: 10px;
+    background: var(--surface); border: 1px solid var(--cyan);
+    color: var(--text); font-size: 10px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    box-shadow: 0 8px 20px rgba(0,0,0,.45); pointer-events: none;
+    animation: pop .28s ease-out both;
+  }
+  .say.refused { border-color: #fb7185; }
+  .say::after {
+    content: ""; position: absolute; left: 50%; top: 100%;
+    margin-left: -5px; border: 5px solid transparent;
+    border-top-color: var(--cyan);
+  }
+  .say.refused::after { border-top-color: #fb7185; }
+  @keyframes pop {
+    from { opacity: 0; transform: translate(-50%, -88%) scale(.9) }
+    to   { opacity: 1; transform: translate(-50%, -100%) scale(1) }
+  }
 
   .team-zone {
     position: absolute; z-index: 1; left: 37%; top: 44%; width: 26%; height: 12%;
@@ -391,6 +460,14 @@
 (function () {
   "use strict";
 
+  //: Handoffs between this person's agents in the last few minutes, straight
+  //: from tasks.agent_step. The floor draws a collaboration from these and
+  //: from nothing else: an empty list means nobody is drawn talking, however
+  //: busy the office looks.
+  var HANDOFFS = [];
+  //: Where each robot ended up on the floor this draw, as percentages, so a
+  //: line can be run between two of them. Rebuilt by drawRooms.
+  var AT = {};
   var AGENTS = [], ACTIVITY = {}, STATS = {}, SKILLS = {}, SELECTED = null,
       TAB = "office";
 
@@ -601,6 +678,97 @@
         encodeURIComponent((m.name || m.id) + ", ") + '">Chat</a>';
   }
 
+  //: How long a handoff keeps two robots visibly together. The server only
+  //: sends the last few minutes, and this is the slice of that which reads as
+  //: "now" rather than "recently".
+  var TALK_SECONDS = 90;
+
+  function _fresh(h) {
+    var at = Date.parse(h && h.at || "");
+    if (!at) return false;
+    return (Date.now() - at) / 1000 <= TALK_SECONDS;
+  }
+
+  function nameOf(id) {
+    var m = AGENTS.filter(function (a) { return a.id === id; })[0];
+    return (m && m.name) || "";
+  }
+
+  //: How far along the line an asking robot walks. Not all the way: it has to
+  //: stay in its own room to still read as who and where it is, and two
+  //: robots standing on the same spot is a pile rather than a conversation.
+  var WALK_FRACTION = 0.28;
+
+  //: Move the asking robot toward the colleague it is actually waiting on.
+  //: Applied after the rooms are drawn, so it rides the .who transition and
+  //: reads as a walk rather than a jump. Cleared on every draw, so the moment
+  //: a handoff falls out of the data the robot walks back: a robot left
+  //: standing beside a colleague long after the fact is the staleness lie
+  //: this floor is supposed to avoid.
+  function walkThem() {
+    HANDOFFS.forEach(function (h) {
+      if (!h || !h.from || !h.to || h.from === h.to || !_fresh(h)) return;
+      var a = AT[h.from], b = AT[h.to];
+      if (!a || !b) return;
+      var id = window.CSS && CSS.escape ? CSS.escape(h.from) : h.from;
+      var who = document.querySelector('.who[data-id="' + id + '"]');
+      if (!who) return;
+      var dx = (b.x - a.x) * CANVAS_W / 100 * WALK_FRACTION;
+      var dy = (b.y - a.y) * CANVAS_H / 100 * WALK_FRACTION;
+      var shift = "translate(" + Math.round(dx) + "px," + Math.round(dy) + "px)";
+      who.style.transform = shift;
+      // The Chat pill is this robot's, not the desk's, so it walks too.
+      // Left behind it would offer a conversation with whoever is standing
+      // there now, which is nobody.
+      var pill = document.querySelector('.who-chat[data-id="' + id + '"]');
+      if (pill) pill.style.transform = "translateX(-50%) " + shift;
+    });
+  }
+
+  //: The line between two robots, plus what the asking one is saying over its
+  //: head. Drawn ONLY from HANDOFFS, which is ONLY tasks.agent_step rows.
+  //: Nothing here may be invented: a line between the wrong pair states a
+  //: collaboration that did not happen, which is worse than drawing none.
+  function talkHtml() {
+    var out = "", seen = {};
+    HANDOFFS.forEach(function (h) {
+      if (!h || !h.from || !h.to || h.from === h.to) return;
+      if (!_fresh(h)) return;
+      var a = AT[h.from], b = AT[h.to];
+      // One of them is filtered out of the search, or in a room nobody is
+      // drawing. A line to nowhere is worse than no line.
+      if (!a || !b) return;
+      var key = h.from + ">" + h.to;
+      if (seen[key]) return;
+      seen[key] = 1;
+
+      var refused = h.status === "refused" || h.status === "failed";
+      var cls = refused ? " refused" : "";
+      // Percentages are of different axes, so the angle is computed in the
+      // floor's own pixel space and the line is placed back in percentages.
+      var dx = (b.x - a.x) * CANVAS_W / 100;
+      var dy = (b.y - a.y) * CANVAS_H / 100;
+      var len = Math.sqrt(dx * dx + dy * dy);
+      var deg = Math.atan2(dy, dx) * 180 / Math.PI;
+      out += '<div class="talk-line' + cls + '"' +
+        ' data-from="' + esc(h.from) + '" data-to="' + esc(h.to) + '"' +
+        ' style="left:' + a.x + '%;top:' + a.y + '%;width:' + Math.round(len) +
+        'px;transform:rotate(' + deg.toFixed(2) + 'deg)"></div>';
+
+      var to = nameOf(h.to) || "a colleague";
+      // Placed where the robot WILL be, not where its desk is: walkThem
+      // moves the robot the same fraction along this line, and a bubble left
+      // behind at the desk reads as somebody else talking.
+      var sayX = a.x + (b.x - a.x) * WALK_FRACTION;
+      var sayY = a.y + (b.y - a.y) * WALK_FRACTION;
+      out += '<div class="say' + cls + '" style="left:' + sayX + '%;top:' +
+        sayY + '%;margin-top:-46px">' +
+        esc(refused ? "Could not reach " + to : "Asking " + to + "…") +
+        '</div>';
+    });
+    return out;
+  }
+
   // Where each agent stands inside its own room. Spread along the room and
   // over two rows, so a room holding three does not stack them.
   function placeIn(z, of) {
@@ -608,12 +776,17 @@
       var cols = Math.min(of.length, 2);
       var col = i % cols, row = Math.floor(i / cols);
       var rows = Math.ceil(of.length / cols);
-      return {
+      var at = {
         m: m,
         x: z.at[0] + z.at[2] * ((col + 1) / (cols + 1)),
         y: z.at[1] + z.at[3] * (rows > 1 ? (0.34 + row * (0.44 / Math.max(1, rows - 1)))
                                          : 0.52),
       };
+      // Kept so a talk line knows where its two ends are. Percentages, the
+      // same units the robots are positioned in, so the line survives a zoom
+      // without being recomputed.
+      AT[m.id] = { x: at.x, y: at.y };
+      return at;
     });
   }
 
@@ -692,7 +865,8 @@
         '<a class="btn ghost" target="_top" href="/tasks/agents">Open the chat</a>' +
       '</span></div>';
 
-    document.getElementById("rooms").innerHTML = html;
+    document.getElementById("rooms").innerHTML = html + talkHtml();
+    walkThem();
 
     document.getElementById("sub").innerHTML =
       '<i class="dot ' + (working ? "working" : "ready") + '"></i>' +
@@ -837,6 +1011,14 @@
     }).join("");
   }
 
+  //: Re-read the floor now rather than at the next poll. The five second
+  //: poll is what normally drives this; the hook exists so a test can prove
+  //: what the floor does with a given set of rows instead of waiting.
+  window.aiuiRefreshOffice = async function () {
+    await loadActivity();
+    draw();
+  };
+
   function draw() {
     document.getElementById("panel-office").hidden = TAB !== "office";
     document.getElementById("panel-activity").hidden = TAB !== "activity";
@@ -864,8 +1046,11 @@
     AGENTS = items.filter(function (m) { return String(m.id || "").indexOf("agent-") === 0; });
   }
   async function loadActivity() {
-    try { ACTIVITY = (await getJson("/api/tasks/agents/activity")).activity || {}; }
-    catch (e) { console.warn("[office] activity unavailable", e); }
+    try {
+      var got = await getJson("/api/tasks/agents/activity");
+      ACTIVITY = got.activity || {};
+      HANDOFFS = got.handoffs || [];
+    } catch (e) { console.warn("[office] activity unavailable", e); }
   }
   async function loadStats() {
     try { STATS = (await getJson("/api/tasks/agents/stats")).stats || {}; }

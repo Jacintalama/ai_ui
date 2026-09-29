@@ -310,6 +310,61 @@ def _shape(row, now: datetime) -> dict:
             "source": row["source"]}
 
 
+#: How far back the floor looks for a collaboration to draw. Minutes, not
+#: hours: the office shows what is happening, and two robots still standing
+#: together at teatime over a handoff from this morning would be a lie of
+#: staleness rather than of invention.
+HANDOFF_WINDOW_MINUTES = 5
+
+
+def _shape_handoff(row) -> dict | None:
+    """One handoff, as the floor needs to read it, or None to draw nothing.
+
+    A handoff refused before the colleague was resolved records no target,
+    and there is no second robot to draw a line to. A self-handoff is
+    refused upstream anyway and would draw a line from a robot to itself.
+    """
+    asked = row["agent_id"]
+    target = row["target_agent_id"]
+    if not target or target == asked:
+        return None
+    return {"from": asked, "to": target, "status": row["status"],
+            "at": row["started_at"].isoformat()}
+
+
+async def handoffs_for(user_email: str) -> list[dict]:
+    """The handoffs between this person's agents in the last few minutes.
+
+    This is what lets the office draw one robot walking to another without
+    inventing anything: every row here is a tool call that really happened,
+    with the colleague's resolved id in it.
+
+    Refusals are included. Showing only the handoffs that went well would be
+    the flattering half of the truth, and the office's whole contract is that
+    it draws what occurred.
+
+    Scoped to the caller, like every other read in this module.
+    """
+    if not user_email:
+        return []
+    try:
+        async with session() as s:
+            rows = (await s.execute(
+                sql_text(
+                    "SELECT agent_id, target_agent_id, status, started_at "
+                    "FROM tasks.agent_step "
+                    "WHERE user_email = :email AND tool = :tool "
+                    "  AND started_at > now() - make_interval(mins => :mins) "
+                    "ORDER BY started_at DESC LIMIT 20"),
+                {"email": user_email, "tool": "ask_colleague",
+                 "mins": HANDOFF_WINDOW_MINUTES})).mappings().all()
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not read agent handoffs", exc_info=True)
+        return []
+    drawn = [_shape_handoff(r) for r in rows]
+    return [d for d in drawn if d]
+
+
 async def activity_for(user_email: str) -> dict:
     """The latest run of each of this person's agents, keyed by agent id.
 

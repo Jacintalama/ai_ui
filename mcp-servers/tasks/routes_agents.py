@@ -418,7 +418,11 @@ async def activity(user: CurrentUser = Depends(current_user)) -> dict:
     listing carries every user's agents, and one person's agent working is
     not another person's agent working.
     """
-    return {"activity": await agent_activity.activity_for(user.email)}
+    # Handoffs ride along rather than getting a route of their own: the floor
+    # polls this every five seconds and needs both to draw one frame, and a
+    # second request would let the two answers disagree about the same moment.
+    return {"activity": await agent_activity.activity_for(user.email),
+            "handoffs": await agent_activity.handoffs_for(user.email)}
 
 
 @router.get("/stats")
