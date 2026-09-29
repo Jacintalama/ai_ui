@@ -396,9 +396,15 @@ def test_the_room_card_weights_success_by_runs(page):
 
 def test_the_figure_wears_the_agents_colour(page):
     """One figure per agent in its own colour, so the floor is readable at a
-    glance rather than a row of identical silhouettes."""
-    colours = page.locator(".who .who-inner").evaluate_all(
+    glance rather than a row of identical silhouettes.
+
+    Read off the button, which is where the colour is set and where the dot
+    and the label inherit it from. This used to select .who-inner, a class
+    that has never existed here: it matched nothing, compared an empty list
+    with itself, and passed however the floor was painted."""
+    colours = page.locator(".who").evaluate_all(
         "els => els.map(e => getComputedStyle(e).color)")
+    assert len(colours) == 2, colours
     assert len(set(colours)) == len(colours), colours
 
 
@@ -775,10 +781,23 @@ def test_nothing_is_talking_when_nothing_happened(page):
 
 def test_a_robot_is_small_enough_to_share_a_room(page):
     """"can you make the robots small." Two agents in one room used to put
-    their labels within about 108px of each other."""
-    box = page.locator('.who[data-id="agent-iris-a103"]').bounding_box()
-    assert box["width"] <= 52, box
-    assert box["height"] <= 72, box
+    their labels within about 108px of each other.
+
+    Measured against the room rather than in screen pixels, and on the figure
+    rather than on the button around it. The button now also holds the name,
+    so its width is the label's; and the floor scales to whatever space it
+    has, so a fixed pixel ceiling passes or fails on the size of the window
+    rather than on the size of the robot."""
+    got = page.evaluate(
+        "() => {"
+        " const bot = document.querySelector("
+        "   '.who[data-id=\"agent-iris-a103\"] svg.bot').getBoundingClientRect();"
+        " const room = [...document.querySelectorAll('section.zone')]"
+        "   .find(z => z.textContent.toLowerCase().includes('knowledge base'))"
+        "   .getBoundingClientRect();"
+        " return { w: bot.width / room.width, h: bot.height / room.height }; }")
+    assert got["w"] <= 0.45, got
+    assert got["h"] <= 0.5, got
 
 
 def test_everyone_is_breathing(page):
@@ -845,10 +864,10 @@ def test_the_asking_robot_walks_toward_its_colleague(page):
     """"add walking animation." It walks only when a handoff is in the data,
     so the movement is a fact rather than scenery: a robot crossing the floor
     says these two worked together."""
-    before = page.locator('.who[data-id="agent-research-assistant-0001"]'
+    before = page.locator('.who-slot[data-id="agent-research-assistant-0001"]'
                           ).evaluate("el => getComputedStyle(el).transform")
     _with_handoff(page)
-    after = page.locator('.who[data-id="agent-research-assistant-0001"]'
+    after = page.locator('.who-slot[data-id="agent-research-assistant-0001"]'
                          ).evaluate("el => getComputedStyle(el).transform")
     assert after != before
     assert after != "none"
@@ -858,7 +877,7 @@ def test_a_robot_nobody_asked_stays_put(page):
     """The colleague being asked does not walk, and neither does anyone
     uninvolved. Everyone drifting would turn a claim into decoration."""
     _with_handoff(page)
-    assert page.locator('.who[data-id="agent-iris-a103"]').evaluate(
+    assert page.locator('.who-slot[data-id="agent-iris-a103"]').evaluate(
         "el => getComputedStyle(el).transform") == "none"
 
 
@@ -866,7 +885,7 @@ def test_the_walk_is_undone_when_the_handoff_goes_stale(page):
     """The floor shows what is happening. A robot left standing next to a
     colleague long after the handoff finished is the staleness lie."""
     _with_handoff(page)
-    moved = page.locator('.who[data-id="agent-research-assistant-0001"]'
+    moved = page.locator('.who-slot[data-id="agent-research-assistant-0001"]'
                          ).evaluate("el => getComputedStyle(el).transform")
     assert moved != "none"
     import json
@@ -875,6 +894,164 @@ def test_the_walk_is_undone_when_the_handoff_goes_stale(page):
         body=json.dumps({"activity": ACTIVITY, "handoffs": []})))
     page.evaluate("() => window.aiuiRefreshOffice()")
     page.wait_for_timeout(400)
-    assert page.locator('.who[data-id="agent-research-assistant-0001"]'
+    assert page.locator('.who-slot[data-id="agent-research-assistant-0001"]'
                         ).evaluate("el => getComputedStyle(el).transform") == "none"
     assert page.locator(".talk-line").count() == 0
+
+
+# --- everybody is visible ---------------------------------------------------
+#
+# The floor placed agents at fixed percentages of a fixed canvas, so a room
+# could hold fewer people than were standing in it. On the owner's own roster
+# three agents hold "code", and the third was drawn below Development's own
+# wall: "see its kinda not showing the project manager". Their name and Chat
+# pill also landed on top of each other, because the offsets that positioned
+# them separately stopped agreeing when the robot was made smaller.
+#
+# Rooms are now sized by the agents in them, and an agent is one slot laid out
+# in normal flow. These tests pin both halves of that.
+
+CROWD = [
+    {"id": "agent-ada", "name": "Ada",
+     "meta": {"role": "Project manager", "toolIds": ["code", "schedules"]},
+     "params": {}, "user_id": "me", "created_at": 1, "updated_at": 1},
+    {"id": "agent-kai", "name": "Kai",
+     "meta": {"role": "Code reviewer", "toolIds": ["code"]},
+     "params": {}, "user_id": "me", "created_at": 2, "updated_at": 2},
+    {"id": "agent-rex", "name": "Rex",
+     "meta": {"role": "Build engineer", "toolIds": ["code"]},
+     "params": {}, "user_id": "me", "created_at": 3, "updated_at": 3},
+    {"id": "agent-iris", "name": "Iris",
+     "meta": {"role": "Drive librarian", "toolIds": ["gdrive"]},
+     "params": {}, "user_id": "me", "created_at": 4, "updated_at": 4},
+    {"id": "agent-mia", "name": "Mia",
+     "meta": {"role": "Receptionist", "toolIds": ["gmail"]},
+     "params": {}, "user_id": "me", "created_at": 5, "updated_at": 5},
+    {"id": "agent-nora", "name": "Nora",
+     "meta": {"role": "Scheduler", "toolIds": ["calendar"]},
+     "params": {}, "user_id": "me", "created_at": 6, "updated_at": 6},
+    {"id": "agent-vera", "name": "Vera",
+     "meta": {"role": "Automation lead", "toolIds": []},
+     "params": {}, "user_id": "me", "created_at": 7, "updated_at": 7},
+]
+
+
+@pytest.fixture
+def crowded(browser):
+    """The owner's real shape: seven agents, three of them in one room."""
+    html = (STATIC / "office.html").read_bytes()
+    srv = _serve(html)
+    # The dock the office really lives in is short and wide, which is the
+    # whole reason Fit matters. Measuring in a tall window would hide it.
+    pg = browser.new_page(viewport={"width": 1100, "height": 460})
+    pg.set_default_timeout(6000)
+
+    def route(r):
+        url = r.request.url
+        if "/models/list" in url:
+            body = {"items": CROWD, "total": len(CROWD)}
+        elif "/agents/activity" in url:
+            body = {"activity": {}, "handoffs": []}
+        elif "/agents/stats" in url:
+            body = {"stats": {}}
+        elif "/agents/skills" in url:
+            body = {"skills": {}}
+        else:
+            body = {}
+        r.fulfill(status=200, content_type="application/json",
+                  body=json.dumps(body))
+
+    pg.route("**/api/**", route)
+    # embed=1 is the only way anybody actually sees this: the office is an
+    # iframe inside the agents page, where the side panel is an overlay and
+    # the floor gets the whole width. Measuring the standalone page instead
+    # would measure a layout no user is ever shown.
+    pg.goto("http://127.0.0.1:%d/office.html?embed=1" % srv.server_address[1])
+    pg.wait_for_selector(".who", state="visible")
+    yield pg
+    pg.close()
+    srv.shutdown()
+
+
+def test_every_agent_is_drawn(crowded):
+    """Seven agents, seven robots. The one that went missing was missing from
+    the picture, not from the roster, so counting the roster would not have
+    caught it."""
+    assert crowded.locator(".who-slot").count() == len(CROWD)
+
+
+def test_every_agent_stands_fully_inside_a_room(crowded):
+    """The whole agent, not just the robot: the name and the Chat pill are
+    what crossed the wall first. An agent half outside its room is the
+    project manager the owner could not find."""
+    stray = crowded.evaluate(
+        "() => {"
+        " const rooms = [...document.querySelectorAll('section.zone')]"
+        "   .map(z => z.getBoundingClientRect());"
+        " const out = [];"
+        " for (const s of document.querySelectorAll('.who-slot')) {"
+        "   const b = s.getBoundingClientRect();"
+        "   const ok = rooms.some(r => b.left >= r.left - 0.5"
+        "     && b.right <= r.right + 0.5 && b.top >= r.top - 0.5"
+        "     && b.bottom <= r.bottom + 0.5);"
+        "   if (!ok) out.push(s.dataset.id);"
+        " } return out; }")
+    assert stray == [], stray
+
+
+def test_a_name_never_lands_on_its_own_chat_pill(crowded):
+    """"Kai ... ewer" in the owner's screenshot: the label sat 36px below the
+    robot and the pill 52px below it, so the two overlapped. Nothing in a
+    slot is positioned by hand any more, which is what makes this hold."""
+    overlap = crowded.evaluate(
+        "() => {"
+        " const out = [];"
+        " for (const s of document.querySelectorAll('.who-slot')) {"
+        "   const l = s.querySelector('.who-label').getBoundingClientRect();"
+        "   const c = s.querySelector('.who-chat').getBoundingClientRect();"
+        "   if (l.bottom > c.top + 0.5) out.push(s.dataset.id);"
+        " } return out; }")
+    assert overlap == [], overlap
+
+
+def test_two_agents_in_one_room_do_not_stand_on_each_other(crowded):
+    """Three agents share Development. Their slots are reserved side by side,
+    so no two of them may overlap anywhere on the floor."""
+    clashes = crowded.evaluate(
+        "() => {"
+        " const s = [...document.querySelectorAll('.who-slot')]"
+        "   .map(e => [e.dataset.id, e.getBoundingClientRect()]);"
+        " const out = [];"
+        " for (let i = 0; i < s.length; i++)"
+        "   for (let j = i + 1; j < s.length; j++) {"
+        "     const a = s[i][1], b = s[j][1];"
+        "     if (a.left < b.right - 0.5 && b.left < a.right - 0.5"
+        "         && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5)"
+        "       out.push(s[i][0] + '/' + s[j][0]);"
+        "   } return out; }")
+    assert clashes == [], clashes
+
+
+def test_the_whole_floor_is_visible_without_scrolling(crowded):
+    """"so they can see in whole area." Fit means the entire floor is on
+    screen: the owner's screenshot showed Research reading "ARCH" because it
+    was cut off at the left edge."""
+    got = crowded.evaluate(
+        "() => {"
+        " const fit = document.getElementById('floor-fit');"
+        " const f = fit.getBoundingClientRect();"
+        " const r = document.getElementById('rooms').getBoundingClientRect();"
+        " return { clipped: r.left < f.left - 1 || r.right > f.right + 1"
+        "                  || r.top < f.top - 1 || r.bottom > f.bottom + 1,"
+        "          f: [f.left, f.right, f.top, f.bottom],"
+        "          r: [r.left, r.right, r.top, r.bottom] }; }")
+    assert not got["clipped"], got
+
+
+def test_fit_keeps_the_robots_worth_looking_at(crowded):
+    """A floor that fits by shrinking everything to nothing is not visible
+    either. The canvas is now about as wide relative to its height as the
+    dock it sits in, which is what buys the scale back."""
+    h = crowded.locator(".who svg.bot").first.bounding_box()["height"]
+    assert h >= 40, h
+

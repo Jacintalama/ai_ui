@@ -122,7 +122,10 @@
   .floor-fit.panning .who, .floor-fit.panning a { pointer-events: none; }
   .floor {
     position: absolute; top: 0; left: 0; transform-origin: 0 0;
-    width: 1040px; height: 680px;
+    /* Replaced inline on every draw by the size the rooms turned out to
+       need. These only have to stop the frame flashing at a wrong shape
+       before the first agent has been placed. */
+    width: 1240px; height: 420px;
     border: 1px solid var(--border); border-radius: 18px; overflow: hidden;
     background:
       linear-gradient(90deg, rgba(230,241,255,.025) 1px, transparent 1px),
@@ -143,23 +146,46 @@
   }
   .zone-head {
     position: absolute; left: 13px; top: 10px; right: 13px;
-    display: flex; align-items: baseline; gap: 10px;
+    display: flex; align-items: baseline; gap: 4px 10px;
+    flex-wrap: wrap; overflow: hidden;
   }
   .zone-head > span:first-child {
     color: var(--glow, var(--cyan)); font-size: 10px; font-weight: 800;
     letter-spacing: .12em; text-transform: uppercase;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .card-room { margin-left: auto; display: flex; gap: 10px; font-size: 10px; color: var(--muted); }
+  /* Always its own line, never sometimes. Left to wrap on its own the
+     stats sat beside a short department name and under a long one, so two
+     rooms side by side printed their numbers at different heights. */
+  .card-room {
+    flex: 0 0 100%; display: flex; justify-content: flex-end; gap: 10px;
+    font-size: 10px; color: var(--muted);
+  }
   .card-room b { color: var(--text); font-weight: 700; }
+
+  /* One agent is one column: the robot, its name and its own Chat pill,
+     stacked in normal flow inside a slot the layout sized for it.
+
+     They used to be three absolutely positioned things with hand-tuned
+     offsets. The offsets stopped agreeing when the robot shrank, so the name
+     label and the Chat pill were drawn on top of each other, and a third
+     agent in one room was pushed out through the room's own wall. Flow
+     layout cannot overlap, and a slot the room reserved cannot spill. */
+  .who-slot {
+    position: absolute; z-index: 12;
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    transition: transform .9s cubic-bezier(.34,.1,.3,1);
+  }
 
   /* a desk behind each agent, so the room is furnished rather than empty */
   .desk {
-    position: absolute; width: 92px; height: 54px; margin: -6px 0 0 -46px;
+    position: absolute; z-index: 0; left: 50%; width: 84px; height: 32px;
+    top: calc(var(--bot-h) - 20px); transform: translateX(-50%);
     border: 1px solid #344a68; border-radius: 9px; background: #101f33;
-    box-shadow: 0 8px 18px rgba(0,0,0,.22); z-index: 14;
+    box-shadow: 0 8px 18px rgba(0,0,0,.22);
   }
   .desk::before {
-    content: ""; position: absolute; left: 15px; right: 15px; top: 9px; height: 22px;
+    content: ""; position: absolute; left: 13px; right: 13px; top: 7px; height: 16px;
     border: 1px solid #425878; border-radius: 4px;
     background: linear-gradient(145deg, #152b47, #0a1525);
     box-shadow: inset 0 0 12px rgba(79,130,205,.14);
@@ -173,18 +199,26 @@
      rather than a toy shelf when the robots are the size of the furniture
      instead of the room. */
   .who {
-    position: absolute; z-index: 12; width: 48px; height: 66px;
-    margin: -60px 0 0 -24px; background: none; border: 0; padding: 0;
+    position: relative; z-index: 1; max-width: 100%;
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    background: none; border: 0; padding: 0;
     cursor: pointer; font: inherit; color: inherit;
-    transition: transform .9s cubic-bezier(.34,.1,.3,1);
   }
-  .who svg.bot { width: 100%; height: 100%; display: block; overflow: visible; }
+  /* The robot keeps its own box whatever the label beside it is called, so a
+     long agent name stretches the label and never the figure. */
+  .who svg.bot {
+    width: var(--bot-w); height: var(--bot-h);
+    display: block; overflow: visible; flex: 0 0 auto;
+  }
   .who[aria-current="true"] svg.bot { filter: drop-shadow(0 0 7px var(--cyan)); }
   .who .bot-think { animation: blink 2.2s ease-in-out infinite; }
   @keyframes blink { 0%, 88%, 100% { opacity: 1 } 94% { opacity: .2 } }
   /* the state light, bottom-right, as in the mockup */
+  /* On the robot, not on the slot: the slot is as wide as the widest label
+     and the status light belongs to the figure. */
   .who .dot {
-    position: absolute; right: 2px; top: 10px;
+    position: absolute; z-index: 2; top: 8px;
+    left: calc(50% + var(--bot-w) / 2 - 14px);
     width: 12px; height: 12px; border: 2px solid var(--base);
   }
   .who[data-state="working"]::after {
@@ -193,22 +227,29 @@
     border: 2px solid var(--cyan); animation: halo 1.5s ease-out infinite;
   }
   @keyframes halo { 0% { transform: scale(.9); opacity: .7 } 100% { transform: scale(1.35); opacity: 0 } }
+  /* Never wider than the slot the room reserved. A name nobody predicted is
+     clipped with an ellipsis instead of reaching into the next agent. */
   .who-label {
-    position: absolute; top: 96px; left: 50%; transform: translateX(-50%);
-    white-space: nowrap; padding: 4px 8px; border: 1px solid var(--border-2);
+    position: relative; z-index: 2; max-width: 100%;
+    display: flex; align-items: baseline; justify-content: center; gap: 5px;
+    white-space: nowrap; overflow: hidden;
+    padding: 3px 8px; border: 1px solid var(--border-2);
     border-radius: 8px; background: rgba(7,15,27,.94);
     font-size: 10px; font-weight: 600; color: var(--text); pointer-events: none;
   }
-  .who-label small { color: var(--muted); margin-left: 5px; font-weight: 500; }
+  .who-label .card-name { overflow: hidden; text-overflow: ellipsis; }
+  .who-label small {
+    color: var(--muted); font-weight: 500;
+    overflow: hidden; text-overflow: ellipsis; min-width: 0;
+  }
 
   /* A sibling of the robot, never a child: an <a> inside a <button> is
-     invalid and the browser resolves it by dropping one of the two. It sits
-     just under the name label, which ends about 73px past the anchor. */
+     invalid and the browser resolves it by dropping one of the two. It is
+     the last thing in the slot, so nothing has to be told where to put it. */
   .who-chat {
-    position: absolute; z-index: 13; margin-top: 52px;
-    transition: transform .9s cubic-bezier(.34,.1,.3,1);
-    transform: translateX(-50%); text-decoration: none; white-space: nowrap;
-    padding: 3px 10px; border-radius: 999px;
+    position: relative; z-index: 2; max-width: 100%;
+    text-decoration: none; white-space: nowrap; overflow: hidden;
+    padding: 2px 10px; border-radius: 999px;
     border: 1px solid var(--border-2); background: rgba(7,15,27,.94);
     font-size: 10px; font-weight: 600; color: var(--muted);
   }
@@ -277,12 +318,6 @@
     to   { opacity: 1; transform: translate(-50%, -100%) scale(1) }
   }
 
-  .team-zone {
-    position: absolute; z-index: 1; left: 37%; top: 44%; width: 26%; height: 12%;
-    border: 1px dashed var(--border-2); border-radius: 14px;
-    background: rgba(22,36,55,.28); display: grid; place-items: center;
-    color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .1em;
-  }
   .floor-bar {
     position: absolute; z-index: 40; left: 16px; right: 16px; bottom: 14px;
     display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
@@ -613,22 +648,125 @@
   // top, three across the bottom, with the middle left open.
   var ZONES = [
     { key: "research",   label: "Research",       tools: ["server:mcp-proxy", "fusion"],
-      at: [2, 2, 30, 29],   glow: "#22D3EE" },
+      glow: "#22D3EE" },
     { key: "dev",        label: "Development",    tools: ["code"],
-      at: [35, 2, 31, 29],  glow: "#60a5fa" },
+      glow: "#60a5fa" },
     { key: "comms",      label: "Communication",  tools: ["gmail"],
-      at: [68, 2, 30, 29],  glow: "#f472b6" },
+      glow: "#f472b6" },
     { key: "meeting",    label: "Meeting room",   tools: ["calendar"],
-      at: [2, 62, 30, 29],  glow: "#34d399" },
+      glow: "#34d399" },
     { key: "knowledge",  label: "Knowledge base", tools: ["gdrive", "documents"],
-      at: [35, 62, 31, 29], glow: "#a78bfa" },
+      glow: "#a78bfa" },
     { key: "automation", label: "Automation",     tools: ["schedules", "excel_creator", "executive_dashboard"],
-      at: [68, 62, 30, 29], glow: "#fbbf24" },
+      glow: "#fbbf24" },
   ];
   // An agent whose owner picked no tools reaches everything, so it has no one
-  // room. It stands in the open middle rather than being hidden.
-  var LOUNGE = { key: "lounge", label: "Open floor", tools: [],
-                 at: [26, 33, 48, 27], glow: "#8296b5" };
+  // room. It gets a room of its own rather than being hidden.
+  var LOUNGE = { key: "lounge", label: "Open floor", tools: [], glow: "#8296b5" };
+
+  //: --- the floor's measurements -------------------------------------------
+  //: Rooms used to be fixed percentages of a fixed 1040x680 canvas, which
+  //: meant a room could hold fewer agents than were standing in it. Three
+  //: agents in Development put the third one's name and Chat pill below the
+  //: room's own wall, which is how the project manager went missing.
+  //:
+  //: Everything below is in canvas pixels and runs the other way round: an
+  //: agent needs a slot, a room is however big its slots make it, and the
+  //: canvas is however big its rooms make it. A room cannot be too small for
+  //: its people because its people are what set its size.
+  var SLOT_W = 140;        // one agent's column; the name label is the widest part
+  var BOT_W = 62, BOT_H = 84;
+  var SLOT_H = 132;        // robot + name + Chat, stacked
+  var SLOT_GAP_X = 12, SLOT_GAP_Y = 14;
+  var ROOM_HEAD = 46;      // the room's own title strip, up to two lines
+  //: No room is narrower than the name written across it. A room holding one
+  //: person would otherwise be sized by that one slot and print its own
+  //: department as "COMMUNICAT...".
+  var ROOM_MIN_W = 172;
+  var ROOM_PAD = 14, ROOM_GAP = 18, BAND_PAD = 18;
+  var FLOOR_BAR = 52;      // the strip along the bottom, which is not a room
+  //: The canvas used to be a fixed 1040px, so the bottom strip always had
+  //: room for its sentence and its two buttons on one line. It is sized by
+  //: the rooms now, and two rooms come to under 400px: the strip wrapped
+  //: onto three lines, grew upward from the bottom edge it is pinned to, and
+  //: covered the agents standing above it, which swallowed their Chat pills.
+  var CANVAS_MIN_W = 780;
+  //: The stacking depths worth trying. Past three rows a room is a tower and
+  //: the canvas is taller than any dock, so there is nothing to gain by
+  //: offering more.
+  var ROW_CAPS = [1, 2, 3];
+
+  //: The shape that shows the floor largest in the room it has. Ties and a
+  //: missing box both fall back to the first candidate, so this can never
+  //: return nothing.
+  function bestLayout(rooms) {
+    var box = fitBox(), best = null, bestK = -1;
+    for (var i = 0; i < ROW_CAPS.length; i++) {
+      var plan = layoutFloor(rooms, ROW_CAPS[i]);
+      if (!box) return plan;
+      var k = Math.min(box.w / plan.w, box.h / plan.h);
+      if (k > bestK) { bestK = k; best = plan; }
+    }
+    return best;
+  }
+
+  //: One room, sized to the agents in it, and where each of them stands.
+  function roomBox(n, rowCap) {
+    var cols = Math.max(1, Math.ceil(n / Math.max(1, rowCap)));
+    var rows = Math.max(1, Math.ceil(n / cols));
+    return {
+      cols: cols, rows: rows,
+      w: Math.max(ROOM_MIN_W,
+                  ROOM_PAD * 2 + cols * SLOT_W + (cols - 1) * SLOT_GAP_X),
+      h: ROOM_HEAD + rows * SLOT_H + (rows - 1) * SLOT_GAP_Y + ROOM_PAD,
+    };
+  }
+
+  //: Lay the occupied rooms out in one band and report the canvas they need.
+  //: Rooms are centred on the band rather than stretched to it, so a room
+  //: holding one person is not a tall empty strip beside a room holding three.
+  //:
+  //: `rowCap` is how many people a room may stack before it grows sideways
+  //: instead. It is not a constant because the right answer depends on the
+  //: dock: stacking makes the canvas tall and short, spreading makes it wide
+  //: and flat, and only one of those matches the box on any given day.
+  //: layoutFloor is called once per candidate and the caller keeps the one
+  //: that fits largest, so the floor uses the width it has rather than
+  //: leaving 400px of it empty beside a floor that shrank to fit the height.
+  function layoutFloor(rooms, rowCap) {
+    var boxes = rooms.map(function (r) { return roomBox(r.of.length, rowCap); });
+    var tallest = boxes.reduce(function (a, b) { return Math.max(a, b.h); }, 0);
+    var need = BAND_PAD * 2 + ROOM_GAP * Math.max(0, boxes.length - 1) +
+      boxes.reduce(function (a, b) { return a + b.w; }, 0);
+    var width = Math.max(need, CANVAS_MIN_W);
+    var height = BAND_PAD * 2 + tallest + FLOOR_BAR;
+
+    // Centred when the strip below is what set the width, so a floor with
+    // two rooms on it is not a pair of rooms in the corner of an empty hall.
+    var x = BAND_PAD + Math.round((width - need) / 2);
+    var out = rooms.map(function (r, i) {
+      var b = boxes[i];
+      var top = BAND_PAD + Math.round((tallest - b.h) / 2);
+      var left = x;
+      x += b.w + ROOM_GAP;
+
+      // Where each agent stands inside THIS room, in canvas pixels. The slot
+      // is reserved by the same numbers that sized the room, so an agent can
+      // no more overflow its room than a room can overflow the canvas.
+      var need = b.cols * SLOT_W + (b.cols - 1) * SLOT_GAP_X;
+      var inner = left + Math.round((b.w - need) / 2), innerTop = top + ROOM_HEAD;
+      var slots = r.of.map(function (m, k) {
+        var col = k % b.cols, row = Math.floor(k / b.cols);
+        return {
+          m: m,
+          left: inner + col * (SLOT_W + SLOT_GAP_X),
+          top: innerTop + row * (SLOT_H + SLOT_GAP_Y),
+        };
+      });
+      return { z: r.z, of: r.of, left: left, top: top, w: b.w, h: b.h, slots: slots };
+    });
+    return { w: width, h: height, rooms: out };
+  }
 
   function zoneFor(m) {
     var tools = toolsOf(m);
@@ -649,14 +787,21 @@
   }
   function saying(id) { return String(id || "").replace(/-/g, " "); }
 
-  function whoHtml(m, x, y) {
+  //: One agent, in the slot the room reserved for it. Everything inside the
+  //: slot is in normal flow: the robot, then the name, then the Chat pill.
+  //: Nothing here is told where to put itself, which is why nothing here can
+  //: land on top of anything else.
+  function whoHtml(m, slot) {
     var st = stateOf(m.id), c = colourOf(m.id);
-    return '<div class="desk" style="left:' + x + '%;top:' + (y + 6) + '%"></div>' +
+    return '<div class="who-slot" data-id="' + esc(m.id) + '"' +
+      ' style="left:' + slot.left + 'px;top:' + slot.top + 'px;width:' + SLOT_W +
+        'px;--bot-w:' + BOT_W + 'px;--bot-h:' + BOT_H + 'px">' +
+      '<div class="desk"></div>' +
       '<button class="who" data-id="' + esc(m.id) + '" data-state="' + st.key + '"' +
       (SELECTED === m.id ? ' aria-current="true"' : "") +
       // No background: the robot IS the avatar now. The colour stays as the
       // element's own colour so the dot and the label pick it up.
-      ' style="left:' + x + '%;top:' + y + '%;color:' + c + '"' +
+      ' style="color:' + c + '"' +
       ' title="' + esc(st.label) + '">' +
       robot(m.id, st.key === "working") +
       '<i class="dot ' + st.key + '"></i>' +
@@ -672,10 +817,10 @@
       // Naming the agent is what makes the turn private: agent_routing's name
       // rung hands it to that one agent and nobody else answers.
       '<a class="who-chat" data-id="' + esc(m.id) + '" target="_top"' +
-        ' style="left:' + x + '%;top:' + y + '%"' +
         ' title="Ask ' + esc(m.name || m.id) + ' on their own"' +
         ' href="/tasks/agents?ask=' +
-        encodeURIComponent((m.name || m.id) + ", ") + '">Chat</a>';
+        encodeURIComponent((m.name || m.id) + ", ") + '">Chat</a>' +
+      '</div>';
   }
 
   //: How long a handoff keeps two robots visibly together. The server only
@@ -711,17 +856,15 @@
       var a = AT[h.from], b = AT[h.to];
       if (!a || !b) return;
       var id = window.CSS && CSS.escape ? CSS.escape(h.from) : h.from;
-      var who = document.querySelector('.who[data-id="' + id + '"]');
+      // The whole slot walks, so the robot keeps its own name and its own
+      // Chat pill with it. Left behind, that pill would offer a conversation
+      // with whoever is standing there now, which is nobody.
+      var who = document.querySelector('.who-slot[data-id="' + id + '"]');
       if (!who) return;
       var dx = (b.x - a.x) * CANVAS_W / 100 * WALK_FRACTION;
       var dy = (b.y - a.y) * CANVAS_H / 100 * WALK_FRACTION;
-      var shift = "translate(" + Math.round(dx) + "px," + Math.round(dy) + "px)";
-      who.style.transform = shift;
-      // The Chat pill is this robot's, not the desk's, so it walks too.
-      // Left behind it would offer a conversation with whoever is standing
-      // there now, which is nobody.
-      var pill = document.querySelector('.who-chat[data-id="' + id + '"]');
-      if (pill) pill.style.transform = "translateX(-50%) " + shift;
+      who.style.transform =
+        "translate(" + Math.round(dx) + "px," + Math.round(dy) + "px)";
     });
   }
 
@@ -769,25 +912,14 @@
     return out;
   }
 
-  // Where each agent stands inside its own room. Spread along the room and
-  // over two rows, so a room holding three does not stack them.
-  function placeIn(z, of) {
-    return of.map(function (m, i) {
-      var cols = Math.min(of.length, 2);
-      var col = i % cols, row = Math.floor(i / cols);
-      var rows = Math.ceil(of.length / cols);
-      var at = {
-        m: m,
-        x: z.at[0] + z.at[2] * ((col + 1) / (cols + 1)),
-        y: z.at[1] + z.at[3] * (rows > 1 ? (0.34 + row * (0.44 / Math.max(1, rows - 1)))
-                                         : 0.52),
-      };
-      // Kept so a talk line knows where its two ends are. Percentages, the
-      // same units the robots are positioned in, so the line survives a zoom
-      // without being recomputed.
-      AT[m.id] = { x: at.x, y: at.y };
-      return at;
-    });
+  //: Where a talk line finds the two robots it joins: the middle of the
+  //: figure, in percentages of the canvas, so the line survives a zoom
+  //: without being recomputed.
+  function markAt(slot) {
+    AT[slot.m.id] = {
+      x: (slot.left + SLOT_W / 2) / CANVAS_W * 100,
+      y: (slot.top + BOT_H / 2) / CANVAS_H * 100,
+    };
   }
 
   function drawRooms() {
@@ -807,12 +939,24 @@
 
     // Only rooms somebody works in. An empty room is scenery, and six of them
     // is what made the earlier floor unreadable.
-    var html = '<div class="team-zone">Open floor</div>';
+    var occupied = ZONES.concat([LOUNGE])
+      .filter(function (z) { return byZone[z.key]; })
+      .map(function (z) { return { z: z, of: byZone[z.key].of }; });
 
-    html += ZONES.concat([LOUNGE]).filter(function (z) {
-      return byZone[z.key];
-    }).map(function (z) {
-      var of = byZone[z.key].of;
+    // The canvas is whatever the rooms need, and the rooms are whatever the
+    // agents need. Set before anything is positioned, because AT records
+    // percentages of it.
+    var plan = bestLayout(occupied);
+    CANVAS_W = plan.w;
+    CANVAS_H = plan.h;
+    var floor = document.getElementById("rooms");
+    if (floor) {
+      floor.style.width = CANVAS_W + "px";
+      floor.style.height = CANVAS_H + "px";
+    }
+
+    var html = plan.rooms.map(function (r) {
+      var z = r.z, of = r.of;
       var runs = 0, done = 0, spent = 0, working = 0;
       of.forEach(function (m) {
         var st = STATS[m.id] || {};
@@ -826,8 +970,8 @@
         if (stateOf(m.id).key === "working") working++;
       });
       var pct = runs ? Math.round(100 * done / runs) : null;
-      return '<section class="zone" style="--glow:' + z.glow + ';left:' + z.at[0] +
-        '%;top:' + z.at[1] + '%;width:' + z.at[2] + '%;height:' + z.at[3] + '%">' +
+      return '<section class="zone" style="--glow:' + z.glow + ';left:' + r.left +
+        'px;top:' + r.top + 'px;width:' + r.w + 'px;height:' + r.h + 'px">' +
         '<div class="zone-head"><span>' + esc(z.label) + '</span>' +
         '<span class="card-room"><span>RUNS <b>' + runs + '</b></span>' +
         (pct == null ? "" : '<span>CLEAN <b>' + pct + '%</b></span>') +
@@ -836,12 +980,12 @@
     }).join("");
 
     // Agents sit above the rooms, so a label is never clipped by a wall.
-    html += ZONES.concat([LOUNGE]).filter(function (z) { return byZone[z.key]; })
-      .map(function (z) {
-        return placeIn(z, byZone[z.key].of).map(function (s) {
-          return whoHtml(s.m, s.x.toFixed(1), s.y.toFixed(1));
-        }).join("");
+    html += plan.rooms.map(function (r) {
+      return r.slots.map(function (slot) {
+        markAt(slot);
+        return whoHtml(slot.m, slot);
       }).join("");
+    }).join("");
 
     var working = shown.filter(function (m) { return stateOf(m.id).key === "working"; }).length;
     var newest = recentRows()[0];
@@ -867,6 +1011,8 @@
 
     document.getElementById("rooms").innerHTML = html + talkHtml();
     walkThem();
+    // The canvas just changed shape, so whatever scale was on it is stale.
+    drawZoom();
 
     document.getElementById("sub").innerHTML =
       '<i class="dot ' + (working ? "working" : "ready") + '"></i>' +
@@ -1078,7 +1224,9 @@
   //
   // Fit is the default and it means the WHOLE office is visible: the smaller
   // of the width and height ratios, so nothing is cut off on either axis.
-  var CANVAS_W = 1040, CANVAS_H = 680;
+  //: Set by layoutFloor on every draw. The starting values only have to be
+  //: sane enough for a first fit before any agent has been placed.
+  var CANVAS_W = 1240, CANVAS_H = 420;
   var ZOOM_KEY = "aiuiOfficeZoom";
   var ZOOM = null;                  // null = fit; a number = the person chose
   //: How far the floor has been dragged from its resting place. Zoom alone
@@ -1092,9 +1240,12 @@
     if (kept > 0) ZOOM = kept;
   } catch (e) { /* fit, then */ }
 
-  function fitScale() {
+  //: How much room the floor actually has. Split out of fitScale because
+  //: layoutFloor asks the same question BEFORE there is a canvas to scale:
+  //: the shape the rooms should take depends on the shape of the box.
+  function fitBox() {
     var fit = document.getElementById("floor-fit");
-    if (!fit) return 1;
+    if (!fit) return null;
     var w = fit.clientWidth || CANVAS_W;
     // How far down the PAGE the floor starts, not where it currently appears
     // on screen. getBoundingClientRect().top moves when the page scrolls, and
@@ -1122,7 +1273,13 @@
     }
     var h = Math.max(160,
                      (window.innerHeight || CANVAS_H) - top - below - 16);
-    return Math.min(w / CANVAS_W, h / CANVAS_H);
+    return { w: w, h: h };
+  }
+
+  function fitScale() {
+    var box = fitBox();
+    if (!box) return 1;
+    return Math.min(box.w / CANVAS_W, box.h / CANVAS_H);
   }
 
   function drawZoom() {
