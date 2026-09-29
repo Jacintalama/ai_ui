@@ -110,13 +110,21 @@ def page_with_tools(browser, tmp_path):
     shutil.copy(STATIC / "agents.html", tmp_path / "agents.html")
     html = (tmp_path / "agents.html").read_bytes()
 
+    office = (STATIC / "office.html").read_bytes()
+
     class Handler(http.server.SimpleHTTPRequestHandler):
         def do_GET(self):                                    # noqa: N802
+            # The office dock frames /tasks/office. Answering that with
+            # agents.html loads this whole page a second time inside its own
+            # iframe, and its bootstrap runs again: that is why seeding
+            # looked like it fired twice when there is exactly one call site
+            # (agents.html:2801). The page was never the problem.
+            body = office if self.path.split("?")[0].startswith("/tasks/office")                 else html
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
-            self.send_header("Content-Length", str(len(html)))
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(html)
+            self.wfile.write(body)
 
         def log_message(self, *a):
             pass
