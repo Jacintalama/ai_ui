@@ -76,3 +76,8 @@ apps/e2e-4f3e4b/
 apps/foo-app/
 apps/smoke-upload-*/
 apps/test-project/
+
+# 21MB of scratch from a demo, not an app and not source. Untracked since it
+# was made, and it sits next to apps/ where a wildcard `git add` would sweep
+# it into the repo by accident.
+_aiui_demo/
