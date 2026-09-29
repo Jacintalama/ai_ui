@@ -2963,7 +2963,15 @@
     var body = document.getElementById("office-body");
     if (!dock || !body || !grip) return;
 
-    var HEIGHT_KEY = "aiuiOfficeHeight";
+    //: Versioned, and deliberately. A remembered height is a choice about a
+    //: particular floor, and on 2026-09-29 the floor stopped being a fixed
+    //: 1040x680 canvas and started being sized by the rooms in it. A height
+    //: chosen for the old shape is not a choice about the new one: the
+    //: owner's own saved value left the office a sliver with the rooms cut
+    //: off, and because a saved height blocks the floor's suggestion below,
+    //: it would have stayed that way for good. The new key ignores the old
+    //: value exactly once, then remembers the next drag as usual.
+    var HEIGHT_KEY = "aiuiOfficeHeight2";
     var SHUT_KEY = "aiuiOfficeShut";
     var MIN = 140;
     //: Whether the height is the person's rather than the floor's suggestion.

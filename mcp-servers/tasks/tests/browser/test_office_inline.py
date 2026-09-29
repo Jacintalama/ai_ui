@@ -440,3 +440,164 @@ def test_fit_leaves_nothing_hanging_below_the_view(page):
         "() => document.documentElement.scrollHeight"
         " - document.documentElement.clientHeight")
     assert over <= 4, over
+
+
+# --- the dock gives the floor the room it asked for -------------------------
+#
+# Ralph, with a screenshot of /ai-agents, 2026-09-29: the office was a sliver
+# with a scrollbar and the rooms cut off at the bottom, reading 95% rather
+# than Fit.
+#
+# Two defects, both measured in the dock and neither visible in the office on
+# its own:
+#
+#  1. fitScale reserves the space above the floor AND below it (the Brain chip
+#     and the live activity strip). tellHostOurHeight added back only the
+#     space above. So the card it asked the page for was short by exactly the
+#     strip underneath, and the floor got 171px of the 255px it sized itself
+#     for. Fit then shrank to fill the height instead of the width.
+#
+#  2. drawZoom sized the wrapper to the full scaled canvas. Zoomed past Fit
+#     inside a short dock, that made the iframe's own page taller than the
+#     frame, so the office scrolled away rather than panning, which is what
+#     the grab cursor has always promised.
+
+SEVEN = [
+    {"id": "agent-ada", "name": "Ada",
+     "meta": {"role": "Project manager", "toolIds": ["code", "schedules"]},
+     "params": {}, "user_id": "me", "created_at": 1, "updated_at": 1},
+    {"id": "agent-kai", "name": "Kai",
+     "meta": {"role": "App reviewer", "toolIds": ["code"]},
+     "params": {}, "user_id": "me", "created_at": 2, "updated_at": 2},
+    {"id": "agent-rex", "name": "Rex",
+     "meta": {"role": "Programmer", "toolIds": ["code"]},
+     "params": {}, "user_id": "me", "created_at": 3, "updated_at": 3},
+    {"id": "agent-mia", "name": "Mia",
+     "meta": {"role": "Receptionist", "toolIds": ["gmail"]},
+     "params": {}, "user_id": "me", "created_at": 4, "updated_at": 4},
+    {"id": "agent-nora", "name": "Nora",
+     "meta": {"role": "Calendar keeper", "toolIds": ["calendar"]},
+     "params": {}, "user_id": "me", "created_at": 5, "updated_at": 5},
+    {"id": "agent-iris", "name": "Iris",
+     "meta": {"role": "Drive librarian", "toolIds": ["gdrive"]},
+     "params": {}, "user_id": "me", "created_at": 6, "updated_at": 6},
+    {"id": "agent-vera", "name": "Vera",
+     "meta": {"role": "Researcher", "toolIds": ["server:mcp-proxy"]},
+     "params": {}, "user_id": "me", "created_at": 7, "updated_at": 7},
+]
+
+#: Read from inside the frame, because every one of these numbers is a
+#: property of the office in the dock and none of them is visible from the
+#: office on its own.
+_DOCK = """() => {
+  const fr = document.getElementById('office-dock').querySelector('iframe');
+  const d = fr.contentDocument, w = fr.contentWindow;
+  const fit = d.getElementById('floor-fit');
+  const rooms = d.getElementById('rooms');
+  const f = fit.getBoundingClientRect(), r = rooms.getBoundingClientRect();
+  return { scrolls: d.body.scrollHeight > w.innerHeight + 1,
+           clippedX: r.right > f.right + 1 || r.left < f.left - 1,
+           clippedY: r.bottom > f.bottom + 1 || r.top < f.top - 1,
+           boxW: f.width, boxH: f.height,
+           drawnW: r.width, drawnH: r.height,
+           zoom: d.getElementById('zoom-fit').textContent }; }"""
+
+
+def _dock(browser, server, zoom=None, stale=False):
+    ctx = browser.new_context(viewport={"width": 1920, "height": 1050})
+    pg = ctx.new_page()
+    pg.set_default_timeout(8000)
+
+    def route(r):
+        url = r.request.url
+        if "/models/list" in url:
+            body = {"items": SEVEN, "total": len(SEVEN)}
+        elif "/agents/activity" in url:
+            body = {"activity": {}, "handoffs": []}
+        elif "/agents/stats" in url:
+            body = {"stats": {}}
+        elif "/agents/skills" in url:
+            body = {"skills": {}}
+        else:
+            body = {"items": [], "total": 0}
+        r.fulfill(status=200, content_type="application/json",
+                  body=json.dumps(body))
+
+    pg.route("**/api/**", route)
+    if zoom is not None:
+        pg.add_init_script(
+            "try{localStorage.setItem('aiuiOfficeZoom2','%s')}catch(e){}" % zoom)
+    if stale:
+        # What the owner's browser actually held on 2026-09-29: a height and a
+        # zoom chosen for the 1040x680 floor that no longer exists.
+        pg.add_init_script(
+            "try{localStorage.setItem('aiuiOfficeZoom','0.95');"
+            "localStorage.setItem('aiuiOfficeHeight','150')}catch(e){}")
+    pg.goto("http://127.0.0.1:%d/agents.html" % server.server_address[1])
+    pg.wait_for_selector("#office-dock", state="attached")
+    # The card resizes itself once the office reports what it needs, so this
+    # waits for the settled layout rather than the first paint.
+    pg.wait_for_timeout(2500)
+    return ctx, pg
+
+
+def test_the_office_in_the_dock_does_not_scroll_away(browser, server):
+    """The floor is panned, not scrolled. A page taller than its frame put
+    the office out of sight inside a short card."""
+    ctx, pg = _dock(browser, server)
+    try:
+        got = pg.evaluate(_DOCK)
+        assert not got["scrolls"], got
+    finally:
+        ctx.close()
+
+
+def test_a_saved_zoom_still_does_not_scroll_the_dock(browser, server):
+    """A zoom the box cannot hold is what panning is for, not what the
+    office's own page scrolling is for."""
+    ctx, pg = _dock(browser, server, zoom="0.95")
+    try:
+        got = pg.evaluate(_DOCK)
+        assert got["zoom"] == "95%", got
+        assert not got["scrolls"], got
+    finally:
+        ctx.close()
+
+
+def test_fit_uses_the_width_the_dock_gives_it(browser, server):
+    """The office asks the page for a card tall enough to show the whole
+    floor. If it asks for too little, Fit shrinks to the height it was given
+    and leaves a third of the width empty, which is what the screenshot
+    showed."""
+    ctx, pg = _dock(browser, server)
+    try:
+        got = pg.evaluate(_DOCK)
+        assert got["zoom"] == "Fit", got
+        assert not got["clippedX"] and not got["clippedY"], got
+        used = got["drawnW"] / got["boxW"]
+        assert used >= 0.85, got
+    finally:
+        ctx.close()
+
+
+def test_a_height_chosen_for_the_old_floor_is_not_obeyed(browser, server):
+    """The fix that reaches the owner's actual screen.
+
+    A saved height blocks the floor's own suggestion (agents.html: `!chosen
+    && saved(HEIGHT_KEY) == null`). His browser held 150px, chosen when the
+    floor was a fixed 1040x680 canvas, so every repair to the layout would
+    have been invisible to him for good: the office would have stayed the
+    sliver in his screenshot no matter what was deployed.
+
+    A remembered height is a choice about a particular floor. That floor is
+    gone, so the value is ignored exactly once and the next drag is
+    remembered as normal."""
+    ctx, pg = _dock(browser, server, stale=True)
+    try:
+        got = pg.evaluate(_DOCK)
+        assert got["zoom"] == "Fit", got
+        assert not got["scrolls"], got
+        assert not got["clippedX"] and not got["clippedY"], got
+        assert got["drawnW"] / got["boxW"] >= 0.85, got
+    finally:
+        ctx.close()

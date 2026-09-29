@@ -1217,17 +1217,22 @@
   });
   // --- how big the floor is drawn -----------------------------------------
   //
-  // The floor is one fixed canvas, 1040x580, scaled to whatever room it has.
-  // Reflowing it cannot work: a room is a percentage of the floor but a robot
-  // is 76 fixed pixels, so a narrow floor packs six rooms into strips too
-  // small to hold one and they pile onto each other.
+  // The floor is one canvas, sized by layoutFloor to whatever its rooms need,
+  // then scaled to the space it has. The canvas is not reflowed to the box:
+  // a robot and its name are fixed pixels, so squeezing the canvas packs the
+  // rooms into strips too small to hold one. layoutFloor instead picks a
+  // canvas SHAPE that suits the box, and this scales it.
   //
   // Fit is the default and it means the WHOLE office is visible: the smaller
   // of the width and height ratios, so nothing is cut off on either axis.
   //: Set by layoutFloor on every draw. The starting values only have to be
   //: sane enough for a first fit before any agent has been placed.
   var CANVAS_W = 1240, CANVAS_H = 420;
-  var ZOOM_KEY = "aiuiOfficeZoom";
+  //: Versioned for the same reason the dock's height is: a zoom is a number
+  //: about a canvas, and this canvas changed size on 2026-09-29. 95% of the
+  //: old floor is not 95% of this one, and the owner's saved value read as a
+  //: zoom he never chose for the floor he was looking at.
+  var ZOOM_KEY = "aiuiOfficeZoom2";
   var ZOOM = null;                  // null = fit; a number = the person chose
   //: How far the floor has been dragged from its resting place. Zoom alone
   //: left the browser's scrollbars as the only way to reach the rest of a
@@ -1243,6 +1248,13 @@
   //: How much room the floor actually has. Split out of fitScale because
   //: layoutFloor asks the same question BEFORE there is a canvas to scale:
   //: the shape the rooms should take depends on the shape of the box.
+  //:
+  //: `top` and `below` are also what tellHostOurHeight has to add back when
+  //: it says how tall a card would need to be. The two used to walk the page
+  //: separately and disagree: this subtracted what sits UNDER the floor and
+  //: that did not add it back, so the office asked its host for a card
+  //: exactly the live activity strip too short, and Fit came out at two
+  //: thirds of the height it had sized itself for.
   function fitBox() {
     var fit = document.getElementById("floor-fit");
     if (!fit) return null;
@@ -1273,7 +1285,7 @@
     }
     var h = Math.max(160,
                      (window.innerHeight || CANVAS_H) - top - below - 16);
-    return { w: w, h: h };
+    return { w: w, h: h, top: top, below: below };
   }
 
   function fitScale() {
@@ -1298,9 +1310,15 @@
     // width it could not use left empty beside it.
     var spare = (fit.clientWidth || CANVAS_W) - CANVAS_W * k;
     floor.style.left = Math.round(Math.max(0, spare) / 2) + "px";
-    // The wrapper owns the space the scaled floor actually occupies. Without
-    // this the page still reserves the full 580px and leaves a gap under it.
-    fit.style.height = Math.round(CANVAS_H * k) + "px";
+    // The wrapper owns the space the scaled floor actually occupies, but
+    // never more than the frame can show. Zoomed in past Fit inside a short
+    // dock, the full scaled height made the office's OWN page taller than
+    // the card, so the whole thing scrolled and the floor went out of sight.
+    // A floor bigger than its box is what panning is for, and the grab
+    // cursor has promised that all along.
+    var room = fitBox();
+    fit.style.height = Math.round(
+      room ? Math.min(CANVAS_H * k, room.h) : CANVAS_H * k) + "px";
     var label = document.getElementById("zoom-fit");
     if (label) label.textContent = ZOOM == null ? "Fit" : Math.round(k * 100) + "%";
     tellHostOurHeight(fit);
@@ -1312,10 +1330,13 @@
   // would change the suggestion, and the two would chase each other.
   function tellHostOurHeight(fit) {
     if (window.parent === window) return;
-    var w = fit.clientWidth || CANVAS_W;
-    var top = 0, el = fit;
-    while (el) { top += el.offsetTop; el = el.offsetParent; }
-    var need = Math.round(top + CANVAS_H * (w / CANVAS_W) + 16);
+    var box = fitBox();
+    if (!box) return;
+    // Everything above the floor AND everything below it. Leaving the strip
+    // underneath out is what made the card too short for the floor it was
+    // being asked to hold.
+    var need = Math.round(
+      box.top + box.below + CANVAS_H * (box.w / CANVAS_W) + 16);
     try {
       window.parent.postMessage({ type: "aiui-office-size", height: need },
                                 window.location.origin);
