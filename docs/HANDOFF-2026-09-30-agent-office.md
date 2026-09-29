@@ -106,7 +106,51 @@ it only after a sweep of everything the script watches: `mcp-servers/`,
 It is JSON and the script parses `['sha']`. Writing a bare SHA breaks the
 next deploy.
 
-### 2.6 Still unverified from CLAUDE.md: RLS and `schema.sql`
+### 2.6 The app commit sweep is dead, and here is the actual cause
+
+Confirmed on the box on 2026-09-30. **Every** git command in
+`/root/proxy-server` fails:
+
+```
+$ git branch --show-current
+fatal: detected dubious ownership in repository at '/root/proxy-server'
+```
+
+That is why `sweep_app_commit` has silently committed nothing since
+2026-08-20: step 5 of `_run_execution` fails open like every other
+post-processing step, so each build swallowed it. The consequence is that
+`rollback_app_core` has had nothing to roll back to and the App Builder's
+version list has been empty for every app built since.
+
+The odd part, and why this needs a careful look rather than a quick
+`safe.directory` line: `stat` reports the repo as `root:root` and `whoami`
+is `root`, so the usual explanation does not apply. Find out why git thinks
+the ownership is dubious before papering over it.
+
+Note there are **two** places to fix, not one. The host needs it for any git
+run over ssh. The sweep runs **inside the container** against
+`/workspace/ai_ui`, so it needs `_run_git` to pass
+`-c safe.directory=/workspace/ai_ui` (or equivalent). Fixing the host alone
+will not revive the sweep.
+
+**Before reviving it, deal with this:** the server has a complete nested
+repository at `apps/create-me-a-shoe-website-fe02/assets/.git`. A sweep that
+starts working will hit it and either record an embedded repo or fail. Clean
+it up first.
+
+### 2.7 Three apps exist locally but not on the server
+
+`create-me-a-landing-page-bf8a`, `landing-page-for-aiui-bot-6c96` and
+`upload-da5312a9` are committed to this branch but are not in
+`/root/proxy-server/apps`. They are either deleted, renamed, or were never
+built on production. Nothing serves them, so they 404 regardless of the
+`tasks.published_apps` row. Worth confirming with Ralph whether to keep them
+in the repo.
+
+The other eleven were swept file by file against the server and now match it
+exactly.
+
+### 2.8 Still unverified from CLAUDE.md: RLS and `schema.sql`
 
 `claude_executor.py` tells the build agent RLS is mandatory and asks it to
 write `schema.sql`, and nothing asserts either against the live database.
