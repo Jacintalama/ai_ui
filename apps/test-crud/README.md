@@ -16,7 +16,7 @@ no build step).
 ## Local preview
 
 ```bash
-cd template_apps/flight-booking
+cd apps/test-crud
 python -m http.server 8200
 # open http://localhost:8200
 ```
@@ -26,3 +26,7 @@ python -m http.server 8200
 - `src/data.js` — flight catalog, airlines list, city codes
 - `styles/main.css` — `--bg`, `--accent`, `--text` CSS custom properties
 - Brand name "Skylane" appears in `index.html` (header) and `<title>`
+
+## Changelog
+
+- **2026-09-03**: Added deploy-smoke HTML comment to index.html for deployment verification

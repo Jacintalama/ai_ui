@@ -58,6 +58,9 @@ apps/_test-*/
 # and the app itself must still get version history. Mirrors the per-app
 # `.attachments/` rule that claude_executor.py:37 maintains.
 apps/*/.video/
+# Generated the same way .video/ is: serve_published_app's thumbnails, remade
+# on every build. Present on the server, never worth a version.
+apps/*/.thumb/
 # Junk on EVIDENCE (checked against tasks.project_members 2026-07-16), not on
 # how the name reads. Every entry below is either owned by *@example.com (the
 # reserved test domain, so a fixture), an orphan with no owner and no build
