@@ -227,6 +227,14 @@
     border: 2px solid var(--cyan); animation: halo 1.5s ease-out infinite;
   }
   @keyframes halo { 0% { transform: scale(.9); opacity: .7 } 100% { transform: scale(1.35); opacity: 0 } }
+  /* The tool a working agent is running right now, from the live feed. */
+  .who .tool-now {
+    position: absolute; top: -4px; left: 50%; transform: translateX(-50%);
+    z-index: 3; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; padding: 1px 6px; border-radius: 8px;
+    font: 600 10px/1.4 var(--font-ui); color: var(--text);
+    background: var(--surface); border: 1px solid var(--border);
+  }
   /* Never wider than the slot the room reserved. A name nobody predicted is
      clipped with an ellipsis instead of reaching into the next agent. */
   .who-label {
@@ -505,6 +513,8 @@
   var AT = {};
   var AGENTS = [], ACTIVITY = {}, STATS = {}, SKILLS = {}, SELECTED = null,
       TAB = "office";
+  //: Which tool each agent is running right now, from the live feed only.
+  var TOOL_NOW = {};
 
   function authHeaders() {
     var h = { "Content-Type": "application/json" };
@@ -632,8 +642,13 @@
     var a = ACTIVITY[id];
     if (!a) return { key: "idle", label: "No runs yet" };
     if (a.state === "working") {
-      return { key: "working", label: "Working" +
-        (a.running_for_seconds != null ? " " + a.running_for_seconds + "s" : "") };
+      // _since is set from the browser's own clock both times it is set,
+      // so the timer runs between reads and server clock skew cannot make
+      // it negative.
+      var secs = a._since != null
+        ? Math.max(0, Math.round((Date.now() - a._since) / 1000))
+        : a.running_for_seconds;
+      return { key: "working", label: "Working" + (secs != null ? " " + secs + "s" : "") };
     }
     if (a.state === "waiting") return { key: "waiting", label: "Waiting on you" };
     if (a.state === "failed") return { key: "failed", label: "Last run failed" };
@@ -805,6 +820,8 @@
       ' title="' + esc(st.label) + '">' +
       robot(m.id, st.key === "working") +
       '<i class="dot ' + st.key + '"></i>' +
+      (st.key === "working" && TOOL_NOW[m.id]
+        ? '<span class="tool-now">' + esc(TOOL_NOW[m.id]) + '</span>' : "") +
       // The role normally, but the STATE the moment there is one worth
       // reading. A dot alone says something is happening without saying
       // what, and "Working 12s" is the whole reason to look at this floor.
@@ -1157,9 +1174,10 @@
     }).join("");
   }
 
-  //: Re-read the floor now rather than at the next poll. The five second
-  //: poll is what normally drives this; the hook exists so a test can prove
-  //: what the floor does with a given set of rows instead of waiting.
+  //: Re-read the floor now rather than at the next poll. The live feed
+  //: (connectLive) normally drives the floor, with a 30 second poll as the
+  //: fallback; the hook exists so a test can prove what the floor does with
+  //: a given set of rows instead of waiting.
   window.aiuiRefreshOffice = async function () {
     await loadActivity();
     draw();
@@ -1196,7 +1214,89 @@
       var got = await getJson("/api/tasks/agents/activity");
       ACTIVITY = got.activity || {};
       HANDOFFS = got.handoffs || [];
+      var now = Date.now();
+      Object.keys(ACTIVITY).forEach(function (id) {
+        var a = ACTIVITY[id];
+        if (a && a.state === "working") a._since = now - (a.running_for_seconds || 0) * 1000;
+      });
     } catch (e) { console.warn("[office] activity unavailable", e); }
+  }
+
+  //: One event from /agents/stream, applied to what the floor holds. Each is
+  //: a row the server just wrote (tool_started: a call it just began), so
+  //: this is the poll's truth, sooner. Safe to apply twice: resync re-applies
+  //: events that arrived while it was reading.
+  function applyEvent(e) {
+    if (!e || !e.agent_id) return;
+    var a = ACTIVITY[e.agent_id] || {};
+    if (e.event === "run_started") {
+      var since = a.state === "working" && a._since != null ? a._since : Date.now();
+      ACTIVITY[e.agent_id] = Object.assign({}, a, { state: "working",
+        running_for_seconds: 0, _since: since, last_run_at: e.at });
+    } else if (e.event === "tool_started") {
+      TOOL_NOW[e.agent_id] = e.tool;
+    } else if (e.event === "tool_finished") {
+      if (TOOL_NOW[e.agent_id] === e.tool) delete TOOL_NOW[e.agent_id];
+    } else if (e.event === "handoff") {
+      if (e.target_agent_id && e.target_agent_id !== e.agent_id) {
+        HANDOFFS = HANDOFFS.filter(function (h) {
+          return !(h && h.from === e.agent_id && h.to === e.target_agent_id);
+        }).concat([{ from: e.agent_id, to: e.target_agent_id,
+                     status: e.status, at: e.at }]);
+      }
+    } else if (e.event === "run_finished") {
+      delete TOOL_NOW[e.agent_id];
+      var next = Object.assign({}, a, { last_status: e.status,
+        state: e.status === "waiting" ? "waiting"
+             : e.status === "failed" ? "failed" : "ready" });
+      delete next.running_for_seconds;
+      delete next._since;
+      ACTIVITY[e.agent_id] = next;
+    }
+  }
+
+  //: One full re-read, with events that arrive meanwhile held and applied
+  //: after it rather than overwritten by it. The poll goes through here too.
+  var SYNCING = null, PENDING = [];
+  function resync() {
+    if (SYNCING) return SYNCING;
+    PENDING = [];
+    SYNCING = loadActivity().then(function () {
+      Object.keys(TOOL_NOW).forEach(function (id) {
+        if (!ACTIVITY[id] || ACTIVITY[id].state !== "working") delete TOOL_NOW[id];
+      });
+      var held = PENDING;
+      PENDING = [];
+      SYNCING = null;
+      held.forEach(applyEvent);
+      draw();
+    });
+    return SYNCING;
+  }
+
+  //: "hello" opens every connection, each automatic reconnect included, and
+  //: the floor re-reads on it: the stream is a fan-out, not a log, so what
+  //: happened while disconnected is only in the database. EventSource sends
+  //: the token cookie, which the gateway accepts; a 401 closes it for good
+  //: and the poll carries on alone.
+  var LIVE_EVENTS = ["run_started", "tool_started", "tool_finished",
+                     "handoff", "run_finished"];
+  function connectLive() {
+    if (typeof window.EventSource !== "function") return;
+    var es;
+    try {
+      es = new EventSource("/api/tasks/agents/stream", { withCredentials: true });
+    } catch (x) { console.warn("[office] live feed unavailable", x); return; }
+    es.addEventListener("hello", function () { resync(); });
+    LIVE_EVENTS.forEach(function (name) {
+      es.addEventListener(name, function (ev) {
+        var e;
+        try { e = JSON.parse(ev.data); } catch (x) { return; }
+        if (SYNCING) { PENDING.push(e); return; }
+        applyEvent(e);
+        draw();
+      });
+    });
   }
   async function loadStats() {
     try { STATS = (await getJson("/api/tasks/agents/stats")).stats || {}; }
@@ -1481,8 +1581,18 @@
     }
     draw();
     // Only the live half repeats. The aggregate covers every run an agent has
-    // ever had and does not move between two ticks of a clock.
-    setInterval(function () { loadActivity().then(draw); }, 5000);
+    // ever had and does not move between two ticks of a clock. The live feed
+    // drives the floor; the poll stays as the fallback (no EventSource, no
+    // cookie, a gap the heartbeat missed), slowed from 5s to 30s.
+    connectLive();
+    setInterval(resync, 30000);
+    // The working timer moves between events without redrawing the floor.
+    setInterval(function () {
+      document.querySelectorAll('.who[data-state="working"]').forEach(function (el) {
+        var small = el.querySelector(".who-label small");
+        if (small) small.textContent = stateOf(el.getAttribute("data-id")).label;
+      });
+    }, 1000);
   })();
 })();
 </script>
