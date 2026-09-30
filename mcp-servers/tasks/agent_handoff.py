@@ -110,6 +110,16 @@ def parent_run() -> str | None:
     return _RUN.get()
 
 
+def current_run() -> str | None:
+    """The run in flight right now, nested included, or None outside a turn.
+
+    The same value parent_run() reads, asked a different question: this is
+    "is a run open for this tool call", not "who asked". Nothing outside
+    this module may read _RUN directly.
+    """
+    return _RUN.get()
+
+
 def spent() -> int:
     t = _TURN.get()
     return int((t or {}).get("spent") or 0)

@@ -152,3 +152,13 @@ async def test_a_refusal_reads_as_an_answer_not_an_error():
     said = agent_handoff.refusal("agent-nora", "agent-nora")
     assert said.endswith(".")
     assert said[0].isupper()
+
+
+async def test_current_run_is_the_run_in_flight_nested_included():
+    assert agent_handoff.current_run() is None
+    async with agent_handoff.began("run-1"):
+        assert agent_handoff.current_run() == "run-1"
+        async with agent_handoff.began("run-2"):
+            assert agent_handoff.current_run() == "run-2"
+        assert agent_handoff.current_run() == "run-1"
+    assert agent_handoff.current_run() is None
