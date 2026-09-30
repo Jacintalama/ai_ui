@@ -161,6 +161,20 @@ gap currently risks no data.
 
 ### 2.9 Status update, later on 2026-09-30
 
+- **2.1 done and live.** Built from
+  `docs/superpowers/plans/2026-09-30-live-agent-office.md`: `agent_events.py`
+  (the fan-out), publishes beside the writes in `agent_activity`,
+  `tool_started` from `execute_tool_call`, `GET /agents/stream`, and the
+  office's `EventSource` with the poll slowed to 30s. One review finding
+  changed the plan: a re-read on `hello` overwrote events that landed while
+  it ran, so those are now held and applied after it (the browser test for
+  it fails against the naive version). Verified on production through the
+  public URL: `run_started` reached the page 33ms after its row was
+  written, `run_finished` 25ms after its row, in order; a second user's
+  stream got `hello` and nothing else; with and without the cookie, and 401
+  with no auth. In a real browser, Dev went working, showed `search_tools`,
+  `describe_tools` and `call_tool` as each ran, and settled, all inside 8
+  seconds. Four test turns, all on the free model, $0.
 - **2.2 done.** The three comments now say what `began()` does: it sets the
   run on every turn and opens the budget only when none is open.
 - **2.4 done.** `feat/office-collaboration` was fast-forwarded into `main`
