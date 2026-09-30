@@ -706,9 +706,14 @@ def iris_starts_a_tool():
 
 
 def test_an_event_moves_the_floor_without_waiting_for_the_poll(iris_starts_a_tool, page):
-    who = page.locator('.who[data-id="%s"]' % IRIS)
-    who.and_(page.locator('[data-state="working"]')).wait_for(timeout=3000)
-    assert who.locator(".tool-now").inner_text() == "search_drive"
+    working = page.locator('.who[data-id="%s"][data-state="working"]' % IRIS)
+    working.wait_for(timeout=3000)
+    # The same body carries hello, which starts a re-read that answers "no
+    # activity". Events that land while it is in flight must survive it, so
+    # the state has to still be there once the re-read is long done.
+    page.wait_for_timeout(1000)
+    assert working.count() == 1
+    assert working.locator(".tool-now").inner_text() == "search_drive"
 
 
 @pytest.fixture
@@ -809,8 +814,30 @@ Expected: the first three FAIL (no EventSource in the page, no `.tool-now`, one 
     }
   }
 ```
-4. `connectLive`, next to it:
+4. `resync` and `connectLive`, next to it. (Review finding, 2026-09-30: a plain
+   `loadActivity().then(draw)` on hello overwrites ACTIVITY with the read's
+   answer, so an event that lands while the read is in flight is lost. The
+   spec says re-read, THEN apply; events that arrive meanwhile wait.)
 ```js
+  //: One full re-read, with events that arrive meanwhile held and applied
+  //: after it, not overwritten by it. The poll goes through here too.
+  var SYNCING = null, PENDING = [];
+  function resync() {
+    if (SYNCING) return SYNCING;
+    PENDING = [];
+    SYNCING = loadActivity().then(function () {
+      Object.keys(TOOL_NOW).forEach(function (id) {
+        if (!ACTIVITY[id] || ACTIVITY[id].state !== "working") delete TOOL_NOW[id];
+      });
+      var held = PENDING;
+      PENDING = [];
+      SYNCING = null;
+      held.forEach(applyEvent);
+      draw();
+    });
+    return SYNCING;
+  }
+
   //: "hello" opens every connection, each automatic reconnect included, and
   //: the floor re-reads on it: the stream is a fan-out, not a log, so what
   //: happened while disconnected is only in the database.
@@ -822,17 +849,21 @@ Expected: the first three FAIL (no EventSource in the page, no `.tool-now`, one 
     try {
       es = new EventSource("/api/tasks/agents/stream", { withCredentials: true });
     } catch (x) { console.warn("[office] live feed unavailable", x); return; }
-    es.addEventListener("hello", function () { loadActivity().then(draw); });
+    es.addEventListener("hello", function () { resync(); });
     LIVE_EVENTS.forEach(function (name) {
       es.addEventListener(name, function (ev) {
         var e;
         try { e = JSON.parse(ev.data); } catch (x) { return; }
+        if (SYNCING) { PENDING.push(e); return; }
         applyEvent(e);
         draw();
       });
     });
   }
 ```
+   Two changes in `applyEvent` make re-applying a held event harmless: a
+   `run_started` for an agent already working keeps its `_since`, and a
+   `handoff` replaces any entry for the same pair instead of adding a second.
 5. The badge, in the robot slot markup (~line 806), right after the dot `<i class="dot ...">`:
 ```js
       (st.key === "working" && TOOL_NOW[m.id]
@@ -853,7 +884,7 @@ Expected: the first three FAIL (no EventSource in the page, no `.tool-now`, one 
     // The live feed drives the floor now. The poll stays as the fallback
     // (no EventSource, no cookie, a gap the heartbeat missed), at 30s.
     connectLive();
-    setInterval(function () { loadActivity().then(draw); }, 30000);
+    setInterval(resync, 30000);
     setInterval(function () {
       document.querySelectorAll('.who[data-state="working"]').forEach(function (el) {
         var small = el.querySelector(".who-label small");
