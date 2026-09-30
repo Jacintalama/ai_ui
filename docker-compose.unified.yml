@@ -740,7 +740,7 @@ services:
   # ===========================================================================
   open-webui:
     logging: *logging
-    image: ghcr.io/open-webui/open-webui:v0.11.3
+    image: ghcr.io/open-webui/open-webui:v0.11.4
     container_name: open-webui
     deploy:
       resources:
