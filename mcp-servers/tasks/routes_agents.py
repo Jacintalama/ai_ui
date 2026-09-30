@@ -25,8 +25,10 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from sqlalchemy import text as sql_text
+from sse_starlette.sse import EventSourceResponse
 
 import agent_activity
+import agent_events
 import agent_memory
 import agent_skills
 import free_pool
@@ -423,6 +425,19 @@ async def activity(user: CurrentUser = Depends(current_user)) -> dict:
     # second request would let the two answers disagree about the same moment.
     return {"activity": await agent_activity.activity_for(user.email),
             "handoffs": await agent_activity.handoffs_for(user.email)}
+
+
+@router.get("/stream")
+async def stream(user: CurrentUser = Depends(current_user)) -> EventSourceResponse:
+    """The office's live feed: the caller's own agents, as it happens.
+
+    Scoped exactly like /activity. One person's agent working is not
+    another person's, and an admin watching must not see anyone else's
+    floor. A comment every 20 seconds keeps Cloudflare and Caddy from
+    reaping a connection that is merely idle, which on this floor is most
+    of the day.
+    """
+    return EventSourceResponse(agent_events.stream(user.email), ping=20)
 
 
 @router.get("/stats")
