@@ -159,6 +159,51 @@ the feature: query `tasks.project_supabase` first. It had 0 rows as of
 2026-07-23, meaning no project has ever linked a Supabase database, so the
 gap currently risks no data.
 
+### 2.9 Status update, later on 2026-09-30
+
+- **2.2 done.** The three comments now say what `began()` does: it sets the
+  run on every turn and opens the budget only when none is open.
+- **2.4 done.** `feat/office-collaboration` was fast-forwarded into `main`
+  (no merge commit), so `main` is what production runs.
+- **2.5 done.** Every file the orchestrator watches was hash-swept against
+  `main` on the host and in the tasks and webhook-handler containers, then
+  `.deploy-state` was stamped. It read `a58870d68` on the box, not
+  `5db322fcd`.
+- **2.6 fixed, root cause found.** `stat` on `.git` says root, but git also
+  checks the work tree's top directory, and `/root/proxy-server` itself was
+  owned by uid 197609, the Git Bash uid a Windows-made tar carries when root
+  unpacks it. Reproduced on a scratch repo, fixed with a `chown` of that one
+  directory, and proven by running the real sweep in the container: the version
+  list for `boxing-landing-page-a03c` went from empty to one entry. Its build
+  and the other two completed builds lost while the sweep was dead (`test-crud`,
+  `hello-jacint-alama-mabuhay-a714`) were given their commit. The two nested
+  repos (there were two, the other at `i-want-this-portfolio-to-d065/.git`) were
+  moved to `/root/sync-backup-20260930/nested-git/`. They came from the build
+  agent running `git init` in the app dir and rsync copying it back, so both
+  rsyncs now exclude `.git`. `_run_git` also passes `safe.directory`, so a wrong
+  owner can no longer silence the sweep.
+- **Still open: published apps serve dotfiles.** Before the move,
+  `/apps/create-me-a-shoe-website-fe02/assets/.git/config` returned 200 to
+  anyone. The repo was empty, and none is left, but `serve_published_app`
+  still serves any dot path.
+- **2.7 answered.** The three apps were in the server's git from 2026-07-16 and
+  were later deleted from disk (17 tracked files show as ` D`). They were
+  deleted, not never built. Whether the repo keeps them is Ralph's call.
+- **2.8 unchanged.** `tasks.project_supabase` still has 0 rows.
+- **Three tests fail on `main`, and on the code production runs** (checked in
+  the container, not only locally):
+  `test_agent_activity.py::test_each_cut_off_clears_the_worst_case_of_its_own_path`
+  (3900s is not more than 3840s + 240s) and
+  `test_agent_stale_model.py::test_the_longer_cap_still_fits_inside_the_awake_window`
+  (1260s is not more than 1290s). Both follow from `6182406aa` putting the free
+  pool back to four models, which made the worst case of a scheduled run and
+  of a channel run longer than the windows that mark a run failed. So a
+  healthy long run can be shown as failed. The third is
+  `test_static_page_js.py::test_element_ids_are_unique[office.html]`, which
+  reads `id="' + esc(m.id) + '"` in `office.html` as a reused id. None of the
+  three were caused by today's work, and none should be "fixed" by editing
+  the test.
+
 ---
 
 ## 3. Things that cost time, so you do not pay twice
