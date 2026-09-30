@@ -329,9 +329,9 @@ async def _run_turn(user_email: str, agent_id: str, messages: list[dict],
               or agent_escalation.Intent(person_text=_last_user_text(messages)))
     usage = agent_escalation.TurnUsage(run_id=run_id)
     outcome = "failed"
-    # Opens the handoff budget for the outermost turn only: began() no-ops
-    # when one is already open, so a colleague's turn spends its caller's
-    # budget rather than getting a fresh one of its own.
+    # Sets this turn's run on every turn, nested included, and opens the
+    # handoff budget only when none is open, so a colleague's turn spends
+    # its caller's budget rather than getting a fresh one of its own.
     async with agent_handoff.began(run_id):
         try:
             answer, notes = await _chat(
@@ -446,8 +446,8 @@ async def _resume_turn(user_email: str, agent_id: str, conversation: list[dict],
     # model this agent was on for this person, for as long as that lasts.
     usage = agent_escalation.TurnUsage(run_id=run_id)
     outcome = "failed"
-    # Opens the handoff budget for the outermost turn only: began()
-    # no-ops when one is already open. A resumed turn runs a full tool
+    # Sets this turn's run on every turn and opens the handoff budget
+    # only when none is open. A resumed turn runs a full tool
     # loop of its own (ask_colleague included), so it has to open this
     # itself the same way _run_turn does, or a colleague asked from a
     # resumed turn would get no parent_run_id and spend()/spent() would

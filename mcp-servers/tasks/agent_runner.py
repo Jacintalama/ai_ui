@@ -1021,8 +1021,8 @@ async def run_agent(sched) -> tuple[str, str, dict]:
         agent_activity.SOURCE_SCHEDULE)
     usage = agent_escalation.TurnUsage(run_id=run_id)
     outcome = "failed"
-    # Opens the handoff budget for the outermost turn only: began()
-    # no-ops when one is already open. run_agent calls _chat directly
+    # Sets this turn's run on every turn and opens the handoff budget
+    # only when none is open. run_agent calls _chat directly
     # rather than through _run_turn, so it has to open this itself, or
     # spend() and spent() would stay no-ops on every scheduled run and a
     # colleague asked from a schedule would get no parent_run_id -- and
