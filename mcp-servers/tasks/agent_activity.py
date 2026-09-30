@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import text as sql_text
 
 import agent_escalation
+import agent_events
 from db import session
 
 logger = logging.getLogger(__name__)
@@ -140,6 +141,10 @@ async def start_run(agent_id: str, user_email: str, source: str,
                  "user_email": user_email, "source": source,
                  "parent_run_id": parent_run_id})
             await s.commit()
+        # After the commit, so the office is never told about a run the
+        # database does not have.
+        agent_events.publish("run_started", agent_id=agent_id,
+                             user_email=user_email)
         return run_id
     except Exception:                                       # noqa: BLE001
         logger.warning("could not record the start of an agent run",
@@ -159,16 +164,19 @@ async def finish_run(run_id: str | None, status: str,
     if not run_id:
         return
     try:
+        # RETURNING because the live office routes by owner and this call
+        # only knows the run id: same statement, no extra round trip.
         async with session() as s:
             if usage is None:
-                await s.execute(
+                result = await s.execute(
                     sql_text(
                         "UPDATE tasks.agent_run "
                         "SET finished_at = now(), status = :status "
-                        "WHERE id = :id"),
+                        "WHERE id = :id "
+                        "RETURNING agent_id, user_email"),
                     {"id": run_id, "status": status})
             else:
-                await s.execute(
+                result = await s.execute(
                     sql_text(
                         "UPDATE tasks.agent_run "
                         "SET finished_at = now(), status = :status, "
@@ -177,14 +185,19 @@ async def finish_run(run_id: str | None, status: str,
                         "prompt_tokens = :prompt_tokens, "
                         "completion_tokens = :completion_tokens, "
                         "cost_usd = :cost_usd "
-                        "WHERE id = :id"),
+                        "WHERE id = :id "
+                        "RETURNING agent_id, user_email"),
                     {"id": run_id, "status": status,
                      "model": usage.model,
                      "escalation": usage.escalation,
                      "prompt_tokens": usage.prompt_tokens,
                      "completion_tokens": usage.completion_tokens,
                      "cost_usd": usage.cost_usd})
+            row = result.first()
             await s.commit()
+        if row is not None:
+            agent_events.publish("run_finished", agent_id=row[0],
+                                 user_email=row[1], status=status)
     except Exception:                                       # noqa: BLE001
         logger.warning("could not record the end of an agent run",
                        exc_info=True)
@@ -222,6 +235,13 @@ async def record_step(run_id: str | None, agent_id: str, user_email: str,
                  "tool": tool, "target": target_agent_id,
                  "status": status})
             await s.commit()
+        agent_events.publish("tool_finished", agent_id=agent_id,
+                             user_email=user_email, tool=tool, status=status)
+        if target_agent_id and target_agent_id != agent_id:
+            agent_events.publish("handoff", agent_id=agent_id,
+                                 user_email=user_email, tool=tool,
+                                 target_agent_id=target_agent_id,
+                                 status=status)
     except Exception:                                       # noqa: BLE001
         logger.warning("could not record a tool call", exc_info=True)
 
