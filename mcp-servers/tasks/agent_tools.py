@@ -14,6 +14,7 @@ from sqlalchemy import text as sql_text
 
 import agent_access
 import agent_activity
+import agent_events
 import agent_handoff
 from db import session
 
@@ -627,6 +628,13 @@ async def execute_tool_call(
     if not name:
         return outcome.failed(
             "That tool call named no tool, so nothing was run.")
+
+    # The live office's tool badge. An event with no row on purpose (see
+    # record_step on why a start row was removed), and only while a run is
+    # open, so the floor never hears of a tool for a run it was never told of.
+    if agent_handoff.current_run():
+        agent_events.publish("tool_started", agent_id=agent_id,
+                             user_email=user_email, tool=name)
 
     if name == HANDOFF_TOOL:
         # Scoped like every other native tool: interception must not become
