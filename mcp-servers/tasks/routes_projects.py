@@ -614,9 +614,16 @@ class RollbackRequest(BaseModel):
 
 
 async def _run_git(*args: str, cwd: str = REPO_ROOT) -> tuple[int, str]:
-    """Run a git command and return (returncode, stdout_stderr)."""
+    """Run a git command and return (returncode, stdout_stderr).
+
+    safe.directory names the one tree being run in. REPO_ROOT is a bind mount
+    whose owner this container does not control: a tar made on Windows and
+    unpacked as root once set it to uid 197609, git refused every command as
+    "dubious ownership", and the fail-open commit sweep lost every app's
+    version history from 2026-08-20 to 2026-09-30 without a word.
+    """
     proc = await asyncio.create_subprocess_exec(
-        "git", *args,
+        "git", "-c", f"safe.directory={cwd}", *args,
         cwd=cwd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,

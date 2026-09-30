@@ -144,6 +144,13 @@ ssh root@46.224.193.25 "cd /root/proxy-server && docker compose -f docker-compos
   Teammates edit files directly on the box, so **hash-sweep server vs repo
   (CRLF-normalized) before any repo-wins deploy** or you will silently revert
   their work.
+- **Unpack a tar on the server with `--no-same-owner`.** A tar made in Git Bash
+  records uid 197609, and root unpacking it keeps that owner. Once it landed on
+  `/root/proxy-server` itself, git refused every command there as "dubious
+  ownership", and the fail-open commit sweep lost all app version history from
+  2026-08-20 to 2026-09-30 without an error anyone saw. `_run_git` now passes
+  `safe.directory`, but git over ssh on the host still needs root ownership:
+  `stat -c %u /root/proxy-server` must print `0`.
 - Stopping Docker rewrites iptables and **resets SSH sessions**. Run migrations
   detached (`systemd-run --unit=NAME --collect /root/script.sh`), never
   interactively.

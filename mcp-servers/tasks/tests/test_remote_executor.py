@@ -356,6 +356,40 @@ async def test_stream_scrubs_credentials_in_output(monkeypatch):
     assert "COMPLETED: build done" in out
 
 
+@pytest.mark.asyncio
+async def test_rsync_never_carries_a_git_dir_either_way(monkeypatch):
+    """A repo the build agent makes inside the app must not reach apps/<slug>/.
+
+    The prompt asks the agent to commit, and /agent/work has no repo, so it
+    sometimes runs `git init` in the app dir. rsync-back then copied that
+    .git into apps/<slug>/ (two apps on prod, 2026-09-30), where it breaks
+    the commit sweep's `git add` and, once published, served
+    /apps/<slug>/.../.git/config to anyone. The push has to skip it too, or
+    a nested repo already on disk goes back out on every later build.
+    """
+    calls = []
+    monkeypatch.setattr("os.path.exists", lambda _p: True)
+
+    async def fake_spawn(*args, **kwargs):
+        calls.append(args)
+        if args[0] == "ssh" and _classify_ssh(args) == "build":
+            return _fake_proc([
+                b'{"type":"result","subtype":"success","is_error":false,'
+                b'"result":"COMPLETED: ok"}\n',
+            ], returncode=0)
+        return _fake_proc([], returncode=0)
+
+    with patch("asyncio.create_subprocess_exec", AsyncMock(side_effect=fake_spawn)):
+        ex = RemoteExecutor()
+        async for _ in ex.run("p", slug="myapp", execution_id="ex1"):
+            pass
+
+    rsync_calls = [c for c in calls if c[0] == "rsync"]
+    assert len(rsync_calls) == 2
+    for c in rsync_calls:
+        assert "--exclude=.git" in c, c
+
+
 def test_ssh_opts_bound_connection_and_transfer():
     """Every ssh/rsync transport call must inherit connect + keepalive bounds.
 

@@ -219,7 +219,7 @@ class RemoteExecutor:
         src = f"{CLAUDE_WORKSPACE}/apps/{slug}/"
         dst = f"{user}@{host}:/agent/work/{slug}/apps/{slug}/"
         rs = await asyncio.create_subprocess_exec(
-            "rsync", "-az", "--delete",
+            "rsync", "-az", "--delete", "--exclude=.git",
             "-e", f"{self._RSYNC_SSH} -i {key}",
             src, dst,
             stdout=asyncio.subprocess.DEVNULL,
@@ -321,7 +321,10 @@ class RemoteExecutor:
         rs = None
         for attempt in range(2):
             rs = await asyncio.create_subprocess_exec(
-                "rsync", "-az", "--delete", "--chmod=D755,F644",
+                # --exclude=.git, both directions: a repo the agent makes
+                # inside the app must never land in apps/<slug>/, where it
+                # breaks the commit sweep and a published app serves it.
+                "rsync", "-az", "--delete", "--exclude=.git", "--chmod=D755,F644",
                 "-e", f"{self._RSYNC_SSH} -i {key}",
                 src, dst,
                 stdout=asyncio.subprocess.DEVNULL,
