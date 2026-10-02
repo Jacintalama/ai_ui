@@ -251,7 +251,10 @@ class RemoteExecutor:
         # apiKeySource=none is fine then: ~/.env also sets
         # ANTHROPIC_AUTH_TOKEN, which claude sends instead (checked against a
         # stub server on the build host, 2026-09-21).
-        model_args = "".join(shlex.quote(a) + " " for a in build_model.cli_args())
+        model_args = "".join(
+            shlex.quote(a) + " "
+            for a in build_model.cli_args(
+                design_skill.disallowed_tools(design, slug)))
         # A marked run (design_skill) also links the Impeccable skill into
         # this run's own folder and gets its rules, cap and safety flags.
         design_args = "".join(shlex.quote(a) + " "

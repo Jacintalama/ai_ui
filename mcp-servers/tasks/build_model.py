@@ -67,11 +67,19 @@ def effort(default: str) -> str:
 DISALLOWED_TOOLS = "EnterPlanMode,ExitPlanMode,AskUserQuestion,EnterWorktree"
 
 
-def cli_args() -> list[str]:
+def cli_args(extra_disallowed: tuple[str, ...] = ()) -> list[str]:
     """Extra claude arguments: --model and --disallowedTools with the
-    override, none without."""
+    override, none without.
+
+    `extra_disallowed` (a design-skill run's, see design_skill.py) joins the
+    same single --disallowedTools list. One flag, not two: whether a second
+    one adds to the first or replaces it is not something the CLI documents.
+    """
     m = model()
-    return ["--model", m, "--disallowedTools", DISALLOWED_TOOLS] if m else []
+    tools = DISALLOWED_TOOLS.split(",") if m else []
+    tools += [t for t in extra_disallowed if t not in tools]
+    args = ["--model", m] if m else []
+    return args + (["--disallowedTools", ",".join(tools)] if tools else [])
 
 
 def model_slots() -> dict[str, str]:

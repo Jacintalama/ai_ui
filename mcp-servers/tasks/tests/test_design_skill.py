@@ -39,7 +39,26 @@ def test_the_rules_turn_off_everything_that_waits_for_a_person():
 def test_the_rules_run_the_checker_once_and_keep_the_ending():
     rules = design_skill.system_prompt(SLUG)
     assert "detect apps/crumb-and-co" in rules
+    # Measured on the build host: detect exits 2 when it finds problems.
+    assert "Exit code 2" in rules
     assert "COMPLETED" in rules
+
+
+def test_the_rules_say_why_nobody_can_answer_with_checked_facts():
+    # Impeccable's own context output tells the model to treat "you are
+    # unattended" in a system prompt as no evidence and to probe once. The
+    # rules answer with the two facts that probe would find.
+    rules = design_skill.system_prompt(SLUG)
+    assert "no structured question tool" in rules
+    assert "serve-question` exits 2" in rules
+
+
+def test_the_rules_keep_the_build_to_one_unattended_pass():
+    rules = design_skill.system_prompt(SLUG)
+    for step in ("direction round", "comps", "component review",
+                 "subagents", "finish reviewer"):
+        assert step in rules, step
+    assert "apps/crumb-and-co/DESIGN.md" in rules
 
 
 # --- the spend cap ---------------------------------------------------------
@@ -67,24 +86,45 @@ def test_a_bad_cap_falls_back_to_the_default(monkeypatch, bad):
 ])
 def test_an_unmarked_run_gets_nothing(design, slug):
     assert design_skill.cli_args(design, slug) == []
+    assert design_skill.disallowed_tools(design, slug) == ()
     assert design_skill.env(design, slug) == {}
     assert design_skill.remote_prefix(design, slug) == ""
 
 
-def test_a_marked_run_gets_the_rules_the_cap_and_no_question_tool():
+def test_a_marked_run_gets_the_rules_and_the_cap():
     args = design_skill.cli_args("impeccable", SLUG)
-    assert args[args.index("--append-system-prompt") + 1] == \
-        design_skill.system_prompt(SLUG)
-    assert args[args.index("--max-budget-usd") + 1] == "1.50"
-    assert args[args.index("--disallowedTools") + 1] == "AskUserQuestion"
+    assert args == ["--append-system-prompt", design_skill.system_prompt(SLUG),
+                    "--max-budget-usd", "1.50"]
 
 
-def test_with_a_model_override_the_question_tool_is_already_gone(monkeypatch):
-    # build_model passes its own --disallowedTools with the override, and a
-    # second one is not something the CLI documents merging.
+def test_a_marked_run_loses_the_question_and_subagent_tools():
+    # Task is the subagent tool on the host's 2.1.140, Agent its later name.
+    # Checked on the host 2026-10-02: the list is accepted and takes the
+    # tools out (25 to 23).
+    assert design_skill.disallowed_tools("impeccable", SLUG) == (
+        "AskUserQuestion", "Task", "Agent")
+    assert design_skill.disallowed_tools(None, SLUG) == ()
+    assert design_skill.disallowed_tools("impeccable", None) == ()
+
+
+def test_build_model_makes_one_flag_from_both_lists(monkeypatch):
+    extra = ("AskUserQuestion", "Task", "Agent")
+    assert build_model.cli_args(extra) == [
+        "--disallowedTools", "AskUserQuestion,Task,Agent"]
     monkeypatch.setenv("APP_BUILD_MODEL", "openai/gpt-5.1-codex")
-    assert "--disallowedTools" not in design_skill.cli_args("impeccable", SLUG)
-    assert "AskUserQuestion" in build_model.DISALLOWED_TOOLS.split(",")
+    args = build_model.cli_args(extra)
+    assert args.count("--disallowedTools") == 1
+    tools = args[args.index("--disallowedTools") + 1].split(",")
+    assert tools == ["EnterPlanMode", "ExitPlanMode", "AskUserQuestion",
+                     "EnterWorktree", "Task", "Agent"]
+
+
+def test_build_model_is_unchanged_without_extra_tools(monkeypatch):
+    assert build_model.cli_args() == []
+    monkeypatch.setenv("APP_BUILD_MODEL", "openai/gpt-5.1-codex")
+    assert build_model.cli_args() == [
+        "--model", "openai/gpt-5.1-codex",
+        "--disallowedTools", build_model.DISALLOWED_TOOLS]
 
 
 def test_a_marked_run_turns_the_question_page_off():

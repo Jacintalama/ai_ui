@@ -59,7 +59,7 @@ class LocalExecutor:
             "--output-format", "stream-json",
             "--verbose",
             "--effort", effort,
-            *build_model.cli_args(),
+            *build_model.cli_args(design_skill.disallowed_tools(design, slug)),
             *design_skill.cli_args(design, slug),
             # --disallowedTools takes a list, so without this the prompt
             # after it would be read as one more tool name.

@@ -33,7 +33,6 @@ import os
 from sqlalchemy import text
 
 import agent_skills
-import build_model
 from db import session
 
 logger = logging.getLogger(__name__)
@@ -50,29 +49,45 @@ _RULES = """IMPECCABLE DESIGN SKILL, FOR THIS RUN
 
 The person who asked for this work chose the Impeccable design skill. Before \
 you write or change any HTML, CSS or interface code, load it with the Skill \
-tool (skill: impeccable) and follow it, with the rules below. This build runs \
-unattended, so where the skill and these rules disagree, these rules win.
+tool (skill: impeccable) and use it within the rules below. These rules are \
+the brief, so where the skill and they disagree, they win.
 
-1. Nobody can answer a question during this run. Never ask, never wait for an \
-answer, and never stop with NEEDS_INPUT over a design choice. Where the skill \
-says to interview, confirm or ask, decide from the request instead.
-2. Product context lives in the app folder. Write apps/{slug}/PRODUCT.md from \
-the request, and mark every fact you inferred rather than read with \
-"(inferred)". Pass --target apps/{slug} to the skill's commands. Anything you \
-write outside apps/{slug}/ is thrown away when the run ends.
-3. Build code-first. Do not run serve-question, live, generate, comps or any \
-image generation, and do not start a dev server or a browser: this machine \
-has no display and no browser.
-4. The task's own platform rules still hold: its stack, CDN block, file \
+1. Nobody can answer during this run, and that is a checked fact, not a \
+default: this session has no structured question tool, and `impeccable \
+serve-question` exits 2 here because there is no browser. The skill's one \
+probe has therefore already failed. Infer from the request as the skill then \
+allows, say in one line that you did, and never stop with NEEDS_INPUT over a \
+design choice.
+2. Write apps/{slug}/PRODUCT.md from the request, marking every fact you \
+inferred rather than read with "(inferred)", and pass --target apps/{slug} to \
+the skill's commands. Anything written outside apps/{slug}/ is thrown away \
+when the run ends.
+3. Build code-led, in one pass. Skip the direction round, comps and any image \
+generation, plates, component review and build-phase gates, live mode, \
+subagents, the finish reviewer and the documenter, and do not start a dev \
+server or a browser. When you finish, this platform smoke-tests the app in a \
+real browser and rolls it back if it breaks.
+4. Read the skill's craft-floor reference before your first edit, and record \
+the palette, type and spacing you chose in apps/{slug}/DESIGN.md, so a later \
+change keeps them.
+5. The task's own platform rules still hold: its stack, CDN block, file \
 layout, content and README rules. Impeccable decides the design inside them.
-5. Before you finish, run .claude/skills/impeccable/scripts/impeccable detect \
-apps/{slug} once, fix what it reports in one batch, and do not run it again.
-6. Changing an app that already exists is a refinement: keep its look, copy \
+6. Before you finish, run .claude/skills/impeccable/scripts/impeccable detect \
+apps/{slug} once. Exit code 2 means it found problems, not that it failed: \
+fix them in one batch and do not run it again.
+7. Changing an app that already exists is a refinement: keep its look, copy \
 and behaviour outside what was asked.
-7. Finish exactly as the task says, with its COMPLETED line last.
+8. Finish exactly as the task says, with its COMPLETED line last.
 
 If the impeccable skill is not available, say so in one line and follow \
-rules 4 to 7 anyway."""
+rules 5 to 8 anyway."""
+
+#: Taken away from a marked run. The question tool because nobody can answer;
+#: the subagent tool (Task on the host's 2.1.140, Agent in later releases)
+#: because Impeccable's full flow spawns reviewer and documenter agents, each
+#: a second bill inside one build. Checked on the host 2026-10-02: the CLI
+#: accepts this list and the tool count drops from 25 to 23.
+_DISALLOWED = ("AskUserQuestion", "Task", "Agent")
 
 
 def _on(design, slug) -> bool:
@@ -104,17 +119,18 @@ def max_budget_usd() -> str:
 
 
 def cli_args(design: str | None, slug: str | None) -> list[str]:
-    """Extra claude arguments for a marked run, none for any other."""
+    """Extra claude arguments for a marked run, none for any other. The
+    tools it loses go through build_model.cli_args instead, so a run has one
+    --disallowedTools list whether or not a model override is set."""
     if not _on(design, slug):
         return []
-    args = ["--append-system-prompt", system_prompt(slug),
+    return ["--append-system-prompt", system_prompt(slug),
             "--max-budget-usd", max_budget_usd()]
-    if not build_model.model():
-        # With a model override build_model already disallows this tool among
-        # others, and a second --disallowedTools is not something the CLI
-        # documents merging.
-        args += ["--disallowedTools", "AskUserQuestion"]
-    return args
+
+
+def disallowed_tools(design: str | None, slug: str | None) -> tuple[str, ...]:
+    """The tools a marked run loses, for build_model.cli_args."""
+    return _DISALLOWED if _on(design, slug) else ()
 
 
 def env(design: str | None, slug: str | None) -> dict[str, str]:

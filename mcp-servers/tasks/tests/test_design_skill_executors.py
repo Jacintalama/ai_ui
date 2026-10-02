@@ -54,8 +54,19 @@ async def test_a_local_marked_run_gets_the_flags_and_the_env():
     assert args[args.index("--append-system-prompt") + 1] == \
         design_skill.system_prompt(SLUG)
     assert args[args.index("--max-budget-usd") + 1] == "1.50"
-    assert args[args.index("--disallowedTools") + 1] == "AskUserQuestion"
+    assert args.count("--disallowedTools") == 1
+    assert args[args.index("--disallowedTools") + 1] == \
+        "AskUserQuestion,Task,Agent"
     assert env["IMPECCABLE_QUESTION_DISABLED"] == "1"
+
+
+async def test_a_local_marked_run_on_an_override_model_has_one_tool_list(
+        monkeypatch):
+    monkeypatch.setenv("APP_BUILD_MODEL", "openai/gpt-5.1-codex")
+    args, _ = await _local(design="impeccable")
+    assert args.count("--disallowedTools") == 1
+    tools = args[args.index("--disallowedTools") + 1].split(",")
+    assert {"EnterPlanMode", "AskUserQuestion", "Task", "Agent"} <= set(tools)
 
 
 async def test_the_local_prompt_is_never_read_as_a_tool_name():
@@ -90,7 +101,9 @@ def test_a_remote_marked_run_gets_the_flags_and_keeps_the_prompt_last():
     assert claude[claude.index("--append-system-prompt") + 1] == \
         design_skill.system_prompt(SLUG)
     assert claude[claude.index("--max-budget-usd") + 1] == "1.50"
-    assert claude[claude.index("--disallowedTools") + 1] == "AskUserQuestion"
+    assert claude.count("--disallowedTools") == 1
+    assert claude[claude.index("--disallowedTools") + 1] == \
+        "AskUserQuestion,Task,Agent"
     assert claude[-2:] == ["--", "build it"]
 
 
