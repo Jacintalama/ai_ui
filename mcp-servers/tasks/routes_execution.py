@@ -101,12 +101,25 @@ _RUNNING: dict[UUID, dict] = {}
 TEAM_EMAIL = "team@aiui.local"
 
 
+def _run_design(task, main_run: bool) -> str | None:
+    """The design skill this run gets: the task's, on its main run only.
+
+    AutoFix, verify, pre-build questions and plan runs are narrow jobs that
+    the design rules would only slow down and spend on. Retries are main runs
+    too: they recurse into _run_execution.
+    """
+    if not main_run or task is None:
+        return None
+    return getattr(task, "design_skill", None) or None
+
+
 async def _stream_claude(
     prompt: str,
     execution_id: UUID,
     task_id: UUID,
     user_jwt: str | None = None,
     schedule_id: str | None = None,
+    main_run: bool = False,
 ) -> str:
     """Run a claude run via the configured executor; stream output to the
     execution log; return the full log as a string.
@@ -133,6 +146,7 @@ async def _stream_claude(
             await s.execute(select(TaskItem).where(TaskItem.id == task_id))
         ).scalar_one_or_none()
         slug = (task.built_app_slug if task else None) or None
+        design = _run_design(task, main_run)
 
     # If we're on the remote backend, record which agent host is handling
     # this execution. Used for audit + forensics ("which VM ran this build?").
@@ -157,9 +171,20 @@ async def _stream_claude(
     # independent and left untouched.
     async with session() as lock_s, heavy_lock(lock_s):
         try:
+            if design:
+                # In the log the person and the forensics read, so "did this
+                # build get Impeccable" is a fact in the row, not a guess.
+                full_log.append("[design skill: %s]\n" % design)
+                async with session() as s:
+                    await s.execute(
+                        update(TaskExecution)
+                        .where(TaskExecution.id == execution_id)
+                        .values(log=TaskExecution.log + full_log[-1])
+                    )
+                    await s.commit()
             async for chunk in executor.run(
                 prompt, slug=slug, execution_id=str(execution_id),
-                user_jwt=user_jwt, schedule_id=schedule_id,
+                user_jwt=user_jwt, schedule_id=schedule_id, design=design,
             ):
                 full_log.append(chunk)
                 async with session() as s:
@@ -273,7 +298,7 @@ async def _run_execution(
 
         full_output = await _stream_claude(
             prompt, execution_id, task_id,
-            user_jwt=user_jwt, schedule_id=schedule_id,
+            user_jwt=user_jwt, schedule_id=schedule_id, main_run=True,
         )
         outcome = parse_outcome(full_output)
 

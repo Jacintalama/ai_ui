@@ -386,6 +386,7 @@ async def _run_prebuild_questions_then_build(
 async def _create_and_spawn_build(
     email: str, seed: str, description: str, template_key: str | None = None,
     attachment_text: str | None = None, attachment_name: str | None = None,
+    design_skill: str | None = None,
 ) -> tuple[str, str]:
     """Create a BUILD task owned by `email` and spawn the agent run.
 
@@ -428,6 +429,7 @@ async def _create_and_spawn_build(
             mode="ai",
             max_attempts=3,
             built_app_slug=slug,
+            design_skill=design_skill,
         )
         s.add(item)
         # Flush (not commit) to assign item.id, then add the execution so both
@@ -479,6 +481,7 @@ async def _create_and_spawn_build(
 async def _create_and_spawn_enhance(
     email: str, slug: str, prompt: str,
     attachment_text: str | None = None, attachment_name: str | None = None,
+    design_skill: str | None = None,
 ) -> tuple[str, str]:
     """Create an ENHANCE build task that edits apps/<slug>/ in place and spawn
     the agent. Reuses the executor's enhance path via the
@@ -527,6 +530,7 @@ async def _create_and_spawn_enhance(
             max_attempts=max(source.max_attempts or 1, 1),
             built_app_slug=slug,
             plan_status="approved",
+            design_skill=design_skill,
         )
         # 403, 404 and 409 above this line are contractually raised BEFORE
         # anything is written. routes_code.apply restores a spent approval on

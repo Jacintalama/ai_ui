@@ -32,6 +32,9 @@ class TaskItem(Base):
     plan = Column(Text, nullable=True)
     plan_status = Column(Text, nullable=True)
     built_app_slug = Column(Text, nullable=True)
+    # The design skill the build runs with (design_skill.py), set when an
+    # agent with Impeccable ticked started it. NULL runs as it always has.
+    design_skill = Column(Text, nullable=True)
     # Structured pre-build clarifying questions (Task 4). Populated only by the
     # one-shot question pass ahead of a NON-template build; the separate
     # mid-build free-text NEEDS_INPUT flow never touches these columns (its
