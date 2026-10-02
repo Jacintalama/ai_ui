@@ -20,8 +20,15 @@ The rules go in as a system prompt rather than into the task prompt, because
 the executors cut the task prompt at MAX_PROMPT_CHARS and a fresh-build
 prompt is already longer than that.
 
-Everything here fails open. An unknown agent, a database error or a missing
-skill on the host leaves the build exactly as it was before this existed.
+Everything here fails open. An unknown agent or a database error leaves the
+build exactly as it was before this existed. A marked run on a host without
+the skill still gets the rules, the cap and the safety flags, and is told to
+say the skill is missing and build to the rules that need no skill.
+
+The rules were checked line by line against Impeccable v4.4.0 as installed
+and its engine's real output on the build host, and each one answers a way a
+marked run was shown to stop, ask, overspend or restyle too much; the tests
+in tests/test_design_skill.py name them.
 """
 from __future__ import annotations
 
@@ -49,38 +56,54 @@ _RULES = """IMPECCABLE DESIGN SKILL, FOR THIS RUN
 
 The person who asked for this work chose the Impeccable design skill. Before \
 you write or change any HTML, CSS or interface code, load it with the Skill \
-tool (skill: impeccable) and use it within the rules below. These rules are \
-the brief, so where the skill and they disagree, they win.
+tool, skill "impeccable", args set to the request in one line. Never load it \
+with no args: with none the skill shows a menu and stops. These rules are the \
+brief, so where the skill and they disagree, they win.
 
-1. Nobody can answer during this run, and that is a checked fact, not a \
-default: this session has no structured question tool, and `impeccable \
-serve-question` exits 2 here because there is no browser. The skill's one \
-probe has therefore already failed. Infer from the request as the skill then \
-allows, say in one line that you did, and never stop with NEEDS_INPUT over a \
-design choice.
-2. Write apps/{slug}/PRODUCT.md from the request, marking every fact you \
-inferred rather than read with "(inferred)", and pass --target apps/{slug} to \
-the skill's commands. Anything written outside apps/{slug}/ is thrown away \
-when the run ends.
-3. Build code-led, in one pass. Skip the direction round, comps and any image \
-generation, plates, component review and build-phase gates, live mode, \
-subagents, the finish reviewer and the documenter, and do not start a dev \
-server or a browser. When you finish, this platform smoke-tests the app in a \
-real browser and rolls it back if it breaks.
-4. Read the skill's craft-floor reference before your first edit, and record \
-the palette, type and spacing you chose in apps/{slug}/DESIGN.md, so a later \
-change keeps them.
+1. Nobody can answer during this run. That is checked, not a default: this \
+session has no question tool, and `impeccable serve-question` exits 2 here \
+because there is no browser. That exit is the failed probe the skill's \
+AUTONOMY_DIRECTIVE_CHECK asks for, so do not probe again, and settle \
+WORLD_DISCOVERY_REQUIRED yourself. Infer everything the skill would ask \
+(audience, purpose, scope, stack, copy, direction) from the request, and say \
+so in one line. Never ask in plain text, never stop to wait, and use \
+NEEDS_INPUT only for a missing credential: the end of your turn is the end of \
+the run, and a reply without a COMPLETED line is a failed build.
+2. If apps/{slug}/PRODUCT.md is missing, write it from the request, marking \
+every inferred fact "(inferred)"; if it exists, keep it and change only what \
+this request changes. Run the skill's context command with --target \
+apps/{slug}. Anything written outside apps/{slug}/ is thrown away when the \
+run ends.
+3. Build code-led, in one pass. Do not run concept-seed, serve-question, \
+build-phase, comp-spec, font-match, generate-image or surface-brief, and do \
+not do their rounds by hand. No subagents, and no finish review or documenter \
+in any form, including the in-thread versions in reference/degraded/. No dev \
+server, browser, live mode or screenshots. When you finish, this platform \
+loads the app in a real browser and runs a narrow fix pass on any load error, \
+and a change to an app that loaded cleanly before is reverted if it no longer \
+loads.
+4. Read reference/craft-floor.md before your first UI edit. Record the \
+palette, type and spacing in apps/{slug}/DESIGN.md yourself, in a few lines \
+and without document.md: create it for a new app, update only what you \
+changed for an existing one.
 5. The task's own platform rules still hold: its stack, CDN block, file \
 layout, content and README rules. Impeccable decides the design inside them.
 6. Before you finish, run .claude/skills/impeccable/scripts/impeccable detect \
-apps/{slug} once. Exit code 2 means it found problems, not that it failed: \
-fix them in one batch and do not run it again.
+once: over apps/{slug} for a new app, over only the files you changed for a \
+change to an existing one. Exit code 2 means it found problems, not that it \
+failed. Fix, in one batch, the findings in code you wrote this run; leave the \
+rest, and do not run it again.
 7. Changing an app that already exists is a refinement: keep its look, copy \
-and behaviour outside what was asked.
-8. Finish exactly as the task says, with its COMPLETED line last.
+and behaviour outside what was asked. The task's limits on file reads and \
+edits apply to the app's code; loading the skill, the craft floor, \
+PRODUCT.md, DESIGN.md and the detect run do not count against them.
+8. End your final message with the task's COMPLETED block: a line starting \
+`COMPLETED:` with your summary, followed only by what the task's own \
+COMPLETED format adds (its Next ideas and commit line). Nothing after it, and \
+never a question.
 
 If the impeccable skill is not available, say so in one line and follow \
-rules 5 to 8 anyway."""
+rules 1, 5, 7 and 8 anyway."""
 
 #: Taken away from a marked run. The question tool because nobody can answer;
 #: the subagent tool (Task on the host's 2.1.140, Agent in later releases)
@@ -148,9 +171,17 @@ def remote_prefix(design: str | None, slug: str | None) -> str:
     never synced back, because only apps/<slug>/ is. `|| true` because the
     remote command runs under set -e, and a host without the skill must
     still build.
+
+    Any other run in an app folder removes the link first. Only a completed
+    run deletes /agent/work/<slug>, so a marked run that hit its cap or the
+    time limit leaves the link behind, and the next run there, an unmarked
+    change from the App Builder page say, would otherwise load the skill with
+    none of the rules, the cap or the safety flags.
     """
-    if not _on(design, slug):
+    if not slug:
         return ""
+    if not _on(design, slug):
+        return "rm -f .claude/skills/impeccable 2>/dev/null || true; "
     return ('{ mkdir -p .claude/skills && ln -sfn "%s" '
             ".claude/skills/impeccable; } || true; "
             "export IMPECCABLE_QUESTION_DISABLED=1; " % REMOTE_SKILL_DIR)

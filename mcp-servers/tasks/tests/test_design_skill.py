@@ -22,43 +22,92 @@ def _no_override(monkeypatch):
 
 
 # --- the rules the run is given --------------------------------------------
+#
+# Each test pins one way a marked run was shown to fail or mislead, checked
+# against Impeccable v4.4.0 as installed and its engine's real output on the
+# build host (2026-10-02).
 
-def test_the_rules_name_the_app_folder_and_the_skill():
-    rules = design_skill.system_prompt(SLUG)
-    assert "apps/crumb-and-co/" in rules
-    assert "Skill tool" in rules and "impeccable" in rules
-
-
-def test_the_rules_turn_off_everything_that_waits_for_a_person():
-    rules = design_skill.system_prompt(SLUG)
-    assert "NEEDS_INPUT" in rules
-    assert "serve-question" in rules
-    assert "PRODUCT.md" in rules and "(inferred)" in rules
+def _rules():
+    return design_skill.system_prompt(SLUG)
 
 
-def test_the_rules_run_the_checker_once_and_keep_the_ending():
-    rules = design_skill.system_prompt(SLUG)
-    assert "detect apps/crumb-and-co" in rules
-    # Measured on the build host: detect exits 2 when it finds problems.
-    assert "Exit code 2" in rules
-    assert "COMPLETED" in rules
+def test_the_skill_is_loaded_with_the_request_never_bare():
+    # With no argument Impeccable "presents its context-aware menu; never
+    # auto-runs a command" (SKILL.md), which ends the run without COMPLETED.
+    rules = _rules()
+    assert 'skill "impeccable"' in rules and "Skill tool" in rules
+    assert "args set to the request in one line" in rules
+    assert "Never load it with no args" in rules
 
 
-def test_the_rules_say_why_nobody_can_answer_with_checked_facts():
-    # Impeccable's own context output tells the model to treat "you are
-    # unattended" in a system prompt as no evidence and to probe once. The
-    # rules answer with the two facts that probe would find.
-    rules = design_skill.system_prompt(SLUG)
-    assert "no structured question tool" in rules
+def test_nobody_can_answer_and_the_rules_say_why_with_checked_facts():
+    # The engine's context output says to treat an unattended claim as no
+    # evidence and probe once (AUTONOMY_DIRECTIVE_CHECK), and to establish
+    # the visual world with a human (WORLD_DISCOVERY_REQUIRED).
+    rules = _rules()
+    assert "no question tool" in rules
     assert "serve-question` exits 2" in rules
+    assert "AUTONOMY_DIRECTIVE_CHECK" in rules
+    assert "WORLD_DISCOVERY_REQUIRED" in rules
+    assert "Never ask in plain text" in rules
+    assert "NEEDS_INPUT only for a missing credential" in rules
 
 
-def test_the_rules_keep_the_build_to_one_unattended_pass():
-    rules = design_skill.system_prompt(SLUG)
-    for step in ("direction round", "comps", "component review",
-                 "subagents", "finish reviewer"):
-        assert step in rules, step
+def test_product_md_is_written_once_and_kept_after():
+    rules = _rules()
+    assert "If apps/crumb-and-co/PRODUCT.md is missing" in rules
+    assert '"(inferred)"' in rules
+    assert "if it exists, keep it" in rules
+    assert "--target apps/crumb-and-co" in rules
+
+
+def test_the_run_is_one_code_led_pass():
+    rules = _rules()
+    for verb in ("concept-seed", "serve-question", "build-phase", "comp-spec",
+                 "font-match", "generate-image", "surface-brief"):
+        assert verb in rules, verb
+    assert "No subagents" in rules
+    assert "reference/degraded/" in rules
+
+
+def test_what_the_platform_does_afterwards_is_said_truthfully():
+    # The regression guard reverts only a change to an app that loaded
+    # cleanly before; a fresh build is never rolled back.
+    rules = _rules()
+    assert "rolls it back if it breaks" not in rules
+    assert "narrow fix pass" in rules
+    assert "loaded cleanly before is reverted" in rules
+
+
+def test_design_md_is_short_and_written_by_hand():
+    rules = _rules()
     assert "apps/crumb-and-co/DESIGN.md" in rules
+    assert "without document.md" in rules
+
+
+def test_the_checker_runs_once_on_what_this_run_wrote():
+    # detect over a whole existing app flags problems that were already
+    # there, and fixing those restyles what nobody asked to change.
+    rules = _rules()
+    assert "detect once" in rules
+    assert "over apps/crumb-and-co for a new app" in rules
+    assert "only the files you changed" in rules
+    assert "Exit code 2" in rules
+    assert "in code you wrote this run" in rules
+
+
+def test_the_task_s_own_limits_do_not_count_the_skill():
+    assert "do not count against them" in _rules()
+
+
+def test_the_run_ends_with_the_completed_block_and_no_question():
+    rules = _rules()
+    assert "`COMPLETED:`" in rules
+    assert "never a question" in rules
+
+
+def test_without_the_skill_only_the_rules_that_need_no_skill_apply():
+    assert "follow rules 1, 5, 7 and 8 anyway" in _rules()
 
 
 # --- the spend cap ---------------------------------------------------------
@@ -88,7 +137,21 @@ def test_an_unmarked_run_gets_nothing(design, slug):
     assert design_skill.cli_args(design, slug) == []
     assert design_skill.disallowed_tools(design, slug) == ()
     assert design_skill.env(design, slug) == {}
-    assert design_skill.remote_prefix(design, slug) == ""
+    assert "ln -sfn" not in design_skill.remote_prefix(design, slug)
+
+
+@pytest.mark.parametrize("design", [None, "", "something-else"])
+def test_an_unmarked_run_in_an_app_folder_removes_a_leftover_link(design):
+    # Only a completed run deletes /agent/work/<slug>. A marked run that hit
+    # the cap or the time limit leaves its link there, and the next run in
+    # that folder would load the skill with none of its guards.
+    assert design_skill.remote_prefix(design, SLUG) == \
+        "rm -f .claude/skills/impeccable 2>/dev/null || true; "
+
+
+def test_a_run_with_no_app_folder_touches_nothing():
+    assert design_skill.remote_prefix(None, None) == ""
+    assert design_skill.remote_prefix("impeccable", None) == ""
 
 
 def test_a_marked_run_gets_the_rules_and_the_cap():

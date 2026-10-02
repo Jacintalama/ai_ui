@@ -107,11 +107,17 @@ def test_a_remote_marked_run_gets_the_flags_and_keeps_the_prompt_last():
     assert claude[-2:] == ["--", "build it"]
 
 
-def test_a_remote_unmarked_run_is_exactly_what_it_was():
+def test_a_remote_unmarked_run_is_what_it_was_plus_the_cleanup():
     ex = RemoteExecutor()
-    assert ex._build_remote_cmd("build it", SLUG, "low", None) == \
-        ex._build_remote_cmd("build it", SLUG, "low")
-    assert "impeccable" not in ex._build_remote_cmd("build it", SLUG, "low")
+    cmd = ex._build_remote_cmd("build it", SLUG, "low")
+    assert cmd == ex._build_remote_cmd("build it", SLUG, "low", None)
+    cleanup = "rm -f .claude/skills/impeccable 2>/dev/null || true; "
+    # The command before design_skill existed (cf769ec3e), byte for byte.
+    assert cmd.replace(cleanup, "", 1) == (
+        "set -e; cd /agent/work/crumb-and-co; set -a; source ~/.env; "
+        "set +a; IS_SANDBOX=1 claude --print --dangerously-skip-permissions "
+        "--output-format stream-json --verbose --effort low -- 'build it'")
+    assert cmd.index(cleanup) < cmd.index("IS_SANDBOX=1 claude")
 
 
 @pytest.mark.skipif(sys.platform == "win32" or not shutil.which("bash"),
@@ -149,3 +155,31 @@ def test_the_remote_command_really_links_the_skill_and_still_builds(
     assert got["link"] == "%s/.impeccable/skills/impeccable" % home
     assert got["question"] == "1"
     assert got["last"] == "build it"
+
+
+@pytest.mark.skipif(sys.platform == "win32" or not shutil.which("bash"),
+                    reason="runs the command text in a real shell")
+def test_an_unmarked_run_really_removes_a_link_a_failed_marked_run_left(
+        tmp_path):
+    home = tmp_path / "home"
+    (home / ".impeccable" / "skills" / "impeccable").mkdir(parents=True)
+    (home / ".env").write_text("ANTHROPIC_AUTH_TOKEN=sk-or-host\n")
+    work = tmp_path / "work"
+    (work / ".claude" / "skills").mkdir(parents=True)
+    (work / ".claude" / "skills" / "impeccable").symlink_to(
+        home / ".impeccable" / "skills" / "impeccable")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    fake = bindir / "claude"
+    fake.write_text(
+        "#!/bin/sh\n"
+        "if [ -e .claude/skills/impeccable ]; then echo link=present;"
+        " else echo link=gone; fi\n")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    cmd = RemoteExecutor()._build_remote_cmd("build it", SLUG, "low")
+    cmd = cmd.replace("cd /agent/work/crumb-and-co;", "cd %s;" % work)
+    out = subprocess.run(
+        ["bash", "-c", cmd], capture_output=True, text=True, timeout=30,
+        env={"HOME": str(home), "PATH": "%s:/usr/bin:/bin" % bindir})
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "link=gone"

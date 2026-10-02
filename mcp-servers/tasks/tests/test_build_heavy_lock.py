@@ -69,8 +69,7 @@ class _Exec:
         self._chunks = chunks
         self._raise_after = raise_after
 
-    async def run(self, prompt, slug=None, execution_id="", user_jwt=None, schedule_id=None,
-                  design=None):
+    async def run(self, prompt, slug=None, execution_id="", user_jwt=None, schedule_id=None):
         for i, c in enumerate(self._chunks):
             self._events.append("CHUNK")
             yield c

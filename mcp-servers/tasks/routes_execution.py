@@ -102,13 +102,17 @@ TEAM_EMAIL = "team@aiui.local"
 
 
 def _run_design(task, main_run: bool) -> str | None:
-    """The design skill this run gets: the task's, on its main run only.
+    """The design skill this run gets: the task's, on its first main run.
 
     AutoFix, verify, pre-build questions and plan runs are narrow jobs that
-    the design rules would only slow down and spend on. Retries are main runs
-    too: they recurse into _run_execution.
+    the design rules would only slow down and spend on. A retry (they recurse
+    into _run_execution with attempt_count raised) runs without it too: each
+    marked attempt may spend the whole cap, so three of them could spend three
+    caps and keep nothing, and a retry exists to get the person a working app.
     """
     if not main_run or task is None:
+        return None
+    if (getattr(task, "attempt_count", 0) or 0) > 0:
         return None
     return getattr(task, "design_skill", None) or None
 
@@ -174,17 +178,23 @@ async def _stream_claude(
             if design:
                 # In the log the person and the forensics read, so "did this
                 # build get Impeccable" is a fact in the row, not a guess.
-                full_log.append("[design skill: %s]\n" % design)
+                # Not in full_log: that is what parse_outcome reads, and a
+                # line in front of it changes its fallback for a run that
+                # produced no text.
                 async with session() as s:
                     await s.execute(
                         update(TaskExecution)
                         .where(TaskExecution.id == execution_id)
-                        .values(log=TaskExecution.log + full_log[-1])
+                        .values(log=TaskExecution.log
+                                + "[design skill: %s]\n" % design)
                     )
                     await s.commit()
+            # design only when set, so an unmarked run calls the executor
+            # exactly as it did before design existed.
+            marked = {"design": design} if design else {}
             async for chunk in executor.run(
                 prompt, slug=slug, execution_id=str(execution_id),
-                user_jwt=user_jwt, schedule_id=schedule_id, design=design,
+                user_jwt=user_jwt, schedule_id=schedule_id, **marked,
             ):
                 full_log.append(chunk)
                 async with session() as s:
