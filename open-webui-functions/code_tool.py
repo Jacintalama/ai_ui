@@ -93,6 +93,14 @@ class Tools:
             raise RuntimeError("I could not tell whose account this is.")
         return email
 
+    @staticmethod
+    def _agent(model) -> str | None:
+        """The calling agent's id, as the tool runner filled it in. The
+        service reads that agent's design skill from it, so a build started
+        by an agent with Impeccable ticked is built with Impeccable."""
+        value = model.get("id") if isinstance(model, dict) else None
+        return value if isinstance(value, str) and value else None
+
     async def list_my_apps(self, __user__: dict = {}) -> str:
         """
         List the apps this person built on this platform. Call this first
@@ -145,7 +153,7 @@ class Tools:
         return "Matches in " + slug + ":\n" + "\n".join(lines)
 
     async def create_app(self, description: str, name: str = "",
-                         __user__: dict = {}) -> str:
+                         __model__: dict = {}, __user__: dict = {}) -> str:
         """
         Build a NEW app, site or page for this person from a description.
 
@@ -163,7 +171,8 @@ class Tools:
             data = await self._call("POST", "/code/create",
                                     user_email=self._email(__user__),
                                     description=description,
-                                    name=(name or "").strip() or None)
+                                    name=(name or "").strip() or None,
+                                    agent_id=self._agent(__model__))
         except RuntimeError as exc:
             return self._message(exc)
         said = ("Building " + (data.get("slug") or "the app")
@@ -233,7 +242,8 @@ class Tools:
                 + "\nChange: " + (data.get("description") or "")
                 + "\nApproval code: " + (data.get("token") or ""))
 
-    async def apply_app_change(self, token: str, __user__: dict = {}) -> str:
+    async def apply_app_change(self, token: str, __model__: dict = {},
+                               __user__: dict = {}) -> str:
         """
         Carry out a change the person has just approved, using the approval
         code from propose_app_change. Only call this after they have
@@ -246,7 +256,8 @@ class Tools:
         try:
             data = await self._call("POST", "/code/apply",
                                     user_email=self._email(__user__),
-                                    token=token)
+                                    token=token,
+                                    agent_id=self._agent(__model__))
         except RuntimeError as exc:
             return self._message(exc)
         said = ("Started. " + (data.get("slug") or "The app")

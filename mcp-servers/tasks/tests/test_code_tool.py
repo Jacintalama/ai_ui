@@ -104,12 +104,17 @@ def test_apply_takes_only_a_token():
     Checks the exact parameter list, not just the literal spelling
     "slug", so renaming that argument (to "app", say) cannot satisfy
     this by accident. test_apply_sends_only_the_email_and_the_token
-    backs this up on the actual wire."""
+    backs this up on the actual wire.
+
+    __model__ is not the model's: the tool runner fills it with the running
+    agent's id and drops any value the model sends (agent_tools._run_native),
+    and Open WebUI leaves double-underscore parameters out of the spec a
+    model sees."""
     source = _source()
     match = re.search(r"async def apply_app_change\(self,\s*([^)]*)\)", source)
     assert match
     params = {p.split(":")[0].strip() for p in match.group(1).split(",")}
-    assert params == {"token", "__user__"}
+    assert params == {"token", "__model__", "__user__"}
 
 
 async def test_every_call_hits_the_endpoint_it_should(monkeypatch):
@@ -166,7 +171,9 @@ async def test_apply_sends_only_the_email_and_the_token(monkeypatch):
     tools, factory = _tool(handler)
     monkeypatch.setattr(httpx, "AsyncClient", factory)
     await tools.apply_app_change("abc", __user__=USER)
-    assert set(bodies[0]) == {"user_email", "token"}
+    # agent_id is the runner's, not the model's: see
+    # test_apply_takes_only_a_token. ApplyIn declares it, so it is not lost.
+    assert set(bodies[0]) == {"user_email", "token", "agent_id"}
 
 
 async def test_propose_shows_the_servers_description_not_its_own(monkeypatch):
