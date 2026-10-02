@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 
 import app_code_access
+import design_skill
 from app_code_access import CodeAccessError
 from code_proposals import (ProposalError, consume_proposal, create_proposal,
                             restore_proposal)
@@ -93,13 +94,21 @@ async def _can_see(user_email: str, slug: str) -> bool:
         return await _user_can_see_project(s, slug, user_email)
 
 
-async def _spawn_enhance(user_email: str, slug: str, prompt: str):
+async def _spawn_enhance(user_email: str, slug: str, prompt: str,
+                         design_skill: str | None = None):
     """A seam over the builder, so a test can prove which slug was used
     without starting a real build. Imported lazily for the same reason
     _create_and_spawn_enhance imports its own dependencies lazily: the
     builder module pulls in the execution stack."""
     from routes_aiuibuilder import _create_and_spawn_enhance
-    return await _create_and_spawn_enhance(user_email, slug, prompt)
+    return await _create_and_spawn_enhance(user_email, slug, prompt,
+                                           design_skill=design_skill)
+
+
+async def _design_for(user_email: str, agent_id: str | None) -> str | None:
+    """The design skill the calling agent has ticked, or None. A seam over
+    design_skill.for_agent, which reads the database and never raises."""
+    return await design_skill.for_agent(user_email, agent_id)
 
 
 async def _build_state(user_email: str, task_id):
@@ -132,7 +141,8 @@ async def _build_state(user_email: str, task_id):
     }
 
 
-async def _spawn_build(user_email: str, seed: str, description: str):
+async def _spawn_build(user_email: str, seed: str, description: str,
+                       design_skill: str | None = None):
     """A seam over the builder for a NEW app, the twin of _spawn_enhance.
 
     Same lazy import for the same reason: the builder pulls in the execution
@@ -140,7 +150,8 @@ async def _spawn_build(user_email: str, seed: str, description: str):
     real build to do it.
     """
     from routes_aiuibuilder import _create_and_spawn_build
-    return await _create_and_spawn_build(user_email, seed, description)
+    return await _create_and_spawn_build(user_email, seed, description,
+                                         design_skill=design_skill)
 
 
 async def _require_member(user_email: str, slug: str) -> None:
@@ -168,6 +179,9 @@ class ProposeIn(BaseModel):
 class ApplyIn(BaseModel):
     user_email: str
     token: str
+    #: The agent that asked, as the tool runner filled it in (never the
+    #: model). Decides the design skill the change runs with.
+    agent_id: str | None = None
 
 
 class CreateIn(BaseModel):
@@ -180,6 +194,9 @@ class CreateIn(BaseModel):
     #: is already a usable name and asking for one twice is a worse
     #: conversation than picking one.
     name: str | None = None
+    #: The agent that asked, as the tool runner filled it in (never the
+    #: model). Decides the design skill the build runs with.
+    agent_id: str | None = None
 
 
 @router.get("/apps")
@@ -322,9 +339,11 @@ async def apply(body: ApplyIn,
     # The slug is the proposal's, never the caller's. _create_and_spawn_enhance
     # does the editor-or-owner check, the per-slug lock and the 409, so those
     # are deliberately not repeated here.
+    design = await _design_for(body.user_email, body.agent_id)
     try:
         task_id, slug = await _spawn_enhance(
-            body.user_email, proposal["slug"], proposal["description"])
+            body.user_email, proposal["slug"], proposal["description"],
+            design_skill=design)
     except HTTPException as exc:
         # These three are raised before the builder inserts anything, so no
         # work began and the person's approval should still be good. Any
@@ -408,7 +427,9 @@ async def create(body: CreateIn,
     # The name is a seed for the slug, not a title, so the description does
     # the job when there is no name. _make_slug handles the rest.
     seed = (body.name or "").strip() or description
-    task_id, slug = await _spawn_build(body.user_email, seed, description)
+    design = await _design_for(body.user_email, body.agent_id)
+    task_id, slug = await _spawn_build(body.user_email, seed, description,
+                                       design_skill=design)
     # This build, not the list of everything. Falls back to App Builder only
     # when there is no public address configured to build a link from.
     return {"task_id": task_id, "slug": slug,

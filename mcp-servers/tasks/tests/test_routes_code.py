@@ -98,7 +98,7 @@ def no_builder(monkeypatch):
     """
     asked = {}
 
-    async def spawn(user_email, seed, description):
+    async def spawn(user_email, seed, description, design_skill=None):
         asked.update(user_email=user_email, seed=seed, description=description)
         return "task-1", "camera-brand-9f21"
 
@@ -237,7 +237,7 @@ async def test_an_id_that_is_not_an_id_never_reaches_the_database(
 async def test_one_build_at_a_time_reaches_the_caller(client, monkeypatch):
     """The builder allows one build platform-wide and says so with a 429.
     Swallowing it would leave an agent reporting a failure for a queue."""
-    async def busy(user_email, seed, description):
+    async def busy(user_email, seed, description, design_skill=None):
         raise HTTPException(status_code=429,
                             detail="A build is already running. Try shortly.")
 
@@ -313,7 +313,7 @@ async def test_apply_never_takes_the_slug_from_the_caller(client, monkeypatch, t
     async def _consume(email, token):
         return {"slug": "from-the-proposal", "description": "make it blue"}
 
-    async def _spawn(email, slug, prompt):
+    async def _spawn(email, slug, prompt, design_skill=None):
         seen["slug"] = slug
         seen["prompt"] = prompt
         return ("task-1", slug)
@@ -337,7 +337,7 @@ async def test_apply_with_a_bad_token_starts_nothing(client, monkeypatch):
 
     started = []
 
-    async def _spawn(email, slug, prompt):
+    async def _spawn(email, slug, prompt, design_skill=None):
         started.append(slug)
         return ("task-1", slug)
 
@@ -390,7 +390,7 @@ async def test_what_the_person_approves_is_what_will_run(client, monkeypatch, tm
 
     seen = {}
 
-    async def _spawn(email, slug, prompt):
+    async def _spawn(email, slug, prompt, design_skill=None):
         seen["prompt"] = prompt
         return ("task-1", slug)
 
@@ -456,7 +456,7 @@ async def test_what_the_person_approves_is_what_will_run_for_real(
 
     seen = {}
 
-    async def _spawn(email, slug, prompt):
+    async def _spawn(email, slug, prompt, design_skill=None):
         seen["prompt"] = prompt
         return ("task-1", slug)
 
@@ -531,7 +531,7 @@ async def test_a_refused_build_gives_the_approval_back(client, monkeypatch, tmp_
     async def _restore(email, token):
         restored.append(token)
 
-    async def _spawn(email, slug, prompt):
+    async def _spawn(email, slug, prompt, design_skill=None):
         raise HTTPException(status_code=status, detail="refused before any write")
 
     monkeypatch.setattr(routes_code, "consume_proposal", _consume)
@@ -557,7 +557,7 @@ async def test_a_failure_to_restore_still_shows_the_real_status(client, monkeypa
     async def _restore(email, token):
         raise RuntimeError("the database went away")
 
-    async def _spawn(email, slug, prompt):
+    async def _spawn(email, slug, prompt, design_skill=None):
         raise HTTPException(status_code=409,
                             detail="An enhancement is already in progress")
 
@@ -585,7 +585,7 @@ async def test_an_unexpected_failure_keeps_the_approval_spent(client, monkeypatc
     async def _restore(email, token):
         restored.append(token)
 
-    async def _spawn(email, slug, prompt):
+    async def _spawn(email, slug, prompt, design_skill=None):
         raise RuntimeError("something else entirely")
 
     monkeypatch.setattr(routes_code, "consume_proposal", _consume)
@@ -614,7 +614,7 @@ async def test_an_unrecognised_http_failure_keeps_the_approval_spent(client, mon
     async def _restore(email, token):
         restored.append(token)
 
-    async def _spawn(email, slug, prompt):
+    async def _spawn(email, slug, prompt, design_skill=None):
         raise HTTPException(status_code=500, detail="the build blew up midway")
 
     monkeypatch.setattr(routes_code, "consume_proposal", _consume)
