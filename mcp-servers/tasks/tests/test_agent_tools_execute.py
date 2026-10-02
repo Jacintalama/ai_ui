@@ -390,6 +390,25 @@ async def test_a_model_supplied_agent_id_is_overwritten_not_obeyed():
     assert out == "as:agent-research-assistant-0001"
 
 
+async def test_a_model_supplied_agent_id_is_dropped_when_no_agent_runs():
+    """With no agent id there is nothing to set last, so a model-supplied
+    __model__ would otherwise pass straight through to the tool. create_app
+    reads it to choose the design skill a build runs with (design_skill.py),
+    and schedules to choose who a schedule runs as."""
+    source = (
+        "class Tools:\n"
+        "    async def create_schedule(self, __user__=None, __model__=None):\n"
+        "        return 'as:' + ((__model__ or {}).get('id') or 'nobody')\n"
+    )
+    with patch("agent_tools._load_native_tool_source",
+               new=AsyncMock(return_value=source)):
+        out = await execute_tool_call(
+            _call("create_schedule",
+                  {"__model__": {"id": "agent-somebody-else-9999"}}),
+            "owner@example.com", None, None)
+    assert out == "as:nobody"
+
+
 async def test_a_tool_that_does_not_ask_for_the_agent_is_left_alone():
     """Every native tool takes __user__; only schedules takes __model__.
     Passing it to a method without the parameter would be a TypeError, so

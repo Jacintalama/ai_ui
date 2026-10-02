@@ -530,6 +530,13 @@ async def _run_native(source: str, method_name: str, params: dict,
         raise RuntimeError("tool module has no method " + method_name)
 
     call_kwargs = _filter_supported_kwargs(method, params)
+    # Open WebUI's reserved arguments (__user__, __model__, ...) are the
+    # runner's to fill, never the model's. Setting them last covers the ones
+    # this runner sets; dropping them here covers __model__ when no agent is
+    # running, which would otherwise reach the tool exactly as the model
+    # wrote it.
+    call_kwargs = {k: v for k, v in call_kwargs.items()
+                   if not k.startswith("__")}
     # Identity always comes from the caller, never from the model's
     # arguments -- set last so nothing supplied above can override it.
     call_kwargs["__user__"] = {"email": user_email}
