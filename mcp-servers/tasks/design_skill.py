@@ -16,9 +16,10 @@ steps off, and loses the question tool. Checked on the build host on
 the tool away, and a skill linked into the run's own .claude/skills is loaded
 by that run and by no other.
 
-The rules go in as a system prompt rather than into the task prompt, because
-the executors cut the task prompt at MAX_PROMPT_CHARS and a fresh-build
-prompt is already longer than that.
+The rules go in as a system prompt rather than into the task prompt: the
+task prompt is the person's request plus the platform's rules, and is cut at
+MAX_PROMPT_CHARS (which, until 2026-10-02, cut the fresh-build prompt's own
+ending), while the design rules belong to the run, not the request.
 
 Everything here fails open. An unknown agent or a database error leaves the
 build exactly as it was before this existed. A marked run on a host without

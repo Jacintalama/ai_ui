@@ -12,7 +12,15 @@ CLAUDE_WORKSPACE = os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui")
 EXECUTION_TIMEOUT_SECONDS = int(os.environ.get("TASKS_AI_TIMEOUT_SECONDS", "600"))
 
 # Sanity bounds on AI execution to limit blast radius
-MAX_PROMPT_CHARS = 8000
+# Bounds a huge or hostile payload (why it was added, 2026-04-13), without
+# cutting the templates' own closing instructions. At 8000 it did cut them:
+# by 2026-10-02 a fresh-build prompt rendered to 9530 characters and lost its
+# commit, NEEDS_INPUT, tool-use and COMPLETED instructions on every build, and
+# a Supabase build (18401) lost its whole SQL block. 32000 is the most that
+# always fits one command-line argument, which is how the prompt travels both
+# locally and inside the ssh command: Linux allows 131072 bytes per argument,
+# and a character takes at most 4 bytes in UTF-8. tests/test_prompt_cap.py.
+MAX_PROMPT_CHARS = 32000
 MAX_LOG_BYTES = 1_000_000  # 1 MB cap on stdout we'll buffer per execution
 
 # When set, run claude inside this writable copy of the workspace instead of
