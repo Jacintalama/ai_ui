@@ -23,6 +23,15 @@ def test_it_is_a_valid_skill_that_needs_the_app_tool():
     assert {"design", "website"} <= set(skill["tags"])
 
 
+def test_it_never_says_built_before_the_build_says_so():
+    # 2026-10-02, the first real run: Dev, with only this skill ticked,
+    # answered "Built Crumb and Co landing page." the moment create_app
+    # returned, minutes before the build finished.
+    body = agent_skills.load_all(refresh=True)["impeccable"]["body"]
+    assert "takes a few minutes" in body
+    assert "build_status" in body
+
+
 def test_it_credits_impeccable_and_its_licence():
     text = open(SKILL_FILE, encoding="utf-8").read()
     assert "impeccable.style" in text

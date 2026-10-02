@@ -22,7 +22,9 @@ design checker before it finishes. Your part is the brief.
    change, then `propose_app_change` naming the design problem in plain
    terms (hierarchy, spacing, contrast, type size, a missing state) and what
    must stay as it is. Wait for their yes before `apply_app_change`.
-3. Give them the link exactly as the result writes it.
+3. Give them the link exactly as the result writes it, and say the build
+   takes a few minutes. It is not built yet when create_app answers: say it
+   is ready only after `build_status` says so.
 
 ## The standard the work is held to
 
