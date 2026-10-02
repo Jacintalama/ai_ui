@@ -20,6 +20,11 @@ TOOL = os.path.join(os.path.dirname(__file__), "..", "..", "..",
                     "open-webui-functions", "code_tool.py")
 OWNER = "owner@example.com"
 
+# The tool lives beside the service in the repo, not in the tasks image, so
+# inside the container there is nothing to load (seen 2026-10-02).
+pytestmark = pytest.mark.skipif(not os.path.exists(TOOL),
+                                reason="code_tool.py is not in this image")
+
 
 def _source():
     with open(TOOL, encoding="utf-8") as fh:
