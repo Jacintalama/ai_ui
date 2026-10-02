@@ -14,6 +14,12 @@ class _Result:
     def scalar(self):
         return self._value
 
+    def first(self):
+        # finish_run reads the owner back with RETURNING (the live office,
+        # 2026-09-30). Without this the fake raised inside finish_run's
+        # fail-open handler, so the commit never happened in the log.
+        return None
+
 
 class _Session:
     def __init__(self, log, value=None, boom=False):
