@@ -14,6 +14,7 @@ import os
 from typing import AsyncIterator
 
 import build_model
+import design_skill
 from claude_executor import (
     CLAUDE_SANDBOX_DIR,
     CLAUDE_WORKSPACE,
@@ -32,10 +33,11 @@ class LocalExecutor:
     async def run(
         self,
         prompt: str,
-        slug: str | None,         # unused for local; preserved for interface parity
+        slug: str | None,         # only names the app folder in the design rules
         execution_id: str,        # unused for local; preserved for interface parity
         user_jwt: str | None = None,  # unused for local; forwarded to remote only
         schedule_id: str | None = None,  # unused for local; remote-only memory roundtrip
+        design: str | None = None,  # design_skill.IMPECCABLE on a marked run
     ) -> AsyncIterator[str]:
         if len(prompt) > MAX_PROMPT_CHARS:
             prompt = prompt[:MAX_PROMPT_CHARS] + "\n[truncated by tasks service]"
@@ -44,6 +46,10 @@ class LocalExecutor:
         # APP_BUILD_MODEL, when set, drops the Anthropic key and names the
         # model; see build_model for why the key has to go.
         env = build_model.local_env({**os.environ, "IS_SANDBOX": "1"})
+        # Only the rules, the flags and the env: the skill itself is linked
+        # into a run's folder on the build host (remote), which is where
+        # production builds run.
+        env.update(design_skill.env(design, slug))
         effort = build_model.effort(os.environ.get("AIUI_AGENT_EFFORT", "low"))
 
         self._proc = await asyncio.create_subprocess_exec(
@@ -54,6 +60,10 @@ class LocalExecutor:
             "--verbose",
             "--effort", effort,
             *build_model.cli_args(),
+            *design_skill.cli_args(design, slug),
+            # --disallowedTools takes a list, so without this the prompt
+            # after it would be read as one more tool name.
+            "--",
             prompt,
             cwd=cwd,
             stdout=asyncio.subprocess.PIPE,

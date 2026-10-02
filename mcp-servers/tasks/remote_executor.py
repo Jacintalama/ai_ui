@@ -21,6 +21,7 @@ import shlex
 from typing import AsyncIterator
 
 import build_model
+import design_skill
 from claude_executor import (
     EXECUTION_TIMEOUT_SECONDS,
     MAX_LOG_BYTES,
@@ -78,6 +79,7 @@ class RemoteExecutor:
         execution_id: str,
         user_jwt: str | None = None,
         schedule_id: str | None = None,
+        design: str | None = None,
     ) -> AsyncIterator[str]:
         # 1. Validate slug
         if slug is not None and not _VALID_SLUG.fullmatch(slug):
@@ -116,7 +118,7 @@ class RemoteExecutor:
                 yield f"[memory fetch failed: {e}]\n"
 
         # 4. Build + spawn the remote command
-        remote_cmd = self._build_remote_cmd(prompt, slug, effort)
+        remote_cmd = self._build_remote_cmd(prompt, slug, effort, design)
         try:
             async for line in self._stream(host, user, key, remote_cmd,
                                            user_jwt=user_jwt):
@@ -230,7 +232,8 @@ class RemoteExecutor:
             err = (await rs.stderr.read()).decode() if rs.stderr else ""
             raise RuntimeError(f"push rsync exit {rc}: {err[:200]}")
 
-    def _build_remote_cmd(self, prompt: str, slug: str | None, effort: str) -> str:
+    def _build_remote_cmd(self, prompt: str, slug: str | None, effort: str,
+                          design: str | None = None) -> str:
         # AIUI_AGENT_EFFORT is forwarded from the orchestrator via SSH
         # SendEnv (see _stream below) — the sshd_config on the agent VM
         # AcceptEnv-lists it. We pass --effort explicitly anyway for
@@ -249,15 +252,20 @@ class RemoteExecutor:
         # ANTHROPIC_AUTH_TOKEN, which claude sends instead (checked against a
         # stub server on the build host, 2026-09-21).
         model_args = "".join(shlex.quote(a) + " " for a in build_model.cli_args())
+        # A marked run (design_skill) also links the Impeccable skill into
+        # this run's own folder and gets its rules, cap and safety flags.
+        design_args = "".join(shlex.quote(a) + " "
+                              for a in design_skill.cli_args(design, slug))
         return (
             "set -e; "
             f"cd {cwd}; "
             "set -a; source ~/.env; set +a; "
-            + build_model.remote_shell_prefix() +
+            + build_model.remote_shell_prefix()
+            + design_skill.remote_prefix(design, slug) +
             "IS_SANDBOX=1 claude --print --dangerously-skip-permissions "
             "--output-format stream-json --verbose "
             f"--effort {shlex.quote(effort)} "
-            + model_args +
+            + model_args + design_args +
             f"-- {qprompt}"
         )
 
