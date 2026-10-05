@@ -170,3 +170,12 @@ def test_the_width_is_clamped_so_a_column_cannot_be_dragged_away():
     js = _script()
     assert "MIN_AGENTS" in js and "MAX_AGENTS" in js
     assert "Math.max" in js and "Math.min" in js
+
+
+def test_escape_is_handled_in_one_place():
+    """Two Escape handlers, each closing "its" dialog, close two layers on
+    one press. agents.html has the page's one handler, which closes only the
+    top-most layer; agent-chat.js has none."""
+    assert '"Escape"' not in _script(), (
+        "agent-chat.js still handles Escape itself")
+    assert _page().count('"Escape"') == 1, "expected exactly one Escape check"

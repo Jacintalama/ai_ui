@@ -702,6 +702,11 @@
   .modal textarea:focus-visible {
     border-color: var(--accent);
   }
+  /* Connections opens from inside the agent form too (its "Connect an app"
+     link). Both overlays sat at z-index 50, so the form, later in the
+     markup, drew over the panel it had just opened. Escape closes
+     Connections first, so it has to be the one on top. */
+  #connections-overlay { z-index: 51; }
 </style>
 <script src="/tasks/static/vendor/htmx.min.js"></script>
 <script src="/tasks/static/vendor/sse.js"></script>
@@ -930,8 +935,9 @@
     </div>
 
     <div class="modal-overlay" id="connections-overlay" hidden>
-      <div class="modal" id="connections-panel">
-        <h2>Connections</h2>
+      <div class="modal" id="connections-panel" role="dialog" aria-modal="true"
+           aria-labelledby="connections-title" tabindex="-1">
+        <h2 id="connections-title">Connections</h2>
         <div class="hint" style="margin-bottom:14px">Connect an app once and
           every agent you own can use it, acting as your account.</div>
         <div id="connections-list"></div>
@@ -942,7 +948,8 @@
     </div>
 
     <div class="modal-overlay" id="agent-overlay" hidden>
-      <div class="modal" id="agent-form">
+      <div class="modal" id="agent-form" role="dialog" aria-modal="true"
+           aria-labelledby="form-title">
         <div class="modal-head"><h2 id="form-title">New agent</h2></div>
         <div class="modal-body">
         <div class="form-cols">
@@ -2494,10 +2501,39 @@
              + "always has full access.");
       formError("");
       updateChars();
-      document.getElementById("agent-overlay").hidden = false;
+      openDialog("agent-overlay", document.getElementById("agent-name"));
     }
 
-    function closeForm() { document.getElementById("agent-overlay").hidden = true; }
+    function closeForm() { closeDialog("agent-overlay"); }
+
+    // The agent form and Connections behave the way the clear confirm already
+    // does (agent-chat.js, showClear): focus moves in when one opens and goes
+    // back to whatever opened it when it closes. Kept per overlay, because
+    // Connections can open on top of the form and each has its own way back.
+    var dialogOpener = {};
+
+    function openDialog(id, first) {
+      var overlay = document.getElementById(id);
+      if (!overlay) return;
+      if (overlay.hidden) dialogOpener[id] = document.activeElement;
+      overlay.hidden = false;
+      var target = first || overlay.querySelector('[role="dialog"]');
+      if (target && typeof target.focus === "function") target.focus();
+    }
+
+    // Says whether there was anything to close, so the Escape handler can
+    // stop at the first layer it actually closed.
+    function closeDialog(id) {
+      var overlay = document.getElementById(id);
+      if (!overlay || overlay.hidden) return false;
+      overlay.hidden = true;
+      var back = dialogOpener[id];
+      dialogOpener[id] = null;
+      if (back && back.isConnected && typeof back.focus === "function") {
+        back.focus();
+      }
+      return true;
+    }
 
     var savedTimer = null;
 
@@ -2771,22 +2807,35 @@
           window.parent.postMessage({ type: "aiui:open-connections" }, "*");
           return;
         }
-        connOverlay.hidden = false;
+        openDialog("connections-overlay");
         loadConnections();
+      }
+
+      // Closing re-reads the tools, which redraws the form's "Connect an app"
+      // link: the very link that opened this panel when it sat on top of the
+      // form. Focus went back to that link before the redraw replaced it, so
+      // once the redraw lands it goes to the replacement, or failing that the
+      // form's first field, rather than being dropped on the page body.
+      function keepFocusInForm() {
+        var form = document.getElementById("agent-overlay");
+        if (!form || form.hidden || form.contains(document.activeElement)) return;
+        var again = form.querySelector("a.umbrella-connect")
+          || document.getElementById("agent-name");
+        if (again) again.focus();
+      }
+
+      function closeConnections() {
+        if (!closeDialog("connections-overlay")) return false;
+        refreshToolsKeepingChoices().then(keepFocusInForm, keepFocusInForm);
+        return true;
       }
 
       document.getElementById("open-connections").addEventListener(
         "click", openConnections);
       document.getElementById("connections-close").addEventListener(
-        "click", function () {
-          connOverlay.hidden = true;
-          refreshToolsKeepingChoices();
-        });
+        "click", closeConnections);
       connOverlay.addEventListener("click", function (ev) {
-        if (ev.target === connOverlay) {
-          connOverlay.hidden = true;
-          refreshToolsKeepingChoices();
-        }
+        if (ev.target === connOverlay) closeConnections();
       });
 
       document.body.addEventListener("click", function (ev) {
@@ -2890,9 +2939,34 @@
         else if (btn.dataset.act === "duplicate") duplicate(agent);
       });
 
-      // Escape closes the overflow, same as clicking away.
+      // The page's one Escape handler. Each press closes the top-most thing
+      // that is open and nothing under it: an overflow menu, then the clear
+      // confirm, then Connections (which can sit on top of the agent form),
+      // then the agent form. One layer per press, so Escape in Connections
+      // never throws away an agent somebody is halfway through writing.
+      // Delete and Forget all are not here: they ask through window.confirm,
+      // which handles its own keys.
       document.addEventListener("keydown", function (ev) {
-        if (ev.key === "Escape") closeMenus(null);
+        if (ev.key !== "Escape") return;
+        var menu = document.querySelector(".more-menu:not([hidden])");
+        if (menu) {
+          var opener = menu.parentNode.querySelector('[data-act="more"]');
+          closeMenus(null);
+          if (opener) opener.focus();
+          ev.preventDefault();
+          return;
+        }
+        var clear = document.getElementById("ap-clear-overlay");
+        if (clear && !clear.hidden) {
+          // agent-chat.js owns this one, and its Cancel is the way out that
+          // already hands focus back to Clear.
+          document.getElementById("ap-clear-cancel").click();
+          ev.preventDefault();
+          return;
+        }
+        if (closeConnections() || closeDialog("agent-overlay")) {
+          ev.preventDefault();
+        }
       });
     })();
 

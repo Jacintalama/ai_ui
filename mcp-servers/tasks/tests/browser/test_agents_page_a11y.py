@@ -336,3 +336,99 @@ def test_a_focused_form_field_shows_the_ring_and_the_border(page, field):
         "e => { const s = getComputedStyle(e); return [s.outlineStyle,"
         " s.outlineWidth, s.outlineColor, s.borderTopColor]; }")
     assert got == ["solid", "2px", ACCENT, ACCENT], (field, got)
+
+
+# --- dialogs -------------------------------------------------------------------
+
+@pytest.mark.parametrize("dialog, title", [("#agent-form", "New agent"),
+                                           ("#connections-panel", "Connections"),
+                                           ("#ap-clear-modal",
+                                            "Clear this conversation?")])
+def test_each_dialog_is_announced_as_one(page, dialog, title):
+    el = page.locator(dialog)
+    assert el.get_attribute("role") == "dialog", dialog
+    assert el.get_attribute("aria-modal") == "true", dialog
+    label = el.get_attribute("aria-labelledby")
+    assert label, dialog
+    assert page.locator("#" + label).inner_text().strip() == title
+
+
+def test_opening_the_form_moves_focus_in_and_cancel_hands_it_back(page):
+    page.locator("#new-agent").focus()
+    page.keyboard.press("Enter")
+    page.wait_for_selector("#agent-form", state="visible")
+    assert _active(page)["id"] == "agent-name", _active(page)
+    page.locator("#agent-cancel").click()
+    assert page.locator("#agent-overlay").is_hidden()
+    assert _active(page)["id"] == "new-agent", _active(page)
+
+
+def test_escape_closes_the_form_and_returns_to_the_edit_button(page):
+    edit = page.locator('[data-agent-id="agent-ada-0001"] [data-act="edit"]')
+    edit.click()
+    page.wait_for_selector("#agent-form", state="visible")
+    assert _active(page)["id"] == "agent-name", _active(page)
+    page.keyboard.press("Escape")
+    assert page.locator("#agent-overlay").is_hidden(), "Escape left the form open"
+    assert _active(page)["act"] == "edit", _active(page)
+
+
+def test_connections_opened_from_the_form_sits_on_top_of_it(page):
+    _open_form(page)
+    page.locator("#agent-form a.umbrella-connect").click()
+    page.wait_for_selector("#connections-panel", state="visible")
+    top = page.evaluate(
+        "() => { const p = document.getElementById('connections-panel')"
+        ".getBoundingClientRect();"
+        " const e = document.elementFromPoint(p.left + p.width / 2, p.top + 12);"
+        " if (!e) return null;"
+        " if (e.closest('#connections-panel')) return 'connections';"
+        " if (e.closest('#agent-form')) return 'agent-form';"
+        " return e.tagName; }")
+    assert top == "connections", top
+
+
+def test_escape_closes_only_the_top_most_dialog(page):
+    """Connections over the form. One Escape closes Connections and keeps
+    the half written agent; the next closes the form."""
+    _open_form(page)
+    page.fill("#agent-name", "Jack")
+    page.locator("#agent-form a.umbrella-connect").click()
+    page.wait_for_selector("#connections-panel", state="visible")
+    assert page.evaluate(
+        "() => !!document.activeElement.closest('#connections-panel')"), (
+        "focus stayed behind the panel")
+
+    page.keyboard.press("Escape")
+    assert page.locator("#connections-overlay").is_hidden()
+    assert page.locator("#agent-overlay").is_visible(), "one Escape closed both"
+    assert page.input_value("#agent-name") == "Jack"
+    # Closing re-reads the tools and redraws the link that opened the panel,
+    # so focus lands on its replacement once that is done.
+    page.wait_for_function(
+        "() => document.activeElement.classList.contains('umbrella-connect')")
+
+    page.keyboard.press("Escape")
+    assert page.locator("#agent-overlay").is_hidden()
+    assert _active(page)["id"] == "new-agent", _active(page)
+
+
+def test_escape_closes_the_clear_confirm_and_returns_to_clear(page):
+    """Already true before the Escape handlers were merged: kept as a pin,
+    because the merge moved this case out of agent-chat.js."""
+    page.locator("#ap-clear").click()
+    page.wait_for_selector("#ap-clear-modal", state="visible")
+    assert _active(page)["id"] == "ap-clear-cancel", _active(page)
+    page.keyboard.press("Escape")
+    assert page.locator("#ap-clear-overlay").is_hidden()
+    assert _active(page)["id"] == "ap-clear", _active(page)
+
+
+def test_escape_closes_an_open_card_menu_and_returns_to_its_button(page):
+    more = page.locator('[data-agent-id="agent-ada-0001"] [data-act="more"]')
+    more.click()
+    menu = page.locator('[data-agent-id="agent-ada-0001"] .more-menu')
+    assert menu.is_visible()
+    page.keyboard.press("Escape")
+    assert menu.is_hidden()
+    assert _active(page)["act"] == "more", _active(page)

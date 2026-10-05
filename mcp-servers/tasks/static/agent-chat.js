@@ -142,9 +142,9 @@
       if (e.detail && e.detail.successful) { showClear(false); }
     });
   }
-  document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && overlay && !overlay.hidden) { showClear(false); }
-  });
+  // No Escape handler here. agents.html has the page's one Escape handler,
+  // which closes only the top-most layer, and for this dialog it presses
+  // Cancel, so focus comes back to Clear through showClear above.
 
   // Drag the divider to trade width between the conversation and the agents.
   // The width belongs to the person, not the session, so it is remembered
