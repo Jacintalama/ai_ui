@@ -776,7 +776,9 @@ def test_the_brain_opens_the_graph_pane_and_leaves_the_page_alone(browser, serve
 
 def test_in_the_shell_a_chat_pill_asks_for_the_agents_pane(page, server):
     """The Agent Office pane on its own, inside the shell. Nobody hosts it,
-    so its Chat pill asks the shell to open AI Agents with the question."""
+    so its Chat pill asks the shell to open AI Agents with the question, and
+    names the agent the way it does when docked, so the agents page can open
+    that agent's own conversation either way."""
     page.goto("http://127.0.0.1:%d/shell" % server.server_address[1])
     office = page.frame_locator("#pane")
     office.locator('.who-chat[data-id="agent-iris-a103"]').wait_for()
@@ -790,7 +792,8 @@ def test_in_the_shell_a_chat_pill_asks_for_the_agents_pane(page, server):
     origin = "http://127.0.0.1:%d" % server.server_address[1]
     assert page.evaluate("() => window.__panes") == [
         {"data": {"type": "aiui:open-pane", "path": "/ai-agents",
-                  "ask": "Iris, "}, "origin": origin}]
+                  "ask": "Iris, ", "agent": "agent-iris-a103", "name": "Iris"},
+         "origin": origin}]
 
 
 def test_in_the_shell_the_brain_asks_for_the_graph_pane(page, server):

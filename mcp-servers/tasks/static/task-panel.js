@@ -1603,20 +1603,32 @@
     // An `ask` goes only to the AI Agents page, only once its frame has
     // loaded, and only PREFILLS its composer. Nothing is ever sent for the
     // person: a turn costs money and can run tools.
+    //
+    // The ask is handed over as the office wrote it, not trimmed: docked in
+    // the agents page the office's "everyone answer: " keeps its trailing
+    // space, so the person types straight after it, and this way it does
+    // here too. Blank or over 2000 characters, it is dropped.
+    //
+    // With the ask may come the `agent` the office asked and its `name`, so
+    // a robot's Chat pill opens that agent's own conversation here exactly
+    // as it does in the docked office. Only an id shaped like one goes on
+    // (the agents page still checks it is one of the viewer's own), and the
+    // name only with it.
     const AIUI_ASK_MAX = 2000;
+    const AIUI_AGENT_ID = /^[A-Za-z0-9_-]{1,100}$/;
+    const AIUI_NAME_MAX = 40;
 
     function aiuiIsPaneFrame(source) {
       return !!source && Object.keys(AIUI_FRAMES).some(
         (k) => AIUI_FRAMES[k].contentWindow === source);
     }
 
-    function aiuiHandAskToAgents(cfg, ask) {
+    function aiuiHandAskToAgents(cfg, msg) {
       const frame = AIUI_FRAMES[cfg.href];
       if (!frame) return;
       const hand = () => {
         try {
-          frame.contentWindow.postMessage(
-            { type: "aiui-agents-ask", ask: ask }, location.origin);
+          frame.contentWindow.postMessage(msg, location.origin);
         } catch (e) { /* frame gone: the question is dropped, never sent */ }
       };
       if (frame.__aiuiLoaded) hand();
@@ -1632,9 +1644,16 @@
       if (!cfg) return;
       if (!cfg.allUsers && !(await isAdmin())) return;
       openAiuiEmbed(cfg);
-      if (d.path === "/ai-agents" && typeof d.ask === "string") {
-        const ask = d.ask.trim();
-        if (ask && ask.length <= AIUI_ASK_MAX) aiuiHandAskToAgents(cfg, ask);
+      if (d.path === "/ai-agents" && typeof d.ask === "string" &&
+          d.ask.trim() && d.ask.length <= AIUI_ASK_MAX) {
+        const msg = { type: "aiui-agents-ask", ask: d.ask };
+        if (typeof d.agent === "string" && AIUI_AGENT_ID.test(d.agent)) {
+          msg.agent = d.agent;
+          if (typeof d.name === "string" && d.name.length <= AIUI_NAME_MAX) {
+            msg.name = d.name;
+          }
+        }
+        aiuiHandAskToAgents(cfg, msg);
       }
     });
 

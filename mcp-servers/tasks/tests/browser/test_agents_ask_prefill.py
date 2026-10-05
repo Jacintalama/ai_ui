@@ -301,3 +301,150 @@ def test_an_overlong_question_is_ignored(browser, server):
         assert _pane(pg).locator(BOX).input_value() == ""
     finally:
         pg.close()
+
+
+# --- the shell naming the agent ---------------------------------------------
+#
+# A robot's Chat pill in the Agent Office opens that agent's own conversation
+# when the office is docked in this page (aiui-office-ask with the agent).
+# The same click in the standalone Agent Office pane reaches this page through
+# the shell as aiui-agents-ask, now carrying the same agent and name, and has
+# to do the same thing: one click may not behave two ways. Only for the
+# viewer's own agents, the rule the cards follow.
+
+ROSTER = [
+    {"id": "agent-iris-a103", "name": "Iris",
+     "meta": {"role": "Drive librarian", "toolIds": ["gdrive"]},
+     "params": {}, "user_id": "me", "created_at": 1, "updated_at": 1},
+    {"id": "agent-bo-0002", "name": "Bo",
+     "meta": {"role": "Researcher", "toolIds": []},
+     "params": {}, "user_id": "someone-else", "created_at": 2, "updated_at": 2},
+]
+IRIS_CARD = '#my-agents .card[data-agent-id="agent-iris-a103"]'
+
+#: What task-panel.js posts, plus whatever fields the test hands it.
+POST_ASK = (
+    "m => document.getElementById('pane').contentWindow.postMessage("
+    "Object.assign({type: 'aiui-agents-ask'}, m), location.origin)")
+
+
+def _shell_as_owner(browser, server, hold_list=False):
+    """The shell around the agents page, signed in as the owner of Iris.
+
+    hold_list leaves the agent list unanswered until the test calls
+    pg.release(). The shell hands a question over the moment the pane's
+    frame fires load, and the list is a fetch that is still out then."""
+    pg = browser.new_page(viewport={"width": 1400, "height": 950})
+    pg.set_default_timeout(6000)
+    sent, held = [], []
+
+    def answer(r):
+        url = r.request.url
+        if "/api/v1/auths/" in url:
+            body = {"id": "me", "email": "me@example.test"}
+        elif "/models/list" in url:
+            body = {"items": ROSTER, "total": len(ROSTER)}
+        else:
+            body = {"items": [], "total": 0}
+        r.fulfill(status=200, content_type="application/json",
+                  body=json.dumps(body))
+
+    def route(r):
+        if r.request.method == "POST":
+            sent.append(r.request.url)
+        if hold_list and "/models/list" in r.request.url:
+            held.append(r)
+            return
+        answer(r)
+
+    def release():
+        while held:
+            answer(held.pop(0))
+
+    pg.route("**/api/**", route)
+    pg.route("**/tasks/**", route)
+    pg.goto("http://127.0.0.1:%d/shell" % server.server_address[1])
+    pg.frame_locator("#pane").locator(BOX).wait_for(state="attached")
+    if not hold_list:
+        pg.frame_locator("#pane").locator(IRIS_CARD).wait_for(state="attached")
+    pg.wait_for_timeout(200)
+    pg.frame_locator("#pane").locator("body").evaluate(LISTEN)
+    pg.sent = sent
+    pg.release = release
+    return pg
+
+
+def _talking_to(pg):
+    return _pane(pg).locator("#ap-agent").input_value()
+
+
+def test_the_shell_opens_your_agents_own_conversation(browser, server):
+    """The Chat pill says "Iris, ". Docked, it opens Iris's own conversation
+    and leaves the box empty; from the shell it does the same."""
+    pg = _shell_as_owner(browser, server)
+    try:
+        pg.evaluate(POST_ASK, {"ask": "Iris, ", "agent": "agent-iris-a103",
+                               "name": "Iris"})
+        pg.wait_for_timeout(300)
+        assert _talking_to(pg) == "agent-iris-a103"
+        assert _pane(pg).locator("#ap-who").inner_text() == "Chat with Iris"
+        assert _pane(pg).locator(BOX).input_value() == ""
+        assert not [u for u in pg.sent if "chat/send" in u], pg.sent
+    finally:
+        pg.close()
+
+
+def test_a_skill_from_the_shell_opens_the_conversation_with_the_question(
+        browser, server):
+    """A skill link says "Iris, find my file". In Iris's own conversation her
+    name is not needed, so only the question goes in the box, unsent."""
+    pg = _shell_as_owner(browser, server)
+    try:
+        pg.evaluate(POST_ASK, {"ask": "Iris, find my file",
+                               "agent": "agent-iris-a103", "name": "Iris"})
+        pg.wait_for_timeout(300)
+        assert _talking_to(pg) == "agent-iris-a103"
+        assert _pane(pg).locator(BOX).input_value() == "find my file"
+        assert not [u for u in pg.sent if "chat/send" in u], pg.sent
+    finally:
+        pg.close()
+
+
+def test_the_question_waits_until_your_agents_are_known(browser, server):
+    """Until the list arrives the page cannot tell whose agent this is. It
+    waits for it rather than putting the question in the room."""
+    pg = _shell_as_owner(browser, server, hold_list=True)
+    try:
+        pg.evaluate(POST_ASK, {"ask": "Iris, find my file",
+                               "agent": "agent-iris-a103", "name": "Iris"})
+        pg.wait_for_timeout(300)
+        assert "aiui-agents-ask" in _arrived(pg)
+        assert _pane(pg).locator(BOX).input_value() == ""
+        pg.release()
+        _pane(pg).locator(IRIS_CARD).wait_for(state="attached")
+        pg.wait_for_timeout(300)
+        assert _talking_to(pg) == "agent-iris-a103"
+        assert _pane(pg).locator(BOX).input_value() == "find my file"
+    finally:
+        pg.close()
+
+
+def test_only_your_own_agents_conversation_is_opened(browser, server):
+    """Somebody else's agent, or an id this page does not list, gets no
+    private conversation from a message. The question goes to the room as
+    it was written, which is what happened before the office named agents."""
+    pg = _shell_as_owner(browser, server)
+    try:
+        for agent, name in (("agent-bo-0002", "Bo"),
+                            ("agent-nobody-0009", "Nobody")):
+            ask = name + ", hello"
+            pg.evaluate(POST_ASK, {"ask": ask, "agent": agent, "name": name})
+            pg.wait_for_timeout(300)
+            assert _talking_to(pg) == "", agent
+            assert _pane(pg).locator(BOX).input_value() == ask
+        pg.evaluate(POST_ASK, {"ask": "Iris, ", "agent": "agent-iris-a103",
+                               "name": "Iris"})
+        pg.wait_for_timeout(300)
+        assert _talking_to(pg) == "agent-iris-a103"
+    finally:
+        pg.close()

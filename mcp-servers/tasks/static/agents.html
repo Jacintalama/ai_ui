@@ -3010,6 +3010,51 @@
       return true;
     }
 
+    // An office Chat pill or skill link that names its agent: open that
+    // agent's own conversation and leave the question in it. The docked
+    // office (aiui-office-ask, below) and the Agent Office pane through the
+    // shell (aiui-agents-ask) both come through here, so the same click does
+    // the same thing either way. A Chat pill says "Iris, " and leaves the box
+    // empty. A skill link says "Iris, find my file", and in Iris's own
+    // conversation only "find my file" is needed. Nothing is sent.
+    function askAgent(id, name, ask) {
+      if (typeof window.aiuiTalkTo !== "function") return false;
+      window.aiuiTalkTo(id, name || id);
+      var rest = ask;
+      if (name && rest.indexOf(name + ",") === 0) rest = rest.slice(name.length + 1);
+      rest = rest.trim();
+      if (rest) prefillAsk(rest);
+      return true;
+    }
+    window.aiuiAskAgent = askAgent;
+
+    // One of this person's own agents, or null. The cards follow the same
+    // rule: an admin's listing carries everybody's agents.
+    function ownAgent(id) {
+      var page = window.__aiuiAgents;
+      if (!page || !page.state || !page.state.me) return null;
+      return page.state.agents.filter(function (m) {
+        return m.id === id && m.user_id === page.state.me;
+      })[0] || null;
+    }
+
+    // The shell hands a question over the moment this frame loads, and the
+    // agent list is a fetch still out then, so whose agent it names cannot
+    // be told yet. Wait for the first drawing of the cards, or for the page
+    // to finish starting when the list failed. Twenty seconds at most:
+    // after that the question goes to the room rather than nowhere.
+    var listed = false;
+    document.body.addEventListener("aiui:cards-drawn", function () { listed = true; });
+    function whenListed(then) {
+      var waited = 0;
+      (function check() {
+        var page = window.__aiuiAgents;
+        if (listed || (page && page.ready) || waited >= 20000) { then(); return; }
+        waited += 100;
+        setTimeout(check, 100);
+      })();
+    }
+
     try {
       var ask = new URLSearchParams(location.search).get("ask");
       if (ask && prefillAsk(ask)) {
@@ -3024,10 +3069,11 @@
     }
 
     // The shell (task-panel.js) opening this pane with a question:
-    // {type: "aiui-agents-ask", ask}. Only from the window that framed this
-    // page and only from this origin. Without both, any page that framed
-    // this one, or any frame beside it, could type into the composer. It
-    // fills and stops, like ?ask=: nothing is ever sent for the person.
+    // {type: "aiui-agents-ask", ask, agent?, name?}. Only from the window
+    // that framed this page and only from this origin. Without both, any
+    // page that framed this one, or any frame beside it, could type into
+    // the composer. It fills and stops, like ?ask=: nothing is ever sent
+    // for the person.
     window.addEventListener("message", function (ev) {
       if (window.parent === window) return;
       if (ev.source !== window.parent) return;
@@ -3038,7 +3084,22 @@
       // Over 2000 characters is dropped, not cut, the same policy as the
       // shell: half a question in the box would read as the whole of it.
       if (msg.ask.length > 2000) return;
-      prefillAsk(msg.ask);
+      var ask = msg.ask;
+      // The Agent Office pane named the agent it asked. Docked, the same
+      // click opens that agent's own conversation, so here it does too,
+      // for this person's own agents. Anybody else's goes to the room as
+      // written, as it did before the office named agents.
+      if (typeof msg.agent === "string" && msg.agent) {
+        var id = msg.agent;
+        var name = typeof msg.name === "string" ? msg.name : "";
+        whenListed(function () {
+          var own = ownAgent(id);
+          if (own && askAgent(id, name || own.name || "", ask)) return;
+          prefillAsk(ask);
+        });
+        return;
+      }
+      prefillAsk(ask);
     });
   })();
 </script>
@@ -3344,17 +3405,13 @@
       var talk = typeof window.aiuiTalkTo === "function" ? window.aiuiTalkTo : null;
       // Clicking Chat on a robot opens that agent's own conversation. It used
       // to type "Ada, " into the shared room, which routed the answer to Ada
-      // but left the words where every other agent read them.
-      if (msg.agent && typeof msg.agent === "string" && talk) {
-        var name = typeof msg.name === "string" ? msg.name : "";
-        talk(msg.agent, name || msg.agent);
-        // A skill link says "Iris, find my file". In Iris's own conversation
-        // her name is not needed, so only the question goes in the box. A
-        // Chat pill says just "Iris, " and leaves the box empty.
-        var rest = msg.ask;
-        if (name && rest.indexOf(name + ",") === 0) rest = rest.slice(name.length + 1);
-        rest = rest.trim();
-        if (rest) prefill(rest);
+      // but left the words where every other agent read them. aiuiAskAgent
+      // is the one copy of that, shared with the shell's aiui-agents-ask.
+      if (msg.agent && typeof msg.agent === "string" &&
+          typeof window.aiuiAskAgent === "function" &&
+          window.aiuiAskAgent(msg.agent,
+                              typeof msg.name === "string" ? msg.name : "",
+                              msg.ask)) {
         return;
       }
       // No agent: a question for the room, such as the meeting button's

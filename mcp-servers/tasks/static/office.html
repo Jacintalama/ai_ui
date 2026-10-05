@@ -1625,9 +1625,17 @@
     // are served by the same host, and a wildcard would hand whatever is
     // typed to any page that framed this one.
     var origin = window.location.origin;
+    // Who a Chat pill or a skill link is talking to, said the same way to
+    // the agents page around us and, through the shell, to the AI Agents
+    // pane: either one opens that agent's own conversation, so the same
+    // click does the same thing wherever this floor is.
+    var name = (ask.split(",")[0] || "").trim();
     if (shell) {
       var open = { type: "aiui:open-pane", path: path };
-      if (ask) open.ask = ask;
+      if (ask) {
+        open.ask = ask;
+        if (id) { open.agent = id; open.name = name; }
+      }
       window.top.postMessage(open, origin);
       return;
     }
@@ -1637,8 +1645,7 @@
       // "Chat" on a robot means a private word with them. Without an id
       // (the meeting button) it is a question for the room.
       window.parent.postMessage({
-        type: "aiui-office-ask", ask: ask, agent: id,
-        name: (ask.split(",")[0] || "").trim()
+        type: "aiui-office-ask", ask: ask, agent: id, name: name
       }, origin);
     } else if (id && a.classList.contains("edit-agent")) {
       window.parent.postMessage({ type: "aiui-office-edit", id: id }, origin);
