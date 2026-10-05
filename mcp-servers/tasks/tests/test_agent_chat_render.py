@@ -303,3 +303,94 @@ def test_a_stored_failure_without_a_reason_falls_back_to_the_generic_one():
     ])
     assert "afail" in html
     assert GENERIC_FAILURE_REASON in html
+
+
+# --- a stored PASS is protocol, not an answer ------------------------------
+#
+# PASS is a word in a protocol between routes_agent_chat and the model, and a
+# person should never read it (see the comment under `_is_pass(answer)` in
+# routes_agent_chat._run_round). The round stopped storing new ones, but rows
+# saved before that still hold them, and thread() redrew every one of them as
+# a bubble on each load. The shapes below are what the round really stored:
+# the dict is _run_round's `messages.append`, and the two contents are a bare
+# PASS (the "Ada / PASS" bubble of 2026-09-24) and the Auto (Smart) pass
+# copied from production into test_agent_chat_room.py as STORED_SMART_PASS.
+# The owner's room still drew that exact 65-character text four times on
+# 2026-10-05.
+
+SMART_FOOTER = "\n\n*Auto (Smart): routed to the paid general model `gpt-5.5`.*"
+STORED_SMART_PASS = "PASS" + SMART_FOOTER
+
+
+def _stored(name, content, **extra):
+    """One answer, in the shape routes_agent_chat._run_round saves it."""
+    m = {"role": "assistant", "agent_id": "agent-" + name.lower(),
+         "agent_name": name, "content": content, "replying_to": None}
+    m.update(extra)
+    return m
+
+
+def test_a_stored_pass_is_not_drawn_on_the_way_back():
+    html = render.thread([
+        {"role": "user", "content": "anything new?", "turn_id": "aaa111aaa111"},
+        _stored("Ada", "PASS"),
+        _stored("Kai", STORED_SMART_PASS),
+        _stored("Mia", "Two invoices are due on Friday."),
+    ])
+    assert html.count('class="am agent"') == 1, "a pass came back as a bubble"
+    assert "Two invoices are due on Friday." in html
+    assert "PASS" not in html
+    assert ">Ada<" not in html and ">Kai<" not in html
+    # The question stays, in its own turn. Only the passes go.
+    assert html.count('class="aturn"') == 1
+    assert "anything new?" in html
+
+
+def test_a_stored_answer_is_drawn_without_its_route_footer():
+    """The footer is the routing pipe talking (auto_smart_pipe.py _footer),
+    not the agent. It comes off the last line only, the way is_pass reads
+    it, so everything the agent said stays."""
+    html = render.thread([
+        {"role": "user", "content": "what is due?", "turn_id": "aaa111aaa111"},
+        _stored("Mia", "Two invoices are due on Friday." + SMART_FOOTER),
+    ])
+    assert html.count('class="am agent"') == 1
+    assert "Two invoices are due on Friday." in html
+    assert "routed to" not in html
+    assert "gpt-5.5" not in html
+
+
+def test_an_answer_that_starts_with_pass_is_still_drawn():
+    """Kai's stored reply (STORED_PASS_THEN_ANSWER in test_agent_chat_room.py)
+    starts with PASS and then says what it did. is_pass calls that an answer,
+    so the thread draws it, word for word."""
+    kai = ("PASS\n\n(create-me-a-shoe-website-fe02: I inspected the files. I "
+           "read public/index.html and the root index.html, but both read "
+           "results were shortened by the tool.)")
+    html = render.thread([
+        {"role": "user", "content": "check the site", "turn_id": "aaa111aaa111"},
+        _stored("Kai", kai),
+    ])
+    assert html.count('class="am agent"') == 1
+    assert "I inspected the files." in html
+
+
+def test_a_stored_pass_that_asked_permission_keeps_its_question():
+    """The round does not treat a pass that came back with a tool call as a
+    pass (`_is_pass(answer) and not out.get("pending")`), so _question_events
+    stores it with `awaiting`. The Yes and No are what matter, so they stay;
+    only the word goes."""
+    html = render.thread([
+        {"role": "user", "content": "send it", "turn_id": "aaa111aaa111"},
+        _stored("Ada", "PASS", awaiting={"ask_id": "q-9", "calls": CALLS}),
+    ])
+    assert 'id="await-q-9"' in html
+    assert "PASS" not in html
+    assert 'class="atext md"' not in html, "the pass was drawn above the question"
+
+
+def test_a_conversation_of_only_passes_falls_back_to_the_empty_state():
+    """Nothing left to show is the empty state, as with round bookkeeping
+    (test_round_bookkeeping_still_draws_as_nothing)."""
+    assert (render.thread([_stored("Ada", STORED_SMART_PASS)])
+            == render.empty_thread())

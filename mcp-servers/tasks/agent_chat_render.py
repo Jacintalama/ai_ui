@@ -13,6 +13,8 @@ import re
 import uuid
 from urllib.parse import quote
 
+import agent_routing
+
 
 def esc(s: str) -> str:
     return html.escape(s or "")
@@ -341,6 +343,29 @@ def empty_thread(private: bool = False) -> str:
             'reply.</div>')
 
 
+def _shown(content: str) -> str:
+    """What a stored answer shows when the thread is drawn again, or "".
+
+    Two things a round stored are not the agent talking. A PASS is a word in
+    a protocol between routes_agent_chat and the model, never something a
+    person should read. The round stopped storing new ones (the
+    `_is_pass(answer)` branch in _run_round), but rows saved before that
+    still hold them, and the owner's room drew four on 2026-10-05, each one
+    a PASS over an Auto (Smart) footer. And that footer is the routing pipe
+    saying which model it picked (auto_smart_pipe.py _footer).
+
+    Both come from agent_routing, so the thread and the round cannot
+    disagree about what a pass is: the pass check reads the whole stored
+    text, exactly as the round does, and the footer comes off the last line
+    only, the one place ROUTE_FOOTER matches. Any other text is drawn
+    exactly as it was stored.
+    """
+    if agent_routing.is_pass(content):
+        return ""
+    body, found = agent_routing.ROUTE_FOOTER.subn("", "\n" + content)
+    return body.strip() if found else content
+
+
 def thread(messages: list[dict], private: bool = False) -> str:
     """A saved conversation replayed, grouped into turns.
 
@@ -349,6 +374,9 @@ def thread(messages: list[dict], private: bool = False) -> str:
     failures ARE drawn, because a round stores them on purpose: a skipped
     agent, or one that could not answer, said out loud while the round ran
     and then gone on reload leaves a conversation that no longer makes sense.
+    An answer is drawn as _shown leaves it: a stored PASS not at all, and
+    anything else without the routing footer. A PASS that stopped to ask
+    permission still draws its Yes and No.
 
     Every user message opens a new turn, closing whichever one was open, so
     replay produces the same one-block-per-question shape a live round does.
@@ -386,12 +414,13 @@ def thread(messages: list[dict], private: bool = False) -> str:
                                str(m.get("fix") or "")))
         elif role == "assistant":
             name = str(m.get("agent_name") or "Agent")
-            if content:
+            shown = _shown(content)
+            if shown:
                 # The stored decision, not a fresh one. After a reload the
                 # messages are in order and nothing looks ambiguous any more,
                 # so recomputing would silently drop a quote that was on
                 # screen a moment ago.
-                out.append(agent_bubble(name, content,
+                out.append(agent_bubble(name, shown,
                                         m.get("replying_to")))
             awaiting = m.get("awaiting")
             if isinstance(awaiting, dict) and awaiting.get("calls"):

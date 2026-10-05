@@ -355,6 +355,35 @@ def test_the_conversation_is_still_there_after_a_restart(monkeypatch):
     assert mod.store.get_session(EMAIL).chat_id == "chat-1"
 
 
+def test_a_stored_pass_is_not_redrawn_when_the_room_loads(monkeypatch):
+    """The other half of test_a_pass_with_a_router_footer_is_still_a_pass.
+    Recognising the shape stopped NEW passes being stored. The ones stored
+    before that are still in the row, and the thread route drew every one as
+    a bubble reading PASS over the route footer: four in the owner's room on
+    2026-10-05."""
+    app, mod, _, rows = _app(monkeypatch)
+    rows[EMAIL] = {
+        "id": "chat-1", "user_email": EMAIL, "title": "anything new?",
+        "summary": "", "pending": {},
+        "messages": [
+            {"role": "user", "content": "anything new?",
+             "turn_id": "aaa111aaa111"},
+            {"role": "assistant", "agent_id": ADA["id"], "agent_name": "Ada",
+             "content": STORED_SMART_PASS, "replying_to": None},
+            {"role": "assistant", "agent_id": MIA["id"], "agent_name": "Mia",
+             "content": "Two invoices are due on Friday.\n\n*Auto (Smart): "
+                        "routed to the paid general model `gpt-5.5`.*",
+             "replying_to": None},
+        ]}
+    mod.store._SESSIONS.clear()
+    thread = TestClient(app).get("/tasks/agents/chat/thread",
+                                 headers=_hdr()).text
+    assert thread.count('class="am agent"') == 1
+    assert "PASS" not in thread
+    assert "routed to" not in thread
+    assert "Two invoices are due on Friday." in thread
+
+
 def test_a_second_person_gets_their_own_room(monkeypatch):
     app, mod, _, rows = _app(monkeypatch)
     _ask(app, "mine")
