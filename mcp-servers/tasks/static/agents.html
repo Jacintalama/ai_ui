@@ -1767,15 +1767,55 @@
     }
 
     var activityTimer = null;
+    //: A tick that found the page off screen. Coming back on screen makes it
+    //: up at once, rather than leaving the dots up to 5 seconds stale.
+    var activityMissed = false;
+
+    // On screen means the tab is showing AND no frame between this page and
+    // the top window is display:none. The shell keeps a closed pane loaded so
+    // that it reopens instantly: closing sets the pane to display:none, and
+    // opening another feature sets this frame to display:none. document.hidden
+    // sees neither, because it only follows the browser tab, so a pane opened
+    // once went on polling for as long as the tab lived. Asked at every tick
+    // rather than kept as a flag, so a message that never arrives cannot
+    // stop the dots for good.
+    function onScreen() {
+      if (document.hidden) return false;
+      try {
+        for (var w = window; w !== w.top; w = w.parent) {
+          var f = w.frameElement;
+          // Framed by another origin: nothing more can be known, so poll.
+          if (!f) return true;
+          if (!f.getClientRects().length) return false;
+        }
+      } catch (e) { /* an ancestor we may not read: poll as before */ }
+      return true;
+    }
 
     function watchActivity() {
       if (activityTimer) clearInterval(activityTimer);
-      // Only while the tab is actually being looked at. The box has 3.8GB and
-      // no reason to answer a poll nobody is reading.
+      // Only while somebody can see it. The box has 3.8GB and no reason to
+      // answer a poll nobody is reading.
       activityTimer = setInterval(function () {
-        if (!document.hidden) loadActivity();
+        if (onScreen()) { activityMissed = false; loadActivity(); }
+        else activityMissed = true;
       }, 5000);
     }
+
+    function catchUpActivity() {
+      if (!activityMissed || !onScreen()) return;
+      activityMissed = false;
+      loadActivity();
+    }
+    document.addEventListener("visibilitychange", catchUpActivity);
+    // The shell says when this pane is back on screen (aiuiFrameVisible in
+    // task-panel.js). Only from the window that framed this page, and only
+    // from this origin.
+    window.addEventListener("message", function (ev) {
+      if (ev.origin !== window.location.origin) return;
+      if (ev.source !== window.parent) return;
+      if (ev.data && ev.data.aiuiFrameVisible === true) catchUpActivity();
+    });
 
     function render() {
       var mineWrap = document.getElementById("my-agents");
