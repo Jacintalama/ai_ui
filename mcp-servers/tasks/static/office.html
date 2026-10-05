@@ -550,8 +550,27 @@
   try { CHOSEN = JSON.parse(localStorage.getItem(COLOUR_KEY) || "{}") || {}; }
   catch (e) { CHOSEN = {}; }      // a private window throws; the office still draws
 
-  // The one this person picked, or a stable one from the id so the same agent
-  // is the same robot on every reload without anybody choosing.
+  //: The agent's own hue, from its NAME, by the hash its card uses
+  //: (agents.html avatarHue) and the chat thread uses
+  //: (agent_chat_render._hue). Keep the three identical: a robot picked by
+  //: a hash of the id made Ada green on her card and purple on this floor.
+  function nameHue(name) {
+    var h = 0, str = String(name || "");
+    for (var i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) % 360;
+    return h;
+  }
+  //: A palette in that hue: the body is DESIGN.md's avatar colour,
+  //: hsl(hue 45% 32%), and the accent is light enough to read as eyes on
+  //: the dark face.
+  function ownPalette(id) {
+    var h = nameHue(nameOf(id));
+    return { hue: "own", accent: "hsl(" + h + ", 70%, 66%)",
+             body: "hsl(" + h + ", 45%, 32%)", body2: "hsl(" + h + ", 45%, 24%)" };
+  }
+
+  // The one this person picked, or the agent's own hue, so the same agent is
+  // the same colour here as on its card and in the chat without anybody
+  // choosing.
   function paletteOf(id) {
     var picked = CHOSEN[id];
     if (picked) {
@@ -559,14 +578,14 @@
         if (PALETTES[i].hue === picked) return PALETTES[i];
       }
     }
-    var n = 0;
-    for (var j = 0; j < id.length; j++) n = (n * 31 + id.charCodeAt(j)) >>> 0;
-    return PALETTES[n % PALETTES.length];
+    return ownPalette(id);
   }
   function colourOf(id) { return paletteOf(id).accent; }
 
   function pickColour(id, hue) {
-    CHOSEN[id] = hue;
+    // "own" is the way back: no choice stored, the agent's own hue again.
+    if (hue === "own") delete CHOSEN[id];
+    else CHOSEN[id] = hue;
     // Per viewer, because it is how this person wants their own office to
     // look rather than a property of the agent. Making it the agent's would
     // mean writing the whole model row back through Open WebUI's update
@@ -1112,10 +1131,15 @@
       '</div>' +
       '<p class="section-title" style="margin-top:18px">Colour</p>' +
       '<div class="tags swatches">' +
-        PALETTES.map(function (pal) {
+        // The agent's own colour first, the one it wears on its card.
+        [ownPalette(m.id)].concat(PALETTES).map(function (pal) {
+          var own = pal.hue === "own";
           return '<button class="swatch" type="button" data-hue="' + pal.hue +
-            '" title="' + pal.hue + '" aria-label="Make ' + esc(m.name || m.id) +
-            ' ' + pal.hue + '" style="background:' + pal.body +
+            '" title="' + (own ? "Its own colour, as on its card" : pal.hue) +
+            '" aria-label="' + (own
+              ? "Give " + esc(m.name || m.id) + " its own colour"
+              : "Make " + esc(m.name || m.id) + " " + pal.hue) +
+            '" style="background:' + pal.body +
             ';border-color:' + pal.accent + '"' +
             (paletteOf(m.id).hue === pal.hue ? ' aria-current="true"' : "") +
             '></button>';

@@ -12,6 +12,8 @@ puppet show.
 import http.server
 import json
 import pathlib
+import re
+import sys
 import threading
 
 import pytest
@@ -20,6 +22,10 @@ playwright_api = pytest.importorskip(
     "playwright.sync_api", reason="playwright not installed")
 
 STATIC = pathlib.Path(__file__).resolve().parents[2] / "static"
+sys.path.insert(0, str(STATIC.parent))
+# The hue the cards and the chat thread give an agent. Read from the producer
+# rather than re-implemented here, so the office is held to the real thing.
+import agent_chat_render as render                        # noqa: E402
 
 AGENTS = [
     {"id": "agent-research-assistant-0001", "name": "Ada",
@@ -1055,3 +1061,59 @@ def test_fit_keeps_the_robots_worth_looking_at(crowded):
     h = crowded.locator(".who svg.bot").first.bounding_box()["height"]
     assert h >= 40, h
 
+
+
+# --- one colour per agent, everywhere ---------------------------------------
+# DESIGN.md, the One Hue Per Agent Rule. The office picked one of its own six
+# palettes from a hash of the agent's id, so Ada was green on her card and
+# purple as a robot. Cards and the chat thread take the hue from the agent's
+# NAME (agents.html avatarHue, ported as agent_chat_render._hue), and a robot
+# now starts from that same hue. A colour the person picked still wins.
+
+def _hue_of(fill):
+    m = re.match(r"\s*hsl\(\s*(\d+)", fill or "")
+    return int(m.group(1)) if m else None
+
+
+def test_a_robot_is_the_colour_of_its_agents_card(page):
+    for agent_id, name in (("agent-research-assistant-0001", "Ada"),
+                           ("agent-iris-a103", "Iris")):
+        fill = page.locator('.who[data-id="%s"] .bot-body' % agent_id
+                            ).get_attribute("fill")
+        assert _hue_of(fill) == render._hue(name), (name, fill, render._hue(name))
+
+
+def test_a_colour_the_person_chose_still_wins(page):
+    """Only the default changed. A swatch somebody picked is kept, and the
+    agent nobody recoloured still wears its own hue."""
+    page.evaluate("() => localStorage.setItem('aiuiOfficeColours',"
+                  " JSON.stringify({'agent-iris-a103': 'orange'}))")
+    page.reload()
+    page.wait_for_selector(".who", state="visible")
+    iris = page.locator('.who[data-id="agent-iris-a103"] .bot-body'
+                        ).get_attribute("fill")
+    ada = page.locator('.who[data-id="agent-research-assistant-0001"] .bot-body'
+                       ).get_attribute("fill")
+    assert iris == "#cc7f2b", iris          # the orange palette's body
+    assert _hue_of(ada) == render._hue("Ada"), ada
+
+
+def test_the_panel_offers_the_agents_own_colour_back(page):
+    """A person who tried orange needs a way back to the colour the agent
+    has everywhere else, and it is the one marked when nothing was picked."""
+    page.locator('.who[data-id="agent-iris-a103"]').click()
+    page.wait_for_timeout(150)
+    own = page.locator('#side .swatch[data-hue="own"]')
+    assert own.count() == 1
+    assert own.get_attribute("aria-current") == "true"
+    page.locator('#side .swatch[data-hue="orange"]').click()
+    page.wait_for_timeout(200)
+    assert page.locator('#side .swatch[data-hue="own"]'
+                        ).get_attribute("aria-current") is None
+    page.locator('#side .swatch[data-hue="own"]').click()
+    page.wait_for_timeout(200)
+    fill = page.locator('.who[data-id="agent-iris-a103"] .bot-body'
+                        ).get_attribute("fill")
+    assert _hue_of(fill) == render._hue("Iris"), fill
+    saved = page.evaluate("() => localStorage.getItem('aiuiOfficeColours')")
+    assert "agent-iris-a103" not in (saved or ""), saved
