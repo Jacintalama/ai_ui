@@ -17,7 +17,7 @@ STATIC = pathlib.Path(__file__).resolve().parent.parent / "static"
 PAGES = sorted(STATIC.glob("*.html"))
 
 _SCRIPT_RE = re.compile(r"<script(?![^>]*\ssrc=)[^>]*>(.*?)</script>", re.S)
-_ID_RE = re.compile(r'\bid="([^"]+)"')
+_ID_RE = re.compile(r'(?<![\w-])id="([^"]+)"')
 
 
 def _inline_scripts(html: str) -> list[str]:
@@ -52,3 +52,11 @@ def test_element_ids_are_unique(page):
     ids = _ID_RE.findall(html)
     dupes = sorted({i for i in ids if ids.count(i) > 1})
     assert not dupes, f"{page.name} reuses element ids: {dupes}"
+
+
+def test_the_id_check_reads_id_and_not_data_id():
+    # `\bid=` also matched the tail of `data-id=`, because the hyphen is a word
+    # boundary. office.html writes data-id="' + esc(m.id) + '" in two places,
+    # so the check reported a duplicate id that no element has.
+    assert _ID_RE.findall('<i id="a">') == ["a"]
+    assert _ID_RE.findall('<i data-id="a">') == []
