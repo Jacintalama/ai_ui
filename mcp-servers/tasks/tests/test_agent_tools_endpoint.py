@@ -120,3 +120,57 @@ async def test_the_templates_are_offered_for_a_user_with_none():
 async def test_the_connect_link_is_not_a_dead_page():
     """It pointed at /tasks/static/connections.html, which does not exist."""
     assert "connections.html" not in routes_agents.CONNECT_URL
+
+
+# --- which model a new agent starts on --------------------------------------
+# Measured 2026-10-05: GET /api/models lists the Webhook Automation pipe first,
+# and the form put a new agent on whatever came first. The form already loads
+# GET /api/tasks/agents/tools, so that response is where it learns the
+# platform default (AGENT_DEFAULT_MODEL, read by _default_model).
+
+def _tools_client(monkeypatch, installed=("documents",)):
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    from auth import CurrentUser, current_user
+
+    app = FastAPI()
+    app.include_router(routes_agents.router, prefix="/api/tasks")
+    app.dependency_overrides[current_user] = (
+        lambda: CurrentUser(email="asker@example.com"))
+    monkeypatch.setattr(routes_agents, "_installed_tool_ids",
+                        AsyncMock(return_value=list(installed)))
+    monkeypatch.setattr(routes_agents, "_connected_providers",
+                        AsyncMock(return_value=set()))
+    return AsyncClient(transport=ASGITransport(app=app), base_url="http://t")
+
+
+async def test_the_form_is_told_the_platform_default_model(monkeypatch):
+    """Over HTTP, on the exact path agents.html fetches, because that is the
+    layer the browser reaches."""
+    monkeypatch.setenv("AGENT_DEFAULT_MODEL", "some/default-model:free")
+    r = await _tools_client(monkeypatch).get("/api/tasks/agents/tools")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["default_model"] == "some/default-model:free"
+    # The tools are still there, unchanged, beside it.
+    assert [t["id"] for t in body["tools"]][0] == "documents"
+
+
+async def test_the_default_is_the_fallback_when_nothing_is_set(monkeypatch):
+    monkeypatch.delenv("AGENT_DEFAULT_MODEL", raising=False)
+    r = await _tools_client(monkeypatch).get("/api/tasks/agents/tools")
+    assert r.json()["default_model"] == "nvidia/nemotron-3-super-120b-a12b:free"
+
+
+async def test_the_listing_every_agent_turn_reads_does_not_change(monkeypatch):
+    """tools_for_email also feeds every agent turn its tool list
+    (routes_agent_turn._every_tool_for). The default belongs to the form's
+    response only, so that listing keeps exactly the shape it had."""
+    monkeypatch.setenv("AGENT_DEFAULT_MODEL", "some/default-model:free")
+    with patch.object(routes_agents, "_installed_tool_ids",
+                      new=AsyncMock(return_value=["documents"])), \
+         patch.object(routes_agents, "_connected_providers",
+                      new=AsyncMock(return_value=set())):
+        out = await routes_agents.tools_for_email("x@example.com")
+    assert set(out) == {"tools"}

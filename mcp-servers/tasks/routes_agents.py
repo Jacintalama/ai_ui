@@ -644,8 +644,16 @@ async def templates() -> dict:
 
 @router.get("/tools")
 async def list_tools(user: CurrentUser = Depends(current_user)) -> dict:
-    """What the agent form may offer the signed-in caller right now."""
-    return await tools_for_email(user.email)
+    """What the agent form may offer the signed-in caller right now, and the
+    model a new agent should start on.
+
+    default_model rides here rather than in tools_for_email, because that
+    listing also feeds every agent turn its tools and has no use for it.
+    Without it the form started a new agent on whatever /api/models listed
+    first, which on production is the Webhook Automation pipe.
+    """
+    out = await tools_for_email(user.email)
+    return {**out, "default_model": _default_model()}
 
 
 class SpeakIn(BaseModel):
