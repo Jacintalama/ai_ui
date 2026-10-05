@@ -245,3 +245,21 @@ def test_the_office_hidden_inside_the_page_stops_polling(shell):
         "the office went on polling while the agents page had it hidden")
     assert hits.count("agents") > agents_before, (
         "hiding the office stopped the agents page's own poll as well")
+
+
+def test_the_office_catches_up_when_the_page_shows_it_again(shell):
+    """The page's own Hide, then Show. The shell's pane never left the
+    screen, so no aiuiFrameVisible comes down from the shell: the agents page
+    has to tell its floor itself, or the floor waits for its next tick."""
+    pg, hits = shell
+    agents = pg.frame_locator("[data-aiui-embed] iframe").first
+    agents.locator("#office-close").click()
+    agents.locator("#office-dock").wait_for(state="hidden")
+    _advance(pg, 31000)             # its tick skipped while hidden
+    before = hits.count("office")
+    # The clock stays paused from here, so no timer can fire.
+    agents.locator("#office-open").click()
+    agents.locator("#office-dock").wait_for(state="visible")
+    pg.wait_for_timeout(1000)
+    assert hits.count("office") > before, (
+        "showing the office again left the floor stale until its next tick")

@@ -3358,6 +3358,16 @@
       // of the floor and leaves the chat usable. Drag it up for the
       // rest; that is what gets remembered.
       setHeight(isNaN(h) ? 420 : h, false);
+      // Shown again by this page's own button, which the shell never sees,
+      // so the floor is told here that it is back on screen. It makes up a
+      // re-read it skipped while hidden instead of waiting for its next tick.
+      var f = body.querySelector("iframe");
+      if (f) {
+        try {
+          f.contentWindow.postMessage({ aiuiFrameVisible: true },
+                                      window.location.origin);
+        } catch (e) { /* not loaded yet: it catches up on its own tick */ }
+      }
     }
     function hide() {
       dock.hidden = true;
