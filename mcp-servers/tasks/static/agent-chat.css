@@ -26,7 +26,10 @@
    to fit its cards and hands the scrolling back to the page. */
 .agents-main {
   min-width: 0; min-height: 0; overflow-y: auto;
-  padding-right: 4px; scrollbar-gutter: stable;
+  /* Both sides, not just the right. This column clips, and the focus ring
+     (2px, offset 2px) on the search box and the buttons flush with its left
+     edge was cut off. */
+  padding: 0 4px; scrollbar-gutter: stable;
 }
 
 @media (min-width: 1181px) {
@@ -125,7 +128,7 @@
 .aquote {
   border-left: 2px solid var(--accent, #7c8cff);
   padding: 2px 0 2px 8px; margin-bottom: 6px;
-  font-size: 12px; line-height: 1.45; color: var(--muted, #8b8b96);
+  font-size: 12px; line-height: 1.45; color: var(--muted, #8b8b95);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .awho {
@@ -166,7 +169,7 @@
 /* Not a bubble. A failure that looks like an answer is one people re-read
    as an answer. */
 .afail { border-left: 2px solid #f87171; padding: 6px 0 6px 10px;
-         font-size: 12.5px; color: var(--muted, #8b8b96); line-height: 1.5; }
+         font-size: 12.5px; color: var(--muted, #8b8b95); line-height: 1.5; }
 .afail-fix { margin-top: 3px; color: var(--text-2, #b8b8c0); }
 
 /* A turn is the person's message and everything that answered it. Grouping
@@ -253,7 +256,14 @@
 .ap-composer input {
   flex: 1; min-width: 0; padding: 9px 12px; border-radius: var(--radius);
   background: var(--surface-2); color: inherit;
-  border: 1px solid var(--border); outline: none; font: inherit;
+  border: 1px solid var(--border); font: inherit;
+}
+/* A focused composer has to look different from an idle one (DESIGN.md).
+   :focus rather than :focus-visible: this is where people type, so the ring
+   shows however focus arrived, a click, Tab or the page putting it there. */
+.ap-composer input:focus {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent); outline-offset: 2px;
 }
 .ap-head-actions .btn { padding: 5px 10px; font-size: 12.5px; }
 .asidenote { font-size: 12.5px; color: var(--text-2); }

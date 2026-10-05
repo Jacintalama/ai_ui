@@ -13,7 +13,9 @@
     --border-2:     #2e2e36;
     --text:         #ededee;
     --text-2:       #b8b8c0;
-    --muted:        #74747e;
+    /* #74747e was 3.87:1 on --surface-2. This is 5.30:1 there and better
+       on the other two surfaces (DESIGN.md, Muted). */
+    --muted:        #8b8b95;
     --accent:       #7c8cff;
     --accent-2:     #5d6cff;
     --radius:       8px;
@@ -21,6 +23,13 @@
     --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
   }
   * { box-sizing: border-box; }
+  /* Form controls do not inherit the page font on their own, so every .btn
+     and both search boxes rendered in Arial. Element selectors only, so a
+     class that sets its own size still wins. */
+  button, input, select, textarea { font: inherit; }
+  /* The browser's own placeholder grey (#757575) is 3.88:1 on the composer.
+     opacity: 1 because Firefox fades placeholder text on top of its colour. */
+  ::placeholder { color: var(--muted); opacity: 1; }
   /* .section-head and the Task 5 modal both set display, and an author
      display beats the user agent's [hidden] { display: none } rule, so the
      attribute alone hides nothing. */
@@ -134,7 +143,7 @@
     width: 230px; padding: 7px 12px 7px 32px;
     background: var(--surface-2); border: 1px solid var(--border);
     border-radius: var(--radius); color: var(--text); font-size: 13px;
-    outline: none; transition: border-color 0.15s, width 0.15s;
+    transition: border-color 0.15s, width 0.15s;
   }
   .search-wrap input::placeholder { color: var(--muted); }
   .search-wrap input:focus { border-color: var(--accent); width: 270px; }
@@ -539,12 +548,13 @@
   .modal label { display: block; font-size: 12px; color: var(--text-2);
                  margin: 14px 0 6px; }
   /* password too: the Connections panel asks for API tokens, and a
-     browser default white box in a dark modal looks broken. */
+     browser default white box in a dark modal looks broken. search for the
+     same reason: the skill search in the agent form was exactly that box. */
   .modal input[type=text], .modal input[type=password],
-  .modal textarea, .modal select {
+  .modal input[type=search], .modal textarea, .modal select {
     width: 100%; box-sizing: border-box; background: var(--surface-2);
     border: 1px solid var(--border-2); border-radius: var(--radius);
-    padding: 10px 12px; color: var(--text); font-size: 13px; outline: none;
+    padding: 10px 12px; color: var(--text); font-size: 13px;
     font-family: inherit; }
   .modal textarea { resize: vertical; line-height: 1.55; }
   /* The browser's own arrow is a different grey in a different place from
@@ -671,7 +681,27 @@
            padding: 11px 15px; font-size: 13px; line-height: 1.45;
            box-shadow: 0 10px 30px rgba(0,0,0,.45); }
   .saved b { font-weight: 600; }
-  .saved-what { color: var(--muted, #8b8b96); font-size: 12px; margin-top: 3px; }
+  .saved-what { color: var(--muted, #8b8b95); font-size: 12px; margin-top: 3px; }
+
+  /* One focus ring for everything a keyboard can reach (DESIGN.md: 2px
+     periwinkle, 2px offset). Last in the sheet so it wins ties, and nothing
+     above sets outline: none any more. The browser ring it replaces was
+     rgb(16, 16, 16) on a near black page. tabindex="-1" is left out: those
+     take focus from script, like a dialog as it opens, and a ring round a
+     whole dialog says nothing. */
+  a[href]:focus-visible, button:focus-visible, input:focus-visible,
+  select:focus-visible, textarea:focus-visible, summary:focus-visible,
+  [tabindex]:not([tabindex="-1"]):focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  /* Fields turn their border periwinkle as well. Repeated under .modal
+     because .modal input[type=text] sets the border at a higher
+     specificity than a bare input selector. */
+  input:focus-visible, select:focus-visible, textarea:focus-visible,
+  .modal input:focus-visible, .modal select:focus-visible,
+  .modal textarea:focus-visible {
+    border-color: var(--accent);
+  }
 </style>
 <script src="/tasks/static/vendor/htmx.min.js"></script>
 <script src="/tasks/static/vendor/sse.js"></script>
