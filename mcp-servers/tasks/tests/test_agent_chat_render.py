@@ -423,3 +423,15 @@ def test_a_footer_shaped_line_inside_an_answer_stays():
     html = render.agent_bubble("Mia", said)
     assert "routed to the paid general model" in html
     assert "That is what the router told me." in html
+
+
+def test_a_live_answer_that_is_only_a_footer_draws_nothing():
+    """An empty answer the routing pipe signed is not a pass (is_pass reads
+    what is left, and nothing is not PASS), so the round still hands it to
+    agent_bubble. With the footer gone there is nothing to draw: an empty
+    bubble live, and none after a reload, would disagree. So it draws none."""
+    assert render.agent_bubble("Mia", SMART_FOOTER.strip()) == ""
+    assert render.agent_bubble("Mia", SMART_FOOTER) == ""
+    # Only a footer that was really there: an answer that was empty to
+    # begin with is drawn as it always was.
+    assert 'class="am agent"' in render.agent_bubble("Mia", "")

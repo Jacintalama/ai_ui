@@ -239,7 +239,12 @@ def agent_bubble(name: str, content: str, replying_to=None) -> str:
     through here, and thread() draws history through here too, so the live
     bubble and the reloaded one say the same thing.
     """
-    content = _without_route_footer(content or "")
+    raw = content or ""
+    content = _without_route_footer(raw)
+    if raw and not content:
+        # Only the footer was there. thread() draws no bubble for it on a
+        # reload (_shown), so the live view draws none either.
+        return ""
     return ('<div class="am agent">'
             f'{_avatar(name)}'
             '<div class="abody">'
