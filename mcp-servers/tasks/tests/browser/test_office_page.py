@@ -1117,3 +1117,57 @@ def test_the_panel_offers_the_agents_own_colour_back(page):
     assert _hue_of(fill) == render._hue("Iris"), fill
     saved = page.evaluate("() => localStorage.getItem('aiuiOfficeColours')")
     assert "agent-iris-a103" not in (saved or ""), saved
+
+
+# --- state you can read, edges without stripes, motion you can stop ---------
+# 6e3dda3c4 deleted the .dot rules along with the old cards, so every state
+# light on the page has been an empty box since: a robot's light, the live
+# strip, the activity list and the header all drew nothing. DESIGN.md also
+# rules out a coloured side stripe wider than 1px, and asks that motion stop
+# for a person whose system asks for less of it.
+
+def test_the_state_light_is_lit_in_the_states_colour(page):
+    got = page.evaluate(
+        "() => {"
+        " const bg = s => getComputedStyle(document.querySelector(s)).backgroundColor;"
+        " const d = document.querySelector('.who[data-id=\"agent-iris-a103\"] .dot');"
+        " return {"
+        "  working: bg('.who[data-id=\"agent-research-assistant-0001\"] .dot.working'),"
+        "  ready: bg('.who[data-id=\"agent-iris-a103\"] .dot.ready'),"
+        "  live: bg('#live .dot'),"
+        "  round: getComputedStyle(d).borderRadius }; }")
+    assert got["working"] == "rgb(34, 211, 238)", got    # --cyan
+    assert got["ready"] == "rgb(52, 211, 153)", got      # --ok
+    assert got["live"] != "rgba(0, 0, 0, 0)", got
+    assert got["round"] == "50%", got
+
+
+def test_a_room_is_outlined_not_striped(page):
+    sides = page.locator("section.zone").evaluate_all(
+        "els => els.map(e => { const s = getComputedStyle(e);"
+        " return [s.borderLeftWidth, s.borderTopWidth, s.borderRightWidth,"
+        "         s.borderBottomWidth, s.borderLeftColor === s.borderTopColor]; })")
+    assert sides, sides
+    for left, top, right, bottom, same in sides:
+        assert left == top == right == bottom == "1px", sides
+        assert same, sides
+
+
+def test_reduced_motion_stops_every_loop(page):
+    """breathe, bustle, blink, halo, the dot's pulse and the talk line's
+    along: every one runs for ever, and none of them is the only place a
+    state is said. The dot colour and the label still say it."""
+    _with_handoff(page)
+    page.emulate_media(reduced_motion="reduce")
+    page.wait_for_timeout(100)
+    names = page.evaluate(
+        "() => {"
+        " const a = (el, p) => getComputedStyle(el, p || null).animationName;"
+        " const ada = document.querySelector("
+        "   '.who[data-id=\"agent-research-assistant-0001\"]');"
+        " const iris = document.querySelector('.who[data-id=\"agent-iris-a103\"]');"
+        " return [a(iris.querySelector('.bot')), a(ada.querySelector('.bot')),"
+        "         a(ada.querySelector('.bot-think')), a(ada, '::after'),"
+        "         a(ada.querySelector('.dot')),"
+        "         a(document.querySelector('.talk-line'))]; }")
+    assert names == ["none"] * 6, names

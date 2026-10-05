@@ -139,8 +139,10 @@
   }
   .zone {
     position: absolute; z-index: 2; border-radius: 14px;
-    border: 1px solid var(--border-2);
-    border-left: 3px solid var(--glow, var(--cyan));
+    /* The department's colour on all four sides at 1px, not a 3px stripe
+       down the left: DESIGN.md rules out side stripes as an accent. Mixed
+       into the plain border so six rooms do not read as six neon frames. */
+    border: 1px solid color-mix(in srgb, var(--glow, var(--cyan)) 55%, var(--border-2));
     background: rgba(14,29,47,.72);
     box-shadow: inset 0 0 45px rgba(74,105,157,.05);
   }
@@ -213,6 +215,19 @@
   .who[aria-current="true"] svg.bot { filter: drop-shadow(0 0 7px var(--cyan)); }
   .who .bot-think { animation: blink 2.2s ease-in-out infinite; }
   @keyframes blink { 0%, 88%, 100% { opacity: 1 } 94% { opacity: .2 } }
+  /* The state light itself, wherever it is drawn: on a robot, in the live
+     strip, the activity list and the header. 6e3dda3c4 removed these with
+     the old cards, and every light on the page was an empty box after it. */
+  .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex: none; }
+  .dot.ready { background: var(--ok); }
+  .dot.working { background: var(--cyan); animation: pulse 1.4s ease-in-out infinite; }
+  .dot.waiting { background: var(--warn); }
+  .dot.failed { background: var(--bad); }
+  .dot.idle { background: #3d4d6b; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
+  /* The panel's state line, which lost its rule in the same commit: lit
+     again, its light would otherwise sit flush against the words. */
+  .st { display: flex; align-items: center; gap: 6px; }
   /* the state light, bottom-right, as in the mockup */
   /* On the robot, not on the slot: the slot is as wide as the widest label
      and the status light belongs to the figure. */
@@ -434,6 +449,17 @@
      still reserved the canvas's own 680: the floor came out 714x316 inside a
      1020x467 box, squashed and with a dead band under it. */
   html.embed .brain { margin-bottom: 8px; }
+
+  /* Every loop on this floor runs for ever: breathe, bustle, blink, halo,
+     the dot's pulse and the talk line. None is the only place a state is
+     said (the dot colour and the label say it), so a person whose system
+     asks for less motion gets none, and a walking robot steps instead. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
 </style>
 </head>
 <script>
