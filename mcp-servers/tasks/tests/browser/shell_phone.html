@@ -1,0 +1,102 @@
+<!doctype html><html><head><meta charset="utf-8"><title>phone shell</title>
+<!--
+  Open WebUI v0.11.4 on a 390x844 phone, trimmed from two live captures taken
+  on 2026-10-05: the signed-in home at "/" (phone_home.html) and the signed-out
+  sign-in page at "/auth". Tags, ids, aria labels and hrefs are the real ones;
+  text, images, svg paths and every user detail are removed. Tailwind is not
+  loaded, so the geometry that matters is written as inline styles: the home's
+  only bar is a <nav> at 0,0, 390 x 47.
+
+  What makes these two pages different for task-panel.js, as measured live:
+    home  : no a[href="/"], a[href="/notes"], a[href="/calendar"],
+            a[href="/workspace"], no #sidebar; main#main-content present.
+    /auth : none of those either, and no main#main-content; the skip link
+            a[href="#main-content"] IS present, as it is on the home.
+
+  The router below plays Open WebUI's: "/" is the home, "/auth" the sign-in
+  page, anything else the bare 404 the real router renders for a pane URL.
+-->
+<style>
+  body { margin: 0; }
+  .hidden { display: none; }
+  main.contents { display: contents; }
+  svg { width: 16px; height: 16px; }
+  .sr-only { position: absolute; left: -1px; top: -1px; width: 1px; height: 1px; overflow: hidden; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<template id="page-home">
+  <a href="#main-content" class="sr-only"></a>
+  <div class="app relative">
+    <div style="height:100vh;display:flex;flex-direction:row;overflow:auto">
+      <button id="sidebar-new-chat-button" class="hidden"></button>
+      <main id="main-content" class="contents">
+        <audio id="audioElement"></audio>
+        <div id="chat-container" style="height:100vh;width:100%;display:flex;flex-direction:column">
+          <div style="width:100%;height:100%;display:flex;flex-direction:column">
+            <div style="width:100%;height:100%;display:flex">
+              <div style="height:100%;display:flex;flex-direction:column;flex:1 1 0%;min-width:0;position:relative">
+                <button id="new-chat-button" class="hidden" aria-label="New Chat"></button>
+                <nav class="sticky top-0 z-30 w-full drag-region" style="position:sticky;top:0;z-index:30;width:100%;height:47px;box-sizing:border-box;padding:6px 10px 4px;margin-bottom:-48px">
+                  <div style="display:flex;align-items:center;width:100%">
+                    <div class="mr-1 flex flex-none items-center self-center">
+                      <div class="flex">
+                        <button id="sidebar-toggle-button" aria-label="Open Sidebar" style="width:28px;height:28px;padding:0"><div class="self-center p-1.5"><svg aria-hidden="true" class="size-4"></svg></div></button>
+                      </div>
+                    </div>
+                    <div style="flex:1 1 0%"></div>
+                    <div style="display:flex;gap:8px">
+                      <div class="flex"><button id="temporary-chat-button" aria-label="Temporary Chat" style="width:24px;height:24px"></button></div>
+                      <div class="flex"><button aria-label="Controls" style="width:24px;height:24px"></button></div>
+                    </div>
+                  </div>
+                </nav>
+                <div id="chat-pane" style="display:flex;flex-direction:column;flex:1 1 auto;width:100%;overflow:auto">
+                  <div id="message-input-container" style="margin-top:auto">
+                    <div id="chat-input-container">
+                      <div id="chat-input" class="tiptap ProseMirror" contenteditable="true" aria-label="How can I help you today?"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+  <div id="svelte-announcer"></div>
+</template>
+
+<template id="page-auth">
+  <a href="#main-content" class="sr-only"></a>
+  <div id="auth-page" style="width:100%;height:100vh;position:relative">
+    <div id="auth-container" style="position:fixed;inset:0;display:flex;justify-content:center;z-index:50">
+      <div id="auth-login-card" style="margin:auto;width:100%;max-width:448px">
+        <form>
+          <input type="email" id="email" name="email" autocomplete="email">
+          <input type="password" id="password" name="password" autocomplete="current-password">
+          <button type="submit"></button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div id="svelte-announcer"></div>
+</template>
+
+<script>
+  (function () {
+    var root = document.getElementById("root");
+    var path = location.pathname;
+    if (path === "/" || path === "/auth") {
+      var tpl = document.getElementById(path === "/" ? "page-home" : "page-auth");
+      root.appendChild(tpl.content.cloneNode(true));
+    } else {
+      root.textContent = "404: Not Found";
+    }
+  })();
+</script>
+<script src="/task-panel.js"></script>
+</body></html>

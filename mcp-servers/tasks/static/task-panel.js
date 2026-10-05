@@ -1376,11 +1376,24 @@
     // column 120px or wider, so it never found the rail and the pane fell
     // back to 260px, leaving an empty strip about 218px wide beside it.
     function aiuiSidebarRightEdge() {
+      // Phones. Under 768px Open WebUI has no rail: its sidebar is a drawer
+      // that slides over the page (measured live 2026-10-05: at 767px there
+      // is no #sidebar and the hamburger, #sidebar-toggle-button, sits in a
+      // 47px top bar; at 768px the 42px rail is back). Nothing holds the left
+      // edge, so the pane takes the full width. It starts under that top bar
+      // so the hamburger stays reachable: a phone has no Escape key, and
+      // every link that would close the pane is underneath it.
+      if (window.innerWidth < 768) {
+        const btn = document.getElementById("sidebar-toggle-button");
+        const bar = btn && (btn.closest("nav") || btn);
+        const top = bar ? Math.max(0, Math.round(bar.getBoundingClientRect().bottom)) : 0;
+        return { edge: 0, top: top, el: null };
+      }
       const sb = document.getElementById("sidebar");
       if (sb) {
         const r = sb.getBoundingClientRect();
         if (r.left <= 8 && r.width >= 30 && r.width <= 520 && r.height > 200) {
-          return { edge: Math.max(0, Math.round(r.right)), el: sb };
+          return { edge: Math.max(0, Math.round(r.right)), top: 0, el: sb };
         }
       }
       // Layouts without a usable #sidebar: walk up from one of our entries.
@@ -1393,8 +1406,8 @@
         if (r.left <= 8 && r.width >= 120 && r.width <= 520 && r.height > 200) best = el;
         el = el.parentElement;
       }
-      if (best) return { edge: Math.round(best.getBoundingClientRect().right), el: best };
-      return { edge: 260, el: null };
+      if (best) return { edge: Math.round(best.getBoundingClientRect().right), top: 0, el: best };
+      return { edge: 260, top: 0, el: null };
     }
 
     // The pane, built once and kept. Reopening a feature must not rebuild it:
@@ -1454,7 +1467,7 @@
       wrap = document.createElement("div");
       wrap.setAttribute("data-aiui-embed", "");
       wrap.style.cssText =
-        "position:fixed;top:0;right:0;bottom:0;left:" + meas.edge + "px;" +
+        "position:fixed;top:" + meas.top + "px;right:0;bottom:0;left:" + meas.edge + "px;" +
         "z-index:35;background:#0b0b0b;overflow:hidden;display:none;";
 
       // No close button. It sat over the top right corner of every feature
@@ -1482,6 +1495,7 @@
         if (!isOpen()) return;
         const m = aiuiSidebarRightEdge();
         wrap.style.left = m.edge + "px";
+        wrap.style.top = m.top + "px";
         const sb = m.el || document.getElementById("sidebar");
         if (ro && sb !== watched) {
           if (watched) ro.unobserve(watched);
@@ -1709,8 +1723,18 @@
         // request, so after signing in they would land on a plain chat. The
         // sidebar is the honest signal that the app rendered and the user is
         // in; until then the key just waits.
-        const appIsUp = !!document.querySelector(
-          'a[href="/"], a[href="/notes"], a[href="/calendar"], a[href="/workspace"]');
+        //
+        // Phones render no sidebar links at all (390px: one 47px top bar), so
+        // on a phone /ai-agents never opened. The app's own
+        // <main id="main-content"> is the phone signal: it appears once a
+        // signed-in user's app has rendered, and never on /auth, not even
+        // while a signed-out "/" or a dead token is being sent there (all
+        // checked live, 2026-10-05). The skip link that points at it,
+        // a[href="#main-content"], IS on /auth: match the element, not the
+        // link.
+        const appIsUp = !onAuthRoute() && !!document.querySelector(
+          'a[href="/"], a[href="/notes"], a[href="/calendar"], a[href="/workspace"], ' +
+          'main#main-content');
         if (wanted && appIsUp &&
             !document.querySelector("[data-aiui-embed][data-open]")) {
           // Cleared only now, on the load that actually opens it, so a detour
