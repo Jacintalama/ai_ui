@@ -3068,6 +3068,18 @@
     }
     window.aiuiAskAgent = askAgent;
 
+    // A question for the room, such as the meeting button's "everyone
+    // answer: ", or one naming somebody else's agent. Left in a private
+    // conversation only that one agent would hear it, so the room comes back
+    // first, the same as the docked office's meeting button does.
+    function askRoom(text) {
+      var field = document.getElementById("ap-agent");
+      if (field && field.value && typeof window.aiuiTalkTo === "function") {
+        window.aiuiTalkTo("", "");
+      }
+      return prefillAsk(text);
+    }
+
     // One of this person's own agents, or null. The cards follow the same
     // rule: an admin's listing carries everybody's agents.
     function ownAgent(id) {
@@ -3135,11 +3147,11 @@
         whenListed(function () {
           var own = ownAgent(id);
           if (own && askAgent(id, name || own.name || "", ask)) return;
-          prefillAsk(ask);
+          askRoom(ask);
         });
         return;
       }
-      prefillAsk(ask);
+      askRoom(ask);
     });
   })();
 </script>

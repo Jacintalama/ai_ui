@@ -448,3 +448,41 @@ def test_only_your_own_agents_conversation_is_opened(browser, server):
         assert _talking_to(pg) == "agent-iris-a103"
     finally:
         pg.close()
+
+
+def test_a_question_for_the_room_leaves_a_private_conversation(browser, server):
+    """Call a team meeting in the Agent Office pane hands over
+    "everyone answer: " with no agent. Docked, the same button goes back to
+    the room first; through the shell it landed in whatever private
+    conversation the page had restored, so only that one agent heard it."""
+    pg = _shell_as_owner(browser, server)
+    try:
+        pg.evaluate(POST_ASK, {"ask": "Iris, ", "agent": "agent-iris-a103",
+                               "name": "Iris"})
+        pg.wait_for_timeout(300)
+        assert _talking_to(pg) == "agent-iris-a103"
+        pg.evaluate(POST_ASK, {"ask": "everyone answer: "})
+        pg.wait_for_timeout(300)
+        assert _talking_to(pg) == "", "the room question stayed in Iris's thread"
+        assert _pane(pg).locator(BOX).input_value() == "everyone answer: "
+        assert not [u for u in pg.sent if "chat/send" in u], pg.sent
+    finally:
+        pg.close()
+
+
+def test_somebody_elses_agent_is_asked_in_the_room_not_the_open_thread(
+        browser, server):
+    """A question naming an agent that is not yours goes to the room as
+    written. With a private conversation open it must still be the room."""
+    pg = _shell_as_owner(browser, server)
+    try:
+        pg.evaluate(POST_ASK, {"ask": "Iris, ", "agent": "agent-iris-a103",
+                               "name": "Iris"})
+        pg.wait_for_timeout(300)
+        pg.evaluate(POST_ASK, {"ask": "Bo, hello", "agent": "agent-bo-0002",
+                               "name": "Bo"})
+        pg.wait_for_timeout(300)
+        assert _talking_to(pg) == ""
+        assert _pane(pg).locator(BOX).input_value() == "Bo, hello"
+    finally:
+        pg.close()
