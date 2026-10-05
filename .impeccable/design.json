@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-05T00:00:00Z",
+  "title": "Design System: IO Agents Workspace",
+  "extensions": {
+    "colorMeta": {
+      "periwinkle": { "role": "primary", "displayName": "Switchboard Periwinkle", "canonical": "#7c8cff" },
+      "ink": { "role": "neutral", "displayName": "Ink", "canonical": "#0a0a0b" },
+      "panel": { "role": "neutral", "displayName": "Panel", "canonical": "#111113" },
+      "raised": { "role": "neutral", "displayName": "Raised", "canonical": "#17171a" },
+      "muted": { "role": "neutral", "displayName": "Muted", "canonical": "#8b8b95" }
+    },
+    "shadows": [
+      { "name": "float", "value": "0 4px 8px rgba(0,0,0,0.45)", "purpose": "Menus, dialogs and the details sheet only." }
+    ],
+    "motion": [
+      { "name": "state", "value": "150ms cubic-bezier(0.25, 1, 0.5, 1)", "purpose": "Hover, selection and panel open or close. Reduced motion: instant." }
+    ],
+    "breakpoints": [
+      { "name": "one-pane", "value": "max-width: 699px" },
+      { "name": "two-pane", "value": "700px to 1180px" },
+      { "name": "three-pane", "value": "min-width: 1181px" }
+    ]
+  },
+  "components": [
+    { "name": "Primary Button", "kind": "button", "refersTo": "button-primary", "description": "Send, Save agent, New agent. One per region.",
+      "html": "<button class=\"ds-btn-primary\">Send</button>",
+      "css": ".ds-btn-primary{background:#7c8cff;color:#0a0a0b;font:500 14px/1.5 -apple-system,Inter,Segoe UI,sans-serif;height:36px;padding:0 14px;border:0;border-radius:8px;cursor:pointer}.ds-btn-primary:hover{background:#5d6cff}.ds-btn-primary:focus-visible{outline:2px solid #7c8cff;outline-offset:2px}" },
+    { "name": "Secondary Button", "kind": "button", "refersTo": "button-secondary", "description": "Details, Cancel, Edit agent.",
+      "html": "<button class=\"ds-btn-secondary\">Details</button>",
+      "css": ".ds-btn-secondary{background:#17171a;color:#ededee;font:500 14px/1.5 -apple-system,Inter,Segoe UI,sans-serif;height:36px;padding:0 14px;border:1px solid #2e2e36;border-radius:8px;cursor:pointer}.ds-btn-secondary:hover{background:#1d1d21}.ds-btn-secondary:focus-visible{outline:2px solid #7c8cff;outline-offset:2px}" },
+    { "name": "Conversation Row", "kind": "nav", "refersTo": "conversation-row", "description": "One agent, or Everyone, in the conversation list.",
+      "html": "<button class=\"ds-row\" aria-current=\"true\"><span class=\"ds-av\" style=\"background:hsl(309 45% 32%)\">M</span><span class=\"ds-txt\"><b>Mia</b><small>Receptionist</small></span></button>",
+      "css": ".ds-row{display:flex;gap:10px;align-items:center;width:240px;height:48px;padding:0 10px;background:transparent;border:0;border-radius:8px;color:#ededee;text-align:left;cursor:pointer}.ds-row:hover,.ds-row[aria-current=true]{background:#17171a}.ds-row:focus-visible{outline:2px solid #7c8cff;outline-offset:-2px}.ds-av{width:28px;height:28px;border-radius:6px;color:#fff;display:grid;place-items:center;font:500 12px system-ui}.ds-txt{display:flex;flex-direction:column;font:400 14px/1.3 system-ui}.ds-txt small{font-size:13px;color:#b8b8c0}" },
+    { "name": "Composer", "kind": "input", "refersTo": "composer", "description": "The message box, pinned to the bottom of the conversation.",
+      "html": "<input class=\"ds-composer\" placeholder=\"Message Mia\">",
+      "css": ".ds-composer{width:420px;background:#17171a;color:#ededee;border:1px solid #2e2e36;border-radius:12px;padding:12px 14px;font:400 16px/1.55 system-ui}.ds-composer::placeholder{color:#8b8b95}.ds-composer:focus{outline:2px solid #7c8cff;outline-offset:1px;border-color:#7c8cff}" }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Switchboard",
+    "keyCharacteristics": ["Three panes on wide screens, two on medium, one at a time on phones.", "Flat tonal layers: ink, then panel, then raised. No decorative shadows.", "One accent (periwinkle) for actions, focus and links only.", "One hue per agent, used only on its avatar.", "Plain-text labels. No icons as decoration, no emoji.", "Responsive by structure, not by fluid type."],
+    "rules": [
+      { "name": "The Rationed Accent Rule", "body": "Periwinkle covers 10% or less of any screen. If two periwinkle things compete, one of them is wrong.", "section": "colors" },
+      { "name": "The One Hue Per Agent Rule", "body": "An agent is the same colour in the list, in the thread, in the details panel and in the Agent Office. A second palette for the same agent is a bug.", "section": "colors" },
+      { "name": "The Five Sizes Rule", "body": "Only 12, 13, 14, 16 and 20px exist. Half-pixel sizes (11.5, 12.5, 13.5) and 10 or 11px text are prohibited.", "section": "typography" },
+      { "name": "The No Glow Rule", "body": "Coloured shadows, glows and halos are prohibited. If something glows, it is decoration.", "section": "elevation" }
+    ]
+  }
+}
