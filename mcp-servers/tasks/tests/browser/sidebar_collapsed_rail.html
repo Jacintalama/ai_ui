@@ -1,0 +1,147 @@
+<!doctype html><html><head><meta charset="utf-8"><title>collapsed rail</title>
+<!--
+  Open WebUI v0.11.4 with the sidebar COLLAPSED, trimmed from the live DOM
+  captured on 2026-10-05 at 1920x1080 (desk_collapsed.html). Tags, ids,
+  aria labels, hrefs and data-state are the real ones; text, images, svg
+  paths, the chat list and every user detail are removed. Tailwind is not
+  loaded, so the geometry measured live is written as inline styles:
+
+    #sidebar (the rail)       0,0    42 x 1080   static, z-index 10
+    rail button.flex-col      4,4    33 x 1038
+    collapsed panel           0,0     0 x 1080   fixed, z-index 50, aria-hidden
+    open panel (#sidebar)     0,0   245 x 1080   fixed, z-index 50
+
+  The toggle below copies what the live site did, recorded frame by frame:
+  opening REMOVES the rail and moves id="sidebar" onto the panel, which widens
+  0 -> 245px over about 200ms. Closing inserts a NEW rail with none of our
+  entries in it, and the panel drops the id and narrows back to 0.
+-->
+<style>
+  body { margin: 0; }
+  .shell-row { display: flex; flex-direction: row; height: 100vh; }
+  .rail { width: 42px; height: 100vh; box-sizing: border-box; padding: 4px;
+          display: flex; flex-direction: column; justify-content: space-between;
+          position: static; z-index: 10; flex-shrink: 0; }
+  .rail > button { display: flex; flex-direction: column; flex: 1 1 0%;
+                   justify-content: flex-start; width: 33px; padding: 0;
+                   border: 0; background: none; }
+  .rail .pb-1 { padding-bottom: 4px; }
+  /* Tailwind's size-4 / size-5 and hidden, which the real icons carry. */
+  svg { width: 16px; height: 16px; }
+  img { width: 20px; height: 20px; }
+  .hidden { display: none; }
+  .rail .row-flex > * { display: flex; width: 32px; height: 32px; }
+  .panel { position: fixed; top: 0; left: 0; height: 100vh; width: 0;
+           overflow: hidden; z-index: 50; transition: width 200ms;
+           pointer-events: none; }
+  .panel[data-state="true"] { width: 245px; pointer-events: auto; }
+  .panel-inner { width: 245px; height: 100vh; display: flex; flex-direction: column; }
+  main.contents { display: contents; }
+  #chat-container { flex: 1 1 0%; height: 100vh; min-width: 0; }
+</style>
+</head>
+<body>
+<div>
+  <a href="#main-content" class="sr-only" style="position:absolute;left:-1px;top:-1px;width:1px;height:1px;overflow:hidden"></a>
+  <div class="app relative">
+    <div class="shell-row" id="shell-row">
+      <button id="sidebar-new-chat-button" class="hidden" style="display:none"></button>
+      <div role="navigation" aria-label="Chat history" aria-hidden="true"
+           class="panel" data-state="false">
+        <div class="panel-inner">
+          <div class="sidebar" style="display:flex;justify-content:space-between">
+            <a href="/" draggable="false"><img alt=""></a>
+            <a href="/" style="flex:1 1 0%"><div id="sidebar-webui-name"></div></a>
+            <div class="flex">
+              <button aria-label="Open Sidebar" style="width:30px;height:30px"><div class=" self-center"><svg aria-hidden="true" class="size-4"></svg></div></button>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;flex:1 1 0%">
+            <div class="pb-1">
+              <div class="px-1 flex"><a id="sidebar-new-chat-button" href="/" draggable="false" aria-label="New Chat"></a></div>
+              <div class="px-1 flex"><button id="sidebar-search-button" draggable="false" aria-label="Search"></button></div>
+              <div id="pinned-menu-items-list">
+                <div class="px-1 flex" data-id="notes"><a draggable="false" id="sidebar-notes-button" href="/notes" aria-label="Notes"><div class="flex"><div></div></div></a></div>
+                <div class="px-1 flex" data-id="workspace"><a draggable="false" id="sidebar-workspace-button" href="/workspace" aria-label="Workspace"><div class="flex"><div></div></div></a></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <main id="main-content" class="contents">
+        <div id="chat-container"></div>
+      </main>
+    </div>
+  </div>
+</div>
+
+<template id="rail-template">
+  <div class="rail" id="sidebar" role="navigation" aria-label="Chat history">
+    <!-- A <button> in the real DOM. The HTML parser will not nest a button in a
+         button, so it is written as a div and made a button when stamped. -->
+    <div data-button class="flex flex-col flex-1 cursor-pointer">
+      <div class="pb-1">
+        <div class="flex">
+          <button aria-label="Open Sidebar" style="width:34px;height:34px"><div class="self-center flex"><img alt=""><svg aria-hidden="true" class="size-4 hidden group-hover:flex"></svg></div></button>
+        </div>
+      </div>
+      <div class="-gap-0.5 row-flex">
+        <div><div class="flex"><a href="/" draggable="false" aria-label="New Chat"><div class="self-center flex"><svg aria-hidden="true" class="size-4"></svg></div></a></div></div>
+        <div><div class="flex"><button draggable="false" aria-label="Search"><div class="self-center flex"><svg aria-hidden="true" class="size-4"></svg></div></button></div></div>
+        <div><div class="flex"><a draggable="false" href="/notes" aria-label="Notes"><div class="self-center flex"><svg aria-hidden="true" class="size-4"></svg></div></a></div></div>
+        <div><div class="flex"><a draggable="false" href="/workspace" aria-label="Workspace"><div class="self-center flex"><svg aria-hidden="true" class="size-4"></svg></div></a></div></div>
+      </div>
+    </div>
+    <div><div><div class="flex justify-center items-center"><span role="button"><button type="button" aria-label="User menu" style="width:34px;height:34px"></button></span></div></div></div>
+  </div>
+</template>
+
+<script>
+  (function () {
+    var row = document.getElementById("shell-row");
+    var panel = row.querySelector(".panel");
+    var panelToggle = panel.querySelector(".sidebar button");
+
+    function stampRail() {
+      var rail = document.getElementById("rail-template").content
+        .firstElementChild.cloneNode(true);
+      var stub = rail.querySelector("[data-button]");
+      var big = document.createElement("button");
+      for (var i = 0; i < stub.attributes.length; i++) {
+        var a = stub.attributes[i];
+        if (a.name !== "data-button") big.setAttribute(a.name, a.value);
+      }
+      while (stub.firstChild) big.appendChild(stub.firstChild);
+      stub.replaceWith(big);
+      row.insertBefore(rail, panel);
+      // The rail is one big <button> in the real DOM, and pressing it (its
+      // "Open Sidebar" icon is inside it) opens the sidebar. Its links do not.
+      rail.querySelector("button.flex-col").addEventListener("click", function (e) {
+        if (e.target.closest && e.target.closest("a")) return;
+        openSidebar();
+      });
+    }
+    function openSidebar() {
+      var rail = document.getElementById("sidebar");
+      if (rail && rail !== panel) rail.remove();
+      panel.id = "sidebar";
+      panel.setAttribute("data-state", "true");
+      panel.setAttribute("aria-hidden", "false");
+      panelToggle.setAttribute("aria-label", "Close Sidebar");
+    }
+    function closeSidebar() {
+      panel.id = "";
+      panel.setAttribute("data-state", "false");
+      panel.setAttribute("aria-hidden", "true");
+      panelToggle.setAttribute("aria-label", "Open Sidebar");
+      stampRail();
+    }
+    panelToggle.addEventListener("click", function () {
+      if (panel.getAttribute("data-state") === "true") closeSidebar();
+      else openSidebar();
+    });
+    stampRail();
+  })();
+</script>
+<script src="./task-panel.js"></script>
+</body></html>

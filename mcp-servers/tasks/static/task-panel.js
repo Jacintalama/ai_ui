@@ -1368,7 +1368,22 @@
 
     // Measure the left sidebar so the overlay starts exactly at its right edge
     // (and re-measures when the sidebar collapses / the window resizes).
+    //
+    // Open WebUI 0.11 puts id="sidebar" on whichever sidebar is showing: the
+    // 42px icon rail when collapsed, the 245px panel when open. They are two
+    // different nodes and only one carries the id at a time (recorded frame
+    // by frame on the live site, 2026-10-05). The walk below accepts only a
+    // column 120px or wider, so it never found the rail and the pane fell
+    // back to 260px, leaving an empty strip about 218px wide beside it.
     function aiuiSidebarRightEdge() {
+      const sb = document.getElementById("sidebar");
+      if (sb) {
+        const r = sb.getBoundingClientRect();
+        if (r.left <= 8 && r.width >= 30 && r.width <= 520 && r.height > 200) {
+          return { edge: Math.max(0, Math.round(r.right)), el: sb };
+        }
+      }
+      // Layouts without a usable #sidebar: walk up from one of our entries.
       const seed = document.querySelector("[data-aiui-graph]") ||
                    document.querySelector('a[href="/workspace"]');
       let best = null, el = seed;
@@ -1452,13 +1467,29 @@
       const isOpen = () => wrap.hasAttribute("data-open");
 
       // Keep the pane glued to the sidebar edge on resize / collapse.
+      //
+      // Collapsing does not resize one sidebar: Open WebUI swaps the rail and
+      // the panel as whole nodes and moves the id between them. scanSidebar
+      // catches the swap (it re-places an open pane on every DOM change), but
+      // that can land while the panel is still sliding open (live: 124 of
+      // 245px), so this observer follows whichever node is the sidebar now
+      // and reports the rest of the slide. One fixed on the node measured at
+      // first open went blind after the first toggle.
+      let watched = null;
+      const ro = "ResizeObserver" in window
+        ? new ResizeObserver(() => reposition()) : null;
       const reposition = () => {
-        if (isOpen()) wrap.style.left = aiuiSidebarRightEdge().edge + "px";
+        if (!isOpen()) return;
+        const m = aiuiSidebarRightEdge();
+        wrap.style.left = m.edge + "px";
+        const sb = m.el || document.getElementById("sidebar");
+        if (ro && sb !== watched) {
+          if (watched) ro.unobserve(watched);
+          if (sb) ro.observe(sb);
+          watched = sb;
+        }
       };
       window.addEventListener("resize", reposition);
-      if (meas.el && "ResizeObserver" in window) {
-        new ResizeObserver(reposition).observe(meas.el);
-      }
       wrap.__aiuiReposition = reposition;
 
       document.addEventListener("keydown", (e) => {
@@ -1510,7 +1541,7 @@
 
       wrap.setAttribute("data-open", cfg.href);
       wrap.style.display = "block";
-      wrap.style.left = aiuiSidebarRightEdge().edge + "px";
+      wrap.__aiuiReposition();
 
       Object.keys(AIUI_FRAMES).forEach((k) => {
         const shown = k === cfg.href;
@@ -1637,6 +1668,12 @@
       pending = true;
       requestAnimationFrame(async () => {
         pending = false;
+        // An open pane follows the sidebar through Open WebUI's re-renders.
+        // Collapsing and expanding swap the rail and the panel as whole
+        // nodes, which no resize event reports, and this runs on every DOM
+        // change.
+        const shown = document.querySelector("[data-aiui-embed][data-open]");
+        if (shown && shown.__aiuiReposition) shown.__aiuiReposition();
         // Don't early-return for non-admins: entries flagged allUsers must
         // still inject. Admin-only entries are gated individually below.
         // Fail-soft: if admin can't be determined isAdmin() is false, so
