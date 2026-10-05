@@ -1012,7 +1012,11 @@
   <script>
   (function () {
     var API = "/api/v1/models";
-    var state = { me: null, email: null, agents: [], models: [], query: "" };
+    // defaultModel is the platform default, sent by GET /api/tasks/agents/tools
+    // (AGENT_DEFAULT_MODEL on the server). Null until that answers, or when an
+    // older service does not send it.
+    var state = { me: null, email: null, agents: [], models: [], query: "",
+                  defaultModel: null };
 
     function authHeaders() {
       var h = { "Content-Type": "application/json" };
@@ -1941,6 +1945,10 @@
         if (r.ok) {
           var body = await r.json();
           if (body && Array.isArray(body.tools)) tools = body.tools;
+          if (body && typeof body.default_model === "string"
+              && body.default_model) {
+            state.defaultModel = body.default_model;
+          }
         }
       } catch (e) {
         console.warn("[agents] could not load which tools are connected", e);
@@ -2218,6 +2226,41 @@
     // and the two get read together whenever a model misbehaves.
     var CALLBACK_MODELS = ["auto_router.auto", "io.io"];
 
+    // Models that cannot answer a chat turn at all, so an agent on one can
+    // never run. Exact ids, never a name pattern: a pattern is how Auto
+    // (Smart) nearly went missing once. Every id here was on GET /api/models
+    // in production on 2026-10-05, and none had ever run an agent turn
+    // (tasks.agent_run, same day). A new one shows up under All models until
+    // somebody adds it here, which is the safe way round.
+    var NON_CHAT_MODELS = [
+      // Automation entry points, not chat. The webhook handler calls the
+      // first one with a wrapped payload; the second is a Pipelines pipe.
+      "webhook_automation.webhook-automation", "webhook_pipe",
+      // Image and video generation.
+      "gpt-image-1", "gpt-image-1-mini", "gpt-image-1.5", "gpt-image-2",
+      "gpt-image-2-2026-04-21", "gpt-image-2.5-flare",
+      "gpt-image-2.5-flare-2026-09-08", "gpt-image-2.5-sunburst",
+      "gpt-image-2.5-sunburst-2026-09-08", "chatgpt-image-latest",
+      "sora-2", "sora-2-pro",
+      // Speech to text.
+      "gpt-transcribe", "gpt-live-transcribe", "gpt-4o-transcribe",
+      "gpt-4o-transcribe-diarize", "gpt-4o-mini-transcribe",
+      "gpt-4o-mini-transcribe-2025-03-20",
+      "gpt-4o-mini-transcribe-2025-12-15",
+      // Realtime voice sessions.
+      "gpt-realtime", "gpt-realtime-1.5", "gpt-realtime-2",
+      "gpt-realtime-2025-08-28", "gpt-realtime-2.1", "gpt-realtime-2.1-mini",
+      "gpt-realtime-mini", "gpt-realtime-mini-2025-12-15",
+      "gpt-realtime-translate",
+      // Audio models, which need audio in or out on every request.
+      "gpt-audio", "gpt-audio-1.5", "gpt-audio-2025-08-28", "gpt-audio-mini",
+      "gpt-audio-mini-2025-10-06", "gpt-audio-mini-2025-12-15",
+      // Moderation classifiers.
+      "omni-moderation-latest", "omni-moderation-2024-09-26",
+      // Completions only, with no chat endpoint.
+      "gpt-3.5-turbo-instruct", "gpt-3.5-turbo-instruct-0914"
+    ];
+
     var MODEL_WARNINGS = {
       "auto_router.auto":
         "Auto (Free) shares a pool of free models that runs out, so an agent "
@@ -2346,13 +2389,48 @@
       // platform down with it. They are also the two that do not forward
       // tools, so such an agent would have none. Not offered here at all:
       // a warning was not enough, because the choice reads as reasonable.
-      state.models.filter(function (m) {
-        return !isAgent(m) && CALLBACK_MODELS.indexOf(m.id) === -1;
-      }).forEach(function (m) {
-        var o = document.createElement("option");
-        o.value = m.id; o.textContent = m.name || m.id;
-        base.appendChild(o);
+      // Models that cannot chat at all are left out the same way.
+      var offered = state.models.filter(function (m) {
+        return !isAgent(m) && CALLBACK_MODELS.indexOf(m.id) === -1
+          && NON_CHAT_MODELS.indexOf(m.id) === -1;
       });
+      var offeredIds = offered.map(function (m) { return m.id; });
+      // Recommended is data, not taste: the platform default first, then
+      // every model one of your own agents already runs on. Only models that
+      // are on offer, and each one once.
+      var recommended = [];
+      function recommend(id) {
+        if (id && offeredIds.indexOf(id) !== -1
+            && recommended.indexOf(id) === -1) {
+          recommended.push(id);
+        }
+      }
+      recommend(state.defaultModel);
+      state.agents.forEach(function (a) {
+        if (a.user_id === state.me) recommend(a.base_model_id);
+      });
+      function addGroup(label, models) {
+        if (!models.length) return;
+        var g = document.createElement("optgroup");
+        g.label = label;
+        models.forEach(function (m) {
+          var opt = document.createElement("option");
+          opt.value = m.id; opt.textContent = m.name || m.id;
+          g.appendChild(opt);
+        });
+        base.appendChild(g);
+      }
+      addGroup("Recommended", recommended.map(function (id) {
+        return offered[offeredIds.indexOf(id)];
+      }));
+      addGroup("All models", offered.filter(function (m) {
+        return recommended.indexOf(m.id) === -1;
+      }));
+      // A new agent starts on the first recommended model: the platform
+      // default when it is on offer, otherwise one your agents already use.
+      // It used to start on whatever /api/models listed first, which on
+      // production is the Webhook Automation pipe.
+      if (!agent && recommended.length) base.value = recommended[0];
       if (agent && agent.base_model_id) {
         base.value = agent.base_model_id;
         // The dropdown no longer offers callback pipes, so an agent already
@@ -2365,6 +2443,7 @@
           o.value = agent.base_model_id;
           o.textContent = agent.base_model_id
             + (CALLBACK_MODELS.indexOf(agent.base_model_id) !== -1
+               || NON_CHAT_MODELS.indexOf(agent.base_model_id) !== -1
                  ? " (cannot run an agent)" : " (not available)");
           base.insertBefore(o, base.firstChild);
           base.value = agent.base_model_id;

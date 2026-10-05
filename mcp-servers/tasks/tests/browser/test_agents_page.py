@@ -1420,6 +1420,180 @@ def test_the_warning_clears_when_you_pick_something_else(page):
     assert not page.locator("#model-warn").is_visible()
 
 
+# --- which model a new agent starts on ---------------------------------------
+
+# Measured 2026-10-05 on GET /api/models in production: 133 base models, and
+# the first one is the Webhook Automation pipe, so that is what a new agent
+# started on. The platform default (AGENT_DEFAULT_MODEL) was
+# nvidia/nemotron-3-super-120b-a12b:free, which 11 of the 12 agents on the
+# platform run on. The rows below keep production's order for the ones that
+# matter: a pipe first, then models that cannot answer a chat turn at all,
+# with the default and a real chat model further down.
+
+DEFAULT_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
+
+
+def _base_row(model_id, name):
+    return {"id": model_id, "name": name, "user_id": None,
+            "base_model_id": None, "params": {}, "meta": {},
+            "access_grants": [], "is_active": True, "write_access": False,
+            "created_at": 1, "updated_at": 1, "user": None}
+
+
+# One id per kind that NON_CHAT_MODELS names, plus the two callback pipes.
+NOT_FOR_AN_AGENT = [
+    "webhook_automation.webhook-automation", "webhook_pipe", "gpt-image-1",
+    "chatgpt-image-latest", "sora-2", "gpt-4o-mini-transcribe",
+    "gpt-realtime", "gpt-audio", "omni-moderation-latest",
+    "gpt-3.5-turbo-instruct", "io.io", "auto_router.auto",
+]
+
+PROD_ORDER = [
+    _base_row("webhook_automation.webhook-automation", "Webhook Automation"),
+    _base_row("fusion_pipe.fusion", "Fusion"),
+    _base_row("auto_smart.auto-smart", "Auto (Smart)"),
+    _base_row("gpt-image-1", "gpt-image-1"),
+    _base_row("chatgpt-image-latest", "chatgpt-image-latest"),
+    _base_row("sora-2", "sora-2"),
+    _base_row("gpt-4o-mini-transcribe", "gpt-4o-mini-transcribe"),
+    _base_row("gpt-realtime", "gpt-realtime"),
+    _base_row("gpt-audio", "gpt-audio"),
+    _base_row("omni-moderation-latest", "omni-moderation-latest"),
+    _base_row("gpt-3.5-turbo-instruct", "gpt-3.5-turbo-instruct"),
+    _base_row("gpt-5.5", "gpt-5.5"),
+    _base_row("webhook_pipe", "webhook_pipe"),
+    _base_row("io.io", "IO"),
+    _base_row(DEFAULT_MODEL, DEFAULT_MODEL),
+] + MODELS
+
+
+def _reload_with(page, default_model=None, models=PROD_ORDER):
+    """Re-run the page's own bootstrap against a different /api/models and
+    /agents/tools. Routes added later win over the fixture's catch-all, and
+    the default only arrives through loadTools(), which runs on page load."""
+    tools = {"tools": [{"id": "documents", "label": "Documents",
+                        "connected": True, "connect_url": ""}]}
+    if default_model is not None:
+        tools["default_model"] = default_model
+    page.route("**/api/tasks/agents/tools*", lambda r: r.fulfill(
+        status=200, content_type="application/json", body=json.dumps(tools)))
+    page.route("**/api/models*", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps(_api_models_envelope(models))))
+    page.reload()
+    page.wait_for_function(
+        "() => window.__aiuiAgents && window.__aiuiAgents.ready")
+
+
+def _groups(page):
+    """[(label, [option values])] for every optgroup in the model select."""
+    return page.locator("#agent-base optgroup").evaluate_all(
+        "gs => gs.map(g => [g.label,"
+        " Array.from(g.querySelectorAll('option')).map(o => o.value)])")
+
+
+def _offered(page):
+    return page.locator("#agent-base option").evaluate_all(
+        "els => els.map(e => e.value)")
+
+
+def test_a_new_agent_starts_on_the_platform_default(page):
+    _reload_with(page, default_model=DEFAULT_MODEL)
+    _open_form(page)
+    assert page.locator("#agent-base").input_value() == DEFAULT_MODEL, (
+        "a new agent started on whatever the list had first")
+
+
+def test_a_new_agent_saves_with_the_platform_default(page):
+    """The value has to reach the request, not just the dropdown."""
+    _reload_with(page, default_model=DEFAULT_MODEL)
+    _fill(page, name="Startsright", instructions="Something.")
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    assert json.loads(page.sent[-1]["body"])["base_model_id"] == DEFAULT_MODEL
+
+
+def test_recommended_comes_first_with_the_default_and_your_own_models(page):
+    """Recommended is data, not taste: the platform default, then every model
+    one of YOUR agents already runs on. gpt-4o-mini is in it because your
+    agents in MODELS use it. gpt-5.5 is used only by somebody else's agent,
+    so it stays under All models."""
+    _reload_with(page, default_model=DEFAULT_MODEL)
+    page.evaluate(
+        "() => { const s = window.__aiuiAgents.state.agents"
+        ".find(x => x.id === 'agent-shared-c3d4');"
+        " s.base_model_id = 'gpt-5.5'; }")
+    _open_form(page)
+    groups = _groups(page)
+    assert [g[0] for g in groups] == ["Recommended", "All models"], groups
+    assert groups[0][1] == [DEFAULT_MODEL, "gpt-4o-mini"], groups[0]
+    assert "gpt-5.5" in groups[1][1], groups[1]
+    assert DEFAULT_MODEL not in groups[1][1], "the default is listed twice"
+    assert "gpt-4o-mini" not in groups[1][1], "a model is listed twice"
+
+
+def test_models_that_cannot_answer_a_chat_are_not_offered(page):
+    _reload_with(page, default_model=DEFAULT_MODEL)
+    _open_form(page)
+    offered = _offered(page)
+    for model_id in NOT_FOR_AN_AGENT:
+        assert model_id not in offered, (model_id, offered)
+
+
+def test_the_exclusion_is_by_id_and_keeps_every_chat_model(page):
+    """An earlier guard learned this: filtering by a name pattern would take
+    Auto (Smart) with it. The list is exact ids, so the pipes that DO chat
+    and an ordinary model all stay."""
+    _reload_with(page, default_model=DEFAULT_MODEL)
+    _open_form(page)
+    offered = _offered(page)
+    for model_id in ("auto_smart.auto-smart", "fusion_pipe.fusion",
+                     "gpt-5.5", "gpt-4o-mini", DEFAULT_MODEL):
+        assert model_id in offered, (model_id, offered)
+
+
+def test_without_a_server_default_a_new_agent_starts_on_a_model_you_use(page):
+    """An older tasks service sends no default_model. The form must still
+    not fall back to the pipe that happens to be listed first."""
+    _reload_with(page, default_model=None)
+    _open_form(page)
+    assert page.locator("#agent-base").input_value() == "gpt-4o-mini"
+    assert _groups(page)[0] == ["Recommended", ["gpt-4o-mini"]]
+
+
+def test_a_default_that_is_not_on_offer_is_not_forced(page):
+    """A default the account cannot see, or one that cannot chat, is left
+    out rather than shown as a choice that would fail."""
+    _reload_with(page, default_model="gpt-image-1")
+    _open_form(page)
+    assert "gpt-image-1" not in _offered(page)
+    assert page.locator("#agent-base").input_value() == "gpt-4o-mini"
+
+
+def test_editing_keeps_the_agents_own_model_not_the_default(page):
+    """Green before this change as well: a guard that the default never
+    overrides an existing agent's model."""
+    _reload_with(page, default_model=DEFAULT_MODEL)
+    page.locator('[data-agent-id="agent-mine-a1b2"] [data-act="edit"]').click()
+    page.wait_for_selector("#agent-form", state="visible")
+    assert page.locator("#agent-base").input_value() == "gpt-4o-mini"
+
+
+def test_an_agent_already_on_a_non_chat_model_shows_it_marked(page):
+    """No agent is on one today (12 agents, two models, measured), but the
+    form must not silently move one that is: it shows the model, marked."""
+    _reload_with(page, default_model=DEFAULT_MODEL)
+    page.evaluate(
+        "() => { const a = window.__aiuiAgents.state.agents"
+        ".find(x => x.id === 'agent-mine-a1b2');"
+        " a.base_model_id = 'gpt-image-1';"
+        " window.__aiuiAgents.openForm(a); }")
+    page.wait_for_selector("#agent-form", state="visible")
+    assert page.locator("#agent-base").input_value() == "gpt-image-1"
+    assert "gpt-image-1 (cannot run an agent)" in (
+        page.locator("#agent-base").inner_text())
+
+
 # --- tools: everything, or only what you pick -------------------------------
 
 # Measured on production: Mia had one tool ticked and reached twelve, because
