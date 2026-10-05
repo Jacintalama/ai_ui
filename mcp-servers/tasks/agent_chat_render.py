@@ -209,6 +209,18 @@ def app_cards_for(content: str) -> str:
     return "".join(out)
 
 
+def _without_route_footer(content: str) -> str:
+    """content with a routing pipe's footer taken off its last line.
+
+    ROUTE_FOOTER only matches the last line, after a newline, so "\\n" is
+    put in front the way agent_routing.is_pass does, and a footer with
+    nothing before it is still found. Only when one was found is the rest
+    stripped; any other text comes back exactly as it was.
+    """
+    body, found = agent_routing.ROUTE_FOOTER.subn("", "\n" + content)
+    return body.strip() if found else content
+
+
 def agent_bubble(name: str, content: str, replying_to=None) -> str:
     """One agent's finished answer: its own row, its own name, its own avatar.
 
@@ -220,7 +232,14 @@ def agent_bubble(name: str, content: str, replying_to=None) -> str:
     to press anything to see it, which is the whole point: in an ordinary chat
     app you long-press a message to reply to it, and here the answer says what
     it belongs to by itself.
+
+    A routing pipe's footer on the last line ("*Auto (Smart): routed to the
+    paid general model `gpt-5.5`.*") is the pipe saying which model it
+    picked, not the agent, so it is not drawn. Every live answer comes
+    through here, and thread() draws history through here too, so the live
+    bubble and the reloaded one say the same thing.
     """
+    content = _without_route_footer(content or "")
     return ('<div class="am agent">'
             f'{_avatar(name)}'
             '<div class="abody">'
@@ -362,8 +381,7 @@ def _shown(content: str) -> str:
     """
     if agent_routing.is_pass(content):
         return ""
-    body, found = agent_routing.ROUTE_FOOTER.subn("", "\n" + content)
-    return body.strip() if found else content
+    return _without_route_footer(content)
 
 
 def thread(messages: list[dict], private: bool = False) -> str:

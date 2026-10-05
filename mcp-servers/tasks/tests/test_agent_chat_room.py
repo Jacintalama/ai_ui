@@ -384,6 +384,18 @@ def test_a_stored_pass_is_not_redrawn_when_the_room_loads(monkeypatch):
     assert "Two invoices are due on Friday." in thread
 
 
+def test_a_live_answer_is_drawn_without_its_route_footer(monkeypatch):
+    """The live half of the test above. An agent on Auto (Smart) answers
+    with the pipe's footer on the end, and the round drew it under the
+    answer until a reload let thread() take it off."""
+    app, mod, _, _ = _app(monkeypatch, answers={
+        "Mia": "Two invoices are due on Friday.\n\n*Auto (Smart): routed to "
+               "the paid general model `gpt-5.5`.*"})
+    _, body = _ask(app, "mia, what is due?")
+    assert "Two invoices are due on Friday." in body
+    assert "routed to" not in body
+
+
 def test_a_second_person_gets_their_own_room(monkeypatch):
     app, mod, _, rows = _app(monkeypatch)
     _ask(app, "mine")

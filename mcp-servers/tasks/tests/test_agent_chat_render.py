@@ -394,3 +394,32 @@ def test_a_conversation_of_only_passes_falls_back_to_the_empty_state():
     (test_round_bookkeeping_still_draws_as_nothing)."""
     assert (render.thread([_stored("Ada", STORED_SMART_PASS)])
             == render.empty_thread())
+
+
+# --- the routing footer is not drawn live either ----------------------------
+#
+# thread() takes the footer off on the way back, but a round draws a fresh
+# answer with agent_bubble straight from the model: _run_round, the
+# everybody-passed fallback, _question_events and the approval resume all
+# call it with the raw answer. So an Auto (Smart) agent's answer read "routed
+# to the paid general model" under it until the page was reloaded (finding 7
+# of docs/plans/2026-10-05-ai-agents-workspace-design.md). agent_bubble is
+# the one place every one of those answers goes through.
+
+def test_a_live_answer_is_drawn_without_its_route_footer():
+    html = render.agent_bubble("Mia",
+                               "Two invoices are due on Friday." + SMART_FOOTER)
+    assert "Two invoices are due on Friday." in html
+    assert "routed to" not in html
+    assert "gpt-5.5" not in html
+
+
+def test_a_footer_shaped_line_inside_an_answer_stays():
+    """Only the last line is the pipe's, the one place ROUTE_FOOTER matches.
+    The same words anywhere else are something the agent said, and are
+    drawn as said."""
+    said = ("Here is the plan.\n\n*Auto (Smart): routed to the paid general "
+            "model `gpt-5.5`.*\n\nThat is what the router told me.")
+    html = render.agent_bubble("Mia", said)
+    assert "routed to the paid general model" in html
+    assert "That is what the router told me." in html
