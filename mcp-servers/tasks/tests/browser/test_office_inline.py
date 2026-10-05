@@ -46,6 +46,27 @@ def browser():
         b.close()
 
 
+# Stand-ins for the Open WebUI document, holding only what the contract needs:
+# a recorder for the one message the shell answers, aiui:open-pane. The office
+# pane variant also loads the REAL task-panel.js, because the office decides
+# it is inside the shell by the flag that file sets on the top window, and a
+# flag written here by hand would only prove what this fixture imagined.
+_RECORD = (b'<script>window.__panes = [];'
+           b'window.addEventListener("message", function (ev) {'
+           b' if (ev.data && ev.data.type === "aiui:open-pane")'
+           b'  window.__panes.push({ data: ev.data, origin: ev.origin });'
+           b'});</script>')
+SHELL_AROUND_OFFICE = (
+    b'<!doctype html><title>shell</title>' + _RECORD +
+    b'<script src="/tasks/static/task-panel.js"></script>'
+    b'<iframe id="pane" src="/tasks/office" '
+    b'style="width:100%;height:1400px;border:0"></iframe>')
+SHELL_AROUND_AGENTS = (
+    b'<!doctype html><title>shell</title>' + _RECORD +
+    b'<iframe id="pane" src="/agents.html" '
+    b'style="width:1500px;height:1000px;border:0"></iframe>')
+
+
 # The page's own stylesheet has to be served, not stubbed. An earlier version
 # of this fixture answered every path that was not /agents with a placeholder
 # document, which meant /tasks/static/agent-chat.css arrived as HTML and the
@@ -73,6 +94,10 @@ def server():
                 body = (b'<!doctype html><title>bare</title>'
                         b'<iframe src="/tasks/office" '
                         b'style="width:100%;height:1400px;border:0"></iframe>')
+            elif path.startswith("/shell-agents"):
+                body = SHELL_AROUND_AGENTS
+            elif path.startswith("/shell"):
+                body = SHELL_AROUND_OFFICE
             else:
                 body = (STATIC / "agents.html").read_bytes()
             self.send_response(200)
@@ -601,3 +626,191 @@ def test_a_height_chosen_for_the_old_floor_is_not_obeyed(browser, server):
         assert got["drawnW"] / got["boxW"] >= 0.85, got
     finally:
         ctx.close()
+
+
+# --- nothing in the office loads a bare page --------------------------------
+#
+# Design 2026-10-05, finding 5: every office link is target=_top and only the
+# Chat pills were intercepted, so The Brain, Call a team meeting, the skill
+# links and Edit agent each replaced the whole Open WebUI window with a bare
+# page. Hosted by the agents page they are now messages to it. Framed straight
+# into the shell (the Agent Office pane) they are aiui:open-pane messages to
+# the shell. Anywhere else they are still followed, which
+# test_a_frame_that_does_not_host_the_office_still_follows_the_link pins.
+
+SKILLED = [
+    {"id": "agent-iris-a103", "name": "Iris",
+     "meta": {"role": "Drive librarian", "toolIds": ["gdrive"],
+              "skillIds": ["find-my-file"]},
+     "params": {}, "user_id": "me", "created_at": 1, "updated_at": 1},
+    OFFICE_AGENTS[1],
+]
+SKILL_CATALOGUE = [{"name": "find-my-file", "description": "Find a file.",
+                    "tools": ["gdrive"], "tags": ["files"]}]
+
+
+def _as_owner(browser, server, agents=None, url="/agents.html"):
+    """The agents page signed in as the owner of the office's agents.
+
+    The default fixture answers /api/v1/auths/ with no id, which the page
+    reads as no identity, so it has no agents of its own and nothing to edit.
+    """
+    roster = agents or OFFICE_AGENTS
+    ctx = browser.new_context(viewport={"width": 1500, "height": 1000})
+    pg = ctx.new_page()
+    pg.set_default_timeout(8000)
+
+    def route(r):
+        u = r.request.url
+        if "/api/v1/auths/" in u:
+            body = {"id": "me", "email": "me@example.test"}
+        elif "/models/list" in u:
+            body = {"items": roster, "total": len(roster)}
+        elif "/agents/activity" in u:
+            body = {"activity": {}, "handoffs": []}
+        elif "/agents/stats" in u:
+            body = {"stats": {}}
+        elif "/agents/skills" in u:
+            body = {"skills": SKILL_CATALOGUE}
+        else:
+            body = {"items": [], "total": 0}
+        r.fulfill(status=200, content_type="application/json",
+                  body=json.dumps(body))
+
+    pg.route("**/api/**", route)
+    pg.route("**/tasks/agents/chat/**", route)
+    pg.goto("http://127.0.0.1:%d%s" % (server.server_address[1], url))
+    return ctx, pg
+
+
+def test_the_embedded_office_does_not_offer_to_open_the_page_it_is_in(page):
+    """"Open the chat" points at /tasks/agents, which is the page around the
+    floor. Followed, it reloaded the page; it has nothing to do here."""
+    frame = page.frame_locator("#office-body iframe")
+    frame.locator(".floor-bar").wait_for()
+    said = frame.locator(".floor-bar a").all_inner_texts()
+    assert "Open the chat" not in said, said
+    assert any("team meeting" in s for s in said), said
+
+
+def test_the_meeting_button_fills_the_room_in_place(page):
+    """Call a team meeting hands over "everyone answer: ". It is a question
+    for the room, so a private conversation that happens to be open is left
+    for the room first: in Iris's own thread only Iris would hear it."""
+    page.evaluate("() => window.aiuiTalkTo('agent-iris-a103', 'Iris')")
+    page.wait_for_timeout(200)
+    frame = page.frame_locator("#office-body iframe")
+    meeting = frame.locator(".floor-bar a.btn").first
+    meeting.wait_for()
+    page.evaluate("() => { window.__stillHere = true; }")
+    meeting.click()
+    page.wait_for_timeout(400)
+    assert page.evaluate("() => window.__stillHere === true"), "the page reloaded"
+    assert page.locator("#ap-agent").input_value() == ""
+    assert page.locator(".ap-composer input[name=message]").input_value(
+        ) == "everyone answer: "
+
+
+def test_a_skill_opens_that_agents_conversation_with_the_question(browser, server):
+    """The skill link says "Iris, find my file". It opens Iris's own
+    conversation and leaves the question in the box, unsent."""
+    ctx, pg = _as_owner(browser, server, agents=SKILLED)
+    try:
+        frame = pg.frame_locator("#office-body iframe")
+        frame.locator('.who[data-id="agent-iris-a103"]').click()
+        skill = frame.locator("#side a.skill").first
+        skill.wait_for()
+        pg.evaluate("() => { window.__stillHere = true; }")
+        skill.click()
+        pg.wait_for_timeout(400)
+        assert pg.evaluate("() => window.__stillHere === true"), "the page reloaded"
+        assert pg.locator("#ap-agent").input_value() == "agent-iris-a103"
+        assert pg.locator(".ap-composer input[name=message]").input_value(
+            ) == "find my file"
+    finally:
+        ctx.close()
+
+
+def test_edit_agent_in_the_office_opens_the_form_on_this_page(browser, server):
+    """Edit agent linked to /tasks/agents, which reloaded this page and
+    opened nothing. The page around the floor has the form already."""
+    ctx, pg = _as_owner(browser, server)
+    try:
+        pg.wait_for_selector('#my-agents .card[data-agent-id="agent-iris-a103"]',
+                             state="attached")
+        frame = pg.frame_locator("#office-body iframe")
+        frame.locator('.who[data-id="agent-iris-a103"]').click()
+        edit = frame.locator("#side a", has_text="Edit agent")
+        edit.wait_for()
+        pg.evaluate("() => { window.__stillHere = true; }")
+        edit.click()
+        pg.wait_for_timeout(400)
+        assert pg.evaluate("() => window.__stillHere === true"), "the page reloaded"
+        assert pg.locator("#agent-overlay").is_visible()
+        assert pg.locator("#form-title").inner_text() == "Edit agent"
+        assert pg.locator("#agent-name").input_value() == "Iris"
+    finally:
+        ctx.close()
+
+
+def test_the_brain_opens_the_graph_pane_and_leaves_the_page_alone(browser, server):
+    """Inside the shell the agents page asks the shell for its Graph pane,
+    the same pane a click on the sidebar entry opens. The shell document is
+    not replaced and the agents page stays where it is."""
+    ctx, pg = _as_owner(browser, server, url="/shell-agents")
+    try:
+        office = pg.frame_locator("#pane").frame_locator("#office-body iframe")
+        office.locator(".brain a").wait_for()
+        pg.wait_for_timeout(300)
+        office.locator(".brain a").click()
+        pg.wait_for_timeout(400)
+        origin = "http://127.0.0.1:%d" % server.server_address[1]
+        got = pg.evaluate("() => window.__panes || null")
+        assert got == [{"data": {"type": "aiui:open-pane", "path": "/graph"},
+                        "origin": origin}], got
+        assert pg.locator("#pane").evaluate(
+            "f => f.contentWindow.location.pathname") == "/agents.html"
+    finally:
+        ctx.close()
+
+
+def test_in_the_shell_a_chat_pill_asks_for_the_agents_pane(page, server):
+    """The Agent Office pane on its own, inside the shell. Nobody hosts it,
+    so its Chat pill asks the shell to open AI Agents with the question."""
+    page.goto("http://127.0.0.1:%d/shell" % server.server_address[1])
+    office = page.frame_locator("#pane")
+    office.locator('.who-chat[data-id="agent-iris-a103"]').wait_for()
+    assert page.evaluate("() => window.__aiuiTaskPanelLoaded === true")
+    # Standalone, so the floor still offers the chat.
+    assert office.locator(".floor-bar a", has_text="Open the chat").count() == 1
+    page.evaluate("() => { window.__stillHere = true; }")
+    office.locator('.who-chat[data-id="agent-iris-a103"]').click()
+    page.wait_for_timeout(400)
+    assert page.evaluate("() => window.__stillHere === true"), "the shell was replaced"
+    origin = "http://127.0.0.1:%d" % server.server_address[1]
+    assert page.evaluate("() => window.__panes") == [
+        {"data": {"type": "aiui:open-pane", "path": "/ai-agents",
+                  "ask": "Iris, "}, "origin": origin}]
+
+
+def test_in_the_shell_the_brain_asks_for_the_graph_pane(page, server):
+    page.goto("http://127.0.0.1:%d/shell" % server.server_address[1])
+    office = page.frame_locator("#pane")
+    office.locator(".brain a").wait_for()
+    page.evaluate("() => { window.__stillHere = true; }")
+    office.locator(".brain a").click()
+    page.wait_for_timeout(400)
+    assert page.evaluate("() => window.__stillHere === true"), "the shell was replaced"
+    origin = "http://127.0.0.1:%d" % server.server_address[1]
+    assert page.evaluate("() => window.__panes") == [
+        {"data": {"type": "aiui:open-pane", "path": "/graph"}, "origin": origin}]
+
+
+def test_on_its_own_the_agents_page_still_opens_the_graph(page):
+    """Guard, passes before and after: /tasks/agents with no shell around it
+    has no pane to open, so The Brain still reaches the graph page."""
+    frame = page.frame_locator("#office-body iframe")
+    frame.locator(".brain a").wait_for()
+    page.wait_for_timeout(300)
+    frame.locator(".brain a").click()
+    page.wait_for_url("**/tasks/graph")

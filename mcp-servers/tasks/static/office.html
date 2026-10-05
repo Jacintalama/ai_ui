@@ -1023,7 +1023,10 @@
       '<span class="right">' +
         '<a class="btn" target="_top" href="/tasks/agents?ask=' +
           encodeURIComponent("everyone answer: ") + '">Call a team meeting</a>' +
-        '<a class="btn ghost" target="_top" href="/tasks/agents">Open the chat</a>' +
+        // Not in the card on the agents page: the chat it opens is the page
+        // around this floor, so following it only reloaded that page.
+        (document.documentElement.classList.contains("embed") ? "" :
+          '<a class="btn ghost" target="_top" href="/tasks/agents">Open the chat</a>') +
       '</span></div>';
 
     document.getElementById("rooms").innerHTML = html + talkHtml();
@@ -1053,7 +1056,10 @@
       esc(name) + ' for</p><div class="tags">' +
       mine.map(function (s) {
         var msg = name + ", " + saying(s.name);
-        return '<a class="tag skill" target="_top" href="/tasks/agents?ask=' +
+        // The agent's id rides along, so the page around a hosted floor can
+        // open this agent's own conversation instead of asking the room.
+        return '<a class="tag skill" target="_top" data-id="' + esc(m.id) +
+          '" href="/tasks/agents?ask=' +
           encodeURIComponent(msg) + '" title="' + esc(s.description) + '">' +
           esc(saying(s.name)) + '</a>';
       }).join("") + '</div>';
@@ -1129,7 +1135,7 @@
         '" href="/tasks/agents?ask=' +
         encodeURIComponent((m.name || "") + ", ") + '">Chat with ' +
         esc(m.name || "this agent") + '</a>' +
-      '<a class="btn ghost" target="_top" href="/tasks/agents">Edit agent</a>' +
+      '<a class="btn ghost edit-agent" target="_top" data-id="' + esc(m.id) + '" href="/tasks/agents">Edit agent</a>' +
       '<p class="note">Which tool a run actually used is not recorded, so this ' +
         'is what it may reach, not what it is using. Only the most recent run ' +
         'is kept per agent.</p>';
@@ -1523,27 +1529,72 @@
     } catch (e) { /* a frame we cannot talk to is simply not a host */ }
   }
 
+  //: Each page this office links to, by the shell's own nav path for it
+  //: (task-panel.js NAV_ENTRIES urlPath). A link to anything else is left
+  //: alone wherever the office is.
+  var PANE_OF = { "/tasks/agents": "/ai-agents", "/tasks/graph": "/graph",
+                  "/tasks/office": "/ai-agents/office" };
+
+  //: The Open WebUI shell, not merely some page that frames this one.
+  //: task-panel.js sets this flag on the top window before it does anything
+  //: else. A page that frames the office without it has nobody to answer
+  //: aiui:open-pane, so there a link has to be followed.
+  function inShell() {
+    if (window.top === window || window.parent !== window.top) return false;
+    try { return window.top.__aiuiTaskPanelLoaded === true; }
+    catch (e) { return false; }            // a top we cannot read is not ours
+  }
+
+  // Every link here used to load a bare page over the whole of Open WebUI,
+  // except the Chat pills. Now:
+  //   hosted by the agents page: a message to it, which acts in place;
+  //   the Agent Office pane in the shell: aiui:open-pane to the shell, which
+  //     opens that pane exactly as its sidebar entry would;
+  //   anywhere else: the link is followed, target=_top as written.
+  // Nothing is ever sent. An ask only fills the composer.
   document.addEventListener("click", function (ev) {
-    if (!HOSTED) return;
-    var a = ev.target.closest("a.who-chat, a.chat-with");
+    // A new tab or window was asked for: that is the link's job.
+    if (ev.defaultPrevented || ev.button !== 0 ||
+        ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+    var a = ev.target.closest("a[href]");
     if (!a) return;
+    if ((a.getAttribute("href") || "").charAt(0) === "#") return;
+    var path = PANE_OF[a.pathname];
+    if (!path) return;
+    var shell = !HOSTED && inShell();
+    if (!HOSTED && !shell) return;
     var ask = "";
-    try { ask = decodeURIComponent((a.href.split("ask=")[1] || "")); }
-    catch (e) { return; }                  // malformed: let the link do its job
-    if (!ask) return;
+    var raw = a.href.split("ask=")[1];
+    if (raw != null) {
+      try { ask = decodeURIComponent(raw); }
+      catch (e) { return; }                // malformed: let the link do its job
+    }
+    var id = a.getAttribute("data-id") || "";
     ev.preventDefault();
-    // Same origin only. The office and the page around it are served by the
-    // same host, and a wildcard would hand whatever is typed to any parent
-    // that framed this page.
-    //
-    // The agent's id goes with it. The page around us opens that agent's own
-    // conversation rather than putting the question to the room: "Chat" on a
-    // robot means a private word with them, not a message everybody reads.
-    window.parent.postMessage({
-      type: "aiui-office-ask", ask: ask,
-      agent: a.getAttribute("data-id") || "",
-      name: (ask.split(",")[0] || "").trim()
-    }, window.location.origin);
+    // Same origin only, both ways. The office, the agents page and the shell
+    // are served by the same host, and a wildcard would hand whatever is
+    // typed to any page that framed this one.
+    var origin = window.location.origin;
+    if (shell) {
+      var open = { type: "aiui:open-pane", path: path };
+      if (ask) open.ask = ask;
+      window.top.postMessage(open, origin);
+      return;
+    }
+    if (ask) {
+      // The agent's id goes with it. The page around us opens that agent's
+      // own conversation rather than putting the question to the room:
+      // "Chat" on a robot means a private word with them. Without an id
+      // (the meeting button) it is a question for the room.
+      window.parent.postMessage({
+        type: "aiui-office-ask", ask: ask, agent: id,
+        name: (ask.split(",")[0] || "").trim()
+      }, origin);
+    } else if (id && a.classList.contains("edit-agent")) {
+      window.parent.postMessage({ type: "aiui-office-edit", id: id }, origin);
+    } else {
+      window.parent.postMessage({ type: "aiui-office-open", path: path }, origin);
+    }
   });
 
   document.getElementById("side").addEventListener("click", function (ev) {

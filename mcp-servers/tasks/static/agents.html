@@ -3338,19 +3338,70 @@
         }
         return;
       }
+      if (msg && msg.type === "aiui-office-open") { openPane(msg.path); return; }
+      if (msg && msg.type === "aiui-office-edit") { editAgent(msg.id); return; }
       if (!msg || msg.type !== "aiui-office-ask" || typeof msg.ask !== "string") return;
+      var talk = typeof window.aiuiTalkTo === "function" ? window.aiuiTalkTo : null;
       // Clicking Chat on a robot opens that agent's own conversation. It used
       // to type "Ada, " into the shared room, which routed the answer to Ada
       // but left the words where every other agent read them.
-      if (msg.agent && typeof window.aiuiTalkTo === "function") {
-        window.aiuiTalkTo(msg.agent, msg.name || msg.agent);
+      if (msg.agent && typeof msg.agent === "string" && talk) {
+        var name = typeof msg.name === "string" ? msg.name : "";
+        talk(msg.agent, name || msg.agent);
+        // A skill link says "Iris, find my file". In Iris's own conversation
+        // her name is not needed, so only the question goes in the box. A
+        // Chat pill says just "Iris, " and leaves the box empty.
+        var rest = msg.ask;
+        if (name && rest.indexOf(name + ",") === 0) rest = rest.slice(name.length + 1);
+        rest = rest.trim();
+        if (rest) prefill(rest);
         return;
       }
+      // No agent: a question for the room, such as the meeting button's
+      // "everyone answer: ". Asked in a private conversation only that one
+      // agent would hear it, so the room comes back first.
+      var field = document.getElementById("ap-agent");
+      if (talk && field && field.value) talk("", "");
+      prefill(msg.ask);
+    });
+
+    function prefill(text) {
       var box = document.querySelector(".ap-composer input[name=message]");
       if (!box) return;
-      box.value = msg.ask;
+      box.value = text;
       box.focus();
-    });
+    }
+
+    // Panes the floor may ask for, by the shell's own nav paths
+    // (task-panel.js NAV_ENTRIES urlPath), and the bare page each one is.
+    var PANES = { "/graph": "/tasks/graph", "/ai-agents/office": "/tasks/office",
+                  "/ai-agents": "/tasks/agents" };
+
+    // The Brain and the other links that leave this page. Inside the shell
+    // the shell opens that pane, exactly as its sidebar entry does, so the
+    // whole window is never replaced by a bare page. On its own, with no
+    // shell around it, this page has no panes, so it goes to the page itself.
+    function openPane(path) {
+      if (typeof path !== "string" ||
+          !Object.prototype.hasOwnProperty.call(PANES, path)) return;
+      if (window.parent !== window) {
+        window.parent.postMessage({ type: "aiui:open-pane", path: path },
+                                  window.location.origin);
+        return;
+      }
+      if (path !== "/ai-agents") window.location.assign(PANES[path]);
+    }
+
+    // Edit agent on the floor opens this page's own form. Yours only, the
+    // same rule the cards follow: nobody else's agent has an Edit button
+    // here, and the server would refuse the save.
+    function editAgent(id) {
+      var page = window.__aiuiAgents;
+      if (!page || !page.state || typeof id !== "string" || !id) return;
+      var agent = page.state.agents.filter(function (m) { return m.id === id; })[0];
+      if (!agent || agent.user_id !== page.state.me) return;
+      page.openForm(agent);
+    }
   })();
 </script>
 <script src="/tasks/static/agent-chat.js"></script>
