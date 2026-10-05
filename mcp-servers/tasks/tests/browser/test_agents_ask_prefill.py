@@ -22,6 +22,17 @@ playwright_api = pytest.importorskip(
 
 STATIC = pathlib.Path(__file__).resolve().parents[2] / "static"
 
+#: The Open WebUI shell, cut down to what these tests need from it: a top
+#: document that frames the agents page as a pane, the way task-panel.js does.
+#: ?frame= points the pane somewhere else, so one server can also play a
+#: shell on a different origin (localhost framing 127.0.0.1).
+SHELL = (b'<!doctype html><meta charset="utf-8"><title>shell</title>'
+         b'<body style="margin:0">'
+         b'<iframe id="pane" style="width:1300px;height:900px;border:0">'
+         b'</iframe><script>document.getElementById("pane").src = '
+         b'new URLSearchParams(location.search).get("frame")'
+         b' || "/agents.html";</script></body>')
+
 
 @pytest.fixture(scope="module")
 def browser():
@@ -40,11 +51,12 @@ def server():
 
     class Handler(http.server.SimpleHTTPRequestHandler):
         def do_GET(self):                                    # noqa: N802
+            body = SHELL if self.path.startswith("/shell") else html
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
-            self.send_header("Content-Length", str(len(html)))
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(html)
+            self.wfile.write(body)
 
         def log_message(self, *a):
             pass
@@ -135,5 +147,157 @@ def test_the_cursor_waits_at_the_end_so_they_can_type_the_rest(browser, server):
         assert at["focused"] is True
         assert at["start"] == len("Iris, "), at
         assert at["end"] == len("Iris, "), at
+    finally:
+        pg.close()
+
+
+# --- the shell handing the pane a question ----------------------------------
+#
+# task-panel.js opens the agents pane and then posts
+# {type: "aiui-agents-ask", ask} to its iframe, with targetOrigin set to its
+# own origin (the shared aiui:open-pane protocol, 2026-10-05). The page fills
+# the box by the same path ?ask= uses, and only for a message from the window
+# that framed it, on its own origin. It never sends.
+
+BOX = ".ap-composer input[name=message]"
+
+#: target None means the shell's own origin, which is what task-panel.js
+#: uses. "*" is only for the cross-origin case: with a named target the
+#: browser would drop the message before the page ever saw it, and the test
+#: would pass without the page checking anything.
+POST_TO_PANE = (
+    "([ask, target]) => document.getElementById('pane').contentWindow"
+    ".postMessage({type: 'aiui-agents-ask', ask: ask},"
+    " target || location.origin)")
+
+#: Records every message type the pane receives, so a test that expects the
+#: box to stay empty can also prove the message did arrive and was refused.
+LISTEN = ("() => { window.__got = [];"
+          " addEventListener('message', e => window.__got.push("
+          "e.data && e.data.type)); }")
+
+
+def _shell(browser, server, host="127.0.0.1", frame=None):
+    pg = browser.new_page(viewport={"width": 1400, "height": 950})
+    pg.set_default_timeout(6000)
+    sent = []
+
+    def route(r):
+        if r.request.method == "POST":
+            sent.append(r.request.url)
+        r.fulfill(status=200, content_type="application/json",
+                  body=json.dumps({"items": [], "total": 0}))
+
+    pg.route("**/api/**", route)
+    pg.route("**/tasks/**", route)
+    url = "http://%s:%d/shell" % (host, server.server_address[1])
+    if frame:
+        url += "?frame=" + urllib.parse.quote(frame, safe="")
+    pg.goto(url)
+    pg.frame_locator("#pane").locator(BOX).wait_for(state="attached")
+    pg.wait_for_timeout(350)
+    pg.frame_locator("#pane").locator("body").evaluate(LISTEN)
+    pg.sent = sent
+    return pg
+
+
+def _pane(pg):
+    return pg.frame_locator("#pane")
+
+
+def _arrived(pg):
+    return _pane(pg).locator("body").evaluate("() => window.__got")
+
+
+def test_the_shell_can_hand_the_pane_a_question(browser, server):
+    pg = _shell(browser, server)
+    try:
+        pg.evaluate(POST_TO_PANE, ["Ada, weekly review", None])
+        pg.wait_for_timeout(200)
+        assert _pane(pg).locator(BOX).input_value() == "Ada, weekly review"
+        assert _pane(pg).locator(BOX).evaluate(
+            "e => e === document.activeElement"), (
+            "the box was filled but not focused, unlike ?ask=")
+    finally:
+        pg.close()
+
+
+def test_a_question_from_the_shell_is_not_sent(browser, server):
+    pg = _shell(browser, server)
+    try:
+        pg.evaluate(POST_TO_PANE, ["Ada, weekly review", None])
+        pg.wait_for_timeout(300)
+        assert "aiui-agents-ask" in _arrived(pg)
+        assert not [u for u in pg.sent if "chat/send" in u], pg.sent
+    finally:
+        pg.close()
+
+
+def test_a_message_that_is_not_from_the_parent_is_ignored(browser, server):
+    """The pane posting to itself stands in for any other frame on the same
+    origin: right origin, wrong source."""
+    pg = _shell(browser, server)
+    try:
+        _pane(pg).locator("body").evaluate(
+            "() => window.postMessage({type: 'aiui-agents-ask',"
+            " ask: 'typed by someone else'}, location.origin)")
+        pg.wait_for_timeout(200)
+        assert "aiui-agents-ask" in _arrived(pg), "the message never arrived"
+        assert _pane(pg).locator(BOX).input_value() == ""
+    finally:
+        pg.close()
+
+
+def test_a_parent_on_another_origin_is_ignored(browser, server):
+    """Right source, wrong origin: a page on localhost framing the agents
+    page on 127.0.0.1 must not be able to type into it."""
+    port = server.server_address[1]
+    pg = _shell(browser, server, host="localhost",
+                frame="http://127.0.0.1:%d/agents.html" % port)
+    try:
+        pg.evaluate(POST_TO_PANE, ["typed by another site", "*"])
+        pg.wait_for_timeout(200)
+        assert "aiui-agents-ask" in _arrived(pg), "the message never arrived"
+        assert _pane(pg).locator(BOX).input_value() == ""
+    finally:
+        pg.close()
+
+
+def test_a_standalone_page_ignores_the_message(browser, server):
+    """Not framed, there is no shell, and window.parent is the page itself,
+    so a source check alone would let the page's own posts through."""
+    pg = _open(browser, server)
+    try:
+        pg.evaluate(
+            "() => window.postMessage({type: 'aiui-agents-ask',"
+            " ask: 'nobody asked'}, location.origin)")
+        pg.wait_for_timeout(200)
+        assert pg.input_value(BOX) == ""
+    finally:
+        pg.close()
+
+
+@pytest.mark.parametrize("ask", [42, None, "   "])
+def test_a_question_that_is_not_text_is_ignored(browser, server, ask):
+    pg = _shell(browser, server)
+    try:
+        pg.evaluate(POST_TO_PANE, [ask, None])
+        pg.wait_for_timeout(200)
+        assert "aiui-agents-ask" in _arrived(pg)
+        assert _pane(pg).locator(BOX).input_value() == ""
+    finally:
+        pg.close()
+
+
+def test_an_overlong_question_is_ignored(browser, server):
+    """The shell drops an ask over 2000 characters rather than cutting it,
+    and so does the page: one policy on both sides, so half a question never
+    lands in the box looking like the whole of it."""
+    pg = _shell(browser, server)
+    try:
+        pg.evaluate(POST_TO_PANE, ["x" * 2500, None])
+        pg.wait_for_timeout(200)
+        assert "aiui-agents-ask" in _arrived(pg)
+        assert _pane(pg).locator(BOX).input_value() == ""
     finally:
         pg.close()

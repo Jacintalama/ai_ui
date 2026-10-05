@@ -3000,21 +3000,46 @@
   // followed a link, is worse than asking for one more click. They can edit
   // it first, which is the point of showing it.
   (function () {
+    // The one way into the box, whoever is asking: the ?ask= link below and
+    // the shell's aiui-agents-ask message both come through here.
+    function prefillAsk(text) {
+      var box = document.querySelector(".ap-composer input[name=message]");
+      if (!box) return false;
+      box.value = text;
+      box.focus();
+      return true;
+    }
+
     try {
       var ask = new URLSearchParams(location.search).get("ask");
-      if (!ask) return;
-      var box = document.querySelector(".ap-composer input[name=message]");
-      if (!box) return;
-      box.value = ask;
-      box.focus();
-      // Taken out of the address bar once it is in the box. Left there, F5
-      // would put it back after the person cleared it, and a URL copied out
-      // of the bar would carry somebody else's question.
-      var url = location.pathname + location.hash;
-      history.replaceState(null, "", url);
+      if (ask && prefillAsk(ask)) {
+        // Taken out of the address bar once it is in the box. Left there, F5
+        // would put it back after the person cleared it, and a URL copied out
+        // of the bar would carry somebody else's question.
+        var url = location.pathname + location.hash;
+        history.replaceState(null, "", url);
+      }
     } catch (e) {
       console.warn("[agents] could not read the asked question", e);
     }
+
+    // The shell (task-panel.js) opening this pane with a question:
+    // {type: "aiui-agents-ask", ask}. Only from the window that framed this
+    // page and only from this origin. Without both, any page that framed
+    // this one, or any frame beside it, could type into the composer. It
+    // fills and stops, like ?ask=: nothing is ever sent for the person.
+    window.addEventListener("message", function (ev) {
+      if (window.parent === window) return;
+      if (ev.source !== window.parent) return;
+      if (ev.origin !== location.origin) return;
+      var msg = ev.data;
+      if (!msg || msg.type !== "aiui-agents-ask") return;
+      if (typeof msg.ask !== "string" || !msg.ask.trim()) return;
+      // Over 2000 characters is dropped, not cut, the same policy as the
+      // shell: half a question in the box would read as the whole of it.
+      if (msg.ask.length > 2000) return;
+      prefillAsk(msg.ask);
+    });
   })();
 </script>
 <script>
