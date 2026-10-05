@@ -1574,6 +1574,7 @@
         frame.style.cssText =
           "width:100%;height:100%;border:0;display:block;background:#0b0b0b;";
         frame.addEventListener("load", () => {
+          frame.__aiuiLoaded = true;
           aiuiFrameVisible(frame, wrap.getAttribute("data-open") === cfg.href);
         });
         AIUI_FRAMES[cfg.href] = frame;
@@ -1585,6 +1586,57 @@
       setTimeout(() => clearInterval(iv), 3000);
       window.__aiuiEmbedCleanup = () => clearInterval(iv);
     }
+
+    // --- aiui:open-pane --------------------------------------------------
+    // A page inside a pane asks the shell to open another pane, exactly as a
+    // click on that sidebar entry would: the agents page opening the Graph,
+    // the office opening AI Agents with a question. Without this they could
+    // only send the whole window to a bare page outside Open WebUI.
+    //
+    // Accepted only from this origin AND straight from one of our own pane
+    // frames. Open WebUI renders chat artifacts in frames, and App Builder
+    // shows app previews in frames inside its pane (projects.html loads
+    // /api/template-preview/ from this same origin); neither may drive the
+    // shell. The path must be the urlPath of a known entry. Anything else is
+    // ignored.
+    //
+    // An `ask` goes only to the AI Agents page, only once its frame has
+    // loaded, and only PREFILLS its composer. Nothing is ever sent for the
+    // person: a turn costs money and can run tools.
+    const AIUI_ASK_MAX = 2000;
+
+    function aiuiIsPaneFrame(source) {
+      return !!source && Object.keys(AIUI_FRAMES).some(
+        (k) => AIUI_FRAMES[k].contentWindow === source);
+    }
+
+    function aiuiHandAskToAgents(cfg, ask) {
+      const frame = AIUI_FRAMES[cfg.href];
+      if (!frame) return;
+      const hand = () => {
+        try {
+          frame.contentWindow.postMessage(
+            { type: "aiui-agents-ask", ask: ask }, location.origin);
+        } catch (e) { /* frame gone: the question is dropped, never sent */ }
+      };
+      if (frame.__aiuiLoaded) hand();
+      else frame.addEventListener("load", hand, { once: true });
+    }
+
+    window.addEventListener("message", async (ev) => {
+      if (ev.origin !== location.origin) return;
+      const d = ev.data;
+      if (!d || d.type !== "aiui:open-pane" || typeof d.path !== "string") return;
+      if (!aiuiIsPaneFrame(ev.source)) return;
+      const cfg = NAV_ENTRIES.find((c) => c.embed && c.urlPath === d.path);
+      if (!cfg) return;
+      if (!cfg.allUsers && !(await isAdmin())) return;
+      openAiuiEmbed(cfg);
+      if (d.path === "/ai-agents" && typeof d.ask === "string") {
+        const ask = d.ask.trim();
+        if (ask && ask.length <= AIUI_ASK_MAX) aiuiHandAskToAgents(cfg, ask);
+      }
+    });
 
     // Mirrors the original App Builder cloning logic exactly, parameterized
     // by `cfg` (label / title / target href / icon).
