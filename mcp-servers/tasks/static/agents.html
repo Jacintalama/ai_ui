@@ -3369,6 +3369,22 @@
     if (open) open.addEventListener("click", show);
     if (close) close.addEventListener("click", hide);
 
+    // The shell tells this page when its pane is back on screen. The floor is
+    // a frame inside this page that the shell cannot see, so it is told here,
+    // or it would wait up to 30 seconds to re-read what it skipped while
+    // hidden. Only from the window that framed this page.
+    window.addEventListener("message", function (ev) {
+      if (ev.origin !== window.location.origin) return;
+      if (ev.source !== window.parent) return;
+      if (!ev.data || ev.data.aiuiFrameVisible !== true) return;
+      var frame = body.querySelector("iframe");
+      if (!frame) return;
+      try {
+        frame.contentWindow.postMessage({ aiuiFrameVisible: true },
+                                        window.location.origin);
+      } catch (e) { /* not loaded yet: it catches up on its own tick */ }
+    });
+
     if (saved(SHUT_KEY) === "1") hide();
     else show();
 

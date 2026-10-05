@@ -196,3 +196,52 @@ def test_showing_the_pane_again_catches_up_at_once(shell, how):
     pg.wait_for_timeout(1000)
     assert hits.count("agents") > before, (
         "reopening the pane left the activity dots stale until the next tick")
+
+
+# --- the office inside it ----------------------------------------------------
+# The floor is a frame inside the agents page, so inside the shell it is two
+# frames down, and it has its own 30 second re-read.
+
+@pytest.mark.parametrize("how", ["closed", "switched"])
+def test_the_office_in_a_hidden_pane_stops_polling(shell, how):
+    pg, hits = shell
+    start = hits.count("office")
+    _advance(pg, 31000)
+    assert hits.count("office") > start, "the office never polled on screen"
+
+    _hide(pg, how)
+    pg.wait_for_timeout(300)
+    before = hits.count("office")
+    _advance(pg, 31000)
+    assert hits.count("office") == before, (
+        "the office went on polling while the shell had the pane hidden (%s)"
+        % how)
+
+
+@pytest.mark.parametrize("how", ["closed", "switched"])
+def test_the_office_catches_up_when_the_pane_is_shown(shell, how):
+    pg, hits = shell
+    _hide(pg, how)
+    _advance(pg, 31000)             # its tick skipped while hidden
+    before = hits.count("office")
+    pg.locator("[data-aiui-agents]").click()
+    pg.wait_for_selector(AGENTS_OPEN)
+    pg.wait_for_timeout(1000)
+    assert hits.count("office") > before, (
+        "reopening the pane left the office floor stale until its next tick")
+
+
+def test_the_office_hidden_inside_the_page_stops_polling(shell):
+    """The page's own Hide button on the office. The pane is on screen, so
+    only the office's frame is display:none, one frame further down."""
+    pg, hits = shell
+    agents = pg.frame_locator("[data-aiui-embed] iframe").first
+    agents.locator("#office-close").click()
+    agents.locator("#office-dock").wait_for(state="hidden")
+    pg.wait_for_timeout(300)
+    agents_before, office_before = hits.count("agents"), hits.count("office")
+    _advance(pg, 31000)
+    assert hits.count("office") == office_before, (
+        "the office went on polling while the agents page had it hidden")
+    assert hits.count("agents") > agents_before, (
+        "hiding the office stopped the agents page's own poll as well")

@@ -1354,6 +1354,44 @@
       });
     });
   }
+  //: On screen: the tab is showing and no frame between this floor and the
+  //: top window is display:none. Inside the agents pane the floor is two
+  //: frames down (shell, agents page, office), and the shell keeps a closed
+  //: pane loaded with display:none, which document.hidden never sees. The
+  //: agents page's own Hide button is caught the same way.
+  function onScreen() {
+    if (document.hidden) return false;
+    try {
+      for (var w = window; w !== w.top; w = w.parent) {
+        var f = w.frameElement;
+        // Framed by another origin: nothing more can be known, so poll.
+        if (!f) return true;
+        if (!f.getClientRects().length) return false;
+      }
+    } catch (e) { /* an ancestor we may not read: poll as before */ }
+    return true;
+  }
+
+  //: The poll is the live feed's fallback, so it runs only while somebody can
+  //: see the floor. A skipped tick is made up as soon as whoever framed this
+  //: page (the shell, or the agents page) says it is back on screen.
+  var RESYNC_MISSED = false;
+  function pollWhenOnScreen() {
+    if (onScreen()) { RESYNC_MISSED = false; resync(); }
+    else RESYNC_MISSED = true;
+  }
+  function catchUp() {
+    if (!RESYNC_MISSED || !onScreen()) return;
+    RESYNC_MISSED = false;
+    resync();
+  }
+  document.addEventListener("visibilitychange", catchUp);
+  window.addEventListener("message", function (ev) {
+    if (ev.origin !== window.location.origin) return;
+    if (ev.source !== window.parent) return;
+    if (ev.data && ev.data.aiuiFrameVisible === true) catchUp();
+  });
+
   async function loadStats() {
     try { STATS = (await getJson("/api/tasks/agents/stats")).stats || {}; }
     catch (e) { console.warn("[office] stats unavailable", e); }
@@ -1693,7 +1731,7 @@
     // drives the floor; the poll stays as the fallback (no EventSource, no
     // cookie, a gap the heartbeat missed), slowed from 5s to 30s.
     connectLive();
-    setInterval(resync, 30000);
+    setInterval(pollWhenOnScreen, 30000);
     // The working timer moves between events without redrawing the floor.
     setInterval(function () {
       document.querySelectorAll('.who[data-state="working"]').forEach(function (el) {
