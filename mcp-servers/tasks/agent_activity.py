@@ -16,6 +16,8 @@ Recording is deliberately fire and forget. An agent run must never fail
 because the bookkeeping around it failed, so every function here swallows its
 own errors and the caller is not asked to handle them.
 """
+import contextlib
+import contextvars
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -105,6 +107,12 @@ SOURCE_CHANNEL = "channel"
 #: Another agent asked for this run. The office reads it to say who is
 #: helping whom, which is a fact about a row rather than an animation.
 SOURCE_COLLEAGUE = "colleague"
+#: Every agent was asked at once, because the words called a meeting.
+#: agent_routing detects one and makes nobody allowed to pass, but until
+#: this existed the runs it started were indistinguishable from five people
+#: being asked five separate questions: `source` was only ever schedule,
+#: channel or colleague. The office cannot draw a meeting it cannot see.
+SOURCE_MEETING = "meeting"
 
 #: The four values tasks.agent_step.status may hold, named so the code that
 #: produces an outcome can say which one it means.
@@ -130,6 +138,29 @@ def _stale_after(source: str):
     """How long a run of this kind may go unfinished before it is a failure."""
     return (STALE_AFTER_SCHEDULE if source == SOURCE_SCHEDULE
             else STALE_AFTER_CHANNEL)
+
+
+#: Whether the round in flight was called as a meeting.
+#:
+#: A ContextVar rather than an argument because _turn_for and _run_turn sit
+#: between the routing decision and the row being written, which is the same
+#: reason agent_escalation.asking carries the person's words this way.
+_MEETING: contextvars.ContextVar = contextvars.ContextVar(
+    "agent_activity_meeting", default=False)
+
+
+@contextlib.contextmanager
+def meeting_round():
+    """Mark every run started inside this block as part of one meeting."""
+    token = _MEETING.set(True)
+    try:
+        yield
+    finally:
+        _MEETING.reset(token)
+
+
+def in_meeting() -> bool:
+    return bool(_MEETING.get())
 
 
 async def start_run(agent_id: str, user_email: str, source: str,

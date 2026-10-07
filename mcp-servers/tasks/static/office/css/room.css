@@ -93,3 +93,54 @@
    room underneath. */
 .agents-layer { z-index: 12; pointer-events: none; }
 .agents-layer .who-slot { pointer-events: auto; }
+
+/* --- the furniture ---------------------------------------------------------
+   Every piece is a div tinted by the room's own --glow, so a room reads as
+   a built space without a single image being fetched. It has to survive a
+   department the owner invents, which is why none of this is an illustration
+   keyed to a room name.
+
+   Behind the agents and deaf to the pointer: a desk must never take a click
+   meant for the room, or for the robot standing at it. */
+.zone-floor {
+  position: absolute; left: 12px; right: 12px; bottom: 12px;
+  height: 46%; display: flex; align-items: flex-end;
+  justify-content: space-around; gap: 10px;
+  pointer-events: none; z-index: 0; opacity: .5;
+}
+.zone-floor i {
+  display: block; border: 1px solid var(--glow, var(--cyan));
+  background: color-mix(in srgb, var(--glow, var(--cyan)) 12%, transparent);
+  border-radius: 3px; flex: 0 0 auto;
+}
+/* A plain rectangle reads as a desk once it has a screen behind it. */
+.zone-floor .f-desk   { width: 46px; height: 13px; border-radius: 2px; }
+.zone-floor .f-bench  { width: 58px; height: 10px; }
+.zone-floor .f-screen { width: 30px; height: 21px; border-radius: 2px; }
+.zone-floor .f-shelf  { width: 16px; height: 42px; }
+.zone-floor .f-rack   { width: 21px; height: 38px; }
+.zone-floor .f-table  { width: 62%; height: 27px; border-radius: 999px; }
+.zone-floor .f-dish   { width: 25px; height: 25px; border-radius: 50%; }
+.zone-floor .f-wave   { width: 34px; height: 8px; border-radius: 999px; }
+/* The one piece that is not furniture, and the one that makes a room look
+   lived in rather than issued. */
+.zone-floor .f-plant {
+  width: 13px; height: 17px; border-radius: 50% 50% 3px 3px;
+  background: color-mix(in srgb, #34d399 30%, transparent);
+  border-color: color-mix(in srgb, #34d399 55%, transparent);
+}
+
+/* The meeting table. It exists only while a meeting is actually running, so
+   seeing it IS the fact: agents gather here because each of their runs
+   recorded source=meeting, never because several started at once. */
+.floor[data-meeting=""] .meeting-table { display: none; }
+.meeting-table {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  width: 46%; height: 34px; border-radius: 999px;
+  border: 2px solid color-mix(in srgb, #fbbf24 55%, transparent);
+  background: color-mix(in srgb, #fbbf24 10%, transparent);
+  display: grid; place-items: center;
+  font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
+  color: color-mix(in srgb, #fbbf24 85%, white);
+  pointer-events: none; z-index: 1;
+}

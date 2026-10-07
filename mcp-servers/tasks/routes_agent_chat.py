@@ -11,6 +11,7 @@ stream per turn. All routes sit under /tasks, already routed to this service
 end to end, so nothing outside this service changes.
 """
 import asyncio
+import contextlib
 import logging
 import uuid
 
@@ -22,6 +23,7 @@ import agent_chat_render as render
 import agent_chat_store as store
 from auth import CurrentUser, current_user
 import agent_access
+import agent_activity
 import agent_escalation
 import agent_graph
 import agent_routing
@@ -515,7 +517,15 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
         # The person's own words, not PASS_INSTRUCTION, which is the last
         # user message this agent reads. Carried rather than passed because
         # _turn_for and _run_turn sit in between.
-        with agent_escalation.asking(agent_escalation.Intent(
+        # A meeting is a fact about the ROUND, and it has to reach the row
+        # the run writes: agent_routing knows one was called, start_run is
+        # several frames below, and _turn_for and _run_turn sit in between.
+        # Without this, five agents convened together were indistinguishable
+        # from five asked separately, and the office could not draw a
+        # meeting it could not see.
+        meeting = (agent_activity.meeting_round() if why == agent_routing.ROUTE_MEETING
+                   else contextlib.nullcontext())
+        with meeting, agent_escalation.asking(agent_escalation.Intent(
                 person_text=asked, may_pass=may_pass)):
             out = await _turn_for(email, agent, turn_history, names,
                                   roster=agents, graph=graph, now=now)

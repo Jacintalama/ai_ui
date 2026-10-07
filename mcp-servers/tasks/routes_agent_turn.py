@@ -317,8 +317,11 @@ async def _run_turn(user_email: str, agent_id: str, messages: list[dict],
 
     run_id = await agent_activity.start_run(
         agent_id, user_email,
+        # Colleague first: a handoff inside a meeting is still a handoff,
+        # and "who asked this agent" is the more specific fact.
         (agent_activity.SOURCE_COLLEAGUE
          if surface == agent_access.SURFACE_COLLEAGUE
+         else agent_activity.SOURCE_MEETING if agent_activity.in_meeting()
          else agent_activity.SOURCE_CHANNEL),
         parent_run_id=parent_run_id)
     # Who is asking. The room says so through agent_escalation.asking,

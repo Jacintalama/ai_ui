@@ -84,23 +84,44 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   // code and schedules sits in Development.
   // Six rooms on a plan, laid out as in the owner's mockup: three across the
   // top, three across the bottom, with the middle left open.
+  //: `style` is the furniture a room wears. Drawn from divs rather than an
+  //: illustration per room, because a department is something the owner
+  //: invents: a file called research.svg cannot furnish a room called
+  //: Sales. Anything unrecognised gets `plain`, so a room is never bare.
   var ZONES = [
     { key: "research",   label: "Research",       tools: ["server:mcp-proxy", "fusion"],
-      glow: "#22D3EE" },
+      glow: "#22D3EE", style: "lab" },
     { key: "dev",        label: "Development",    tools: ["code"],
-      glow: "#60a5fa" },
+      glow: "#60a5fa", style: "desks" },
     { key: "comms",      label: "Communication",  tools: ["gmail"],
-      glow: "#f472b6" },
+      glow: "#f472b6", style: "comms" },
     { key: "meeting",    label: "Meeting room",   tools: ["calendar"],
-      glow: "#34d399" },
+      glow: "#34d399", style: "table" },
     { key: "knowledge",  label: "Knowledge base", tools: ["gdrive", "documents"],
-      glow: "#a78bfa" },
+      glow: "#a78bfa", style: "shelves" },
     { key: "automation", label: "Automation",     tools: ["schedules", "excel_creator", "executive_dashboard"],
-      glow: "#fbbf24" },
+      glow: "#fbbf24", style: "racks" },
   ];
   // An agent whose owner picked no tools reaches everything, so it has no one
   // room. It gets a room of its own rather than being hidden.
-  var LOUNGE = { key: "lounge", label: "Open floor", tools: [], glow: "#8296b5" };
+  var LOUNGE = { key: "lounge", label: "Open floor", tools: [], glow: "#8296b5",
+                 style: "plain" };
+
+  //: The furniture itself. Every piece is a div the room's own colour tints,
+  //: so a room looks built without a single image being fetched.
+  var FURNITURE = {
+    lab:     '<i class="f-bench"></i><i class="f-screen"></i><i class="f-plant"></i>',
+    desks:   '<i class="f-desk"></i><i class="f-screen"></i><i class="f-desk"></i>',
+    comms:   '<i class="f-dish"></i><i class="f-wave"></i><i class="f-plant"></i>',
+    table:   '<i class="f-table"></i>',
+    shelves: '<i class="f-shelf"></i><i class="f-shelf"></i><i class="f-plant"></i>',
+    racks:   '<i class="f-rack"></i><i class="f-rack"></i><i class="f-screen"></i>',
+    plain:   '<i class="f-plant"></i>',
+  };
+
+  function furnitureFor(z) {
+    return FURNITURE[z && z.style] || FURNITURE.plain;
+  }
 
   //: --- the floor's measurements -------------------------------------------
   //: Rooms used to be fixed percentages of a fixed 1040x680 canvas, which
@@ -292,6 +313,28 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
         ' title="Ask ' + esc(m.name || m.id) + ' on their own"' +
         ' href="/tasks/agents?ask=' +
         encodeURIComponent((m.name || m.id) + ", ") + '">Chat</a>';
+  }
+
+  //: Who is in a meeting right now.
+  //:
+  //: Only from the run's own source. agent_routing calls a meeting and every
+  //: agent answers at once, and the run each of them starts records
+  //: `meeting` (agent_activity.SOURCE_MEETING). Guessing it instead, from
+  //: several runs beginning at about the same time, would draw a meeting
+  //: that nobody called.
+  function inMeeting(id) {
+    var a = S.ACTIVITY[id];
+    return !!(a && a.state === "working" && a.source === "meeting");
+  }
+
+  //: Where the table stands: the middle of the clear band above the rooms,
+  //: which is the only part of the canvas no room occupies.
+  function meetingSeat(i, total) {
+    var cx = CANVAS_W / 2, cy = BAND_PAD + topReserve() / 2 + 6;
+    var span = Math.min(CANVAS_W * 0.52, total * (SLOT_W * 0.72));
+    var step = total > 1 ? span / (total - 1) : 0;
+    return { left: Math.round(cx - span / 2 + i * step - SLOT_W / 2),
+             top: Math.round(cy - BOT_H / 2) };
   }
 
   //: Bring the agents layer in line with the plan, WITHOUT rebuilding it.
@@ -488,21 +531,47 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
         if (stateOf(m.id).key === "working") working++;
       });
       var pct = runs ? Math.round(100 * done / runs) : null;
-      return '<section class="zone" style="--glow:' + z.glow + ';left:' + r.left +
+      return '<section class="zone" data-room="' + esc(z.key) + '"' +
+        ' style="--glow:' + z.glow + ';left:' + r.left +
         'px;top:' + r.top + 'px;width:' + r.w + 'px;height:' + r.h + 'px">' +
         '<div class="zone-head"><span>' + esc(z.label) + '</span>' +
         '<span class="card-room"><span>RUNS <b>' + runs + '</b></span>' +
         (pct == null ? "" : '<span>CLEAN <b>' + pct + '%</b></span>') +
         (spent ? '<span>$<b>' + spent.toFixed(2) + '</b></span>' : "") +
-        '</span></div></section>';
+        '</span></div>' +
+        '<div class="zone-floor" aria-hidden="true">' + furnitureFor(z) + '</div>' +
+        '</section>';
     }).join("");
 
     // The agents are NOT part of this string. They live in their own layer
     // so that redrawing a room does not rebuild a robot mid-walk.
     var allSlots = [];
     plan.rooms.forEach(function (r) {
-      r.slots.forEach(function (slot) { markAt(slot); allSlots.push(slot); });
+      r.slots.forEach(function (slot) { allSlots.push(slot); });
     });
+
+    // Anybody in a meeting leaves their desk for the table. Their slot is
+    // replaced rather than added to, so they are in one place, and because
+    // the node survives a redraw the change of coordinates IS the walk.
+    var met = allSlots.filter(function (s) { return inMeeting(s.m.id); });
+    met.forEach(function (slot, i) {
+      var seat = meetingSeat(i, met.length);
+      slot.left = seat.left;
+      slot.top = seat.top;
+    });
+    document.getElementById("rooms").setAttribute(
+      "data-meeting", met.length ? String(met.length) : "");
+    allSlots.forEach(markAt);
+
+    // The table itself, in the clear band the rooms leave above them. Drawn
+    // only while somebody is at it: a table standing empty all day would
+    // stop meaning that a meeting is happening.
+    if (met.length) {
+      html += '<div class="meeting-table" style="top:' +
+        (BAND_PAD + Math.round(topReserve() / 2) + BOT_H / 2 - 6) + 'px">' +
+        esc(met.length + (met.length === 1 ? " agent" : " agents") +
+            " in a meeting") + '</div>';
+    }
 
     var working = shown.filter(function (m) { return stateOf(m.id).key === "working"; }).length;
     var newest = recentRows()[0];

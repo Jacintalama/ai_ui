@@ -1427,3 +1427,70 @@ def test_the_floor_fits_what_is_visible_not_the_frame_it_is_in(browser):
     finally:
         ctx.close()
         srv.shutdown()
+
+
+# --- the meeting table ------------------------------------------------------
+#
+# "add a meeting place if they will do meetting." It exists only while a
+# meeting is actually running, so the table being there IS the fact. Agents
+# gather because each of their runs recorded source=meeting, never because
+# several happened to start at once.
+
+def _in_a_meeting(page, ids):
+    """Put the given agents in a running meeting and redraw."""
+    act = {i: {"state": "working", "running_for_seconds": 4,
+               "last_run_at": "2026-10-08T02:00:00+00:00",
+               "source": "meeting"} for i in ids}
+    page.route("**/agents/activity**", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"activity": act, "handoffs": []})))
+    page.evaluate("() => window.aiuiRefreshOffice()")
+    page.wait_for_timeout(1400)
+
+
+def test_no_meeting_means_no_table(page):
+    """The default fixture has nobody in a meeting. A table standing there
+    all day would stop meaning anything."""
+    assert page.locator(".meeting-table").count() == 0
+
+
+def test_a_real_meeting_puts_a_table_on_the_floor(page):
+    _in_a_meeting(page, ["agent-research-assistant-0001", "agent-iris-a103"])
+    assert page.locator(".meeting-table").count() == 1
+    # Uppercased by text-transform, so inner_text reports it that way.
+    assert "2 agents" in page.locator(".meeting-table").inner_text().lower()
+
+
+def test_the_agents_in_it_leave_their_desks_for_the_table(page):
+    before = page.locator('.who-slot[data-id="agent-iris-a103"]').evaluate(
+        "el => [el.offsetLeft, el.offsetTop]")
+    _in_a_meeting(page, ["agent-research-assistant-0001", "agent-iris-a103"])
+    after = page.locator('.who-slot[data-id="agent-iris-a103"]').evaluate(
+        "el => [el.offsetLeft, el.offsetTop]")
+    assert after != before, (before, after)
+
+
+def test_they_gather_rather_than_scatter(page):
+    """Both sit at the same table, so they end up near each other. Two
+    agents walking to opposite corners is not a meeting."""
+    _in_a_meeting(page, ["agent-research-assistant-0001", "agent-iris-a103"])
+    gap = page.evaluate(
+        "() => {"
+        " const a = document.querySelector('.who-slot[data-id=\"agent-research-assistant-0001\"]');"
+        " const b = document.querySelector('.who-slot[data-id=\"agent-iris-a103\"]');"
+        " return Math.abs(a.offsetTop - b.offsetTop); }")
+    assert gap < 10, gap
+
+
+def test_working_alone_is_not_a_meeting(page):
+    """A run with any other source leaves the agent at its desk. This is the
+    guard that stops the floor inventing a meeting from a busy moment."""
+    act = {"agent-iris-a103": {"state": "working", "running_for_seconds": 3,
+                               "last_run_at": "2026-10-08T02:00:00+00:00",
+                               "source": "channel"}}
+    page.route("**/agents/activity**", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"activity": act, "handoffs": []})))
+    page.evaluate("() => window.aiuiRefreshOffice()")
+    page.wait_for_timeout(600)
+    assert page.locator(".meeting-table").count() == 0
