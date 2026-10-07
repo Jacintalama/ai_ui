@@ -387,3 +387,61 @@ async def test_a_round_reads_the_persons_clock_once_not_once_per_agent(monkeypat
 
     assert len(out["turns"]) == 2, out["turns"]
     assert read.await_count == 1
+
+
+# --- being able to ask a colleague, and being told so ------------------------
+#
+# The tool shipped, was granted to '*', and was attached to nobody. Measured
+# on prod 2026-10-07: one agent out of twelve held it, and tasks.agent_step
+# had two handoff rows in its whole history.
+#
+# Attaching it is not enough on its own. The brief told every agent that
+# "anything that needs another tool is not yours to do: say so or pass", which
+# is exactly the moment it should be asking the colleague who holds that tool.
+# A granted tool the brief argues against is still a tool nobody uses.
+
+def _picked(name, tools):
+    return {"id": "agent-" + name.lower(), "name": name,
+            "meta": {"toolIds": tools, "toolScope": "picked"}}
+
+
+def test_an_agent_that_can_ask_a_colleague_is_told_to():
+    """Otherwise it has to infer the whole behaviour from a tool spec, while
+    the sentence beside it tells it to pass instead."""
+    said = agent_brief.build(_picked("Iris", ["gdrive", "colleague"]),
+                             ["Iris", "Kai"], now=WHEN)["content"]
+    assert "ask the assistant who does" in said, said
+    assert "use their answer in your own reply" in said, said
+
+
+def test_an_agent_that_can_ask_is_not_told_to_pass_instead():
+    """"say so or pass" is the instruction that competes with the grant."""
+    said = agent_brief.build(_picked("Iris", ["gdrive", "colleague"]),
+                             ["Iris", "Kai"], now=WHEN)["content"]
+    assert "say so or pass" not in said, said
+
+
+def test_an_agent_without_the_tool_is_still_told_to_pass():
+    """For that one it remains true: there is nobody it can ask."""
+    said = agent_brief.build(_picked("Mia", ["gmail"]),
+                             ["Mia", "Kai"], now=WHEN)["content"]
+    assert "say so or pass" in said, said
+    assert "never offer to do it" in said, said
+
+
+def test_the_tool_is_never_named_as_a_bare_word_in_the_reach_list():
+    """_TOOL_WORDS has no entry for it, so it fell through to the raw id and
+    the brief read "Your tools reach Drive and colleague, and nothing else",
+    which describes no capability a model can act on."""
+    said = agent_brief.build(_picked("Iris", ["gdrive", "colleague"]),
+                             ["Iris"], now=WHEN)["content"]
+    assert "reach Drive and colleague" not in said, said
+    assert "and colleague, and nothing else" not in said, said
+
+
+def test_the_other_agents_are_still_named_for_an_asker():
+    """It cannot ask by name without the names, and the roster sentence is
+    where they come from."""
+    said = agent_brief.build(_picked("Iris", ["gdrive", "colleague"]),
+                             ["Iris", "Kai", "Nora"], now=WHEN)["content"]
+    assert "Kai" in said and "Nora" in said

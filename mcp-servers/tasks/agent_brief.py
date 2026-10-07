@@ -96,6 +96,25 @@ def _join_words(words: list) -> str:
     return ", ".join(words[:-1]) + " and " + words[-1]
 
 
+#: The tool that lets an agent ask another agent. Named here because the
+#: brief has to say something different to an agent that holds it.
+HANDOFF_TOOL_ID = "colleague"
+
+#: What to do at the edge of your own tools, once you can reach somebody who
+#: has the missing one. This REPLACES the passing sentence rather than
+#: joining it: the two answer the same moment with opposite instructions, and
+#: passing is the behaviour the tool was granted to end.
+_ASK_SENTENCE = (
+    "Anything that needs a tool you do not have, ask the assistant who does: "
+    "name them, ask them directly, and use their answer in your own reply. "
+    "Do not hand the problem back to this person when a colleague can do it.")
+
+#: Unchanged for an agent with nobody to ask, where it is still true.
+_PASS_SENTENCE = (
+    "Anything that needs another tool is not yours to do: say so or pass, "
+    "and never offer to do it.")
+
+
 def _tools_sentence(agent: dict) -> str:
     """What this agent can reach, and what to do about the rest.
 
@@ -103,6 +122,11 @@ def _tools_sentence(agent: dict) -> str:
     mail, files, apps, connections, schedules and saved notes. True of an
     agent with everything, false of every narrowed one, so Mia, Nora and Iris
     each offered to bug-hunt an app none of them can open.
+
+    And it used to tell every agent to pass at the edge of its own tools,
+    which is the exact moment one that can ask a colleague should be asking.
+    A granted tool the brief argues against is a tool nobody uses: measured
+    on prod 2026-10-07, ask_colleague had been called twice in its life.
     """
     base = ("When they ask about their own things, use a tool and answer "
             "from what it returns. Never state a number or a name you have "
@@ -111,12 +135,19 @@ def _tools_sentence(agent: dict) -> str:
     own = _own_tools(agent)
     if own is None:
         return "You have tools that read this person's real account. " + base
-    reach = [_TOOL_WORDS.get(t, t) for t in own if t != "skills"]
+    can_ask = HANDOFF_TOOL_ID in own
+    edge = _ASK_SENTENCE if can_ask else _PASS_SENTENCE
+    # Neither of these is something the agent reaches on this person's
+    # behalf, so neither belongs in "your tools reach ...". `skills` was
+    # already excluded; `colleague` has no _TOOL_WORDS entry and so fell
+    # through to its raw id, reading as "your tools reach Drive and
+    # colleague", which names no capability a model can act on.
+    reach = [_TOOL_WORDS.get(t, t) for t in own
+             if t not in ("skills", HANDOFF_TOOL_ID)]
     if not reach:
-        return base
-    return ("Your tools reach %s, and nothing else. %s Anything that needs "
-            "another tool is not yours to do: say so or pass, and never "
-            "offer to do it." % (_join_words(reach), base))
+        return base + (" " + _ASK_SENTENCE if can_ask else "")
+    return ("Your tools reach %s, and nothing else. %s %s"
+            % (_join_words(reach), base, edge))
 
 
 def _others_with_roles(roster, me: str) -> list[str]:
