@@ -193,11 +193,20 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   //: return nothing.
   function bestLayout(rooms) {
     var box = fitBox(), best = null, bestK = -1;
-    for (var i = 0; i < ROW_CAPS.length; i++) {
-      var plan = layoutFloor(rooms, ROW_CAPS[i]);
-      if (!box) return plan;
-      var k = Math.min(box.w / plan.w, box.h / plan.h);
-      if (k > bestK) { bestK = k; best = plan; }
+    // Both the shape of a room and the shape of the PLAN are tried: how many
+    // people stack inside a room, and how many rooms stand side by side
+    // before the next row. One band of equal columns reads as a chart rather
+    // than a floor, and on a wide page it is also the worst use of the
+    // height, so the grid has to be a candidate and not an afterthought.
+    for (var c = 1; c <= rooms.length; c++) {
+      for (var i = 0; i < ROW_CAPS.length; i++) {
+        var plan = layoutFloor(rooms, ROW_CAPS[i], c);
+        if (!box) return plan;
+        var k = Math.min(box.w / plan.w, box.h / plan.h);
+        // A tie goes to the arrangement already chosen, so the floor does
+        // not flip between two equally good shapes as the window wobbles.
+        if (k > bestK + 0.001) { bestK = k; best = plan; }
+      }
     }
     return best;
   }
@@ -225,45 +234,67 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   //: layoutFloor is called once per candidate and the caller keeps the one
   //: that fits largest, so the floor uses the width it has rather than
   //: leaving 400px of it empty beside a floor that shrank to fit the height.
-  function layoutFloor(rooms, rowCap) {
+  function layoutFloor(rooms, rowCap, cols) {
     var boxes = rooms.map(function (r) { return roomBox(r.of.length, rowCap); });
-    var tallest = boxes.reduce(function (a, b) { return Math.max(a, b.h); }, 0);
-    var need = BAND_PAD * 2 + ROOM_GAP * Math.max(0, boxes.length - 1) +
-      boxes.reduce(function (a, b) { return a + b.w; }, 0);
+    cols = Math.max(1, Math.min(cols || boxes.length, boxes.length));
+    var rowCount = Math.ceil(boxes.length / cols);
+
+    // Rooms sit in a grid, not a single band. A row of equal columns reads
+    // as a chart; a plan has rooms above and below each other, which is what
+    // the owner's reference looks like and what an office looks like.
+    var rowsOf = [];
+    for (var r0 = 0; r0 < rowCount; r0++) {
+      rowsOf.push(boxes.slice(r0 * cols, (r0 + 1) * cols));
+    }
+    // Every room in a row shares that row's height, and every row is as wide
+    // as the widest, so the plan has straight walls rather than a ragged edge.
+    var rowH = rowsOf.map(function (row) {
+      return row.reduce(function (a, b) { return Math.max(a, b.h); }, 0);
+    });
+    var rowW = rowsOf.map(function (row) {
+      return ROOM_GAP * Math.max(0, row.length - 1) +
+        row.reduce(function (a, b) { return a + b.w; }, 0);
+    });
+    var widest = rowW.reduce(function (a, b) { return Math.max(a, b); }, 0);
+    var stack = rowH.reduce(function (a, b) { return a + b; }, 0) +
+      ROOM_GAP * Math.max(0, rowCount - 1);
+
+    var need = BAND_PAD * 2 + widest;
     var width = Math.max(need, CANVAS_MIN_W);
     var reserve = topReserve();
-    var height = BAND_PAD * 2 + reserve + tallest + FLOOR_BAR;
+    var height = BAND_PAD * 2 + reserve + stack + FLOOR_BAR;
 
-    // Centred when the strip below is what set the width, so a floor with
-    // two rooms on it is not a pair of rooms in the corner of an empty hall.
-    var x = BAND_PAD + Math.round((width - need) / 2);
-    var out = rooms.map(function (r, i) {
-      var b = boxes[i];
-      // Every room is as tall as the tallest, rather than centred on the
-      // band. Centring was right when the floor was a short wide strip and a
-      // room holding one person would have been a tall empty column. Given
-      // the height of the whole page it reads as five cards floating at
-      // different offsets instead of rooms in a building, and it wastes the
-      // space the fit just won back.
-      var top = BAND_PAD + reserve;
-      var left = x;
-      x += b.w + ROOM_GAP;
+    var out = [];
+    var y = BAND_PAD + reserve;
+    rowsOf.forEach(function (row, ri) {
+      // Each row centred on the plan, so a short last row is not left
+      // hanging off one side.
+      var x = Math.round((width - rowW[ri]) / 2);
+      row.forEach(function (b, ci) {
+        var idx = ri * cols + ci;
+        var rm = rooms[idx];
+        var top = y, left = x;
+        x += b.w + ROOM_GAP;
 
-      // Where each agent stands inside THIS room, in canvas pixels. The slot
-      // is reserved by the same numbers that sized the room, so an agent can
-      // no more overflow its room than a room can overflow the canvas.
-      var need = b.cols * SLOT_W + (b.cols - 1) * SLOT_GAP_X;
-      var inner = left + Math.round((b.w - need) / 2), innerTop = top + ROOM_HEAD;
-      var slots = r.of.map(function (m, k) {
-        var col = k % b.cols, row = Math.floor(k / b.cols);
-        return {
-          m: m,
-          left: inner + col * (SLOT_W + SLOT_GAP_X),
-          top: innerTop + row * (SLOT_H + SLOT_GAP_Y),
-        };
+        // Where each agent stands inside THIS room, in canvas pixels. The
+        // slot is reserved by the same numbers that sized the room, so an
+        // agent can no more overflow its room than a room can overflow the
+        // canvas.
+        var want = b.cols * SLOT_W + (b.cols - 1) * SLOT_GAP_X;
+        var inner = left + Math.round((b.w - want) / 2);
+        var innerTop = top + ROOM_HEAD;
+        var slots = rm.of.map(function (m, k) {
+          var col = k % b.cols, row2 = Math.floor(k / b.cols);
+          return {
+            m: m,
+            left: inner + col * (SLOT_W + SLOT_GAP_X),
+            top: innerTop + row2 * (SLOT_H + SLOT_GAP_Y),
+          };
+        });
+        out.push({ z: rm.z, of: rm.of, left: left, top: top,
+                   w: b.w, h: rowH[ri], slots: slots });
       });
-      return { z: r.z, of: r.of, left: left, top: top, w: b.w, h: tallest,
-               slots: slots };
+      y += rowH[ri] + ROOM_GAP;
     });
     return { w: width, h: height, rooms: out };
   }
