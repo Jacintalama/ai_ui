@@ -47,6 +47,7 @@ Two tables, both scoped by `user_email` like every other per-user table here.
 | `user_email` | owner scoping |
 | `name` | what it is called |
 | `glow` | the room's colour, as `ZONES` carries today |
+| `style` | which room illustration it wears, from a fixed set |
 | `position` | integer, left to right on the floor |
 | `is_open_floor` | exactly one per owner, and it cannot be deleted |
 | `created_at` | |
@@ -63,6 +64,18 @@ Two tables, both scoped by `user_email` like every other per-user table here.
 
 Migration `054_agent_rooms.sql`, additive and idempotent, because `db.py`
 re-runs every migration on each startup.
+
+### Room style
+
+Added 2026-10-07, from a UI reference the owner supplied: rooms are drawn as
+furnished isometric spaces rather than lit boxes. Illustration per room cannot
+be per department, because a department is something the owner invents, so
+`style` names one of a fixed set (`lab`, `dev`, `comms`, `meeting`, `archive`,
+`open`) and is chosen when a department is created, beside its colour. A
+department with no style falls back to `open`, which is the plainest, so an
+unstyled room is still a room.
+
+The seeded six take the style matching what they already are.
 
 ### Seeding, which is what makes this invisible on day one
 
