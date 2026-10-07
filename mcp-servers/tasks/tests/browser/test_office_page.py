@@ -1471,15 +1471,28 @@ def test_the_agents_in_it_leave_their_desks_for_the_table(page):
 
 
 def test_they_gather_rather_than_scatter(page):
-    """Both sit at the same table, so they end up near each other. Two
-    agents walking to opposite corners is not a meeting."""
+    """Both sit AT the table, which since seats went round it means facing
+    each other across it rather than side by side. What matters is that they
+    are together: two agents walking to opposite corners is not a meeting.
+
+    Measured against the table itself rather than against each other, so
+    this keeps meaning the same thing if the seating changes again."""
     _in_a_meeting(page, ["agent-research-assistant-0001", "agent-iris-a103"])
-    gap = page.evaluate(
+    got = page.evaluate(
         "() => {"
-        " const a = document.querySelector('.who-slot[data-id=\"agent-research-assistant-0001\"]');"
-        " const b = document.querySelector('.who-slot[data-id=\"agent-iris-a103\"]');"
-        " return Math.abs(a.offsetTop - b.offsetTop); }")
-    assert gap < 10, gap
+        " const t = document.querySelector('.meeting-table').getBoundingClientRect();"
+        " const box = s => document.querySelector('.who-slot[data-id=\"' + s + '\"]')"
+        "   .getBoundingClientRect();"
+        " const a = box('agent-research-assistant-0001'), b = box('agent-iris-a103');"
+        " const near = r => Math.abs((r.left + r.right) / 2 - (t.left + t.right) / 2);"
+        " return { aOff: near(a), bOff: near(b), tableW: t.width,"
+        "          aTouches: a.bottom > t.top - 4 && a.top < t.bottom + 4,"
+        "          bTouches: b.bottom > t.top - 4 && b.top < t.bottom + 4 }; }")
+    # Each stands within the table's own width of its centre...
+    assert got["aOff"] <= got["tableW"], got
+    assert got["bOff"] <= got["tableW"], got
+    # ...and each is alongside the table rather than away from it.
+    assert got["aTouches"] and got["bTouches"], got
 
 
 def test_working_alone_is_not_a_meeting(page):

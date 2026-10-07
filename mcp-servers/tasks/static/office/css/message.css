@@ -31,6 +31,11 @@
 
 .say.refused { border-color: #fb7185; }
 
+/* Arrives rather than appears. The keyframes live in
+   animations/speaking.css with the rest of the talking. */
+.say { animation: bubble-pop .35s cubic-bezier(.34,1.56,.64,1) both; }
+.say.going { animation: bubble-float-out .6s ease-in both; }
+
 .say::after {
     content: ""; position: absolute; left: 50%; top: 100%;
     margin-left: -5px; border: 5px solid transparent;

@@ -7,3 +7,27 @@
     from { opacity: 0; transform: translate(-50%, -88%) scale(.9) }
     to   { opacity: 1; transform: translate(-50%, -100%) scale(1) }
   }
+
+/* The bubble arriving and leaving, from the owner's reference.
+   It pops in with a slight overshoot and floats up as it goes, so a thing
+   an agent said reads as said rather than as a label that was always
+   there. Both are short: the bubble is over a working floor, not a toast. */
+@keyframes bubble-pop {
+  0%   { transform: translate(-50%, 10px) scale(.62); opacity: 0; }
+  60%  { transform: translate(-50%, -5px) scale(1.05); opacity: 1; }
+  100% { transform: translate(-50%, 0) scale(1); opacity: 1; }
+}
+@keyframes bubble-float-out {
+  0%   { opacity: 1; transform: translate(-50%, 0); }
+  100% { opacity: 0; transform: translate(-50%, -22px); }
+}
+
+/* The walk itself. Applied only while an agent is actually travelling, and
+   taken off when it arrives, so a bobbing robot always means one is on its
+   way somewhere. */
+@keyframes robot-walk {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  25%      { transform: translateY(-4px) rotate(-3deg); }
+  75%      { transform: translateY(-4px) rotate(3deg); }
+}
+.who-slot.walking .bot { animation: robot-walk .35s ease-in-out infinite; }

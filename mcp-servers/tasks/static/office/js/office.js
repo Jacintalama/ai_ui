@@ -170,7 +170,11 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
       // Enough to STAND in while a meeting runs, not just enough to float a
       // card in. At 120 the agents' name labels and Chat pills hung over the
       // room headings below them, because a whole slot is taller than that.
-      return meetingCount() ? SLOT_H + TABLE_H + 18 : TOP_RESERVE;
+      // Two rows and the table between them, when there is more than one
+      // person at it. One person does not need a far side.
+      var n = meetingCount();
+      if (!n) return TOP_RESERVE;
+      return n > 1 ? SLOT_H * 2 + TABLE_H + 22 : SLOT_H + TABLE_H + 18;
     } catch (e) { return 0; }
   }
   //: The canvas used to be a fixed 1040px, so the bottom strip always had
@@ -290,9 +294,21 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   //: Where an agent stands. Changed on its own, so the node moves rather
   //: than being rebuilt somewhere else: a replaced node starts life at the
   //: new coordinates and jumps, and no transition can animate that.
+  //: How long the slot's own left/top transition runs. The walk animation
+  //: is taken off when the journey ends, so a bobbing robot always means
+  //: one is actually on its way somewhere.
+  var WALK_MS = 850;
+
   function placeSlot(el, slot) {
+    var moved = el.isConnected &&
+      (el.style.left !== slot.left + "px" || el.style.top !== slot.top + "px");
     el.style.left = slot.left + "px";
     el.style.top = slot.top + "px";
+    if (!moved) return;
+    el.classList.add("walking");
+    clearTimeout(el._walk);
+    el._walk = setTimeout(function () { el.classList.remove("walking"); },
+                          WALK_MS);
   }
 
   //: What an agent shows. Rebuilt only when one of these actually changed,
@@ -312,7 +328,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
       // element's own colour so the dot and the label pick it up.
       ' style="color:' + c + '"' +
       ' title="' + esc(st.label) + '">' +
-      robot(m.id, st.key === "working") +
+      robot(m.id, st.key) +
       '<i class="dot ' + st.key + '"></i>' +
       (st.key === "working" && S.TOOL_NOW[m.id]
         ? '<span class="tool-now">' + esc(S.TOOL_NOW[m.id]) + '</span>' : "") +
@@ -351,19 +367,31 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   //: agents keeps out of it, or the last two at the table stand behind it.
   var CARD_ZONE = 320;
 
+  //: Seats round the table rather than in a line. Half stand along the top
+  //: edge and half along the bottom, which is what a table looks like with
+  //: people at it, and it halves how wide the gathering has to be.
+  function meetingRows(total) {
+    var top = Math.ceil(total / 2);
+    return { top: top, bottom: total - top };
+  }
+
   function meetingSeat(i, total) {
+    var rows = meetingRows(total);
+    var atBottom = i >= rows.top;
+    var n = atBottom ? rows.bottom : rows.top;
+    var k = atBottom ? i - rows.top : i;
     // The row gets the band minus the card's corner. Seats are a slot apart
     // where there is room and squeezed evenly where there is not: seven
     // agents at 0.72 of a slot overlapped by a quarter each and read as a
     // pile rather than a table.
     var usable = Math.max(SLOT_W, CANVAS_W - CARD_ZONE - BAND_PAD * 2);
-    var step = total > 1
-      ? Math.min(SLOT_W + 8, (usable - SLOT_W) / (total - 1))
-      : 0;
-    var span = (total - 1) * step;
+    var step = n > 1 ? Math.min(SLOT_W + 8, (usable - SLOT_W) / (n - 1)) : 0;
+    var span = (n - 1) * step;
     var cx = BAND_PAD + usable / 2;
-    return { left: Math.round(cx - span / 2 + i * step - SLOT_W / 2),
-             top: BAND_PAD };
+    return {
+      left: Math.round(cx - span / 2 + k * step - SLOT_W / 2),
+      top: atBottom ? BAND_PAD + SLOT_H + TABLE_H + 4 : BAND_PAD,
+    };
   }
 
   //: Bring the agents layer in line with the plan, WITHOUT rebuilding it.
@@ -596,8 +624,9 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
     // only while somebody is at it: a table standing empty all day would
     // stop meaning that a meeting is happening.
     if (met.length) {
+      var rows = meetingRows(met.length);
       var first = meetingSeat(0, met.length);
-      var last = meetingSeat(met.length - 1, met.length);
+      var last = meetingSeat(rows.top - 1, met.length);
       html += '<div class="meeting-table" style="top:' +
         (BAND_PAD + SLOT_H + 2) + 'px;left:' + (first.left - 10) +
         'px;width:' + (last.left - first.left + SLOT_W + 20) +
@@ -700,7 +729,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
       '<button class="side-shut" type="button" id="side-shut" ' +
         'aria-label="Close the details">&times;</button>' +
       '<div class="side-head">' +
-        '<div class="side-bot">' + robot(m.id, st.key === "working", "p") + '</div>' +
+        '<div class="side-bot">' + robot(m.id, st.key, "p") + '</div>' +
         '<div><h2>' + esc(m.name || m.id) + '</h2>' +
         '<div class="st"><i class="dot ' + st.key + '"></i>' + esc(st.label) + '</div></div>' +
       '</div>' +

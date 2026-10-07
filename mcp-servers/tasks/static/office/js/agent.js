@@ -77,17 +77,53 @@ export function pickColour(id, hue) {
 // this size: head, face, body, arms and feet. The legs and the walking
 // animation in the reference are for a 220px portrait and turn to mud on a
 // floor tile.
-export function robot(id, thinking, ns) {
+//: The face, from the agent's REAL state and nothing else.
+//:
+//: There is no mood to set, by a button or otherwise. A robot looking
+//: pleased when its last run failed would be the floor lying in the one
+//: place a person reads fastest, and a face is read before any label.
+//:
+//:   working  eyes narrowed on the job, and the blink that already said
+//:            "mid-run" carries on
+//:   waiting  wide, looking straight at you, because it is waiting on YOU
+//:   failed   flat and dimmed, with a down-turned mouth
+//:   ready    the one that smiles
+//:   idle     open and neutral: nothing has happened yet
+function faceFor(state, a) {
+  var w = '#fff';
+  if (state === "working") {
+    return '<ellipse class="bot-eye bot-think" cx="58" cy="70" rx="8" ry="9" fill="' + a.accent + '"/>' +
+      '<rect class="bot-eye bot-think" x="74" y="68" width="16" height="4" rx="2" fill="' + a.accent + '"/>' +
+      '<rect x="60" y="86" width="20" height="3" rx="1.5" fill="' + a.accent + '" opacity=".75"/>';
+  }
+  if (state === "waiting") {
+    return '<ellipse class="bot-eye" cx="58" cy="70" rx="9.5" ry="10.5" fill="' + a.accent + '"/>' +
+      '<ellipse class="bot-eye" cx="82" cy="70" rx="9.5" ry="10.5" fill="' + a.accent + '"/>' +
+      '<circle cx="55" cy="66" r="2.8" fill="' + w + '"/><circle cx="79" cy="66" r="2.8" fill="' + w + '"/>' +
+      '<ellipse cx="70" cy="87" rx="5" ry="4" fill="none" stroke="' + a.accent + '" stroke-width="2.4"/>';
+  }
+  if (state === "failed") {
+    return '<rect class="bot-eye" x="50" y="68" width="16" height="3.4" rx="1.7" fill="#fb7185"/>' +
+      '<rect class="bot-eye" x="74" y="68" width="16" height="3.4" rx="1.7" fill="#fb7185"/>' +
+      '<path d="M60 90 Q70 83 80 90" stroke="#fb7185" stroke-width="2.6" fill="none" stroke-linecap="round"/>';
+  }
+  if (state === "ready") {
+    return '<path class="bot-eye" d="M50 72 Q58 63 66 72" stroke="' + a.accent + '" stroke-width="3.2" fill="none" stroke-linecap="round"/>' +
+      '<path class="bot-eye" d="M74 72 Q82 63 90 72" stroke="' + a.accent + '" stroke-width="3.2" fill="none" stroke-linecap="round"/>' +
+      '<path d="M58 83 Q70 93 82 83 Z" fill="' + a.accent + '" opacity=".9"/>';
+  }
+  return '<ellipse class="bot-eye" cx="58" cy="70" rx="8" ry="9" fill="' + a.accent + '"/>' +
+    '<ellipse class="bot-eye" cx="82" cy="70" rx="8" ry="9" fill="' + a.accent + '"/>' +
+    '<circle cx="55" cy="67" r="2.4" fill="' + w + '"/><circle cx="79" cy="67" r="2.4" fill="' + w + '"/>' +
+    '<rect x="62" y="86" width="16" height="3" rx="1.5" fill="' + a.accent + '" opacity=".5"/>';
+}
+
+//: `state` is one of idle/working/waiting/failed/ready. It used to be a
+//: boolean for "thinking", which is why the old call sites passed one.
+export function robot(id, state, ns) {
   var a = paletteOf(id), uid = (ns || "f") + id.replace(/[^a-z0-9]/gi, "");
-  // Thinking is the only mood worth carrying: an agent mid-run is the one
-  // thing on this floor that is happening, and a face says it faster than
-  // a label does.
-  var eyes = thinking
-    ? '<ellipse class="bot-eye bot-think" cx="58" cy="70" rx="8" ry="9" fill="' + a.accent + '"/>' +
-      '<rect class="bot-think" x="74" y="68" width="16" height="4" rx="2" fill="' + a.accent + '"/>'
-    : '<ellipse class="bot-eye" cx="58" cy="70" rx="8" ry="9" fill="' + a.accent + '"/>' +
-      '<ellipse class="bot-eye" cx="82" cy="70" rx="8" ry="9" fill="' + a.accent + '"/>' +
-      '<circle cx="55" cy="67" r="2.4" fill="#fff"/><circle cx="79" cy="67" r="2.4" fill="#fff"/>';
+  if (state === true) state = "working";          // the old boolean
+  var eyes = faceFor(state, a);
   // Wide enough for the arms and the floor shadow. A tighter box drew them
   // only because the tile allowed overflow, which the panel portrait does not.
   return '<svg class="bot" viewBox="4 0 132 182" aria-hidden="true">' +
