@@ -142,5 +142,7 @@
   display: grid; place-items: center;
   font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
   color: color-mix(in srgb, #fbbf24 85%, white);
-  pointer-events: none; z-index: 1;
+  /* Above the rooms, not behind them. At z-index 1 it sat under every
+     room and was simply invisible. */
+  pointer-events: none; z-index: 11;
 }

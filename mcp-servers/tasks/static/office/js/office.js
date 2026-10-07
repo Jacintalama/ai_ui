@@ -150,9 +150,27 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   //: it is reporting on, which is the opposite of what it is for. Zero in
   //: the dock, where the card is under the floor and not over it.
   var TOP_RESERVE = 120;
+  //: The table's own height, reserved under the agents standing at it.
+  var TABLE_H = 34;
+  //: Is anybody actually in a meeting? Read here rather than passed in,
+  //: because the band's height has to be decided before the rooms are laid
+  //: out and the activity is already known by then.
+  function meetingCount() {
+    var n = 0;
+    for (var id in S.ACTIVITY) {
+      if (Object.prototype.hasOwnProperty.call(S.ACTIVITY, id)
+          && inMeeting(id)) n++;
+    }
+    return n;
+  }
+
   function topReserve() {
     try {
-      return document.documentElement.classList.contains("embed") ? 0 : TOP_RESERVE;
+      if (document.documentElement.classList.contains("embed")) return 0;
+      // Enough to STAND in while a meeting runs, not just enough to float a
+      // card in. At 120 the agents' name labels and Chat pills hung over the
+      // room headings below them, because a whole slot is taller than that.
+      return meetingCount() ? SLOT_H + TABLE_H + 18 : TOP_RESERVE;
     } catch (e) { return 0; }
   }
   //: The canvas used to be a fixed 1040px, so the bottom strip always had
@@ -329,12 +347,23 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
 
   //: Where the table stands: the middle of the clear band above the rooms,
   //: which is the only part of the canvas no room occupies.
+  //: The right hand strip the live activity card sits over. The row of
+  //: agents keeps out of it, or the last two at the table stand behind it.
+  var CARD_ZONE = 320;
+
   function meetingSeat(i, total) {
-    var cx = CANVAS_W / 2, cy = BAND_PAD + topReserve() / 2 + 6;
-    var span = Math.min(CANVAS_W * 0.52, total * (SLOT_W * 0.72));
-    var step = total > 1 ? span / (total - 1) : 0;
+    // The row gets the band minus the card's corner. Seats are a slot apart
+    // where there is room and squeezed evenly where there is not: seven
+    // agents at 0.72 of a slot overlapped by a quarter each and read as a
+    // pile rather than a table.
+    var usable = Math.max(SLOT_W, CANVAS_W - CARD_ZONE - BAND_PAD * 2);
+    var step = total > 1
+      ? Math.min(SLOT_W + 8, (usable - SLOT_W) / (total - 1))
+      : 0;
+    var span = (total - 1) * step;
+    var cx = BAND_PAD + usable / 2;
     return { left: Math.round(cx - span / 2 + i * step - SLOT_W / 2),
-             top: Math.round(cy - BOT_H / 2) };
+             top: BAND_PAD };
   }
 
   //: Bring the agents layer in line with the plan, WITHOUT rebuilding it.
@@ -567,8 +596,12 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
     // only while somebody is at it: a table standing empty all day would
     // stop meaning that a meeting is happening.
     if (met.length) {
+      var first = meetingSeat(0, met.length);
+      var last = meetingSeat(met.length - 1, met.length);
       html += '<div class="meeting-table" style="top:' +
-        (BAND_PAD + Math.round(topReserve() / 2) + BOT_H / 2 - 6) + 'px">' +
+        (BAND_PAD + SLOT_H + 2) + 'px;left:' + (first.left - 10) +
+        'px;width:' + (last.left - first.left + SLOT_W + 20) +
+        'px;transform:none">' +
         esc(met.length + (met.length === 1 ? " agent" : " agents") +
             " in a meeting") + '</div>';
     }
