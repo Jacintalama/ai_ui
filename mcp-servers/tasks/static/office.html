@@ -414,7 +414,51 @@
     border-radius: 999px; padding: 7px 14px; font-size: 12.5px; font-weight: 600;
   }
   .brain a:hover { border-color: var(--cyan); color: var(--cyan); }
+  #panel-office { position: relative; }
   .strip { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px; }
+
+  /* On the whole page the floor is the page, so the activity feed stops
+     being a band underneath it and becomes a card in its top right corner.
+     Faded, because a solid panel laid over the floor hides the agents it is
+     reporting on: "opacity faded in the middle soo its easy anmd can see all
+     agent walking around". Reading it is a deliberate act, so it comes to
+     full strength on hover and on keyboard focus.
+
+     Not in the dock. There the floor is about 200px tall and this would
+     cover most of it. */
+  html:not(.embed) .strip {
+    position: absolute; z-index: 45; top: 14px; right: 14px;
+    width: min(284px, 30%); max-height: 150px;
+    display: flex; flex-direction: column;
+    margin: 0; padding: 10px 12px 12px;
+    border: 1px solid var(--border-2); border-top: 1px solid var(--border-2);
+    border-radius: var(--radius-lg);
+    background: rgba(7, 15, 27, .55);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    opacity: .5; transition: opacity .18s ease, background .18s ease;
+  }
+  /* Nothing to report means nothing in the way. */
+  html:not(.embed) .strip[data-empty="1"] { display: none; }
+  html:not(.embed) .strip:hover,
+  html:not(.embed) .strip:focus-within {
+    opacity: 1; background: rgba(7, 15, 27, .88);
+  }
+  /* A corner is tall, not wide: the feed stacks instead of scrolling
+     sideways, and scrolls down when there is more than fits. */
+  html:not(.embed) .feed {
+    flex-direction: column; overflow-x: hidden; overflow-y: auto;
+    gap: 7px; min-height: 0;
+    /* The card holds about three rows and scrolls for the rest. Cut flat,
+       the fourth row is sliced through its middle and reads as a rendering
+       fault; faded, it reads as more below, which is what it is. */
+    -webkit-mask-image: linear-gradient(to bottom, #000 76%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 76%, transparent 100%);
+  }
+  html:not(.embed) .strip:hover .feed,
+  html:not(.embed) .strip:focus-within .feed {
+    -webkit-mask-image: none; mask-image: none;
+  }
+  html:not(.embed) .feed li { min-width: 0; font-size: 12px; padding: 7px 10px; }
   .strip h2 { font-size: 12px; color: var(--muted); margin: 0 0 9px; font-weight: 600; letter-spacing: .04em; }
   .feed { list-style: none; margin: 0; padding: 0; display: flex; gap: 10px; overflow-x: auto; }
   .feed li {
@@ -502,6 +546,14 @@
 
     <div id="panel-office">
       <div class="floor-fit" id="floor-fit"><div class="floor" id="rooms"></div></div>
+      <!-- Inside the floor's own box so it can be laid over it on the full
+           page, and still simply under it in the dock, where the floor is
+           only about 200px tall and an overlay would cover the agents it is
+           reporting on. -->
+      <div class="strip" id="strip">
+        <h2>Live activity</h2>
+        <ul class="feed" id="live"></ul>
+      </div>
     </div>
 
     <section id="panel-activity" hidden>
@@ -514,10 +566,6 @@
       </p>
     </section>
 
-    <div class="strip" id="strip">
-      <h2>Live activity</h2>
-      <ul class="feed" id="live"></ul>
-    </div>
   </main>
 
   <aside class="side" id="side">
@@ -745,6 +793,17 @@
   var ROOM_MIN_W = 172;
   var ROOM_PAD = 14, ROOM_GAP = 18, BAND_PAD = 18;
   var FLOOR_BAR = 52;      // the strip along the bottom, which is not a room
+  //: Clear canvas above the rooms for the live activity card, which on the
+  //: whole page is laid over the floor in the top right corner. Reserved
+  //: rather than left to overlap: a card sitting on a room hides the agent
+  //: it is reporting on, which is the opposite of what it is for. Zero in
+  //: the dock, where the card is under the floor and not over it.
+  var TOP_RESERVE = 150;
+  function topReserve() {
+    try {
+      return document.documentElement.classList.contains("embed") ? 0 : TOP_RESERVE;
+    } catch (e) { return 0; }
+  }
   //: The canvas used to be a fixed 1040px, so the bottom strip always had
   //: room for its sentence and its two buttons on one line. It is sized by
   //: the rooms now, and two rooms come to under 400px: the strip wrapped
@@ -799,14 +858,21 @@
     var need = BAND_PAD * 2 + ROOM_GAP * Math.max(0, boxes.length - 1) +
       boxes.reduce(function (a, b) { return a + b.w; }, 0);
     var width = Math.max(need, CANVAS_MIN_W);
-    var height = BAND_PAD * 2 + tallest + FLOOR_BAR;
+    var reserve = topReserve();
+    var height = BAND_PAD * 2 + reserve + tallest + FLOOR_BAR;
 
     // Centred when the strip below is what set the width, so a floor with
     // two rooms on it is not a pair of rooms in the corner of an empty hall.
     var x = BAND_PAD + Math.round((width - need) / 2);
     var out = rooms.map(function (r, i) {
       var b = boxes[i];
-      var top = BAND_PAD + Math.round((tallest - b.h) / 2);
+      // Every room is as tall as the tallest, rather than centred on the
+      // band. Centring was right when the floor was a short wide strip and a
+      // room holding one person would have been a tall empty column. Given
+      // the height of the whole page it reads as five cards floating at
+      // different offsets instead of rooms in a building, and it wastes the
+      // space the fit just won back.
+      var top = BAND_PAD + reserve;
       var left = x;
       x += b.w + ROOM_GAP;
 
@@ -823,7 +889,8 @@
           top: innerTop + row * (SLOT_H + SLOT_GAP_Y),
         };
       });
-      return { z: r.z, of: r.of, left: left, top: top, w: b.w, h: b.h, slots: slots };
+      return { z: r.z, of: r.of, left: left, top: top, w: b.w, h: tallest,
+               slots: slots };
     });
     return { w: width, h: height, rooms: out };
   }
@@ -1202,6 +1269,12 @@
 
   function drawLive() {
     var rows = recentRows(), live = document.getElementById("live");
+    // Marked so the overlay on the whole page can take itself away entirely
+    // when there is nothing to report, rather than sit over a room header
+    // saying so. The bar along the bottom of the floor already says nothing
+    // has run.
+    var strip = document.getElementById("strip");
+    if (strip) strip.setAttribute("data-empty", rows.length ? "0" : "1");
     if (!rows.length) {
       live.innerHTML = '<li><span class="empty">Nothing has run yet.</span></li>';
       return;
@@ -1468,11 +1541,23 @@
     // of the wrapper, it sits outside the panel the wrapper is in, so
     // looking only at the wrapper's own siblings found nothing and the fit
     // was still 81px too tall.
+    //: Only what is actually UNDER the floor. A following sibling is not
+    //: necessarily a lower one: on the whole page the right hand panel is a
+    //: sibling of <main> and sits BESIDE the floor, and counting it reserved
+    //: 827px of height against a column that costs the floor none. Available
+    //: height collapsed to 160 and Fit fell to 0.57, so the floor drew 725px
+    //: inside a 1295px box (measured 2026-10-07).
+    //:
+    //: Compared with offsetTop rather than a client rect, for the same
+    //: reason the walk above uses offsetTop: a rect moves when the page
+    //: scrolls, and this number decides a height that decides whether the
+    //: page scrolls at all.
     var below = 0, node = fit;
     while (node && node !== document.body) {
+      var bottom = node.offsetTop + node.offsetHeight;
       var sib = node.nextElementSibling;
       while (sib) {
-        if (!sib.hidden) below += sib.offsetHeight || 0;
+        if (!sib.hidden && sib.offsetTop >= bottom) below += sib.offsetHeight || 0;
         sib = sib.nextElementSibling;
       }
       node = node.parentElement;
@@ -1570,7 +1655,7 @@
       fit.addEventListener("pointerdown", function (e) {
         // The robots are buttons and the room links are links. A drag that
         // started on one of those is that control's, not the floor's.
-        if (e.target.closest("button, a")) return;
+        if (e.target.closest("button, a, .strip")) return;
         from = { x: e.clientX, y: e.clientY, px: PAN_X, py: PAN_Y };
         fit.classList.add("panning");
         try { fit.setPointerCapture(e.pointerId); } catch (err) { /* older */ }

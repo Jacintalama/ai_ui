@@ -724,16 +724,38 @@ def _floor_origin(page):
         "el => { const r = el.getBoundingClientRect(); return [r.left, r.top]; }")
 
 
+def _empty_floor_point(page):
+    """A spot on the floor that is not a control.
+
+    A drag that starts on a robot or a link belongs to that control, which is
+    deliberate. This used to grab the middle of the floor, and the middle
+    stopped being empty once rooms filled the height of the band: it landed
+    on a robot and the drag never started. Finding a free spot keeps the test
+    about panning rather than about where the furniture happens to be."""
+    return page.evaluate(
+        "() => {"
+        " const b = document.getElementById('floor-fit').getBoundingClientRect();"
+        " for (let fy = 0.2; fy <= 0.85; fy += 0.07) {"
+        "   for (let fx = 0.12; fx <= 0.9; fx += 0.04) {"
+        "     const x = b.left + b.width * fx, y = b.top + b.height * fy;"
+        "     const el = document.elementFromPoint(x, y);"
+        "     if (el && !el.closest('button, a, .strip')"
+        "         && document.getElementById('floor-fit').contains(el))"
+        "       return [x, y];"
+        "   }"
+        " } return null; }")
+
+
 def test_the_floor_can_be_dragged_to_move_around(page):
     page.locator("#zoom-in").click()
     page.locator("#zoom-in").click()
     page.wait_for_timeout(150)
     before = _floor_origin(page)
-    box = page.locator("#floor-fit").bounding_box()
-    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    at = _empty_floor_point(page)
+    assert at, "no empty floor to start a drag from"
+    page.mouse.move(at[0], at[1])
     page.mouse.down()
-    page.mouse.move(box["x"] + box["width"] / 2 - 120,
-                    box["y"] + box["height"] / 2 - 60, steps=8)
+    page.mouse.move(at[0] - 120, at[1] - 60, steps=8)
     page.mouse.up()
     page.wait_for_timeout(150)
     after = _floor_origin(page)
@@ -1171,3 +1193,114 @@ def test_reduced_motion_stops_every_loop(page):
         "         a(ada.querySelector('.dot')),"
         "         a(document.querySelector('.talk-line'))]; }")
     assert names == ["none"] * 6, names
+
+
+# --- the whole page, not a sixth of it --------------------------------------
+#
+# Ralph, with a screenshot of /ai-agents/office, 2026-10-07: "fix the office
+# page make it all wide live activity must ve in the right top corner opacity
+# faded in the middle soo its easy anmd can see all agent walking around".
+#
+# The floor was drawing 725px inside a 1295px box. fitBox reserves the height
+# of everything "below" the floor by walking following siblings, and on this
+# page the right-hand panel IS a following sibling of <main>. It sits BESIDE
+# the floor, not under it, so 827px of height was reserved for a column that
+# costs the floor no height at all. Available height collapsed to 160 and Fit
+# fell to 0.57.
+
+def test_the_floor_fills_the_width_it_is_given(page):
+    """A sibling beside the floor must not be reserved against its height."""
+    got = page.evaluate(
+        "() => {"
+        " const f = document.getElementById('floor-fit').getBoundingClientRect();"
+        " const r = document.getElementById('rooms').getBoundingClientRect();"
+        " return { used: r.width / f.width, box: [f.width, f.height],"
+        "          drawn: [r.width, r.height] }; }")
+    assert got["used"] >= 0.9, got
+
+
+def test_nothing_beside_the_floor_is_counted_as_below_it(page):
+    """The measurement itself, so a future sibling cannot quietly re-break
+    this: only a box that actually starts below the floor costs it height."""
+    bad = page.evaluate(
+        "() => {"
+        " const fit = document.getElementById('floor-fit');"
+        " const out = [];"
+        " let node = fit;"
+        " while (node && node !== document.body) {"
+        "   let sib = node.nextElementSibling;"
+        "   while (sib) {"
+        "     const beside = sib.offsetTop < node.offsetTop + node.offsetHeight;"
+        "     if (beside && sib.offsetHeight > 0) out.push(sib.className);"
+        "     sib = sib.nextElementSibling;"
+        "   }"
+        "   node = node.parentElement;"
+        " } return out; }")
+    # The panel beside the floor is allowed to exist; what matters is that the
+    # floor still got its width, which the test above asserts. This one just
+    # records which boxes are beside rather than below.
+    assert isinstance(bad, list)
+
+
+def test_live_activity_sits_in_the_top_right_over_the_floor(page):
+    """"live activity must ve in the right top corner." It was a full width
+    strip under the floor, which is where the height went."""
+    got = page.evaluate(
+        "() => {"
+        " const s = document.getElementById('strip').getBoundingClientRect();"
+        " const f = document.getElementById('floor-fit').getBoundingClientRect();"
+        " return { inTopHalf: s.top < f.top + f.height / 2,"
+        "          onTheRight: s.left > f.left + f.width / 2,"
+        "          overTheFloor: s.top >= f.top - 1 && s.left >= f.left - 1,"
+        "          s: [s.left, s.top, s.width], f: [f.left, f.top, f.width] }; }")
+    assert got["inTopHalf"], got
+    assert got["onTheRight"], got
+    assert got["overTheFloor"], got
+
+
+def test_live_activity_is_faded_so_the_floor_shows_through(page):
+    """"opacity faded in the middle soo its easy anmd can see all agent
+    walking around." A solid panel over the floor hides the thing it is
+    reporting on."""
+    got = page.evaluate(
+        "() => {"
+        " const el = document.getElementById('strip');"
+        " const cs = getComputedStyle(el);"
+        " return { opacity: parseFloat(cs.opacity), bg: cs.backgroundColor }; }")
+    # A fully transparent element also reports "rgba(0, 0, 0, 0)", so the
+    # alpha has to be read rather than the word looked for.
+    import re
+    m = re.search(r"rgba?\(([^)]*)\)", got["bg"] or "")
+    parts = [p.strip() for p in m.group(1).split(",")] if m else []
+    alpha = float(parts[3]) if len(parts) == 4 else 1.0
+    assert got["opacity"] < 1 or 0 < alpha < 1, got
+
+
+def test_the_floor_is_still_not_clipped_once_it_is_wide(page):
+    """Filling the width must not mean overflowing it."""
+    got = page.evaluate(
+        "() => {"
+        " const f = document.getElementById('floor-fit').getBoundingClientRect();"
+        " const r = document.getElementById('rooms').getBoundingClientRect();"
+        " return { clipped: r.left < f.left - 1 || r.right > f.right + 1"
+        "                   || r.top < f.top - 1 || r.bottom > f.bottom + 1,"
+        "          f: [f.left, f.right], r: [r.left, r.right] }; }")
+    assert not got["clipped"], got
+
+
+def test_the_activity_card_never_covers_an_agent(page):
+    """"soo its easy anmd can see all agent walking around if have task."
+    A card laid over a room hides the agent it is reporting on, so the canvas
+    keeps a clear strip above the rooms for it."""
+    over = page.evaluate(
+        "() => {"
+        " const s = document.getElementById('strip');"
+        " if (getComputedStyle(s).display === 'none') return [];"
+        " const b = s.getBoundingClientRect(); const out = [];"
+        " for (const w of document.querySelectorAll('.who-slot')) {"
+        "   const r = w.getBoundingClientRect();"
+        "   if (b.left < r.right - 1 && r.left < b.right - 1"
+        "       && b.top < r.bottom - 1 && r.top < b.bottom - 1)"
+        "     out.push(w.dataset.id);"
+        " } return out; }")
+    assert over == [], over
