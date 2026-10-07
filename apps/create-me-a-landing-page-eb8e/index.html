@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Legendary Laptop — The Machine That Outlives the Hype</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles/main.css">
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 antialiased">
+
+  <nav class="fixed top-0 inset-x-0 z-50 backdrop-blur-md bg-slate-950/70 border-b border-slate-800">
+    <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+      <a href="#" class="flex items-center gap-2 font-bold text-lg">
+        <span class="inline-block w-6 h-6 rounded bg-gradient-to-br from-amber-400 to-rose-500"></span>
+        Legendary
+      </a>
+      <div class="hidden md:flex items-center gap-8 text-sm text-slate-300">
+        <a href="#features" class="hover:text-white">Features</a>
+        <a href="#specs" class="hover:text-white">Specs</a>
+        <a href="#reviews" class="hover:text-white">Reviews</a>
+        <a href="#pricing" class="hover:text-white">Pricing</a>
+        <a href="#faq" class="hover:text-white">FAQ</a>
+      </div>
+      <a href="#pricing" class="px-4 py-2 rounded-full bg-white text-slate-900 text-sm font-semibold hover:bg-slate-200">Pre-order</a>
+    </div>
+  </nav>
+
+  <header class="relative pt-32 pb-24 overflow-hidden">
+    <div class="absolute inset-0 bg-gradient-to-b from-indigo-900/40 via-slate-950 to-slate-950"></div>
+    <div class="absolute -top-40 left-1/2 -translate-x-1/2 w-[60rem] h-[60rem] rounded-full bg-indigo-600/20 blur-3xl"></div>
+    <div class="relative max-w-6xl mx-auto px-6 text-center">
+      <span class="inline-block px-3 py-1 rounded-full border border-slate-700 text-xs uppercase tracking-widest text-slate-300 mb-6">Now taking pre-orders · Ships Q3 2026</span>
+      <h1 class="text-5xl md:text-7xl font-black tracking-tight leading-[1.05]">
+        The Legendary Laptop.<br>
+        <span class="bg-gradient-to-r from-amber-300 via-rose-400 to-fuchsia-500 bg-clip-text text-transparent">Built to be remembered.</span>
+      </h1>
+      <p class="mt-6 max-w-2xl mx-auto text-lg text-slate-300">
+        A 14-inch portable workstation engineered for the people who actually finish things. Machined aluminum chassis, 32-hour battery, a display calibrated in a darkroom, and the quietest cooling system we've ever shipped.
+      </p>
+      <div class="mt-10 flex items-center justify-center gap-4 flex-wrap">
+        <a href="#pricing" class="px-7 py-3 rounded-full bg-white text-slate-900 font-semibold hover:bg-slate-200">Reserve yours — $200</a>
+        <a href="#features" class="px-7 py-3 rounded-full border border-slate-700 hover:border-slate-500 font-semibold">See what's inside</a>
+      </div>
+      <div class="mt-16 grid grid-cols-2 md:grid-cols-4 gap-6 max-w-3xl mx-auto text-left">
+        <div><div class="text-3xl font-bold text-white">32h</div><div class="text-sm text-slate-400">Real-world battery</div></div>
+        <div><div class="text-3xl font-bold text-white">2.4 lb</div><div class="text-sm text-slate-400">Aircraft-grade aluminum</div></div>
+        <div><div class="text-3xl font-bold text-white">120 Hz</div><div class="text-sm text-slate-400">OLED, color-true</div></div>
+        <div><div class="text-3xl font-bold text-white">0 dB</div><div class="text-sm text-slate-400">Fanless under 40W</div></div>
+      </div>
+    </div>
+  </header>
+
+  <section id="features" class="py-24 border-t border-slate-900">
+    <div class="max-w-6xl mx-auto px-6">
+      <div class="max-w-2xl">
+        <h2 class="text-4xl md:text-5xl font-bold tracking-tight">Engineered without compromise.</h2>
+        <p class="mt-4 text-slate-400 text-lg">Every component was chosen by people who use laptops for a living, not by a spreadsheet. Here's what that gets you.</p>
+      </div>
+      <div class="mt-14 grid md:grid-cols-3 gap-6">
+        <div class="p-7 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-slate-700 transition">
+          <div class="w-10 h-10 rounded-lg bg-amber-500/15 text-amber-300 flex items-center justify-center font-bold">01</div>
+          <h3 class="mt-5 text-xl font-semibold">Apex M4 silicon</h3>
+          <p class="mt-2 text-slate-400">12-core CPU and 16-core neural engine, fabricated on a 3nm process. Compiles a Rust kernel in 41 seconds. Edits 8K ProRes without breaking a sweat.</p>
+        </div>
+        <div class="p-7 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-slate-700 transition">
+          <div class="w-10 h-10 rounded-lg bg-rose-500/15 text-rose-300 flex items-center justify-center font-bold">02</div>
+          <h3 class="mt-5 text-xl font-semibold">All-day battery, actually</h3>
+          <p class="mt-2 text-slate-400">A 92 Wh cell paired with aggressive idle states gives you 32 hours of mixed use. Fly New York to Tokyo, land with 40% left.</p>
+        </div>
+        <div class="p-7 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-slate-700 transition">
+          <div class="w-10 h-10 rounded-lg bg-fuchsia-500/15 text-fuchsia-300 flex items-center justify-center font-bold">03</div>
+          <h3 class="mt-5 text-xl font-semibold">Reference-grade display</h3>
+          <p class="mt-2 text-slate-400">14.2" OLED at 3024×1964, Delta-E under 1, 1600 nits peak. Calibrated individually before it leaves the factory floor.</p>
+        </div>
+        <div class="p-7 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-slate-700 transition">
+          <div class="w-10 h-10 rounded-lg bg-emerald-500/15 text-emerald-300 flex items-center justify-center font-bold">04</div>
+          <h3 class="mt-5 text-xl font-semibold">Mechanical keyboard</h3>
+          <p class="mt-2 text-slate-400">2.1 mm travel, low-profile mechanical switches, per-key RGB. The first laptop keyboard typists actually ask for by name.</p>
+        </div>
+        <div class="p-7 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-slate-700 transition">
+          <div class="w-10 h-10 rounded-lg bg-sky-500/15 text-sky-300 flex items-center justify-center font-bold">05</div>
+          <h3 class="mt-5 text-xl font-semibold">Whisper cooling</h3>
+          <p class="mt-2 text-slate-400">Vapor chamber plus dual graphene fans tuned to a sub-22 dB ceiling. Even under sustained load, the loudest thing in the room is you.</p>
+        </div>
+        <div class="p-7 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-slate-700 transition">
+          <div class="w-10 h-10 rounded-lg bg-indigo-500/15 text-indigo-300 flex items-center justify-center font-bold">06</div>
+          <h3 class="mt-5 text-xl font-semibold">Repairable by design</h3>
+          <p class="mt-2 text-slate-400">Modular SSD, replaceable battery, standard screws. We publish the service manual the same day the laptop ships.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="specs" class="py-24 border-t border-slate-900 bg-slate-900/30">
+    <div class="max-w-6xl mx-auto px-6 grid md:grid-cols-2 gap-12">
+      <div>
+        <h2 class="text-4xl md:text-5xl font-bold tracking-tight">The full spec sheet.</h2>
+        <p class="mt-4 text-slate-400 text-lg">No asterisks. No "up to" weasel words. These are the numbers you get out of the box, configured at our standard tier.</p>
+        <a href="#pricing" class="inline-block mt-8 px-6 py-3 rounded-full bg-white text-slate-900 font-semibold hover:bg-slate-200">Configure yours</a>
+      </div>
+      <dl class="space-y-3 text-sm">
+        <div class="flex justify-between py-3 border-b border-slate-800"><dt class="text-slate-400">Processor</dt><dd class="font-medium">Apex M4 · 12-core</dd></div>
+        <div class="flex justify-between py-3 border-b border-slate-800"><dt class="text-slate-400">Memory</dt><dd class="font-medium">32 GB LPDDR5X, unified</dd></div>
+        <div class="flex justify-between py-3 border-b border-slate-800"><dt class="text-slate-400">Storage</dt><dd class="font-medium">1 TB NVMe Gen 4 (user-swappable)</dd></div>
+        <div class="flex justify-between py-3 border-b border-slate-800"><dt class="text-slate-400">Display</dt><dd class="font-medium">14.2" OLED · 3024×1964 · 120 Hz</dd></div>
+        <div class="flex justify-between py-3 border-b border-slate-800"><dt class="text-slate-400">Battery</dt><dd class="font-medium">92 Wh · 32 h mixed use</dd></div>
+        <div class="flex justify-between py-3 border-b border-slate-800"><dt class="text-slate-400">Weight</dt><dd class="font-medium">2.4 lb · 1.09 kg</dd></div>
+        <div class="flex justify-between py-3 border-b border-slate-800"><dt class="text-slate-400">Ports</dt><dd class="font-medium">3× USB-C/TB5, HDMI 2.1, SD, jack</dd></div>
+        <div class="flex justify-between py-3 border-b border-slate-800"><dt class="text-slate-400">Wireless</dt><dd class="font-medium">Wi-Fi 7, Bluetooth 5.4</dd></div>
+        <div class="flex justify-between py-3 border-b border-slate-800"><dt class="text-slate-400">Webcam</dt><dd class="font-medium">1080p with mechanical shutter</dd></div>
+        <div class="flex justify-between py-3"><dt class="text-slate-400">Warranty</dt><dd class="font-medium">3 years, parts and labor</dd></div>
+      </dl>
+    </div>
+  </section>
+
+  <section id="reviews" class="py-24 border-t border-slate-900">
+    <div class="max-w-6xl mx-auto px-6">
+      <h2 class="text-4xl md:text-5xl font-bold tracking-tight text-center">The reviews are in.</h2>
+      <p class="mt-4 text-slate-400 text-lg text-center max-w-2xl mx-auto">Early units went out to the people who'd be hardest on them. Here's what they said.</p>
+      <div class="mt-14 grid md:grid-cols-3 gap-6">
+        <figure class="p-7 rounded-2xl bg-slate-900/60 border border-slate-800">
+          <blockquote class="text-slate-200 leading-relaxed">"I forgot to plug it in for two days. It still had charge. I have never written that sentence about a laptop before."</blockquote>
+          <figcaption class="mt-5 flex items-center gap-3">
+            <div class="w-9 h-9 rounded-full bg-gradient-to-br from-amber-300 to-rose-500"></div>
+            <div><div class="font-semibold">Marisa Chen</div><div class="text-xs text-slate-400">Senior editor, The Verge</div></div>
+          </figcaption>
+        </figure>
+        <figure class="p-7 rounded-2xl bg-slate-900/60 border border-slate-800">
+          <blockquote class="text-slate-200 leading-relaxed">"Compiles our backend monorepo 38% faster than my old workstation. I'm writing this from a cafe, fanless, on battery."</blockquote>
+          <figcaption class="mt-5 flex items-center gap-3">
+            <div class="w-9 h-9 rounded-full bg-gradient-to-br from-sky-300 to-indigo-500"></div>
+            <div><div class="font-semibold">Devon Ortiz</div><div class="text-xs text-slate-400">Staff engineer, Linear</div></div>
+          </figcaption>
+        </figure>
+        <figure class="p-7 rounded-2xl bg-slate-900/60 border border-slate-800">
+          <blockquote class="text-slate-200 leading-relaxed">"The display is the first laptop panel I've trusted for color grading without an external reference monitor. That's a real sentence I'm typing."</blockquote>
+          <figcaption class="mt-5 flex items-center gap-3">
+            <div class="w-9 h-9 rounded-full bg-gradient-to-br from-emerald-300 to-teal-500"></div>
+            <div><div class="font-semibold">Priya Anand</div><div class="text-xs text-slate-400">Colorist, A24</div></div>
+          </figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section id="pricing" class="py-24 border-t border-slate-900 bg-slate-900/30">
+    <div class="max-w-6xl mx-auto px-6">
+      <h2 class="text-4xl md:text-5xl font-bold tracking-tight text-center">Three configurations. No upsells.</h2>
+      <p class="mt-4 text-slate-400 text-lg text-center max-w-2xl mx-auto">Pre-order with a fully refundable $200 deposit. Full charge only when your unit ships.</p>
+      <div class="mt-14 grid md:grid-cols-3 gap-6">
+        <div class="p-8 rounded-2xl bg-slate-900 border border-slate-800">
+          <h3 class="text-xl font-semibold">Standard</h3>
+          <p class="text-slate-400 text-sm mt-1">For the everyday demanding workload.</p>
+          <div class="mt-6 text-4xl font-bold">$1,899</div>
+          <ul class="mt-6 space-y-2 text-sm text-slate-300">
+            <li>· Apex M4, 12-core</li><li>· 16 GB RAM</li><li>· 512 GB SSD</li><li>· 3-year warranty</li>
+          </ul>
+          <button @click="$dispatch('reserve', { tier: 'Standard' })" class="mt-8 w-full py-3 rounded-full border border-slate-700 hover:border-slate-500 font-semibold">Reserve Standard</button>
+        </div>
+        <div class="p-8 rounded-2xl bg-gradient-to-br from-indigo-600 to-fuchsia-600 border border-fuchsia-400/40 relative">
+          <span class="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-white text-slate-900 text-xs font-bold">Most popular</span>
+          <h3 class="text-xl font-semibold">Pro</h3>
+          <p class="text-white/80 text-sm mt-1">Our reference configuration.</p>
+          <div class="mt-6 text-4xl font-bold">$2,499</div>
+          <ul class="mt-6 space-y-2 text-sm text-white/90">
+            <li>· Apex M4, 12-core</li><li>· 32 GB RAM</li><li>· 1 TB SSD</li><li>· Lifetime cloud sync</li>
+          </ul>
+          <button @click="$dispatch('reserve', { tier: 'Pro' })" class="mt-8 w-full py-3 rounded-full bg-white text-slate-900 font-semibold hover:bg-slate-100">Reserve Pro</button>
+        </div>
+        <div class="p-8 rounded-2xl bg-slate-900 border border-slate-800">
+          <h3 class="text-xl font-semibold">Max</h3>
+          <p class="text-slate-400 text-sm mt-1">When you don't want to think about it.</p>
+          <div class="mt-6 text-4xl font-bold">$3,299</div>
+          <ul class="mt-6 space-y-2 text-sm text-slate-300">
+            <li>· Apex M4 Max, 16-core</li><li>· 64 GB RAM</li><li>· 2 TB SSD</li><li>· On-site repair, year one</li>
+          </ul>
+          <button @click="$dispatch('reserve', { tier: 'Max' })" class="mt-8 w-full py-3 rounded-full border border-slate-700 hover:border-slate-500 font-semibold">Reserve Max</button>
+        </div>
+      </div>
+
+      <div x-data="reserveForm" @reserve.window="open($event.detail.tier)" class="mt-16 max-w-xl mx-auto">
+        <div x-show="status === 'idle'" class="text-center text-sm text-slate-400">Click a tier above to start your reservation.</div>
+        <form x-show="status === 'open'" @submit.prevent="submit" x-cloak class="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
+          <div class="text-sm text-slate-300">Reserving the <span class="font-semibold text-white" x-text="tier"></span> tier.</div>
+          <input x-model="email" type="email" required placeholder="you@domain.com" class="w-full px-4 py-3 rounded-lg bg-slate-950 border border-slate-700 focus:border-slate-500 outline-none">
+          <button class="w-full py-3 rounded-full bg-white text-slate-900 font-semibold hover:bg-slate-200">Confirm reservation</button>
+        </form>
+        <div x-show="status === 'done'" x-cloak class="p-6 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-200 text-center">
+          Reserved. We sent confirmation to <span x-text="email" class="font-semibold"></span>.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="faq" class="py-24 border-t border-slate-900">
+    <div class="max-w-3xl mx-auto px-6">
+      <h2 class="text-4xl md:text-5xl font-bold tracking-tight text-center">Questions, answered.</h2>
+      <div class="mt-12 space-y-3" x-data="{ open: 0 }">
+        <template x-for="(item, i) in [
+          { q: 'When does it ship?', a: 'Pre-orders placed before July 1 ship in Q3 2026. After that, units ship within 4 weeks of order.' },
+          { q: 'Can I return it?', a: 'Yes. 60-day no-questions-asked returns, return shipping included. The reservation deposit is refundable any time before your unit ships.' },
+          { q: 'Does it run Linux?', a: 'Fully. Ubuntu 24.04 and Fedora 40 are officially supported with first-party drivers. We publish the device tree.' },
+          { q: 'What about repairs?', a: 'Battery, SSD, keyboard, and display are user-replaceable with Phillips #00 and a spudger. Service manuals are public on day one.' },
+          { q: 'Is there a discount for students or open-source maintainers?', a: 'Yes — 15% off any tier with proof of enrollment or a verified GitHub maintainer profile. Email help@legendary.computer.' }
+        ]" :key="i">
+          <div class="rounded-xl border border-slate-800 bg-slate-900/40">
+            <button @click="open = (open === i ? -1 : i)" class="w-full px-5 py-4 flex justify-between items-center text-left">
+              <span class="font-semibold" x-text="item.q"></span>
+              <span x-text="open === i ? '−' : '+'" class="text-slate-500 text-xl"></span>
+            </button>
+            <div x-show="open === i" x-collapse class="px-5 pb-4 text-slate-400" x-text="item.a"></div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </section>
+
+  <footer class="border-t border-slate-900 py-12">
+    <div class="max-w-6xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-4 text-sm text-slate-400">
+      <div class="flex items-center gap-2">
+        <span class="inline-block w-5 h-5 rounded bg-gradient-to-br from-amber-400 to-rose-500"></span>
+        <span class="font-semibold text-slate-200">Legendary Computer Co.</span>
+        <span>· Brooklyn, NY</span>
+      </div>
+      <div class="flex gap-6">
+        <a href="#" class="hover:text-white">Privacy</a>
+        <a href="#" class="hover:text-white">Terms</a>
+        <a href="mailto:hello@legendary.computer" class="hover:text-white">hello@legendary.computer</a>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

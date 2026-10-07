@@ -1,0 +1,13 @@
+[x-cloak] { display: none !important; }
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+}
+
+[draggable="true"] {
+  user-select: none;
+}

@@ -1,0 +1,3 @@
+html { scroll-behavior: smooth; }
+body { font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+::selection { background: rgba(129,140,248,0.35); }

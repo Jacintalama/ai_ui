@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en" x-data="portfolio" x-init="init()" :class="{ 'dark': theme === 'dark' }">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lukas Herajt — AI Engineer</title>
+  <meta name="description" content="Portfolio of Lukas Herajt, an AI engineer building production-grade LLM platforms, RAG pipelines, and agentic systems." />
+  <script>
+    tailwind = window.tailwind || {};
+    if (typeof tailwind === 'object') tailwind.config = {
+      darkMode: 'class',
+      theme: { extend: { fontFamily: { serif: ['Fraunces', 'ui-serif', 'Georgia', 'serif'], mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace'] } } }
+    };
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,800&family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600&family=UnifrakturCook:wght@700&family=UnifrakturMaguntia&display=swap" rel="stylesheet" />
+  <style>
+    .font-gothic {
+      font-family: Arial, Helvetica, sans-serif;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+    .font-gothic em {
+      font-style: normal;
+    }
+  </style>
+  <link rel="stylesheet" href="styles/main.css" />
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+</head>
+<body class="bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100 antialiased transition-colors">
+
+  <a href="#main" class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:bg-emerald-500 focus:text-slate-950 focus:px-3 focus:py-1.5 focus:rounded">Skip to content</a>
+
+  <!-- Header -->
+  <header class="sticky top-0 z-30 backdrop-blur bg-white/80 dark:bg-slate-950/70 border-b border-slate-200 dark:border-slate-800/80">
+    <div class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <a href="#hero" class="flex items-center gap-2 font-semibold">
+        <span class="inline-flex h-8 w-8 items-center justify-center rounded-md bg-slate-900 text-emerald-300 dark:bg-emerald-400 dark:text-slate-950 text-sm font-mono">&gt;_</span>
+        <span class="font-serif text-lg" x-text="name"></span>
+      </a>
+      <nav class="hidden md:flex items-center gap-7 text-sm text-slate-600 dark:text-slate-400" aria-label="Primary">
+        <a href="#work" :class="activeSection === 'work' ? 'text-slate-900 dark:text-white' : ''" class="hover:text-slate-900 dark:hover:text-white transition">Work</a>
+        <a href="#about" :class="activeSection === 'about' ? 'text-slate-900 dark:text-white' : ''" class="hover:text-slate-900 dark:hover:text-white transition">About</a>
+        <a href="#writing" :class="activeSection === 'writing' ? 'text-slate-900 dark:text-white' : ''" class="hover:text-slate-900 dark:hover:text-white transition">Writing</a>
+        <a href="#resume" :class="activeSection === 'resume' ? 'text-slate-900 dark:text-white' : ''" class="hover:text-slate-900 dark:hover:text-white transition">Resume</a>
+        <a href="#contact" :class="activeSection === 'contact' ? 'text-slate-900 dark:text-white' : ''" class="hover:text-slate-900 dark:hover:text-white transition">Contact</a>
+      </nav>
+      <div class="flex items-center gap-2">
+        <span class="hidden lg:inline text-xs font-mono text-slate-400 dark:text-slate-500 mr-2">press <kbd class="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800">j</kbd> / <kbd class="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800">k</kbd></span>
+        <button @click="toggleTheme()" class="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500" :aria-label="theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'">
+          <i data-lucide="sun" class="w-5 h-5" x-show="theme === 'dark'"></i>
+          <i data-lucide="moon" class="w-5 h-5" x-show="theme !== 'dark'"></i>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+
+  <!-- Hero -->
+  <section id="hero" class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-20 lg:py-28">
+    <div class="grid lg:grid-cols-[1fr,auto] gap-10 items-center">
+      <div>
+        <p class="text-xs uppercase tracking-[0.25em] text-emerald-600 dark:text-emerald-400 font-mono font-medium">AI Engineer · LLM Systems · ML Infra</p>
+        <h1 class="mt-5 font-gothic text-5xl sm:text-6xl lg:text-7xl tracking-tight leading-[1.1] drop-shadow-sm">
+          I build <em class="text-emerald-600 dark:text-emerald-400">useful</em> things<br/>with language models.
+        </h1>
+        <p class="mt-6 max-w-xl text-lg text-slate-600 dark:text-slate-400 leading-relaxed">
+          I'm <span x-text="name"></span> — an AI engineer building production-grade LLM platforms with RAG pipelines, agentic systems, and the evaluation infrastructure that keeps them grounded. Currently architecting AI systems on contract; previously AI Software Engineer at the American Board of Anesthesiology.
+        </p>
+        <div class="mt-8 flex flex-wrap items-center gap-3">
+          <a href="#work" class="inline-flex items-center gap-2 rounded-lg bg-slate-900 dark:bg-emerald-400 dark:text-slate-950 text-white px-5 py-2.5 text-sm font-medium hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+            See selected work <i data-lucide="arrow-down" class="w-4 h-4"></i>
+          </a>
+          <a href="#contact" class="inline-flex items-center gap-2 rounded-lg border border-slate-300 dark:border-slate-700 px-5 py-2.5 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-900">
+            Get in touch
+          </a>
+        </div>
+        <div class="mt-8 flex items-center gap-5">
+          <a href="https://github.com/" target="_blank" rel="noopener noreferrer" class="text-slate-500 hover:text-slate-900 dark:hover:text-white" aria-label="GitHub">
+            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-2.05c-3.2.69-3.87-1.36-3.87-1.36-.52-1.31-1.27-1.66-1.27-1.66-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.76 2.69 1.25 3.35.96.1-.74.4-1.25.73-1.54-2.55-.29-5.24-1.27-5.24-5.66 0-1.25.45-2.27 1.18-3.07-.12-.29-.51-1.46.11-3.04 0 0 .96-.31 3.16 1.18.92-.26 1.9-.39 2.88-.39s1.96.13 2.88.39c2.2-1.49 3.16-1.18 3.16-1.18.62 1.58.23 2.75.11 3.04.74.8 1.18 1.82 1.18 3.07 0 4.4-2.7 5.36-5.27 5.65.41.36.78 1.06.78 2.13v3.16c0 .31.21.67.79.55C20.21 21.39 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5z"/></svg>
+          </a>
+          <a href="https://linkedin.com/" target="_blank" rel="noopener noreferrer" class="text-slate-500 hover:text-slate-900 dark:hover:text-white" aria-label="LinkedIn">
+            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.45 20.45h-3.55v-5.57c0-1.33-.02-3.04-1.85-3.04-1.86 0-2.14 1.45-2.14 2.95v5.66H9.36V9h3.41v1.56h.05c.47-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.06 2.06 0 1 1 0-4.12 2.06 2.06 0 0 1 0 4.12zm1.78 13.02H3.56V9h3.56v11.45zM22.22 0H1.77C.79 0 0 .77 0 1.72v20.56C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.72V1.72C24 .77 23.2 0 22.22 0z"/></svg>
+          </a>
+          <a href="https://twitter.com/" target="_blank" rel="noopener noreferrer" class="text-slate-500 hover:text-slate-900 dark:hover:text-white" aria-label="Twitter / X">
+            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.244 2H21l-6.52 7.45L22 22h-6.156l-4.81-6.29L5.62 22H2.86l6.97-7.96L2 2h6.31l4.34 5.74L18.244 2z"/></svg>
+          </a>
+          <a href="mailto:lukasherajt@gmail.com" class="text-slate-500 hover:text-slate-900 dark:hover:text-white inline-flex items-center gap-1.5 text-sm font-mono">
+            <i data-lucide="mail" class="w-4 h-4"></i> lukasherajt@gmail.com
+          </a>
+        </div>
+      </div>
+
+      <!-- Avatar / terminal card -->
+      <div class="hidden lg:block">
+        <div class="relative w-72 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 p-1 shadow-sm">
+          <div class="flex items-center gap-1.5 px-3 py-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-red-400"></span>
+            <span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+            <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+            <span class="ml-2 font-mono text-[11px] text-slate-500">~/lukas.sh</span>
+          </div>
+          <pre class="px-4 pb-4 pt-1 text-[12px] leading-relaxed font-mono text-slate-700 dark:text-slate-300 overflow-x-auto"><span class="text-emerald-600 dark:text-emerald-400">$</span> whoami
+lukas herajt
+<span class="text-emerald-600 dark:text-emerald-400">$</span> cat role.txt
+AI engineer · RAG · agents · MCP
+<span class="text-emerald-600 dark:text-emerald-400">$</span> ls projects/
+rag-search/   agentic-docs/
+eval-kit/     mcp-tools/
+<span class="text-emerald-600 dark:text-emerald-400">$</span> uptime
+shipping since 2020
+<span class="text-emerald-600 dark:text-emerald-400">$</span> <span class="inline-block w-2 h-4 align-middle bg-emerald-500 animate-pulse"></span></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Selected work -->
+  <section id="work" class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-16 scroll-mt-20">
+    <div class="flex items-end justify-between flex-wrap gap-4">
+      <div>
+        <p class="text-xs uppercase tracking-[0.25em] text-emerald-600 dark:text-emerald-400 font-mono">/ work</p>
+        <h2 class="mt-2 font-serif text-4xl font-semibold tracking-tight">Selected work</h2>
+        <p class="mt-2 text-slate-600 dark:text-slate-400 max-w-xl">Production systems and open-source tools across LLM apps, agentic workflows, and ML infrastructure.</p>
+      </div>
+      <div class="flex flex-wrap gap-2" role="tablist" aria-label="Filter projects by category">
+        <template x-for="tag in ['All','LLM','Agents','ML Infra']" :key="tag">
+          <button @click="filter = tag" :aria-pressed="filter === tag"
+            :class="filter === tag ? 'bg-slate-900 text-emerald-300 dark:bg-emerald-400 dark:text-slate-950' : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700'"
+            class="px-3 py-1.5 rounded-full text-sm font-mono transition focus:outline-none focus:ring-2 focus:ring-emerald-500">
+            <span x-text="tag"></span>
+          </button>
+        </template>
+      </div>
+    </div>
+
+    <div class="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      <template x-for="p in filteredProjects" :key="p.title">
+        <a :href="'#' + p.title.toLowerCase().replace(/[^a-z0-9]+/g,'-')"
+           class="group relative overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-emerald-500/60 dark:hover:border-emerald-400/60 transition">
+          <div class="relative">
+            <img :src="`https://picsum.photos/seed/${p.seed}/600/400`" :alt="p.title + ' project thumbnail'" loading="lazy" class="w-full aspect-[3/2] object-cover transition group-hover:scale-[1.03]" />
+            <span class="absolute top-3 left-3 text-[10px] uppercase tracking-wider font-mono bg-slate-950/80 text-emerald-300 px-2 py-1 rounded" x-text="p.category"></span>
+          </div>
+          <div class="p-4">
+            <div class="flex items-center justify-between gap-2">
+              <h3 class="font-serif text-lg font-semibold" x-text="p.title"></h3>
+              <span class="text-xs font-mono text-slate-500" x-text="p.year"></span>
+            </div>
+            <p class="mt-1.5 text-sm text-slate-600 dark:text-slate-400 leading-relaxed" x-text="p.summary"></p>
+            <div class="mt-3 flex flex-wrap gap-1.5">
+              <template x-for="tag in p.tags" :key="tag">
+                <span class="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300" x-text="tag"></span>
+              </template>
+            </div>
+          </div>
+        </a>
+      </template>
+    </div>
+    <p x-show="filteredProjects.length === 0" class="mt-8 text-center text-slate-500">No projects in this category yet.</p>
+  </section>
+
+  <!-- About -->
+  <section id="about" class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-20 scroll-mt-20">
+    <div class="grid gap-10 lg:grid-cols-[1fr,1.4fr] items-start">
+      <div>
+        <div class="rounded-2xl overflow-hidden bg-slate-100 dark:bg-slate-900 aspect-[4/5] max-w-xs">
+          <img src="https://images.unsplash.com/photo-1531123897727-8f129e1688ce?auto=format&fit=crop&w=600&q=80" alt="Portrait of Lukas Herajt" loading="lazy" class="w-full h-full object-cover grayscale hover:grayscale-0 transition duration-500" />
+        </div>
+        <p class="mt-4 text-sm font-mono text-slate-500 dark:text-slate-400">
+          <span class="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse mr-1.5 align-middle"></span>
+          Currently AI Engineer on contract · Sioux Falls, SD
+        </p>
+      </div>
+      <div>
+        <p class="text-xs uppercase tracking-[0.25em] text-emerald-600 dark:text-emerald-400 font-mono">/ about</p>
+        <h2 class="mt-2 font-serif text-4xl font-semibold tracking-tight">A short bio</h2>
+        <p class="mt-5 text-slate-600 dark:text-slate-300 leading-relaxed">
+          I've been building software since 2020, starting on frontend and backend at Hiretalk, then moving into Python services and ML-assisted automation at Mid Atlantic Distribution. From 2022 to 2025 I worked as an AI Software Engineer at the American Board of Anesthesiology, engineering token-cost optimization layers, evaluation harnesses, and structured-output reliability for multi-step agentic workflows. Since mid-2025 I've been an AI Engineer (Title Contract), architecting production-grade LLM platforms and using Anthropic's Model Context Protocol (MCP) to expose internal systems to Claude agents.
+        </p>
+        <p class="mt-4 text-slate-600 dark:text-slate-300 leading-relaxed">
+          Most of my work sits at the load-bearing layer: retrieval grounding, hybrid search, agent reliability, eval harnesses, and the routing/fallback policies that decide whether an AI feature is a demo or a product. I care about systems that fail loudly, prompts that read like specifications, and confidence checks that catch silent regressions before users do.
+        </p>
+
+        <div class="mt-8 grid grid-cols-3 gap-4 max-w-md">
+          <div>
+            <div class="font-serif text-3xl font-semibold">5y+</div>
+            <div class="text-xs text-slate-500 mt-1">Shipping software</div>
+          </div>
+          <div>
+            <div class="font-serif text-3xl font-semibold">4</div>
+            <div class="text-xs text-slate-500 mt-1">RAG / agent platforms</div>
+          </div>
+          <div>
+            <div class="font-serif text-3xl font-semibold">3y</div>
+            <div class="text-xs text-slate-500 mt-1">LLMs in production</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Skills -->
+    <div class="mt-16">
+      <h3 class="font-serif text-2xl font-semibold tracking-tight">Stack &amp; capabilities</h3>
+      <div class="mt-6 grid gap-8 md:grid-cols-3">
+        <div>
+          <h4 class="text-xs uppercase tracking-[0.2em] font-mono text-slate-500">Machine learning</h4>
+          <div class="mt-3 flex flex-wrap gap-2">
+            <template x-for="s in skills.ml" :key="s">
+              <span class="px-3 py-1.5 rounded-md bg-slate-100 dark:bg-slate-800 text-sm" x-text="s"></span>
+            </template>
+          </div>
+        </div>
+        <div>
+          <h4 class="text-xs uppercase tracking-[0.2em] font-mono text-slate-500">LLM &amp; agents</h4>
+          <div class="mt-3 flex flex-wrap gap-2">
+            <template x-for="s in skills.llm" :key="s">
+              <span class="px-3 py-1.5 rounded-md bg-slate-100 dark:bg-slate-800 text-sm" x-text="s"></span>
+            </template>
+          </div>
+        </div>
+        <div>
+          <h4 class="text-xs uppercase tracking-[0.2em] font-mono text-slate-500">Backend &amp; infra</h4>
+          <div class="mt-3 flex flex-wrap gap-2">
+            <template x-for="s in skills.infra" :key="s">
+              <span class="px-3 py-1.5 rounded-md bg-slate-100 dark:bg-slate-800 text-sm" x-text="s"></span>
+            </template>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Writing -->
+  <section id="writing" class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-16 scroll-mt-20">
+    <p class="text-xs uppercase tracking-[0.25em] text-emerald-600 dark:text-emerald-400 font-mono">/ writing</p>
+    <h2 class="mt-2 font-serif text-4xl font-semibold tracking-tight">Recent writing</h2>
+    <p class="mt-2 text-slate-600 dark:text-slate-400 max-w-xl">Field notes on building with LLMs — mostly about evals, agents, and the gap between demos and production.</p>
+
+    <ul class="mt-8 divide-y divide-slate-200 dark:divide-slate-800 border-t border-b border-slate-200 dark:border-slate-800">
+      <template x-for="post in writing" :key="post.title">
+        <li>
+          <a href="#" class="group flex flex-col sm:flex-row sm:items-center justify-between gap-2 py-5 hover:bg-slate-50 dark:hover:bg-slate-900/60 -mx-2 px-2 rounded transition">
+            <div>
+              <h3 class="font-serif text-lg group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition" x-text="post.title"></h3>
+              <p class="mt-0.5 text-xs font-mono text-slate-500" x-text="post.date + ' · ' + post.read"></p>
+            </div>
+            <span class="text-sm text-slate-400 group-hover:text-emerald-500">Read →</span>
+          </a>
+        </li>
+      </template>
+    </ul>
+  </section>
+
+  <!-- Resume / PDF -->
+  <section id="resume" class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-16 scroll-mt-20">
+    <p class="text-xs uppercase tracking-[0.25em] text-emerald-600 dark:text-emerald-400 font-mono">/ resume</p>
+    <h2 class="mt-2 font-serif text-4xl font-semibold tracking-tight">Grab a PDF copy</h2>
+    <p class="mt-2 text-slate-600 dark:text-slate-400 max-w-xl">Prefer to read offline or pass it to a teammate? Download a printable PDF of my resume — same content as this site, condensed to two pages.</p>
+
+    <div class="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 flex flex-col">
+        <div class="flex items-center gap-3">
+          <span class="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+            <i data-lucide="file-text" class="w-5 h-5"></i>
+          </span>
+          <div>
+            <h3 class="font-serif text-lg font-semibold">Full resume</h3>
+            <p class="text-xs font-mono text-slate-500">PDF · 2 pages · ~180 KB</p>
+          </div>
+        </div>
+        <p class="mt-3 text-sm text-slate-600 dark:text-slate-400 flex-1">Roles, responsibilities, stack, and project highlights from 2020 to today.</p>
+        <a href="lukas-herajt-resume.pdf" download class="mt-4 inline-flex items-center justify-center gap-2 rounded-lg bg-slate-900 dark:bg-emerald-400 dark:text-slate-950 text-white px-4 py-2 text-sm font-medium hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+          <i data-lucide="download" class="w-4 h-4"></i> Download PDF
+        </a>
+      </div>
+
+      <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 flex flex-col">
+        <div class="flex items-center gap-3">
+          <span class="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+            <i data-lucide="file-badge" class="w-5 h-5"></i>
+          </span>
+          <div>
+            <h3 class="font-serif text-lg font-semibold">One-page summary</h3>
+            <p class="text-xs font-mono text-slate-500">PDF · 1 page · ~90 KB</p>
+          </div>
+        </div>
+        <p class="mt-3 text-sm text-slate-600 dark:text-slate-400 flex-1">The TL;DR version — headline experience, core stack, and a few flagship projects.</p>
+        <a href="lukas-herajt-summary.pdf" download class="mt-4 inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 dark:border-slate-700 px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+          <i data-lucide="download" class="w-4 h-4"></i> Download PDF
+        </a>
+      </div>
+
+      <div class="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 flex flex-col">
+        <div class="flex items-center gap-3">
+          <span class="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+            <i data-lucide="printer" class="w-5 h-5"></i>
+          </span>
+          <div>
+            <h3 class="font-serif text-lg font-semibold">Print this page</h3>
+            <p class="text-xs font-mono text-slate-500">Browser · Save as PDF</p>
+          </div>
+        </div>
+        <p class="mt-3 text-sm text-slate-600 dark:text-slate-400 flex-1">Generate a fresh PDF straight from the site — handy if you want the latest content with no download.</p>
+        <button type="button" @click="window.print()" class="mt-4 inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 dark:border-slate-700 px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+          <i data-lucide="printer" class="w-4 h-4"></i> Print / Save
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Contact -->
+  <section id="contact" class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-20 scroll-mt-20">
+    <p class="text-xs uppercase tracking-[0.25em] text-emerald-600 dark:text-emerald-400 font-mono">/ contact</p>
+    <h2 class="mt-2 font-serif text-4xl font-semibold tracking-tight">Let's build something.</h2>
+    <p class="mt-3 text-slate-600 dark:text-slate-400">
+      Hiring for an LLM problem you can't quite scope yet? Wrangling a flaky agent? Want a second pair of eyes on your eval setup? Drop a line — I read every message and reply within a day.
+    </p>
+
+    <form @submit.prevent="submitContact" class="mt-8 grid gap-4">
+      <div class="grid sm:grid-cols-2 gap-4">
+        <div>
+          <label for="c-name" class="block text-sm font-medium mb-1">Your name</label>
+          <input id="c-name" x-model="contact.name" required type="text" autocomplete="name" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+        </div>
+        <div>
+          <label for="c-email" class="block text-sm font-medium mb-1">Email</label>
+          <input id="c-email" x-model="contact.email" required type="email" autocomplete="email" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" />
+        </div>
+      </div>
+      <div>
+        <label for="c-msg" class="block text-sm font-medium mb-1">What are you working on?</label>
+        <textarea id="c-msg" x-model="contact.message" required rows="5" class="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500" placeholder="A few sentences about the problem, the stack, and the timeline."></textarea>
+      </div>
+      <div class="flex items-center justify-between flex-wrap gap-3">
+        <p class="text-xs text-slate-500">Or email directly: <a href="mailto:lukasherajt@gmail.com" class="font-mono text-slate-700 dark:text-slate-300 hover:text-emerald-600 dark:hover:text-emerald-400">lukasherajt@gmail.com</a></p>
+        <button type="submit" :disabled="contact.sending" class="inline-flex items-center gap-2 rounded-lg bg-slate-900 dark:bg-emerald-400 dark:text-slate-950 text-white px-5 py-2.5 text-sm font-medium hover:opacity-90 disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+          <span x-show="!contact.sending">Send message</span>
+          <span x-show="contact.sending">Sending…</span>
+          <i data-lucide="send" class="w-4 h-4"></i>
+        </button>
+      </div>
+    </form>
+
+    <div x-show="toast.visible" x-transition x-cloak class="fixed bottom-6 right-6 z-50 rounded-lg bg-emerald-600 text-white px-4 py-3 shadow-lg flex items-center gap-2">
+      <i data-lucide="check-circle-2" class="w-5 h-5"></i>
+      <span x-text="toast.message"></span>
+    </div>
+  </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t border-slate-200 dark:border-slate-800/80">
+    <div class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-slate-500">
+      <p>&copy; <span x-text="new Date().getFullYear()"></span> <span x-text="name"></span>. Hand-coded, no frameworks.</p>
+      <div class="flex items-center gap-5">
+        <a href="https://github.com/" target="_blank" rel="noopener noreferrer" class="hover:text-slate-700 dark:hover:text-slate-300">GitHub</a>
+        <a href="https://linkedin.com/" target="_blank" rel="noopener noreferrer" class="hover:text-slate-700 dark:hover:text-slate-300">LinkedIn</a>
+        <a href="https://twitter.com/" target="_blank" rel="noopener noreferrer" class="hover:text-slate-700 dark:hover:text-slate-300">Twitter</a>
+        <span class="font-mono text-xs text-slate-400">Last updated Jun 2026</span>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

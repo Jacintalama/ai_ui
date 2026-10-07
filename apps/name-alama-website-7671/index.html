@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Alama Forms — Build, Preview, Collect</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles/main.css" />
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col">
+  <div x-data="formBuilder" x-cloak class="flex flex-col min-h-screen">
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-20">
+      <div class="max-w-7xl mx-auto px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-md bg-indigo-600 text-white grid place-items-center font-bold">A</div>
+          <h1 class="text-lg font-semibold tracking-tight">Alama Forms</h1>
+        </div>
+        <input
+          type="text"
+          x-model="form.title"
+          aria-label="Form title"
+          class="flex-1 max-w-sm border border-slate-200 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        />
+        <nav class="flex gap-1 bg-slate-100 rounded-md p-1" role="tablist" aria-label="Views">
+          <template x-for="t in tabs" :key="t.id">
+            <button
+              :aria-selected="tab === t.id"
+              role="tab"
+              @click="tab = t.id"
+              :class="tab === t.id ? 'bg-white shadow text-indigo-700' : 'text-slate-600 hover:text-slate-900'"
+              class="px-3 py-1.5 text-sm font-medium rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              x-text="t.label"
+            ></button>
+          </template>
+        </nav>
+      </div>
+    </header>
+
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 py-6">
+      <!-- BUILDER -->
+      <section x-show="tab === 'builder'" aria-label="Form builder" class="grid grid-cols-1 md:grid-cols-[220px_1fr_280px] gap-4">
+        <aside class="bg-white border border-slate-200 rounded-lg p-3">
+          <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Field types</h2>
+          <p class="text-xs text-slate-500 mb-3">Drag a field onto the canvas, or tap to add. Reorder by dragging fields on the canvas.</p>
+          <ul class="space-y-1">
+            <template x-for="p in palette" :key="p.type">
+              <li>
+                <button
+                  draggable="true"
+                  @dragstart="onPaletteDragStart($event, p.type)"
+                  @click="addField(p.type)"
+                  class="w-full flex items-center gap-2 text-left px-2 py-2 rounded-md border border-slate-200 bg-slate-50 hover:bg-indigo-50 hover:border-indigo-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <span x-text="p.icon" class="text-base"></span>
+                  <span x-text="p.label"></span>
+                </button>
+              </li>
+            </template>
+          </ul>
+        </aside>
+
+        <div
+          class="bg-white border border-dashed border-slate-300 rounded-lg p-4 min-h-[400px]"
+          @dragover.prevent="onCanvasDragOver($event)"
+          @drop.prevent="onCanvasDrop($event)"
+        >
+          <template x-if="form.fields.length === 0">
+            <div class="text-center py-16 text-slate-500">
+              <div class="text-4xl mb-2">📝</div>
+              <p class="font-medium">Your canvas is empty</p>
+              <p class="text-sm">Drag a field from the left, or click one to add it to your form.</p>
+            </div>
+          </template>
+
+          <ul class="space-y-2">
+            <template x-for="(field, i) in form.fields" :key="field.id">
+              <li
+                draggable="true"
+                @dragstart="onFieldDragStart($event, i)"
+                @dragover.prevent="dragOverIndex = i"
+                @drop.prevent="onFieldDrop($event, i)"
+                :class="selectedId === field.id ? 'border-indigo-500 ring-2 ring-indigo-200' : 'border-slate-200'"
+                class="border rounded-md p-3 bg-white cursor-move hover:border-indigo-300"
+                @click="selectedId = field.id"
+              >
+                <div class="flex items-start justify-between gap-2">
+                  <div class="flex-1">
+                    <div class="text-xs uppercase tracking-wide text-slate-400" x-text="paletteLabel(field.type)"></div>
+                    <div class="font-medium" x-text="field.label || 'Untitled field'"></div>
+                    <div class="text-xs text-slate-500" x-text="field.placeholder"></div>
+                    <template x-if="['radio','checkbox'].includes(field.type)">
+                      <ul class="mt-1 text-xs text-slate-600 list-disc list-inside">
+                        <template x-for="opt in field.options" :key="opt">
+                          <li x-text="opt"></li>
+                        </template>
+                      </ul>
+                    </template>
+                  </div>
+                  <div class="flex items-center gap-1">
+                    <span x-show="field.required" class="text-xs bg-rose-50 text-rose-700 px-1.5 py-0.5 rounded">required</span>
+                    <button @click.stop="moveUp(i)" aria-label="Move up" class="text-slate-400 hover:text-slate-700 px-1">▲</button>
+                    <button @click.stop="moveDown(i)" aria-label="Move down" class="text-slate-400 hover:text-slate-700 px-1">▼</button>
+                    <button @click.stop="removeField(field.id)" aria-label="Remove field" class="text-rose-500 hover:text-rose-700 px-1">✕</button>
+                  </div>
+                </div>
+              </li>
+            </template>
+          </ul>
+        </div>
+
+        <aside class="bg-white border border-slate-200 rounded-lg p-3">
+          <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Field settings</h2>
+          <template x-if="!selectedField">
+            <p class="text-sm text-slate-500">Select a field on the canvas to edit its label, placeholder, options, and whether it's required.</p>
+          </template>
+          <template x-if="selectedField">
+            <div class="space-y-3">
+              <div>
+                <label class="block text-xs font-medium text-slate-600 mb-1" :for="'lbl-'+selectedField.id">Label</label>
+                <input :id="'lbl-'+selectedField.id" type="text" x-model="selectedField.label" class="w-full border border-slate-200 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              </div>
+              <div x-show="!['radio','checkbox'].includes(selectedField.type)">
+                <label class="block text-xs font-medium text-slate-600 mb-1" :for="'ph-'+selectedField.id">Placeholder</label>
+                <input :id="'ph-'+selectedField.id" type="text" x-model="selectedField.placeholder" class="w-full border border-slate-200 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              </div>
+              <div x-show="['radio','checkbox'].includes(selectedField.type)">
+                <label class="block text-xs font-medium text-slate-600 mb-1">Options (one per line)</label>
+                <textarea
+                  rows="4"
+                  :value="(selectedField.options||[]).join('\n')"
+                  @input="selectedField.options = $event.target.value.split('\n').map(s=>s.trim()).filter(Boolean)"
+                  class="w-full border border-slate-200 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                ></textarea>
+              </div>
+              <label class="flex items-center gap-2 text-sm">
+                <input type="checkbox" x-model="selectedField.required" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+                <span>Required field</span>
+              </label>
+              <div class="pt-2 border-t border-slate-100 text-xs text-slate-500">
+                <p>Tip: Drag the field on the canvas to reorder. Use the arrows for keyboard-friendly reordering.</p>
+              </div>
+            </div>
+          </template>
+        </aside>
+      </section>
+
+      <!-- PREVIEW -->
+      <section x-show="tab === 'preview'" aria-label="Form preview" class="max-w-2xl mx-auto">
+        <div class="bg-white border border-slate-200 rounded-lg p-6">
+          <h2 class="text-2xl font-semibold mb-1" x-text="form.title"></h2>
+          <p class="text-sm text-slate-500 mb-5">Public preview — this is what respondents will see when they open the shareable link below.</p>
+
+          <template x-if="form.fields.length === 0">
+            <p class="text-slate-500 italic">Add fields in the Builder tab to see the live form preview here.</p>
+          </template>
+
+          <form @submit.prevent="submitResponse" class="space-y-4" x-show="form.fields.length > 0">
+            <template x-for="field in form.fields" :key="field.id">
+              <div>
+                <label :for="'f-'+field.id" class="block text-sm font-medium mb-1">
+                  <span x-text="field.label || 'Untitled'"></span>
+                  <span x-show="field.required" class="text-rose-600">*</span>
+                </label>
+
+                <template x-if="field.type === 'text'">
+                  <input :id="'f-'+field.id" type="text" :placeholder="field.placeholder" :required="field.required" x-model="draft[field.id]" class="w-full border border-slate-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                </template>
+                <template x-if="field.type === 'textarea'">
+                  <textarea :id="'f-'+field.id" rows="3" :placeholder="field.placeholder" :required="field.required" x-model="draft[field.id]" class="w-full border border-slate-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+                </template>
+                <template x-if="field.type === 'number'">
+                  <input :id="'f-'+field.id" type="number" :placeholder="field.placeholder" :required="field.required" x-model="draft[field.id]" class="w-full border border-slate-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                </template>
+                <template x-if="field.type === 'email'">
+                  <input :id="'f-'+field.id" type="email" :placeholder="field.placeholder" :required="field.required" x-model="draft[field.id]" class="w-full border border-slate-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                </template>
+                <template x-if="field.type === 'url'">
+                  <input :id="'f-'+field.id" type="url" :placeholder="field.placeholder" :required="field.required" x-model="draft[field.id]" class="w-full border border-slate-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                </template>
+                <template x-if="field.type === 'date'">
+                  <input :id="'f-'+field.id" type="date" :required="field.required" x-model="draft[field.id]" class="w-full border border-slate-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                </template>
+                <template x-if="field.type === 'radio'">
+                  <div class="space-y-1">
+                    <template x-for="opt in field.options" :key="opt">
+                      <label class="flex items-center gap-2 text-sm">
+                        <input type="radio" :name="'f-'+field.id" :value="opt" :required="field.required" x-model="draft[field.id]" class="text-indigo-600 focus:ring-indigo-500" />
+                        <span x-text="opt"></span>
+                      </label>
+                    </template>
+                  </div>
+                </template>
+                <template x-if="field.type === 'checkbox'">
+                  <div class="space-y-1">
+                    <template x-for="opt in field.options" :key="opt">
+                      <label class="flex items-center gap-2 text-sm">
+                        <input type="checkbox" :value="opt" @change="toggleCheckbox(field.id, opt, $event.target.checked)" :checked="(draft[field.id]||[]).includes(opt)" class="rounded text-indigo-600 focus:ring-indigo-500" />
+                        <span x-text="opt"></span>
+                      </label>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </template>
+
+            <button type="submit" class="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 text-white rounded-md font-medium hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">Submit response</button>
+            <p x-show="lastSubmitted" class="text-emerald-700 text-sm">Thanks — your response was recorded in the Responses tab.</p>
+          </form>
+
+          <div class="mt-6 pt-5 border-t border-slate-100 text-sm">
+            <div class="font-medium text-slate-700 mb-1">Shareable link</div>
+            <div class="flex items-center gap-2">
+              <code class="flex-1 bg-slate-100 rounded px-2 py-1 text-xs break-all" x-text="shareUrl"></code>
+              <button @click="copyShare" class="text-xs px-2 py-1 border border-slate-300 rounded hover:bg-slate-50">Copy</button>
+            </div>
+            <p class="text-xs text-slate-500 mt-1" x-text="shareNote"></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- RESPONSES -->
+      <section x-show="tab === 'responses'" aria-label="Form responses">
+        <div class="bg-white border border-slate-200 rounded-lg p-4">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
+            <div>
+              <h2 class="text-lg font-semibold">Responses</h2>
+              <p class="text-sm text-slate-500"><span x-text="responses.length"></span> submission(s) so far. Stored in-memory for this session only.</p>
+            </div>
+            <div class="flex gap-2">
+              <button @click="exportCsv" :disabled="responses.length === 0" class="px-3 py-1.5 text-sm bg-indigo-600 text-white rounded disabled:opacity-50 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">Export CSV</button>
+              <button @click="clearResponses" :disabled="responses.length === 0" class="px-3 py-1.5 text-sm border border-slate-300 rounded disabled:opacity-50 hover:bg-slate-50">Clear</button>
+            </div>
+          </div>
+
+          <template x-if="responses.length === 0">
+            <p class="text-sm text-slate-500 italic py-8 text-center">No responses yet. Switch to the Preview tab and submit the form to see entries appear here.</p>
+          </template>
+
+          <div x-show="responses.length > 0" class="overflow-x-auto">
+            <table class="min-w-full text-sm border-collapse">
+              <thead class="bg-slate-50">
+                <tr>
+                  <th class="text-left px-3 py-2 border-b border-slate-200 font-medium">Submitted</th>
+                  <template x-for="f in form.fields" :key="f.id">
+                    <th class="text-left px-3 py-2 border-b border-slate-200 font-medium" x-text="f.label || 'Untitled'"></th>
+                  </template>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="(r, idx) in responses" :key="idx">
+                  <tr class="odd:bg-white even:bg-slate-50">
+                    <td class="px-3 py-2 border-b border-slate-100 text-xs text-slate-500 whitespace-nowrap" x-text="new Date(r.submitted_at).toLocaleString()"></td>
+                    <template x-for="f in form.fields" :key="f.id">
+                      <td class="px-3 py-2 border-b border-slate-100 align-top" x-text="formatAnswer(r.answers[f.id])"></td>
+                    </template>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="border-t border-slate-200 bg-white">
+      <div class="max-w-7xl mx-auto px-4 py-4 text-xs text-slate-500 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+        <p>Alama Forms — a no-code form builder for quick surveys, RSVPs, and intake.</p>
+        <p>Built with Tailwind + Alpine.js. Stateless session — refresh clears your work.</p>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

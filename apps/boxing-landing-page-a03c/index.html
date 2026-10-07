@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Champion Boxing Academy - Train Like a Champion</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="styles/main.css">
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script type="module" src="src/main.js"></script>
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-gray-900 text-white">
+    <!-- Navigation -->
+    <nav class="fixed w-full bg-black/90 backdrop-blur-sm z-50" x-data="navigation">
+        <div class="container mx-auto px-6 py-4 flex justify-between items-center">
+            <div class="text-2xl font-bold text-red-600">CHAMPION BOXING</div>
+            <div class="hidden md:flex space-x-8">
+                <a href="#home" class="hover:text-red-600 transition">Home</a>
+                <a href="#about" class="hover:text-red-600 transition">About</a>
+                <a href="#programs" class="hover:text-red-600 transition">Programs</a>
+                <a href="#trainers" class="hover:text-red-600 transition">Trainers</a>
+                <a href="#contact" class="hover:text-red-600 transition">Contact</a>
+            </div>
+            <button @click="toggleMobile" class="md:hidden">
+                <i data-lucide="menu" class="w-6 h-6"></i>
+            </button>
+        </div>
+        <div x-show="mobileOpen" class="md:hidden bg-black px-6 py-4">
+            <a href="#home" class="block py-2 hover:text-red-600">Home</a>
+            <a href="#about" class="block py-2 hover:text-red-600">About</a>
+            <a href="#programs" class="block py-2 hover:text-red-600">Programs</a>
+            <a href="#trainers" class="block py-2 hover:text-red-600">Trainers</a>
+            <a href="#contact" class="block py-2 hover:text-red-600">Contact</a>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section id="home" class="hero-section min-h-screen flex items-center justify-center relative overflow-hidden pt-20">
+        <div class="absolute inset-0 bg-gradient-to-br from-red-900/50 to-black"></div>
+        <div class="container mx-auto px-6 relative z-10 text-center">
+            <h1 class="text-5xl md:text-7xl font-bold mb-6 animate-fade-in">
+                TRAIN LIKE A <span class="text-red-600">CHAMPION</span>
+            </h1>
+            <p class="text-xl md:text-2xl mb-8 text-gray-300 max-w-3xl mx-auto">
+                Unleash your potential with world-class boxing training. Build strength, discipline, and confidence in the ring.
+            </p>
+            <div class="flex gap-4 justify-center flex-wrap">
+                <a href="#programs" class="bg-red-600 hover:bg-red-700 px-8 py-4 rounded-lg font-bold text-lg transition transform hover:scale-105">
+                    View Programs
+                </a>
+                <a href="#contact" class="border-2 border-white hover:bg-white hover:text-black px-8 py-4 rounded-lg font-bold text-lg transition">
+                    Get Started
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- About Section -->
+    <section id="about" class="py-20 bg-gray-800">
+        <div class="container mx-auto px-6">
+            <h2 class="text-4xl font-bold text-center mb-12">About <span class="text-red-600">Champion Boxing</span></h2>
+            <div class="grid md:grid-cols-2 gap-12 items-center">
+                <div>
+                    <p class="text-lg mb-6 text-gray-300">
+                        Champion Boxing Academy was founded in 2010 with a mission to bring professional-level boxing training to athletes of all skill levels. Our state-of-the-art facility combines traditional boxing techniques with modern sports science to create champions both inside and outside the ring.
+                    </p>
+                    <p class="text-lg mb-6 text-gray-300">
+                        Whether you're looking to compete professionally, improve your fitness, or learn self-defense, our experienced trainers will guide you every step of the way. We've trained multiple regional champions and helped thousands transform their lives through the sweet science of boxing.
+                    </p>
+                    <p class="text-lg text-gray-300">
+                        At Champion Boxing, we believe that boxing is more than just a sport—it's a lifestyle that builds character, mental toughness, and unwavering determination. Join our community and discover what it truly means to train like a champion.
+                    </p>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-red-600 p-6 rounded-lg text-center">
+                        <div class="text-4xl font-bold mb-2">15+</div>
+                        <div class="text-sm">Years Experience</div>
+                    </div>
+                    <div class="bg-gray-900 p-6 rounded-lg text-center">
+                        <div class="text-4xl font-bold mb-2">3000+</div>
+                        <div class="text-sm">Members Trained</div>
+                    </div>
+                    <div class="bg-gray-900 p-6 rounded-lg text-center">
+                        <div class="text-4xl font-bold mb-2">12</div>
+                        <div class="text-sm">Champion Trainers</div>
+                    </div>
+                    <div class="bg-red-600 p-6 rounded-lg text-center">
+                        <div class="text-4xl font-bold mb-2">50+</div>
+                        <div class="text-sm">Regional Titles</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Programs Section -->
+    <section id="programs" class="py-20 bg-gray-900">
+        <div class="container mx-auto px-6">
+            <h2 class="text-4xl font-bold text-center mb-4">Our <span class="text-red-600">Programs</span></h2>
+            <p class="text-center text-gray-400 mb-12 max-w-2xl mx-auto">
+                Choose the training program that fits your goals and experience level
+            </p>
+            <div class="grid md:grid-cols-3 gap-8" x-data="programs">
+                <template x-for="program in programList" :key="program.id">
+                    <div class="bg-gray-800 rounded-lg p-8 hover:transform hover:scale-105 transition duration-300">
+                        <div class="text-red-600 mb-4">
+                            <i :data-lucide="program.icon" class="w-12 h-12"></i>
+                        </div>
+                        <h3 class="text-2xl font-bold mb-4" x-text="program.title"></h3>
+                        <p class="text-gray-400 mb-6" x-text="program.description"></p>
+                        <ul class="space-y-2 mb-6">
+                            <template x-for="feature in program.features">
+                                <li class="flex items-start">
+                                    <i data-lucide="check" class="w-5 h-5 text-red-600 mr-2 mt-1"></i>
+                                    <span x-text="feature"></span>
+                                </li>
+                            </template>
+                        </ul>
+                        <div class="text-3xl font-bold text-red-600 mb-4" x-text="program.price"></div>
+                        <button class="w-full bg-red-600 hover:bg-red-700 py-3 rounded-lg font-bold transition">
+                            Enroll Now
+                        </button>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </section>
+
+    <!-- Trainers Section -->
+    <section id="trainers" class="py-20 bg-gray-800">
+        <div class="container mx-auto px-6">
+            <h2 class="text-4xl font-bold text-center mb-4">Meet Our <span class="text-red-600">Trainers</span></h2>
+            <p class="text-center text-gray-400 mb-12 max-w-2xl mx-auto">
+                Learn from champions who have competed at the highest levels
+            </p>
+            <div class="grid md:grid-cols-4 gap-8" x-data="trainers">
+                <template x-for="trainer in trainerList" :key="trainer.id">
+                    <div class="bg-gray-900 rounded-lg overflow-hidden hover:transform hover:scale-105 transition">
+                        <div class="h-64 bg-gradient-to-br from-red-900 to-gray-800 flex items-center justify-center">
+                            <i data-lucide="user" class="w-24 h-24 text-gray-600"></i>
+                        </div>
+                        <div class="p-6">
+                            <h3 class="text-xl font-bold mb-2" x-text="trainer.name"></h3>
+                            <p class="text-red-600 text-sm mb-3" x-text="trainer.title"></p>
+                            <p class="text-gray-400 text-sm" x-text="trainer.bio"></p>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </section>
+
+    <!-- Contact Section -->
+    <section id="contact" class="py-20 bg-gray-900">
+        <div class="container mx-auto px-6">
+            <h2 class="text-4xl font-bold text-center mb-4">Get <span class="text-red-600">Started</span></h2>
+            <p class="text-center text-gray-400 mb-12 max-w-2xl mx-auto">
+                Ready to begin your boxing journey? Contact us today for a free trial session
+            </p>
+            <div class="grid md:grid-cols-2 gap-12">
+                <div x-data="contactForm" class="bg-gray-800 p-8 rounded-lg">
+                    <form @submit.prevent="submitForm">
+                        <div class="mb-6">
+                            <label class="block mb-2 font-bold">Name</label>
+                            <input x-model="formData.name" type="text" required
+                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 focus:border-red-600 focus:outline-none">
+                        </div>
+                        <div class="mb-6">
+                            <label class="block mb-2 font-bold">Email</label>
+                            <input x-model="formData.email" type="email" required
+                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 focus:border-red-600 focus:outline-none">
+                        </div>
+                        <div class="mb-6">
+                            <label class="block mb-2 font-bold">Phone</label>
+                            <input x-model="formData.phone" type="tel"
+                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 focus:border-red-600 focus:outline-none">
+                        </div>
+                        <div class="mb-6">
+                            <label class="block mb-2 font-bold">Message</label>
+                            <textarea x-model="formData.message" rows="4" required
+                                class="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 focus:border-red-600 focus:outline-none"></textarea>
+                        </div>
+                        <button type="submit"
+                            class="w-full bg-red-600 hover:bg-red-700 py-3 rounded-lg font-bold transition">
+                            Send Message
+                        </button>
+                        <div x-show="submitted" class="mt-4 text-green-500 text-center">
+                            Thanks! We'll contact you soon.
+                        </div>
+                    </form>
+                </div>
+                <div class="space-y-8">
+                    <div>
+                        <h3 class="text-2xl font-bold mb-6">Visit Our Gym</h3>
+                        <div class="space-y-4">
+                            <div class="flex items-start">
+                                <i data-lucide="map-pin" class="w-6 h-6 text-red-600 mr-4 mt-1"></i>
+                                <div>
+                                    <div class="font-bold mb-1">Location</div>
+                                    <div class="text-gray-400">456 Champion Street, Downtown, CA 90210</div>
+                                </div>
+                            </div>
+                            <div class="flex items-start">
+                                <i data-lucide="phone" class="w-6 h-6 text-red-600 mr-4 mt-1"></i>
+                                <div>
+                                    <div class="font-bold mb-1">Phone</div>
+                                    <div class="text-gray-400">(555) 123-4567</div>
+                                </div>
+                            </div>
+                            <div class="flex items-start">
+                                <i data-lucide="mail" class="w-6 h-6 text-red-600 mr-4 mt-1"></i>
+                                <div>
+                                    <div class="font-bold mb-1">Email</div>
+                                    <div class="text-gray-400">info@championboxing.com</div>
+                                </div>
+                            </div>
+                            <div class="flex items-start">
+                                <i data-lucide="clock" class="w-6 h-6 text-red-600 mr-4 mt-1"></i>
+                                <div>
+                                    <div class="font-bold mb-1">Hours</div>
+                                    <div class="text-gray-400">Mon-Fri: 6am-10pm</div>
+                                    <div class="text-gray-400">Sat-Sun: 8am-8pm</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div>
+                        <h3 class="text-2xl font-bold mb-6">Follow Us</h3>
+                        <div class="flex space-x-4">
+                            <a href="#" class="bg-gray-800 hover:bg-red-600 p-3 rounded-lg transition">
+                                <i data-lucide="facebook" class="w-6 h-6"></i>
+                            </a>
+                            <a href="#" class="bg-gray-800 hover:bg-red-600 p-3 rounded-lg transition">
+                                <i data-lucide="instagram" class="w-6 h-6"></i>
+                            </a>
+                            <a href="#" class="bg-gray-800 hover:bg-red-600 p-3 rounded-lg transition">
+                                <i data-lucide="twitter" class="w-6 h-6"></i>
+                            </a>
+                            <a href="#" class="bg-gray-800 hover:bg-red-600 p-3 rounded-lg transition">
+                                <i data-lucide="youtube" class="w-6 h-6"></i>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="bg-black py-8">
+        <div class="container mx-auto px-6 text-center text-gray-400">
+            <p>&copy; 2026 Champion Boxing Academy. All rights reserved.</p>
+        </div>
+    </footer>
+
+    <script>
+        lucide.createIcons();
+    </script>
+</body>
+</html>

@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Jacint Alama — Software Engineer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles/main.css">
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 antialiased" x-data="portfolio">
+  <nav class="sticky top-0 z-40 backdrop-blur bg-slate-950/70 border-b border-slate-800">
+    <div class="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
+      <a href="#top" class="font-semibold tracking-tight">JA<span class="text-emerald-400">.</span></a>
+      <div class="hidden sm:flex gap-6 text-sm text-slate-300">
+        <a href="#about" class="hover:text-emerald-400">About</a>
+        <a href="#experience" class="hover:text-emerald-400">Experience</a>
+        <a href="#projects" class="hover:text-emerald-400">Projects</a>
+        <a href="#contact" class="hover:text-emerald-400">Contact</a>
+      </div>
+    </div>
+  </nav>
+
+  <main id="top" class="max-w-5xl mx-auto px-6">
+    <section id="hero" class="pt-24 pb-20">
+      <p class="text-emerald-400 font-mono text-sm mb-4">Hi, my name is</p>
+      <h1 class="text-5xl sm:text-6xl font-bold tracking-tight">Jacint Alama.</h1>
+      <h2 class="text-3xl sm:text-5xl font-bold text-slate-400 mt-2">I build reliable software.</h2>
+      <p class="mt-6 max-w-2xl text-slate-300 leading-relaxed">
+        I'm a software engineer focused on backend systems, developer tooling, and distributed
+        infrastructure. I enjoy turning fuzzy product problems into well-tested, maintainable
+        systems that hold up under real production load.
+      </p>
+      <div class="mt-8 flex gap-4">
+        <a href="#projects" class="px-5 py-3 border border-emerald-400 text-emerald-400 rounded hover:bg-emerald-400/10 font-mono text-sm">See my work</a>
+        <a href="#contact" class="px-5 py-3 bg-emerald-400 text-slate-950 rounded hover:bg-emerald-300 font-mono text-sm font-semibold">Get in touch</a>
+      </div>
+    </section>
+
+    <section id="about" class="py-16 border-t border-slate-800">
+      <h2 class="text-2xl font-bold mb-6"><span class="text-emerald-400 font-mono">01.</span> About me</h2>
+      <div class="grid md:grid-cols-3 gap-8">
+        <div class="md:col-span-2 space-y-4 text-slate-300 leading-relaxed">
+          <p>
+            I've been writing software professionally for over seven years, mostly in the trenches
+            of backend engineering — designing APIs, wrangling databases, and keeping services
+            healthy at scale. My path started with a computer science degree and a stubborn side
+            project that eventually turned into my first startup job.
+          </p>
+          <p>
+            Today I care most about the parts of engineering that don't show up in demos: solid
+            observability, tests that actually catch regressions, migrations that don't page the
+            on-call at 3am, and code that the next engineer can read without a decoder ring.
+          </p>
+          <p>
+            Outside of work I contribute to a handful of open-source projects, mentor early-career
+            engineers, and spend an unreasonable amount of time optimizing my home Kubernetes
+            cluster that runs approximately three things.
+          </p>
+        </div>
+        <div>
+          <p class="text-slate-400 text-sm mb-3 font-mono">Technologies I work with:</p>
+          <ul class="grid grid-cols-2 gap-2 text-sm text-slate-300 font-mono">
+            <template x-for="skill in skills" :key="skill">
+              <li class="flex items-center gap-2"><span class="text-emerald-400">▸</span><span x-text="skill"></span></li>
+            </template>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="experience" class="py-16 border-t border-slate-800">
+      <h2 class="text-2xl font-bold mb-8"><span class="text-emerald-400 font-mono">02.</span> Where I've worked</h2>
+      <div class="flex flex-col md:flex-row gap-8">
+        <div class="flex md:flex-col overflow-x-auto md:overflow-visible border-l border-slate-800">
+          <template x-for="(job, i) in jobs" :key="job.company">
+            <button
+              @click="active = i"
+              :class="active === i ? 'text-emerald-400 border-emerald-400 bg-emerald-400/5' : 'text-slate-400 border-transparent hover:bg-slate-800/50'"
+              class="px-5 py-3 text-sm font-mono border-l-2 -ml-px whitespace-nowrap text-left transition"
+              x-text="job.company"></button>
+          </template>
+        </div>
+        <div class="flex-1 min-h-[220px]">
+          <template x-for="(job, i) in jobs" :key="job.company">
+            <div x-show="active === i">
+              <h3 class="text-xl font-semibold">
+                <span x-text="job.role"></span>
+                <span class="text-emerald-400"> @ <span x-text="job.company"></span></span>
+              </h3>
+              <p class="text-sm text-slate-400 font-mono mt-1" x-text="job.period"></p>
+              <ul class="mt-4 space-y-3 text-slate-300">
+                <template x-for="bullet in job.bullets" :key="bullet">
+                  <li class="flex gap-3"><span class="text-emerald-400 mt-1">▹</span><span x-text="bullet"></span></li>
+                </template>
+              </ul>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <section id="projects" class="py-16 border-t border-slate-800">
+      <h2 class="text-2xl font-bold mb-8"><span class="text-emerald-400 font-mono">03.</span> Selected projects</h2>
+      <div class="grid md:grid-cols-2 gap-6">
+        <template x-for="p in projects" :key="p.title">
+          <article class="bg-slate-900 border border-slate-800 rounded-lg p-6 hover:border-emerald-400/50 hover:-translate-y-1 transition">
+            <div class="flex items-center justify-between mb-4">
+              <div class="w-10 h-10 rounded bg-emerald-400/10 text-emerald-400 flex items-center justify-center font-bold" x-text="p.icon"></div>
+              <a :href="p.link" class="text-slate-400 hover:text-emerald-400 text-sm font-mono">↗</a>
+            </div>
+            <h3 class="text-lg font-semibold mb-2" x-text="p.title"></h3>
+            <p class="text-slate-400 text-sm leading-relaxed mb-4" x-text="p.description"></p>
+            <ul class="flex flex-wrap gap-2 text-xs text-slate-400 font-mono">
+              <template x-for="tag in p.tags" :key="tag">
+                <li x-text="tag" class="px-2 py-1 bg-slate-800 rounded"></li>
+              </template>
+            </ul>
+          </article>
+        </template>
+      </div>
+    </section>
+
+    <section id="contact" class="py-24 border-t border-slate-800 text-center">
+      <p class="text-emerald-400 font-mono text-sm mb-3">04. What's next?</p>
+      <h2 class="text-4xl font-bold mb-4">Get in touch</h2>
+      <p class="max-w-xl mx-auto text-slate-300 leading-relaxed">
+        I'm currently open to interesting engineering roles and freelance collaborations.
+        Whether you have a question, a project idea, or just want to say hello — my inbox is open.
+      </p>
+      <a href="mailto:jacint@alama.dev" class="inline-block mt-8 px-6 py-4 border border-emerald-400 text-emerald-400 rounded hover:bg-emerald-400/10 font-mono">jacint@alama.dev</a>
+      <div class="mt-8 flex justify-center gap-6 text-slate-400 text-sm font-mono">
+        <a href="https://github.com/jacintalama" class="hover:text-emerald-400">GitHub</a>
+        <a href="https://linkedin.com/in/jacintalama" class="hover:text-emerald-400">LinkedIn</a>
+        <a href="https://twitter.com/jacintalama" class="hover:text-emerald-400">Twitter</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="text-center py-8 text-slate-500 text-xs font-mono border-t border-slate-800">
+    Designed &amp; built by Jacint Alama · 2026
+  </footer>
+</body>
+</html>

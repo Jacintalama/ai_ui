@@ -1,0 +1,10 @@
+[x-cloak] { display: none !important; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+}
+
+::selection { background: rgba(244, 114, 182, 0.35); color: white; }

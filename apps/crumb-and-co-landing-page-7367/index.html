@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="de-CH">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crumb and Co – Handwerkliche Sauerteigbäckerei in Basel</title>
+    <meta name="description" content="Crumb and Co bietet handwerklich hergestelltes Sauerteigbrot und Gebäck in Basel. Besuchen Sie uns für frische, lokale Backwaren.">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="styles/main.css">
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script type="module" src="src/main.js"></script>
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        flour: '#FAF8F5',
+                        wheat: '#D4A574',
+                        crust: '#634832',
+                        'dark-crust': '#3D2A1F',
+                    },
+                    fontFamily: {
+                        sans: ['system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-flour text-dark-crust">
+    <nav class="fixed top-0 w-full bg-flour/95 backdrop-blur-sm border-b border-crust/10 z-50">
+        <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+            <h1 class="text-2xl font-bold tracking-tight">Crumb and Co</h1>
+            <div class="flex gap-8 items-center">
+                <a href="#angebot" class="text-sm font-medium hover:text-wheat transition-colors">Angebot</a>
+                <a href="#handwerk" class="text-sm font-medium hover:text-wheat transition-colors">Handwerk</a>
+                <a href="#besuch" class="text-sm font-medium hover:text-wheat transition-colors">Besuch</a>
+                <a href="#besuch" class="bg-crust text-flour px-5 py-2.5 text-sm font-semibold hover:bg-dark-crust transition-colors">Besuchen Sie uns</a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="pt-20">
+        <section class="max-w-7xl mx-auto px-6 py-24">
+            <div class="grid lg:grid-cols-2 gap-16 items-center">
+                <div>
+                    <p class="text-sm font-semibold text-wheat mb-4 tracking-wide uppercase">Handwerkliche Bäckerei in Basel</p>
+                    <h2 class="text-[4rem] font-bold leading-[1.1] mb-6">Sauerteig und Gebäck mit Seele</h2>
+                    <p class="text-xl leading-relaxed text-crust/80 mb-8">Bei Crumb and Co backen wir jeden Tag frisches Sauerteigbrot und feine Gebäcke. Unsere Backwaren entstehen mit Zeit, hochwertigen Zutaten und echter Handarbeit.</p>
+                    <div class="flex gap-4">
+                        <a href="#besuch" class="bg-dark-crust text-flour px-7 py-4 text-base font-semibold hover:bg-crust transition-colors inline-flex items-center gap-2">
+                            Zur Bäckerei
+                            <i data-lucide="arrow-right" class="w-5 h-5"></i>
+                        </a>
+                        <a href="#angebot" class="border-2 border-crust text-crust px-7 py-4 text-base font-semibold hover:bg-crust hover:text-flour transition-colors">
+                            Unser Angebot
+                        </a>
+                    </div>
+                </div>
+                <div class="bg-wheat/20 aspect-[4/3] rounded-sm overflow-hidden">
+                    <img src="public/hero-bread.svg" alt="Frisches Sauerteigbrot bei Crumb and Co" class="w-full h-full object-cover">
+                </div>
+            </div>
+        </section>
+
+        <section id="angebot" class="bg-white py-24">
+            <div class="max-w-7xl mx-auto px-6">
+                <h3 class="text-[2.5rem] font-bold mb-16">Was wir backen</h3>
+                <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+                    <div class="group">
+                        <div class="bg-flour aspect-square mb-4 rounded-sm overflow-hidden">
+                            <img src="public/sourdough.svg" alt="Traditionelles Sauerteigbrot" class="w-full h-full object-cover transition-opacity duration-300 group-hover:opacity-90">
+                        </div>
+                        <h4 class="text-[1.75rem] font-bold mb-2">Sauerteigbrote</h4>
+                        <p class="text-crust/70 leading-relaxed">Unsere klassischen Sauerteigbrote brauchen 24 bis 48 Stunden. Dinkel, Roggen, Vollkorn – jedes Brot hat seinen eigenen Charakter und eine kräftige Kruste.</p>
+                    </div>
+                    <div class="group">
+                        <div class="bg-flour aspect-square mb-4 rounded-sm overflow-hidden">
+                            <img src="public/croissants.svg" alt="Butter-Croissants" class="w-full h-full object-cover transition-opacity duration-300 group-hover:opacity-90">
+                        </div>
+                        <h4 class="text-[1.75rem] font-bold mb-2">Feingebäck</h4>
+                        <p class="text-crust/70 leading-relaxed">Butter-Croissants mit 27 Schichten, Pain au Chocolat, und saisonale Stückchen. Hergestellt aus französischer Butter und ohne Kompromisse.</p>
+                    </div>
+                    <div class="group">
+                        <div class="bg-flour aspect-square mb-4 rounded-sm overflow-hidden">
+                            <img src="public/pastries.svg" alt="Saisonale Backwaren" class="w-full h-full object-cover transition-opacity duration-300 group-hover:opacity-90">
+                        </div>
+                        <h4 class="text-[1.75rem] font-bold mb-2">Saisonales</h4>
+                        <p class="text-crust/70 leading-relaxed">Von Zimtschnecken im Herbst bis zu Zitronentörtchen im Sommer. Wir arbeiten mit den Jahreszeiten und lokalen Zutaten aus der Region Basel.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="handwerk" class="py-24 bg-flour">
+            <div class="max-w-5xl mx-auto px-6">
+                <div class="grid lg:grid-cols-5 gap-16 items-start">
+                    <div class="lg:col-span-2">
+                        <h3 class="text-[2.5rem] font-bold mb-8">Warum Sauerteig?</h3>
+                        <p class="text-lg text-crust/80 leading-relaxed mb-6">Sauerteig ist eine lebendige Kultur aus wilden Hefen und Milchsäurebakterien. Diese Mikroorganismen brauchen Zeit – aber sie geben dem Brot Geschmack, Struktur und bessere Bekömmlichkeit.</p>
+                        <p class="text-lg text-crust/80 leading-relaxed">Wir pflegen unseren Starter seit der Eröffnung 2019. Jedes Brot entsteht aus dieser einen Kultur, ohne zugesetzte Hefe, ohne Zusatzstoffe.</p>
+                    </div>
+                    <div class="lg:col-span-3 space-y-6">
+                        <div class="flex gap-4">
+                            <div class="w-12 h-12 bg-wheat/30 rounded-full flex items-center justify-center flex-shrink-0">
+                                <span class="text-lg font-bold text-dark-crust">1</span>
+                            </div>
+                            <div>
+                                <h4 class="font-bold text-lg mb-1">Füttern des Starters</h4>
+                                <p class="text-crust/70">Jeden Morgen füttern wir unseren Sauerteigstarter mit frischem Mehl und Wasser. Er braucht 4 bis 6 Stunden, bis er aktiv ist.</p>
+                            </div>
+                        </div>
+                        <div class="flex gap-4">
+                            <div class="w-12 h-12 bg-wheat/30 rounded-full flex items-center justify-center flex-shrink-0">
+                                <span class="text-lg font-bold text-dark-crust">2</span>
+                            </div>
+                            <div>
+                                <h4 class="font-bold text-lg mb-1">Teig ansetzen und falten</h4>
+                                <p class="text-crust/70">Der Teig entsteht aus Starter, Mehl, Wasser und Salz. Über 12 bis 24 Stunden wird er mehrfach gefaltet, um Struktur aufzubauen.</p>
+                            </div>
+                        </div>
+                        <div class="flex gap-4">
+                            <div class="w-12 h-12 bg-wheat/30 rounded-full flex items-center justify-center flex-shrink-0">
+                                <span class="text-lg font-bold text-dark-crust">3</span>
+                            </div>
+                            <div>
+                                <h4 class="font-bold text-lg mb-1">Formen und ruhen lassen</h4>
+                                <p class="text-crust/70">Jeder Laib wird von Hand geformt und ruht über Nacht im Kühlschrank. Dort entwickelt der Teig seinen vollen Geschmack.</p>
+                            </div>
+                        </div>
+                        <div class="flex gap-4">
+                            <div class="w-12 h-12 bg-wheat/30 rounded-full flex items-center justify-center flex-shrink-0">
+                                <span class="text-lg font-bold text-dark-crust">4</span>
+                            </div>
+                            <div>
+                                <h4 class="font-bold text-lg mb-1">Backen im Steinofen</h4>
+                                <p class="text-crust/70">Am Morgen gehen die Brote bei hoher Hitze in den Ofen. Dampf sorgt für die knusprige Kruste, die einen guten Laib ausmacht.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="besuch" class="py-24 bg-dark-crust text-flour">
+            <div class="max-w-7xl mx-auto px-6">
+                <div class="grid lg:grid-cols-2 gap-16">
+                    <div>
+                        <h3 class="text-[2.5rem] font-bold mb-8">Besuchen Sie uns</h3>
+                        <p class="text-xl text-flour/80 leading-relaxed mb-12">Unsere Bäckerei liegt im Herzen von Basel, nur wenige Minuten vom Bahnhof SBB. Kommen Sie vorbei für frisches Brot, einen Kaffee und ein Croissant.</p>
+
+                        <div class="space-y-8">
+                            <div>
+                                <h4 class="text-sm font-semibold text-wheat mb-3 tracking-wide uppercase">Adresse</h4>
+                                <p class="text-lg">Gerbergasse 24<br>4051 Basel<br>Schweiz</p>
+                            </div>
+                            <div>
+                                <h4 class="text-sm font-semibold text-wheat mb-3 tracking-wide uppercase">Öffnungszeiten</h4>
+                                <div class="space-y-2 text-lg">
+                                    <div class="flex justify-between max-w-sm">
+                                        <span>Dienstag – Freitag</span>
+                                        <span class="font-semibold">7:00 – 18:00</span>
+                                    </div>
+                                    <div class="flex justify-between max-w-sm">
+                                        <span>Samstag</span>
+                                        <span class="font-semibold">7:00 – 16:00</span>
+                                    </div>
+                                    <div class="flex justify-between max-w-sm">
+                                        <span>Sonntag</span>
+                                        <span class="font-semibold">8:00 – 14:00</span>
+                                    </div>
+                                    <div class="flex justify-between max-w-sm text-flour/60">
+                                        <span>Montag</span>
+                                        <span>Geschlossen</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div>
+                                <h4 class="text-sm font-semibold text-wheat mb-3 tracking-wide uppercase">Kontakt</h4>
+                                <p class="text-lg">
+                                    <a href="tel:+41612345678" class="hover:text-wheat transition-colors">+41 61 234 56 78</a><br>
+                                    <a href="mailto:hallo@crumbandco.ch" class="hover:text-wheat transition-colors">hallo@crumbandco.ch</a>
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-wheat/10 aspect-[4/3] lg:aspect-auto rounded-sm overflow-hidden">
+                        <img src="public/storefront.svg" alt="Crumb and Co Bäckerei Eingang in Basel" class="w-full h-full object-cover">
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="py-16 bg-wheat/15">
+            <div class="max-w-7xl mx-auto px-6 text-center">
+                <p class="text-lg text-crust/70">Wir freuen uns auf Ihren Besuch bei Crumb and Co in Basel.</p>
+            </div>
+        </section>
+    </main>
+
+    <footer class="bg-white py-12 border-t border-crust/10">
+        <div class="max-w-7xl mx-auto px-6">
+            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                <div>
+                    <p class="font-bold text-lg mb-1">Crumb and Co</p>
+                    <p class="text-sm text-crust/60">Handwerkliche Sauerteigbäckerei seit 2019</p>
+                </div>
+                <div class="flex gap-6 text-sm">
+                    <a href="mailto:hallo@crumbandco.ch" class="text-crust/70 hover:text-crust transition-colors">Kontakt</a>
+                    <a href="#besuch" class="text-crust/70 hover:text-crust transition-colors">Öffnungszeiten</a>
+                    <a href="#angebot" class="text-crust/70 hover:text-crust transition-colors">Angebot</a>
+                </div>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

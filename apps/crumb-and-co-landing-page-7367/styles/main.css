@@ -1,0 +1,67 @@
+@font-face {
+    font-family: 'Work Sans';
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url('https://fonts.gstatic.com/s/worksans/v18/QGY_z_wNahGAdqQ43RhVcIgYT2Xz5u32K0nWNigDp6_cOyA.woff2') format('woff2');
+}
+
+* {
+    font-family: 'Work Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+::selection {
+    background-color: #D4A574;
+    color: #FAF8F5;
+}
+
+::-webkit-scrollbar {
+    width: 12px;
+}
+
+::-webkit-scrollbar-track {
+    background: #FAF8F5;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #634832;
+    border-radius: 6px;
+    border: 3px solid #FAF8F5;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #3D2A1F;
+}
+
+:focus-visible {
+    outline: 2px solid #D4A574;
+    outline-offset: 2px;
+}
+
+a:focus-visible {
+    outline-color: #634832;
+}
+
+html {
+    scroll-behavior: smooth;
+}
+
+body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    text-wrap: balance;
+}
+
+p {
+    text-wrap: pretty;
+}
+
+input[type="text"],
+input[type="email"],
+input[type="tel"],
+textarea {
+    caret-color: #634832;
+}

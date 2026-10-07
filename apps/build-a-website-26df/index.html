@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lumen Studio — Design & Development</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles/main.css">
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 antialiased">
+
+  <header x-data="nav" class="fixed top-0 inset-x-0 z-40 backdrop-blur bg-slate-950/70 border-b border-slate-800">
+    <div class="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+      <a href="#top" class="flex items-center gap-2 font-semibold tracking-tight">
+        <span class="w-7 h-7 rounded-md bg-gradient-to-br from-fuchsia-500 to-amber-400"></span>
+        Lumen Studio
+      </a>
+      <nav class="hidden md:flex gap-8 text-sm text-slate-300">
+        <a href="#services" class="hover:text-white">Services</a>
+        <a href="#work" class="hover:text-white">Work</a>
+        <a href="#about" class="hover:text-white">About</a>
+        <a href="#testimonials" class="hover:text-white">Clients</a>
+        <a href="#contact" class="hover:text-white">Contact</a>
+      </nav>
+      <a href="#contact" class="text-sm px-4 py-2 rounded-md bg-white text-slate-900 font-medium hover:bg-slate-200">Start a project</a>
+    </div>
+  </header>
+
+  <section id="top" class="pt-40 pb-24 px-6">
+    <div class="max-w-6xl mx-auto">
+      <p class="text-amber-300 text-sm tracking-widest uppercase mb-4">Independent design & engineering studio</p>
+      <h1 class="text-5xl md:text-7xl font-semibold tracking-tight leading-[1.05] max-w-4xl">
+        We build digital products that feel <span class="text-transparent bg-clip-text bg-gradient-to-r from-fuchsia-400 to-amber-300">obvious in hindsight.</span>
+      </h1>
+      <p class="mt-8 text-lg text-slate-300 max-w-2xl">
+        Lumen is a five-person studio working with early-stage founders and product teams.
+        Since 2019 we've shipped marketing sites, internal tools, and consumer apps for clients
+        from seed-stage startups to publicly traded SaaS companies — usually in six weeks or less.
+      </p>
+      <div class="mt-10 flex flex-wrap gap-4">
+        <a href="#contact" class="px-6 py-3 rounded-md bg-fuchsia-500 hover:bg-fuchsia-400 font-medium">Book a discovery call</a>
+        <a href="#work" class="px-6 py-3 rounded-md border border-slate-700 hover:border-slate-500">See recent work</a>
+      </div>
+      <div class="mt-16 grid grid-cols-2 md:grid-cols-4 gap-8 text-sm">
+        <div><div class="text-3xl font-semibold">62</div><div class="text-slate-400 mt-1">Projects shipped</div></div>
+        <div><div class="text-3xl font-semibold">7 yrs</div><div class="text-slate-400 mt-1">In business</div></div>
+        <div><div class="text-3xl font-semibold">$48M</div><div class="text-slate-400 mt-1">Client funding raised</div></div>
+        <div><div class="text-3xl font-semibold">4.9/5</div><div class="text-slate-400 mt-1">Average client rating</div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="services" class="py-24 px-6 border-t border-slate-900">
+    <div class="max-w-6xl mx-auto">
+      <h2 class="text-3xl md:text-4xl font-semibold tracking-tight">What we do</h2>
+      <p class="text-slate-400 mt-3 max-w-2xl">Four practice areas, deeply integrated. Most engagements pull from two or three at once.</p>
+      <div class="mt-12 grid md:grid-cols-2 gap-6" x-data="services">
+        <template x-for="s in items" :key="s.title">
+          <div class="p-6 rounded-xl bg-slate-900/60 border border-slate-800 hover:border-slate-700 transition">
+            <div class="text-2xl mb-3" x-text="s.icon"></div>
+            <h3 class="text-lg font-semibold" x-text="s.title"></h3>
+            <p class="text-slate-400 text-sm mt-2 leading-relaxed" x-text="s.body"></p>
+            <ul class="mt-4 flex flex-wrap gap-2">
+              <template x-for="t in s.tags" :key="t">
+                <li class="text-xs px-2 py-1 rounded bg-slate-800 text-slate-300" x-text="t"></li>
+              </template>
+            </ul>
+          </div>
+        </template>
+      </div>
+    </div>
+  </section>
+
+  <section id="work" class="py-24 px-6 border-t border-slate-900">
+    <div class="max-w-6xl mx-auto">
+      <h2 class="text-3xl md:text-4xl font-semibold tracking-tight">Selected work</h2>
+      <p class="text-slate-400 mt-3 max-w-2xl">A few of the projects we're proudest of from the last eighteen months.</p>
+      <div class="mt-12 grid md:grid-cols-2 lg:grid-cols-3 gap-6" x-data="projects">
+        <template x-for="p in items" :key="p.title">
+          <article class="rounded-xl overflow-hidden bg-slate-900/60 border border-slate-800 flex flex-col">
+            <div class="h-40" :class="p.bg"></div>
+            <div class="p-5 flex flex-col flex-1">
+              <div class="flex items-center justify-between text-xs text-slate-400">
+                <span x-text="p.client"></span>
+                <span x-text="p.year"></span>
+              </div>
+              <h3 class="mt-2 text-lg font-semibold" x-text="p.title"></h3>
+              <p class="text-sm text-slate-400 mt-2 flex-1" x-text="p.body"></p>
+              <div class="mt-4 flex flex-wrap gap-2">
+                <template x-for="t in p.tags" :key="t">
+                  <span class="text-[11px] px-2 py-0.5 rounded bg-slate-800 text-slate-300" x-text="t"></span>
+                </template>
+              </div>
+            </div>
+          </article>
+        </template>
+      </div>
+    </div>
+  </section>
+
+  <section id="about" class="py-24 px-6 border-t border-slate-900">
+    <div class="max-w-6xl mx-auto grid md:grid-cols-2 gap-12">
+      <div>
+        <h2 class="text-3xl md:text-4xl font-semibold tracking-tight">About the studio</h2>
+        <div class="mt-6 space-y-5 text-slate-300 leading-relaxed">
+          <p>Lumen Studio was founded in 2019 by Maya Okafor and Daniel Reiss after a decade of working together at larger product agencies. We started with a simple thesis: the best work happens when the same small group of people who frame the problem also write the code that ships.</p>
+          <p>We deliberately stay small — five full-time designers and engineers, no project managers, no account leads. You talk to the people doing the work, every day. Most weeks that means a Tuesday demo, a shared Figma file, and a Linear board you have full access to.</p>
+          <p>We work in six-week cycles inspired by Shape Up, take on roughly one new engagement a month, and turn down any work we don't think we can do exceptionally well. That's the only filter we apply.</p>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-4 self-start">
+        <div class="p-5 rounded-xl bg-slate-900/60 border border-slate-800">
+          <div class="text-sm text-slate-400">Founded</div>
+          <div class="text-xl font-semibold mt-1">2019, Brooklyn</div>
+        </div>
+        <div class="p-5 rounded-xl bg-slate-900/60 border border-slate-800">
+          <div class="text-sm text-slate-400">Team size</div>
+          <div class="text-xl font-semibold mt-1">5 humans</div>
+        </div>
+        <div class="p-5 rounded-xl bg-slate-900/60 border border-slate-800">
+          <div class="text-sm text-slate-400">Engagement model</div>
+          <div class="text-xl font-semibold mt-1">6-week sprints</div>
+        </div>
+        <div class="p-5 rounded-xl bg-slate-900/60 border border-slate-800">
+          <div class="text-sm text-slate-400">Typical budget</div>
+          <div class="text-xl font-semibold mt-1">$45–120k</div>
+        </div>
+        <div class="col-span-2 p-5 rounded-xl bg-gradient-to-br from-fuchsia-500/20 to-amber-300/10 border border-slate-800">
+          <div class="text-sm text-slate-300">Capabilities</div>
+          <div class="mt-3 flex flex-wrap gap-2 text-xs">
+            <span class="px-2 py-1 rounded bg-slate-900/80">Product strategy</span>
+            <span class="px-2 py-1 rounded bg-slate-900/80">Brand identity</span>
+            <span class="px-2 py-1 rounded bg-slate-900/80">UI/UX design</span>
+            <span class="px-2 py-1 rounded bg-slate-900/80">Design systems</span>
+            <span class="px-2 py-1 rounded bg-slate-900/80">Web engineering</span>
+            <span class="px-2 py-1 rounded bg-slate-900/80">React / Next.js</span>
+            <span class="px-2 py-1 rounded bg-slate-900/80">TypeScript</span>
+            <span class="px-2 py-1 rounded bg-slate-900/80">Node / Postgres</span>
+            <span class="px-2 py-1 rounded bg-slate-900/80">iOS (Swift)</span>
+            <span class="px-2 py-1 rounded bg-slate-900/80">Motion / Rive</span>
+            <span class="px-2 py-1 rounded bg-slate-900/80">Webflow</span>
+            <span class="px-2 py-1 rounded bg-slate-900/80">Shopify Hydrogen</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="testimonials" class="py-24 px-6 border-t border-slate-900">
+    <div class="max-w-6xl mx-auto">
+      <h2 class="text-3xl md:text-4xl font-semibold tracking-tight">What clients say</h2>
+      <div class="mt-12 grid md:grid-cols-3 gap-6" x-data="testimonials">
+        <template x-for="t in items" :key="t.name">
+          <figure class="p-6 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col">
+            <blockquote class="text-slate-200 leading-relaxed flex-1" x-text="'“' + t.quote + '”'"></blockquote>
+            <figcaption class="mt-5 text-sm">
+              <div class="font-semibold" x-text="t.name"></div>
+              <div class="text-slate-400" x-text="t.role"></div>
+            </figcaption>
+          </figure>
+        </template>
+      </div>
+    </div>
+  </section>
+
+  <section id="contact" class="py-24 px-6 border-t border-slate-900">
+    <div class="max-w-3xl mx-auto text-center">
+      <h2 class="text-3xl md:text-4xl font-semibold tracking-tight">Have a project in mind?</h2>
+      <p class="text-slate-300 mt-4">
+        Tell us a little about what you're building. We reply to every inquiry within two business days,
+        and if we're not the right fit we'll happily recommend a studio who is.
+      </p>
+      <form x-data="contact" @submit.prevent="submit" class="mt-10 grid gap-4 text-left">
+        <div class="grid md:grid-cols-2 gap-4">
+          <input x-model="name" required placeholder="Your name" class="px-4 py-3 rounded-md bg-slate-900 border border-slate-800 focus:border-fuchsia-500 outline-none" />
+          <input x-model="email" required type="email" placeholder="Email" class="px-4 py-3 rounded-md bg-slate-900 border border-slate-800 focus:border-fuchsia-500 outline-none" />
+        </div>
+        <input x-model="company" placeholder="Company (optional)" class="px-4 py-3 rounded-md bg-slate-900 border border-slate-800 focus:border-fuchsia-500 outline-none" />
+        <textarea x-model="message" required rows="5" placeholder="What are you trying to build?" class="px-4 py-3 rounded-md bg-slate-900 border border-slate-800 focus:border-fuchsia-500 outline-none"></textarea>
+        <button class="px-6 py-3 rounded-md bg-fuchsia-500 hover:bg-fuchsia-400 font-medium justify-self-start">Send inquiry</button>
+        <p x-show="sent" x-cloak class="text-emerald-400 text-sm">Thanks — we'll be in touch within two business days.</p>
+      </form>
+      <div class="mt-12 text-sm text-slate-400 flex flex-wrap justify-center gap-x-6 gap-y-2">
+        <span>hello@lumenstudio.co</span>
+        <a href="#" class="hover:text-white">Twitter / X</a>
+        <a href="#" class="hover:text-white">LinkedIn</a>
+        <a href="#" class="hover:text-white">Dribbble</a>
+        <a href="#" class="hover:text-white">GitHub</a>
+      </div>
+    </div>
+  </section>
+
+  <footer class="border-t border-slate-900 py-10 px-6 text-sm text-slate-500">
+    <div class="max-w-6xl mx-auto flex flex-wrap justify-between gap-4">
+      <div>© 2026 Lumen Studio LLC · Brooklyn, NY</div>
+      <div>Built in-house. No analytics, no trackers.</div>
+    </div>
+  </footer>
+
+</body>
+</html>

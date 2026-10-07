@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Oakline Doors — Handcrafted hardwood doors, made to your size</title>
+  <meta name="description" content="Oakline Doors designs and builds solid hardwood interior, entry, and custom doors — delivered and installed across the US with a lifetime warranty." />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles/main.css" />
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+</head>
+<body class="bg-white text-slate-900 antialiased">
+  <div x-data="landingPage" x-init="init()">
+
+    <!-- Header -->
+    <header class="sticky top-0 z-40 backdrop-blur bg-white/80 border-b border-slate-200">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <a href="#" class="flex items-center gap-2 font-semibold text-slate-900">
+          <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-amber-700 text-white">
+            <i data-lucide="door-closed" class="w-4 h-4"></i>
+          </span>
+          <span>Oakline Doors</span>
+        </a>
+        <nav class="hidden md:flex items-center gap-8 text-sm text-slate-600">
+          <a href="#features" class="hover:text-slate-900">Why Oakline</a>
+          <a href="#how" class="hover:text-slate-900">How it works</a>
+          <a href="#pricing" class="hover:text-slate-900">Collections</a>
+          <a href="#faq" class="hover:text-slate-900">FAQ</a>
+        </nav>
+        <div class="flex items-center gap-3">
+          <a href="#" class="hidden sm:inline text-sm text-slate-600 hover:text-slate-900">Showroom</a>
+          <a href="#cta" class="inline-flex items-center gap-1.5 rounded-lg bg-amber-700 px-4 py-2 text-sm font-medium text-white hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:ring-offset-2">
+            Get a quote <i data-lucide="arrow-right" class="w-4 h-4"></i>
+          </a>
+          <button @click="mobileMenu = !mobileMenu" class="md:hidden p-2 rounded-md hover:bg-slate-100" aria-label="Toggle menu">
+            <i data-lucide="menu" class="w-5 h-5" x-show="!mobileMenu"></i>
+            <i data-lucide="x" class="w-5 h-5" x-show="mobileMenu" x-cloak></i>
+          </button>
+        </div>
+      </div>
+      <div x-show="mobileMenu" x-cloak class="md:hidden border-t border-slate-200 px-4 py-3 space-y-2 bg-white">
+        <a href="#features" @click="mobileMenu = false" class="block py-2 text-slate-700">Why Oakline</a>
+        <a href="#how" @click="mobileMenu = false" class="block py-2 text-slate-700">How it works</a>
+        <a href="#pricing" @click="mobileMenu = false" class="block py-2 text-slate-700">Collections</a>
+        <a href="#faq" @click="mobileMenu = false" class="block py-2 text-slate-700">FAQ</a>
+      </div>
+    </header>
+
+    <!-- Hero -->
+    <section class="relative overflow-hidden">
+      <div class="absolute inset-0 -z-10 bg-gradient-to-b from-amber-50 via-white to-white"></div>
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-20 lg:py-28 grid lg:grid-cols-2 gap-12 items-center">
+        <div>
+          <span class="inline-flex items-center gap-2 rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800">
+            <span class="h-1.5 w-1.5 rounded-full bg-amber-700"></span>
+            New for 2026: Reclaimed oak collection
+          </span>
+          <h1 class="mt-6 text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-slate-900 leading-tight">
+            Doors that feel<br/>
+            like part of<br/>
+            <span class="text-amber-700">the house.</span>
+          </h1>
+          <p class="mt-6 text-lg text-slate-600 max-w-xl">
+            Oakline Doors builds solid hardwood interior, entry, and custom doors in our Ohio workshop — then delivers and installs them anywhere in the lower 48. No big-box hollow cores. No flimsy veneers. Just doors built to outlive the trends.
+          </p>
+          <div class="mt-8 flex flex-col sm:flex-row gap-3">
+            <a href="#cta" class="inline-flex items-center justify-center gap-2 rounded-lg bg-amber-700 px-6 py-3 text-sm font-medium text-white hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:ring-offset-2">
+              Get an instant quote <i data-lucide="arrow-right" class="w-4 h-4"></i>
+            </a>
+            <a href="#how" class="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-6 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:ring-offset-2">
+              <i data-lucide="play" class="w-4 h-4"></i> See how it works
+            </a>
+          </div>
+          <p class="mt-4 text-sm text-slate-500">Free swatch pack · Ships in 2 business days</p>
+        </div>
+        <div class="relative">
+          <div class="rounded-2xl bg-white shadow-xl border border-slate-200 overflow-hidden">
+            <div class="aspect-[4/5] bg-gradient-to-br from-amber-100 via-amber-50 to-stone-100 relative flex items-center justify-center">
+              <!-- Stylized door illustration -->
+              <div class="w-44 h-80 rounded-t-[6rem] bg-gradient-to-b from-amber-800 to-amber-900 shadow-2xl border-4 border-amber-950 p-3 grid grid-cols-1 gap-3">
+                <div class="rounded-t-[4rem] border-2 border-amber-950/50 bg-amber-800/40"></div>
+                <div class="rounded border-2 border-amber-950/50 bg-amber-800/40"></div>
+                <div class="rounded border-2 border-amber-950/50 bg-amber-800/40"></div>
+                <span class="absolute right-12 top-1/2 h-2 w-2 rounded-full bg-amber-300 shadow"></span>
+              </div>
+            </div>
+            <div class="p-5 space-y-3 border-t border-slate-200">
+              <div class="flex items-center justify-between">
+                <div>
+                  <h3 class="font-semibold text-slate-900">Brookline 3-Panel Shaker</h3>
+                  <p class="text-xs text-slate-500">Solid white oak · Matte natural finish</p>
+                </div>
+                <span class="text-xs px-2 py-0.5 rounded bg-emerald-100 text-emerald-700">In stock</span>
+              </div>
+              <div class="grid grid-cols-3 gap-3 text-center">
+                <div class="rounded-lg bg-amber-50 p-3">
+                  <div class="text-xs text-slate-500">Width</div>
+                  <div class="text-lg font-semibold text-amber-800">36"</div>
+                </div>
+                <div class="rounded-lg bg-stone-100 p-3">
+                  <div class="text-xs text-slate-500">Height</div>
+                  <div class="text-lg font-semibold text-stone-700">80"</div>
+                </div>
+                <div class="rounded-lg bg-emerald-50 p-3">
+                  <div class="text-xs text-slate-500">Ships</div>
+                  <div class="text-lg font-semibold text-emerald-700">48h</div>
+                </div>
+              </div>
+              <div class="flex items-center justify-between pt-2">
+                <span class="text-2xl font-bold text-slate-900">$489</span>
+                <span class="text-xs text-slate-500">Free delivery</span>
+              </div>
+            </div>
+          </div>
+          <div class="hidden lg:block absolute -top-4 -right-4 rounded-xl bg-white shadow-lg border border-slate-200 p-3 w-56">
+            <div class="flex items-center gap-2">
+              <i data-lucide="leaf" class="w-4 h-4 text-emerald-600"></i>
+              <span class="text-sm font-medium">FSC-certified wood</span>
+            </div>
+            <p class="mt-1 text-xs text-slate-500">Every door sourced from responsibly managed forests.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Logo strip -->
+    <section class="border-y border-slate-200 bg-slate-50">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-10">
+        <p class="text-center text-sm font-medium text-slate-500 uppercase tracking-wider">Specified by builders & designers at</p>
+        <div class="mt-6 flex flex-wrap items-center justify-center gap-3 sm:gap-6">
+          <template x-for="brand in brands" :key="brand">
+            <span class="px-4 py-2 rounded-full bg-white border border-slate-200 text-slate-600 text-sm font-medium" x-text="brand"></span>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section id="features" class="py-20 lg:py-28">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="max-w-2xl">
+          <h2 class="text-3xl sm:text-4xl font-bold tracking-tight">Why homeowners choose Oakline</h2>
+          <p class="mt-4 text-lg text-slate-600">A door is the first thing guests touch and the last thing closed at night. We build ours like that matters — because it does.</p>
+        </div>
+        <div class="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          <template x-for="f in features" :key="f.title">
+            <div class="rounded-2xl border border-slate-200 p-6 hover:shadow-md hover:border-amber-200 transition">
+              <div class="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
+                <i :data-lucide="f.icon" class="w-5 h-5"></i>
+              </div>
+              <h3 class="mt-4 font-semibold text-lg" x-text="f.title"></h3>
+              <p class="mt-2 text-slate-600 text-sm leading-relaxed" x-text="f.description"></p>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- How it works -->
+    <section id="how" class="bg-slate-50 py-20 lg:py-28">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="text-center max-w-2xl mx-auto">
+          <h2 class="text-3xl sm:text-4xl font-bold tracking-tight">From sketch to swinging in three steps</h2>
+          <p class="mt-4 text-lg text-slate-600">No measuring visit. No back-and-forth quotes. Just a clear path from idea to installed door.</p>
+        </div>
+        <div class="mt-14 grid gap-8 md:grid-cols-3">
+          <template x-for="(step, i) in steps" :key="step.title">
+            <div class="relative">
+              <div class="inline-flex h-10 w-10 items-center justify-center rounded-full bg-amber-700 text-white font-semibold" x-text="i + 1"></div>
+              <h3 class="mt-4 text-lg font-semibold" x-text="step.title"></h3>
+              <p class="mt-2 text-slate-600 text-sm leading-relaxed" x-text="step.description"></p>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- Testimonials -->
+    <section class="py-20 lg:py-28">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="max-w-2xl">
+          <h2 class="text-3xl sm:text-4xl font-bold tracking-tight">Trusted in 14,000+ homes and counting</h2>
+          <p class="mt-4 text-lg text-slate-600">Homeowners, designers, and contractors on what changed after the door went up.</p>
+        </div>
+        <div class="mt-12 grid gap-6 md:grid-cols-3">
+          <template x-for="t in testimonials" :key="t.name">
+            <figure class="rounded-xl border border-slate-200 p-6 bg-white">
+              <blockquote class="text-slate-700 text-sm leading-relaxed">
+                <span x-text="`“${t.quote}”`"></span>
+              </blockquote>
+              <figcaption class="mt-4 flex items-center gap-3">
+                <img :src="t.avatar" :alt="t.name" class="h-10 w-10 rounded-full" />
+                <div>
+                  <div class="text-sm font-medium" x-text="t.name"></div>
+                  <div class="text-xs text-slate-500" x-text="t.role"></div>
+                </div>
+              </figcaption>
+            </figure>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- Pricing -->
+    <section id="pricing" class="bg-slate-50 py-20 lg:py-28">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="text-center max-w-2xl mx-auto">
+          <h2 class="text-3xl sm:text-4xl font-bold tracking-tight">Three collections. One workshop.</h2>
+          <p class="mt-4 text-lg text-slate-600">Every Oakline door — from the $389 interior slab to a custom 10-foot pivot entry — leaves the same Ohio workshop.</p>
+        </div>
+        <div class="mt-12 grid gap-6 md:grid-cols-3 max-w-5xl mx-auto">
+          <template x-for="plan in plans" :key="plan.name">
+            <div class="rounded-2xl border bg-white p-8 flex flex-col" :class="plan.featured ? 'border-amber-700 shadow-lg ring-1 ring-amber-100' : 'border-slate-200'">
+              <div class="flex items-center justify-between">
+                <h3 class="text-lg font-semibold" x-text="plan.name"></h3>
+                <span x-show="plan.featured" class="text-xs px-2 py-0.5 rounded bg-amber-700 text-white">Most popular</span>
+              </div>
+              <div class="mt-4 flex items-baseline gap-1">
+                <span class="text-4xl font-bold" x-text="plan.price"></span>
+                <span class="text-slate-500 text-sm" x-text="plan.cadence"></span>
+              </div>
+              <p class="mt-2 text-sm text-slate-600" x-text="plan.description"></p>
+              <ul class="mt-6 space-y-2 text-sm flex-1">
+                <template x-for="feat in plan.features" :key="feat">
+                  <li class="flex items-start gap-2">
+                    <i data-lucide="check" class="w-4 h-4 text-amber-700 mt-0.5"></i>
+                    <span x-text="feat"></span>
+                  </li>
+                </template>
+              </ul>
+              <a href="#cta" class="mt-8 inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-600 focus:ring-offset-2"
+                :class="plan.featured ? 'bg-amber-700 text-white hover:bg-amber-800' : 'border border-slate-300 text-slate-700 hover:bg-slate-50'">
+                <span x-text="plan.cta"></span>
+              </a>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section id="faq" class="py-20 lg:py-28">
+      <div class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
+        <h2 class="text-3xl sm:text-4xl font-bold tracking-tight text-center">Frequently asked questions</h2>
+        <div class="mt-12 divide-y divide-slate-200 border-y border-slate-200">
+          <template x-for="(item, i) in faqs" :key="item.q">
+            <div class="py-5">
+              <button @click="openFaq = openFaq === i ? null : i" class="w-full flex items-center justify-between text-left gap-4 group focus:outline-none">
+                <span class="font-medium text-slate-900 group-hover:text-amber-800" x-text="item.q"></span>
+                <i data-lucide="chevron-down" class="w-5 h-5 text-slate-400 transition-transform" :class="openFaq === i ? 'rotate-180' : ''"></i>
+              </button>
+              <div x-show="openFaq === i" x-collapse class="mt-3 text-slate-600 text-sm leading-relaxed" x-text="item.a"></div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA band -->
+    <section id="cta" class="relative overflow-hidden bg-gradient-to-br from-amber-700 via-amber-800 to-stone-900">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-16 lg:py-24 text-center text-white">
+        <h2 class="text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight">Your new front door is closer than you think.</h2>
+        <p class="mt-4 text-lg text-amber-100 max-w-2xl mx-auto">Order a free swatch pack, get an instant online quote, or book a 15-minute call with one of our door specialists. No pressure — just real answers.</p>
+        <div class="mt-8 flex flex-col sm:flex-row gap-3 justify-center">
+          <a href="#" class="inline-flex items-center justify-center gap-2 rounded-lg bg-white px-6 py-3 text-sm font-medium text-amber-800 hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-amber-800">
+            Get an instant quote <i data-lucide="arrow-right" class="w-4 h-4"></i>
+          </a>
+          <a href="#" class="inline-flex items-center justify-center gap-2 rounded-lg border border-white/40 px-6 py-3 text-sm font-medium text-white hover:bg-white/10">
+            <i data-lucide="package" class="w-4 h-4"></i> Send me free swatches
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-200 bg-white">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12 grid gap-8 md:grid-cols-4">
+        <div>
+          <div class="flex items-center gap-2 font-semibold">
+            <span class="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-amber-700 text-white">
+              <i data-lucide="door-closed" class="w-4 h-4"></i>
+            </span>
+            <span>Oakline Doors</span>
+          </div>
+          <p class="mt-3 text-sm text-slate-500">Handcrafted hardwood doors, made to your size in Ohio since 2011.</p>
+          <p class="mt-3 text-sm text-slate-500">hello@oaklinedoors.com<br/>(614) 555-0148</p>
+        </div>
+        <div>
+          <h4 class="text-sm font-semibold text-slate-900">Shop</h4>
+          <ul class="mt-3 space-y-2 text-sm text-slate-600">
+            <li><a href="#pricing" class="hover:text-slate-900">Interior doors</a></li>
+            <li><a href="#pricing" class="hover:text-slate-900">Entry doors</a></li>
+            <li><a href="#pricing" class="hover:text-slate-900">Custom & pivot</a></li>
+            <li><a href="#" class="hover:text-slate-900">Hardware</a></li>
+          </ul>
+        </div>
+        <div>
+          <h4 class="text-sm font-semibold text-slate-900">Help</h4>
+          <ul class="mt-3 space-y-2 text-sm text-slate-600">
+            <li><a href="#how" class="hover:text-slate-900">How to measure</a></li>
+            <li><a href="#" class="hover:text-slate-900">Installation guide</a></li>
+            <li><a href="#" class="hover:text-slate-900">Care & finish</a></li>
+            <li><a href="#" class="hover:text-slate-900">Warranty claims</a></li>
+          </ul>
+        </div>
+        <div>
+          <h4 class="text-sm font-semibold text-slate-900">Company</h4>
+          <ul class="mt-3 space-y-2 text-sm text-slate-600">
+            <li><a href="#" class="hover:text-slate-900">Our workshop</a></li>
+            <li><a href="#" class="hover:text-slate-900">Trade program</a></li>
+            <li><a href="#" class="hover:text-slate-900">Showroom visits</a></li>
+            <li><a href="#" class="hover:text-slate-900">Contact</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="border-t border-slate-200">
+        <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-slate-500">
+          <p>&copy; <span x-text="new Date().getFullYear()"></span> Oakline Doors LLC. Crafted in Columbus, Ohio.</p>
+          <div class="flex items-center gap-4">
+            <a href="#" class="hover:text-slate-700">Privacy</a>
+            <a href="#" class="hover:text-slate-700">Terms</a>
+            <a href="#" class="hover:text-slate-700">Security</a>
+          </div>
+        </div>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

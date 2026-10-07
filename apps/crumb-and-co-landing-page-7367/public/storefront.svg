@@ -1,0 +1,14 @@
+<svg width="1200" height="900" viewBox="0 0 1200 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="900" fill="#E8DCC8"/>
+  <rect x="200" y="150" width="800" height="600" fill="#8B7355"/>
+  <rect x="250" y="200" width="300" height="400" fill="#634832"/>
+  <rect x="260" y="210" width="280" height="280" fill="#5C9EAD" opacity="0.3"/>
+  <rect x="650" y="200" width="300" height="400" fill="#634832"/>
+  <rect x="660" y="210" width="280" height="280" fill="#5C9EAD" opacity="0.3"/>
+  <rect x="200" y="100" width="800" height="50" fill="#3D2A1F"/>
+  <rect x="450" y="300" width="300" height="250" fill="#A0825A"/>
+  <rect x="470" y="320" width="120" height="180" fill="#2C1810"/>
+  <rect x="475" y="325" width="110" height="120" fill="#7BAABE" opacity="0.4"/>
+  <path d="M200 150 L600 50 L1000 150" fill="#8B4513"/>
+  <text x="600" y="130" text-anchor="middle" font-family="sans-serif" font-size="48" font-weight="bold" fill="#FAF8F5">Crumb &amp; Co</text>
+</svg>

@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Northwind Studio — Design that ships</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="styles/main.css">
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 antialiased" x-data="site">
+  <header class="sticky top-0 z-40 backdrop-blur bg-slate-950/70 border-b border-slate-800">
+    <div class="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+      <a href="#" class="flex items-center gap-2 font-semibold tracking-tight">
+        <span class="inline-block w-7 h-7 rounded-md bg-gradient-to-br from-indigo-400 to-fuchsia-500"></span>
+        Northwind Studio
+      </a>
+      <nav class="hidden md:flex items-center gap-8 text-sm text-slate-300">
+        <a href="#services" class="hover:text-white">Services</a>
+        <a href="#work" class="hover:text-white">Work</a>
+        <a href="#process" class="hover:text-white">Process</a>
+        <a href="#team" class="hover:text-white">Team</a>
+        <a href="#contact" class="hover:text-white">Contact</a>
+      </nav>
+      <a href="#contact" class="text-sm bg-indigo-500 hover:bg-indigo-400 transition px-4 py-2 rounded-md font-medium">Start a project</a>
+    </div>
+  </header>
+
+  <section class="relative overflow-hidden">
+    <div class="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(99,102,241,0.25),transparent_50%),radial-gradient(circle_at_80%_60%,rgba(217,70,239,0.2),transparent_45%)]"></div>
+    <div class="relative max-w-6xl mx-auto px-6 py-28 md:py-36">
+      <p class="text-indigo-300 text-sm uppercase tracking-[0.2em] mb-5">Independent design & engineering studio</p>
+      <h1 class="text-5xl md:text-7xl font-bold tracking-tight leading-[1.05] max-w-4xl">
+        We build digital products that <span class="bg-gradient-to-r from-indigo-300 to-fuchsia-300 bg-clip-text text-transparent">actually ship.</span>
+      </h1>
+      <p class="mt-8 text-lg md:text-xl text-slate-300 max-w-2xl leading-relaxed">
+        From early-stage prototypes to production-grade platforms, Northwind partners with founders and product teams to turn rough ideas into thoughtful, fast, and beautiful software — usually in weeks, not quarters.
+      </p>
+      <div class="mt-10 flex flex-wrap gap-4">
+        <a href="#contact" class="bg-indigo-500 hover:bg-indigo-400 transition px-6 py-3 rounded-md font-medium">Book a discovery call</a>
+        <a href="#work" class="border border-slate-700 hover:border-slate-500 transition px-6 py-3 rounded-md font-medium">See recent work</a>
+      </div>
+      <div class="mt-16 grid grid-cols-2 md:grid-cols-4 gap-8 text-sm">
+        <div><div class="text-3xl font-semibold text-white">62</div><div class="text-slate-400 mt-1">Products shipped</div></div>
+        <div><div class="text-3xl font-semibold text-white">9 yrs</div><div class="text-slate-400 mt-1">In business</div></div>
+        <div><div class="text-3xl font-semibold text-white">14</div><div class="text-slate-400 mt-1">Full-time team</div></div>
+        <div><div class="text-3xl font-semibold text-white">$48M</div><div class="text-slate-400 mt-1">Client funding raised</div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="services" class="border-t border-slate-800 py-24">
+    <div class="max-w-6xl mx-auto px-6">
+      <h2 class="text-3xl md:text-4xl font-bold tracking-tight">What we do</h2>
+      <p class="mt-4 text-slate-400 max-w-2xl">Four practice areas, one integrated team. We bring strategy, design, and engineering into the same room — and the same Linear workspace — from day one.</p>
+      <div class="mt-12 grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <template x-for="s in services" :key="s.title">
+          <div class="bg-slate-900/60 border border-slate-800 rounded-xl p-6 hover:border-indigo-500/50 transition">
+            <div class="w-10 h-10 rounded-lg bg-indigo-500/10 text-indigo-300 flex items-center justify-center mb-5">
+              <i :data-lucide="s.icon" class="w-5 h-5"></i>
+            </div>
+            <h3 class="font-semibold text-lg" x-text="s.title"></h3>
+            <p class="mt-2 text-sm text-slate-400 leading-relaxed" x-text="s.body"></p>
+          </div>
+        </template>
+      </div>
+    </div>
+  </section>
+
+  <section id="work" class="border-t border-slate-800 py-24 bg-slate-950">
+    <div class="max-w-6xl mx-auto px-6">
+      <div class="flex items-end justify-between flex-wrap gap-4">
+        <div>
+          <h2 class="text-3xl md:text-4xl font-bold tracking-tight">Selected work</h2>
+          <p class="mt-4 text-slate-400 max-w-2xl">A few of the products we've helped design, build, and launch over the last twelve months.</p>
+        </div>
+        <a href="#contact" class="text-sm text-indigo-300 hover:text-indigo-200">View case studies →</a>
+      </div>
+      <div class="mt-12 grid md:grid-cols-2 gap-6">
+        <template x-for="p in projects" :key="p.title">
+          <article class="group bg-slate-900/60 border border-slate-800 rounded-xl overflow-hidden hover:border-indigo-500/50 transition">
+            <div class="h-44 relative" :style="`background: ${p.gradient}`">
+              <div class="absolute inset-0 flex items-center justify-center text-3xl font-bold tracking-tight opacity-90" x-text="p.title"></div>
+            </div>
+            <div class="p-6">
+              <div class="flex items-center justify-between">
+                <h3 class="font-semibold text-lg" x-text="p.title"></h3>
+                <span class="text-xs text-slate-400" x-text="p.year"></span>
+              </div>
+              <p class="mt-2 text-sm text-slate-400 leading-relaxed" x-text="p.body"></p>
+              <div class="mt-4 flex flex-wrap gap-2">
+                <template x-for="t in p.tags" :key="t">
+                  <span class="text-xs bg-slate-800 text-slate-300 px-2 py-1 rounded" x-text="t"></span>
+                </template>
+              </div>
+            </div>
+          </article>
+        </template>
+      </div>
+    </div>
+  </section>
+
+  <section id="process" class="border-t border-slate-800 py-24">
+    <div class="max-w-6xl mx-auto px-6 grid lg:grid-cols-2 gap-16">
+      <div>
+        <h2 class="text-3xl md:text-4xl font-bold tracking-tight">How we work</h2>
+        <p class="mt-4 text-slate-400 leading-relaxed">
+          Most agencies trade clarity for billable hours. We don't. Every engagement is structured around a fixed weekly cadence, a single Slack channel, and a public roadmap you can read at any time. You always know what's shipping next, what it costs, and why.
+        </p>
+        <p class="mt-4 text-slate-400 leading-relaxed">
+          We don't sub-contract. Every engineer, designer, and PM you'll meet during the sales call is the same person who will be in your standups next week.
+        </p>
+      </div>
+      <ol class="space-y-6">
+        <template x-for="(step, i) in steps" :key="step.title">
+          <li class="flex gap-5">
+            <div class="shrink-0 w-10 h-10 rounded-full bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 flex items-center justify-center font-semibold" x-text="String(i+1).padStart(2,'0')"></div>
+            <div>
+              <h3 class="font-semibold" x-text="step.title"></h3>
+              <p class="text-sm text-slate-400 mt-1 leading-relaxed" x-text="step.body"></p>
+            </div>
+          </li>
+        </template>
+      </ol>
+    </div>
+  </section>
+
+  <section id="team" class="border-t border-slate-800 py-24 bg-slate-950">
+    <div class="max-w-6xl mx-auto px-6">
+      <h2 class="text-3xl md:text-4xl font-bold tracking-tight">The people</h2>
+      <p class="mt-4 text-slate-400 max-w-2xl">A small, senior team. Everyone you'll work with has shipped real products at real companies — before agency life.</p>
+      <div class="mt-12 grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        <template x-for="m in team" :key="m.name">
+          <div class="bg-slate-900/60 border border-slate-800 rounded-xl p-6">
+            <div class="w-16 h-16 rounded-full mb-4" :style="`background: ${m.gradient}`"></div>
+            <h3 class="font-semibold" x-text="m.name"></h3>
+            <p class="text-xs text-indigo-300 mt-0.5" x-text="m.role"></p>
+            <p class="mt-3 text-sm text-slate-400 leading-relaxed" x-text="m.bio"></p>
+          </div>
+        </template>
+      </div>
+    </div>
+  </section>
+
+  <section id="contact" class="border-t border-slate-800 py-24">
+    <div class="max-w-3xl mx-auto px-6 text-center">
+      <h2 class="text-3xl md:text-5xl font-bold tracking-tight">Let's build something.</h2>
+      <p class="mt-5 text-slate-400 leading-relaxed">
+        Send a couple of sentences about your project and we'll reply within one business day with a few questions and a suggested next step. No decks, no funnels, no "discovery sequence."
+      </p>
+      <form class="mt-10 grid sm:grid-cols-2 gap-4 text-left" @submit.prevent="submit">
+        <input x-model="form.name" required placeholder="Your name" class="bg-slate-900 border border-slate-800 rounded-md px-4 py-3 focus:border-indigo-500 focus:outline-none">
+        <input x-model="form.email" required type="email" placeholder="Email" class="bg-slate-900 border border-slate-800 rounded-md px-4 py-3 focus:border-indigo-500 focus:outline-none">
+        <textarea x-model="form.message" required rows="4" placeholder="What are you building?" class="sm:col-span-2 bg-slate-900 border border-slate-800 rounded-md px-4 py-3 focus:border-indigo-500 focus:outline-none"></textarea>
+        <button class="sm:col-span-2 bg-indigo-500 hover:bg-indigo-400 transition px-6 py-3 rounded-md font-medium">Send message</button>
+      </form>
+      <p x-show="sent" x-transition class="mt-6 text-emerald-400 text-sm">Thanks — message saved locally. We'll be in touch shortly.</p>
+      <div class="mt-12 text-sm text-slate-400 flex flex-wrap justify-center gap-x-8 gap-y-2">
+        <span>hello@northwind.studio</span>
+        <span>+1 (415) 555-0142</span>
+        <span>San Francisco · Berlin</span>
+      </div>
+    </div>
+  </section>
+
+  <footer class="border-t border-slate-800 py-10 text-center text-sm text-slate-500">
+    © 2026 Northwind Studio. Crafted with care.
+  </footer>
+</body>
+</html>

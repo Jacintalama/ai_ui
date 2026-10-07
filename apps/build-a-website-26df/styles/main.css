@@ -1,0 +1,7 @@
+[x-cloak] { display: none !important; }
+
+html { scroll-behavior: smooth; }
+
+body { font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif; }
+
+section { scroll-margin-top: 5rem; }

@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en" x-data="portfolio" x-init="init()" :class="{ 'dark': theme === 'dark' }">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jacint Alama — Software Engineer & Full-Stack Developer</title>
+  <meta name="description" content="Jacint Alama is a software engineer and full-stack developer specializing in Next.js, AI automation with Claude Code, Puppeteer-driven workflows, and LLM integration." />
+  <script>
+    tailwind = window.tailwind || {};
+    if (typeof tailwind === 'object') tailwind.config = { darkMode: 'class' };
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles/main.css" />
+  <script type="module" src="src/main.js"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+</head>
+<body id="top" class="bg-stone-50 text-stone-900 dark:bg-[#0a0a0b] dark:text-stone-100 antialiased transition-colors">
+
+  <!-- Header -->
+  <header class="sticky top-0 z-30 backdrop-blur-md bg-stone-50/70 dark:bg-[#0a0a0b]/70 border-b hairline">
+    <div class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <a href="#top" class="flex items-center gap-3">
+        <span class="inline-flex h-9 w-9 items-center justify-center rounded-full border gold-border gold-accent font-serif-display text-sm tracking-wider">JA</span>
+        <span class="hidden sm:inline font-serif-display text-base tracking-wide">Jacint Alama</span>
+      </a>
+      <nav class="hidden md:flex items-center gap-10 text-sm text-stone-600 dark:text-stone-400">
+        <a href="#work" class="hover:gold-accent transition">Work</a>
+        <a href="#about" class="hover:gold-accent transition">About</a>
+        <a href="#writing" class="hover:gold-accent transition">Writing</a>
+        <a href="#contact" class="hover:gold-accent transition">Contact</a>
+      </nav>
+      <div class="flex items-center gap-2">
+        <button @click="toggleTheme()" class="p-2 rounded-full hover:bg-stone-200/60 dark:hover:bg-stone-800/60" :aria-label="theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'">
+          <i data-lucide="sun" class="w-5 h-5" x-show="theme === 'dark'"></i>
+          <i data-lucide="moon" class="w-5 h-5" x-show="theme !== 'dark'"></i>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero -->
+  <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 pt-24 pb-20 lg:pt-32 lg:pb-28">
+    <div class="grid lg:grid-cols-12 gap-12 items-center">
+      <div class="lg:col-span-8">
+        <p class="text-xs uppercase tracking-[0.3em] gold-accent font-medium">Software Engineer · Full-Stack Developer · Available for work</p>
+        <h1 class="mt-6 font-serif-display text-5xl sm:text-6xl lg:text-8xl font-light leading-[0.95]">
+          <span class="block">Jacint</span>
+          <span class="block italic gold-gradient-text font-normal">Alama.</span>
+        </h1>
+        <p class="mt-8 max-w-2xl text-lg sm:text-xl text-stone-600 dark:text-stone-400 leading-relaxed">
+          Full-stack developer building Next.js web apps and AI-driven automation with Claude Code, Puppeteer, and LLM workflows — for international clients in Switzerland and the United States. A graphic-design background sharpens the work; production-ready features ship the rest.
+        </p>
+        <div class="mt-10 flex flex-wrap items-center gap-5">
+          <a href="#work" class="inline-flex items-center gap-2 rounded-full gold-bg text-stone-950 px-6 py-3 text-sm font-medium hover:opacity-90 transition">
+            See selected work
+            <i data-lucide="arrow-right" class="w-4 h-4"></i>
+          </a>
+          <a href="#contact" class="inline-flex items-center gap-2 rounded-full border hairline px-6 py-3 text-sm font-medium hover:gold-accent transition">
+            Get in touch
+          </a>
+        </div>
+        <div class="mt-10 flex items-center gap-5 text-stone-500 dark:text-stone-500">
+          <a href="https://github.com/jacintalama" target="_blank" rel="noopener" class="hover:gold-accent transition" aria-label="GitHub">
+            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-2.05c-3.2.69-3.87-1.36-3.87-1.36-.52-1.31-1.27-1.66-1.27-1.66-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.76 2.69 1.25 3.35.96.1-.74.4-1.25.73-1.54-2.55-.29-5.24-1.27-5.24-5.66 0-1.25.45-2.27 1.18-3.07-.12-.29-.51-1.46.11-3.04 0 0 .96-.31 3.16 1.18.92-.26 1.9-.39 2.88-.39s1.96.13 2.88.39c2.2-1.49 3.16-1.18 3.16-1.18.62 1.58.23 2.75.11 3.04.74.8 1.18 1.82 1.18 3.07 0 4.4-2.7 5.36-5.27 5.65.41.36.78 1.06.78 2.13v3.16c0 .31.21.67.79.55C20.21 21.39 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5z"/></svg>
+          </a>
+          <a href="https://linkedin.com/in/jacintalama" target="_blank" rel="noopener" class="hover:gold-accent transition" aria-label="LinkedIn">
+            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.45 20.45h-3.55v-5.57c0-1.33-.02-3.04-1.85-3.04-1.86 0-2.14 1.45-2.14 2.95v5.66H9.36V9h3.41v1.56h.05c.47-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.06 2.06 0 1 1 0-4.12 2.06 2.06 0 0 1 0 4.12zm1.78 13.02H3.56V9h3.56v11.45zM22.22 0H1.77C.79 0 0 .77 0 1.72v20.56C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.72V1.72C24 .77 23.2 0 22.22 0z"/></svg>
+          </a>
+          <a href="https://twitter.com/jacintalama" target="_blank" rel="noopener" class="hover:gold-accent transition" aria-label="Twitter">
+            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.244 2H21l-6.52 7.45L22 22h-6.156l-4.81-6.29L5.62 22H2.86l6.97-7.96L2 2h6.31l4.34 5.74L18.244 2zm-2.16 18h1.69L7.99 4H6.21l9.875 16z"/></svg>
+          </a>
+          <a href="mailto:alamajacintg04@gmail.com" class="hover:gold-accent transition" aria-label="Email">
+            <i data-lucide="mail" class="w-5 h-5"></i>
+          </a>
+        </div>
+      </div>
+      <div class="lg:col-span-4 order-first lg:order-last">
+        <div class="relative max-w-xs mx-auto">
+          <div class="absolute -inset-4 rounded-full bg-gradient-to-br from-amber-300/30 via-transparent to-amber-700/20 blur-2xl"></div>
+          <div class="relative rounded-full overflow-hidden aspect-square border gold-border">
+            <img src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=600&q=80" alt="Portrait of Jacint Alama" class="w-full h-full object-cover" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Selected work -->
+  <main>
+  <section id="work" class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-20 border-t hairline">
+    <div class="flex items-end justify-between flex-wrap gap-4">
+      <div>
+        <p class="text-xs uppercase tracking-[0.3em] gold-accent">Portfolio</p>
+        <h2 class="mt-3 font-serif-display text-4xl sm:text-5xl font-light">Selected work</h2>
+        <p class="mt-3 text-stone-600 dark:text-stone-400 max-w-xl">A slice of recent client builds, capstones, and OJT projects — full-stack web apps, AI automation, and the design work that keeps it all sharp.</p>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <template x-for="tag in ['All','Backend','Web','Infra']" :key="tag">
+          <button @click="filter = tag"
+            :class="filter === tag ? 'gold-bg text-stone-950 border-transparent' : 'border hairline text-stone-600 dark:text-stone-400 hover:gold-accent'"
+            class="px-4 py-1.5 rounded-full text-sm font-medium transition border">
+            <span x-text="tag"></span>
+          </button>
+        </template>
+      </div>
+    </div>
+
+    <div class="mt-12 grid gap-7 sm:grid-cols-2 lg:grid-cols-3">
+      <template x-for="p in filteredProjects" :key="p.title">
+        <article class="card-hover group relative overflow-hidden rounded-2xl border hairline bg-white/60 dark:bg-stone-900/40 backdrop-blur">
+          <div class="relative overflow-hidden">
+            <img :src="`https://picsum.photos/seed/${p.seed}/720/480`" :alt="`${p.title} preview`" loading="lazy" class="w-full aspect-[3/2] object-cover group-hover:scale-105" />
+            <div class="absolute top-3 left-3 text-[10px] uppercase tracking-widest gold-accent bg-stone-950/70 px-2 py-1 rounded-full" x-text="p.category"></div>
+          </div>
+          <div class="p-5">
+            <div class="flex items-baseline justify-between gap-3">
+              <h3 class="font-serif-display text-lg" x-text="p.title"></h3>
+              <span class="text-xs text-stone-500" x-text="p.year"></span>
+            </div>
+            <p class="mt-2 text-sm text-stone-600 dark:text-stone-400 leading-relaxed" x-text="p.summary"></p>
+            <div class="mt-4 flex flex-wrap gap-1.5">
+              <template x-for="tag in p.tags" :key="tag">
+                <span class="text-[11px] px-2 py-0.5 rounded-full border hairline text-stone-600 dark:text-stone-400" x-text="tag"></span>
+              </template>
+            </div>
+          </div>
+        </article>
+      </template>
+    </div>
+    <p x-show="filteredProjects.length === 0" class="mt-8 text-center text-stone-500">No projects in this category yet.</p>
+  </section>
+
+  <!-- About -->
+  <section id="about" class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-20 border-t hairline">
+    <div class="grid gap-12 lg:grid-cols-12 items-start">
+      <div class="lg:col-span-5">
+        <p class="text-xs uppercase tracking-[0.3em] gold-accent">About</p>
+        <h2 class="mt-3 font-serif-display text-4xl sm:text-5xl font-light">Design, code, and a little AI.</h2>
+        <div class="mt-6 inline-flex items-center gap-2 text-sm border hairline rounded-full px-4 py-2">
+          <span class="relative flex h-2 w-2">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          </span>
+          <span>Freelancing for <span class="gold-accent font-medium">Swiss & US clients</span> · open to new work</span>
+        </div>
+      </div>
+      <div class="lg:col-span-7 space-y-5 text-stone-600 dark:text-stone-300 leading-relaxed text-[17px]">
+        <p>
+          I'm a tech-savvy, creative software engineer based in Maasim, Sarangani. I hold a Bachelor's in Information Technology from Holy Trinity College of General Santos City, and I specialize in full-stack web development and AI-driven solutions — building scalable Next.js apps and automation systems with Claude Code, Puppeteer, and LLM workflows.
+        </p>
+        <p>
+          Right now I deliver end-to-end builds for two international clients: a Swiss e-commerce platform and a US-based Open WebUI deployment. I scope the requirements, plan the architecture, and ship production-ready AI features in iterative releases. Alongside that, I work as a graphic artist at Starbright Printing Press — calendars, business cards, company IDs, vector identity work, and BIR ATP documentation.
+        </p>
+        <p>
+          Before freelance I was the web developer at General Santos City Water District, building an EPANET.js-style tool to process .INP files for hydraulic and water-quality modeling. I'm certified NC III in Visual Graphic Design and NC II in Electronic Products Assembly & Servicing — the design eye and the IT-support fundamentals both show up in the work.
+        </p>
+        <div class="grid grid-cols-3 gap-6 pt-4 border-t hairline">
+          <div>
+            <div class="font-serif-display text-3xl gold-gradient-text">2+</div>
+            <div class="text-xs uppercase tracking-widest text-stone-500 mt-1">Years shipping</div>
+          </div>
+          <div>
+            <div class="font-serif-display text-3xl gold-gradient-text">2</div>
+            <div class="text-xs uppercase tracking-widest text-stone-500 mt-1">International clients</div>
+          </div>
+          <div>
+            <div class="font-serif-display text-3xl gold-gradient-text">2</div>
+            <div class="text-xs uppercase tracking-widest text-stone-500 mt-1">TESDA certifications</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Skills -->
+  <section id="skills" class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-20 border-t hairline">
+    <p class="text-xs uppercase tracking-[0.3em] gold-accent">Toolkit</p>
+    <h2 class="mt-3 font-serif-display text-4xl sm:text-5xl font-light">Skills & tools</h2>
+    <p class="mt-3 text-stone-600 dark:text-stone-400 max-w-2xl">The languages I reach for, the frameworks and AI tools I build with, and the craft skills picked up across full-stack development, IT support, and graphic design.</p>
+
+    <div class="mt-12 grid gap-10 md:grid-cols-3">
+      <div>
+        <h3 class="text-xs uppercase tracking-[0.25em] gold-accent">Languages</h3>
+        <div class="mt-4 flex flex-wrap gap-2">
+          <template x-for="s in skills.languages" :key="s">
+            <span class="px-3 py-1.5 rounded-full border hairline text-sm" x-text="s"></span>
+          </template>
+        </div>
+      </div>
+      <div>
+        <h3 class="text-xs uppercase tracking-[0.25em] gold-accent">Systems</h3>
+        <div class="mt-4 flex flex-wrap gap-2">
+          <template x-for="s in skills.systems" :key="s">
+            <span class="px-3 py-1.5 rounded-full border hairline text-sm" x-text="s"></span>
+          </template>
+        </div>
+      </div>
+      <div>
+        <h3 class="text-xs uppercase tracking-[0.25em] gold-accent">Craft</h3>
+        <div class="mt-4 flex flex-wrap gap-2">
+          <template x-for="s in skills.craft" :key="s">
+            <span class="px-3 py-1.5 rounded-full border hairline text-sm" x-text="s"></span>
+          </template>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Writing -->
+  <section id="writing" class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-20 border-t hairline">
+    <p class="text-xs uppercase tracking-[0.3em] gold-accent">Writing</p>
+    <h2 class="mt-3 font-serif-display text-4xl sm:text-5xl font-light">Recent essays</h2>
+    <p class="mt-3 text-stone-600 dark:text-stone-400 max-w-2xl">Notes on distributed systems, engineering craft, and the slow trades of building software that lasts.</p>
+
+    <ul class="mt-10 divide-y hairline border-y hairline">
+      <template x-for="post in posts" :key="post.title">
+        <li>
+          <a href="#" class="group flex items-center justify-between gap-6 py-6 hover:px-2 transition-all">
+            <div>
+              <h3 class="font-serif-display text-xl sm:text-2xl group-hover:gold-accent transition" x-text="post.title"></h3>
+              <p class="mt-1 text-sm text-stone-500" x-text="`${post.date} · ${post.read} read`"></p>
+            </div>
+            <i data-lucide="arrow-up-right" class="w-5 h-5 text-stone-400 group-hover:gold-accent transition"></i>
+          </a>
+        </li>
+      </template>
+    </ul>
+  </section>
+
+  <!-- Contact -->
+  <section id="contact" class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-24 border-t hairline">
+    <p class="text-xs uppercase tracking-[0.3em] gold-accent text-center">Contact</p>
+    <h2 class="mt-3 font-serif-display text-4xl sm:text-5xl font-light text-center">Let's build something quiet.</h2>
+    <p class="mt-4 text-stone-600 dark:text-stone-400 text-center max-w-xl mx-auto">
+      Available for freelance full-stack and AI-automation work, plus full-time roles. Email me directly, message me on LinkedIn, or send a note below — I read every message and reply within a working day. Based in Maasim, Sarangani · +63 951 110 6262.
+    </p>
+
+    <div class="mt-8 text-center">
+      <a href="mailto:alamajacintg04@gmail.com" class="font-serif-display text-2xl gold-gradient-text hover:underline">alamajacintg04@gmail.com</a>
+    </div>
+
+    <form @submit.prevent="submitContact" class="mt-10 grid gap-5">
+      <div class="grid sm:grid-cols-2 gap-5">
+        <div>
+          <label for="c-name" class="block text-xs uppercase tracking-widest text-stone-500 mb-2">Your name</label>
+          <input id="c-name" x-model="contact.name" required type="text" class="w-full rounded-lg border hairline bg-transparent px-4 py-3 text-sm focus:outline-none" />
+        </div>
+        <div>
+          <label for="c-email" class="block text-xs uppercase tracking-widest text-stone-500 mb-2">Email</label>
+          <input id="c-email" x-model="contact.email" required type="email" class="w-full rounded-lg border hairline bg-transparent px-4 py-3 text-sm focus:outline-none" />
+        </div>
+      </div>
+      <div>
+        <label for="c-msg" class="block text-xs uppercase tracking-widest text-stone-500 mb-2">Message</label>
+        <textarea id="c-msg" x-model="contact.message" required rows="5" class="w-full rounded-lg border hairline bg-transparent px-4 py-3 text-sm focus:outline-none"></textarea>
+      </div>
+      <div class="flex items-center justify-between flex-wrap gap-3">
+        <p class="text-xs text-stone-500">Replies typically within 24 hours.</p>
+        <button type="submit" :disabled="contact.sending" class="inline-flex items-center gap-2 rounded-full gold-bg text-stone-950 px-6 py-3 text-sm font-medium hover:opacity-90 disabled:opacity-60 transition">
+          <span x-show="!contact.sending">Send message</span>
+          <span x-show="contact.sending">Sending…</span>
+          <i data-lucide="send" class="w-4 h-4"></i>
+        </button>
+      </div>
+    </form>
+
+    <div x-show="toast.visible" x-transition x-cloak class="fixed bottom-6 right-6 z-50 rounded-lg bg-emerald-600 text-white px-4 py-3 shadow-lg flex items-center gap-2">
+      <i data-lucide="check-circle-2" class="w-5 h-5"></i>
+      <span x-text="toast.message"></span>
+    </div>
+  </section>
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t hairline">
+    <div class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-10 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-stone-500">
+      <div>
+        <p class="font-serif-display gold-accent">Jacint Alama</p>
+        <p class="mt-1 text-xs">&copy; <span x-text="new Date().getFullYear()"></span> · All rights reserved · Last updated June 2026</p>
+      </div>
+      <div class="flex items-center gap-2 text-xs">
+        <span>Navigate:</span>
+        <span class="kbd">J</span>
+        <span class="kbd">K</span>
+      </div>
+      <div class="flex items-center gap-5">
+        <a href="https://github.com/jacintalama" target="_blank" rel="noopener" class="hover:gold-accent transition">GitHub</a>
+        <a href="https://linkedin.com/in/jacintalama" target="_blank" rel="noopener" class="hover:gold-accent transition">LinkedIn</a>
+        <a href="https://twitter.com/jacintalama" target="_blank" rel="noopener" class="hover:gold-accent transition">Twitter</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>
