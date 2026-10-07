@@ -1,0 +1,135 @@
+:root {
+    /* AIUI Cyan Circuit */
+    --base:      #0B1221;
+    --surface:   #101a2e;
+    --surface-2: #14203a;
+    --border:    #1e2d4a;
+    --border-2:  #2a3d61;
+    --text:      #E6F1FF;
+    --muted:     #8296b5;
+    --cyan:      #22D3EE;
+    --ok:        #34d399;
+    --warn:      #fbbf24;
+    --bad:       #fb7185;
+    --radius:    10px;
+    --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
+  }
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0; background: var(--base); color: var(--text);
+    font-family: var(--font-ui); font-size: 14px; line-height: 1.5;
+  }
+
+a { color: inherit; }
+
+.top {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 13px 20px; border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--surface), var(--base));
+    position: sticky; top: 0; z-index: 5;
+  }
+
+.mark {
+    width: 34px; height: 34px; border-radius: 9px; flex: none;
+    background: linear-gradient(140deg, var(--cyan), #3b82f6);
+    display: grid; place-items: center; color: #04121a; font-weight: 800;
+    font-size: 13px;
+  }
+
+h1 { font-size: 16px; margin: 0; letter-spacing: -.01em; }
+
+.online { color: var(--muted); font-size: 12.5px; display: flex; align-items: center; gap: 6px; }
+
+.top-right { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+
+.search {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text);
+    padding: 8px 12px; min-width: 210px; font: inherit;
+  }
+
+.search::placeholder { color: var(--muted); }
+
+.search:focus { outline: none; border-color: var(--cyan); }
+
+.btn {
+    background: var(--cyan); color: #04121a; border: 0; font: inherit;
+    font-weight: 700; padding: 8px 14px; border-radius: var(--radius);
+    cursor: pointer; text-decoration: none; display: inline-block;
+  }
+
+.btn.ghost { background: transparent; color: var(--text); border: 1px solid var(--border-2); font-weight: 600; }
+
+.btn:hover { filter: brightness(1.08); }
+
+.tab {
+    background: none; border: 0; border-bottom: 2px solid transparent;
+    color: var(--muted); font: inherit; padding: 7px 11px; cursor: pointer;
+  }
+
+.tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--cyan); }
+
+.wrap { display: flex; align-items: flex-start; }
+
+.main { flex: 1 1 auto; min-width: 0; padding: 18px 20px 24px; }
+
+/* --- the floor, top-down ------------------------------------------------
+     From the owner's own mockup. Top-down rather than isometric is why it
+     reads: a room is a plain rectangle you can put a label in, and an agent
+     is a circle at a position, with no rotation flattening either. Five
+     attempts at an isometric plate ended in "i cant understand!". */
+
+/* A robot stands rather than sits in a disc, so the tile is taller than it
+     is wide and the anchor point is its feet: an agent belongs to the spot on
+     the floor it is standing on. */
+
+/* The state light itself, wherever it is drawn: on a robot, in the live
+     strip, the activity list and the header. 6e3dda3c4 removed these with
+     the old cards, and every light on the page was an empty box after it. */
+  .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex: none; }
+
+.dot.ready { background: var(--ok); }
+
+.dot.working { background: var(--cyan); animation: pulse 1.4s ease-in-out infinite; }
+
+.dot.waiting { background: var(--warn); }
+
+.dot.failed { background: var(--bad); }
+
+.dot.idle { background: #3d4d6b; }
+
+/* The panel's state line, which lost its rule in the same commit: lit
+     again, its light would otherwise sit flush against the words. */
+  .st { display: flex; align-items: center; gap: 6px; }
+
+/* the state light, bottom-right, as in the mockup */
+
+.swatches { gap: 8px; }
+
+.swatch { width: 28px; height: 28px; border-radius: 50%; cursor: pointer;
+            border: 2px solid transparent; padding: 0; }
+
+.swatch[aria-current="true"] { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+.when { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
+
+.zoom { margin-left: auto; display: flex; gap: 4px; align-items: center; }
+
+.zoom-btn {
+    background: var(--surface-2); color: var(--text); font: inherit;
+    border: 1px solid var(--border-2); border-radius: 8px; cursor: pointer;
+    width: 26px; height: 26px; padding: 0; line-height: 1;
+  }
+
+.zoom-btn.wide { width: auto; padding: 0 9px; font-size: 12px; }
+
+.zoom-btn:hover { border-color: var(--cyan); color: var(--cyan); }
+
+#panel-office { position: relative; }
+
+/* Every loop on this floor runs for ever: breathe, bustle, blink, halo,
+     the dot's pulse and the talk line. None is the only place a state is
+     said (the dot colour and the label say it), so a person whose system
+     asks for less motion gets none, and a walking robot steps instead. */

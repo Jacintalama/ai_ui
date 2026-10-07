@@ -1,0 +1,82 @@
+/* Scaled as a whole rather than reflowed. The floor is drawn at one fixed
+     size and shrunk to whatever room it is given, so every room, robot and
+     label keeps its proportions and the WHOLE office is always visible. */
+  .floor-fit { position: relative; overflow: hidden; cursor: grab; }
+
+.floor-fit.panning { cursor: grabbing; }
+
+/* While the floor is being dragged, nothing under the pointer should
+     decide it was clicked. */
+  .floor-fit.panning .who, .floor-fit.panning a { pointer-events: none; }
+
+.floor {
+    position: absolute; top: 0; left: 0; transform-origin: 0 0;
+    /* Replaced inline on every draw by the size the rooms turned out to
+       need. These only have to stop the frame flashing at a wrong shape
+       before the first agent has been placed. */
+    width: 1240px; height: 420px;
+    border: 1px solid var(--border); border-radius: 18px; overflow: hidden;
+    background:
+      linear-gradient(90deg, rgba(230,241,255,.025) 1px, transparent 1px),
+      linear-gradient(rgba(230,241,255,.025) 1px, transparent 1px),
+      linear-gradient(145deg, #0d1b2d, #091522);
+    background-size: 44px 44px, 44px 44px, 100% 100%;
+  }
+
+.floor::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(circle at 50% 45%, transparent 35%, rgba(0,0,0,.30) 100%);
+  }
+
+.zone {
+    position: absolute; z-index: 2; border-radius: 14px;
+    /* The department's colour on all four sides at 1px, not a 3px stripe
+       down the left: DESIGN.md rules out side stripes as an accent. Mixed
+       into the plain border so six rooms do not read as six neon frames. */
+    border: 1px solid color-mix(in srgb, var(--glow, var(--cyan)) 55%, var(--border-2));
+    background: rgba(14,29,47,.72);
+    box-shadow: inset 0 0 45px rgba(74,105,157,.05);
+  }
+
+.zone-head {
+    position: absolute; left: 13px; top: 10px; right: 13px;
+    display: flex; align-items: baseline; gap: 4px 10px;
+    flex-wrap: wrap; overflow: hidden;
+  }
+
+.zone-head > span:first-child {
+    color: var(--glow, var(--cyan)); font-size: 10px; font-weight: 800;
+    letter-spacing: .12em; text-transform: uppercase;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+/* Always its own line, never sometimes. Left to wrap on its own the
+     stats sat beside a short department name and under a long one, so two
+     rooms side by side printed their numbers at different heights. */
+  .card-room {
+    flex: 0 0 100%; display: flex; justify-content: flex-end; gap: 10px;
+    font-size: 10px; color: var(--muted);
+  }
+
+.card-room b { color: var(--text); font-weight: 700; }
+
+.floor-bar {
+    position: absolute; z-index: 40; left: 16px; right: 16px; bottom: 14px;
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    /* A full width strip with transparent gaps must not swallow what is
+       under it: it was eating the Chat pill of whoever stood in the bottom
+       row, so clicking them did nothing at all. Only its own controls take
+       the pointer. */
+    pointer-events: none;
+  }
+
+.floor-bar .now {
+    padding: 8px 12px; border: 1px solid var(--border-2); border-radius: 10px;
+    background: rgba(6,14,25,.9); font-size: 11.5px; color: var(--muted);
+  }
+
+.floor-bar .now b { color: var(--text); }
+
+.floor-bar .right { margin-left: auto; display: flex; gap: 8px; }
+
+.floor-bar .now, .floor-bar a { pointer-events: auto; }

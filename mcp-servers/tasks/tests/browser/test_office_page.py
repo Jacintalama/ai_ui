@@ -88,11 +88,26 @@ def browser():
 def _serve(html: bytes):
     class Handler(http.server.SimpleHTTPRequestHandler):
         def do_GET(self):                                    # noqa: N802
+            # The page's stylesheet lives in static/office/ since 2026-10-08.
+            # A fixture that answered every path with the page itself would
+            # serve HTML where a stylesheet was asked for, and every geometry
+            # assertion here would be measuring an unstyled document. That
+            # has already happened once on this file.
+            path = self.path.split("?")[0]
+            body, kind = html, "text/html"
+            if "/office/" in path:
+                rel = path.split("/office/", 1)[1]
+                asset = STATIC / "office" / rel
+                if not asset.is_file():
+                    self.send_error(404, "no such asset: %s" % rel)
+                    return
+                body = asset.read_bytes()
+                kind = "text/css" if rel.endswith(".css") else "text/javascript"
             self.send_response(200)
-            self.send_header("Content-Type", "text/html")
-            self.send_header("Content-Length", str(len(html)))
+            self.send_header("Content-Type", kind)
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(html)
+            self.wfile.write(body)
 
         def log_message(self, *a):
             pass
@@ -1304,3 +1319,46 @@ def test_the_activity_card_never_covers_an_agent(page):
         "     out.push(w.dataset.id);"
         " } return out; }")
     assert over == [], over
+
+
+# --- the split stylesheet actually arrives ----------------------------------
+#
+# office.html was one 1832 line file until 2026-10-08. Splitting it means the
+# page now depends on ten separate requests, and a stylesheet that 404s makes
+# an unstyled page, not an error. Twice already a fixture here answered every
+# path with the page itself and the geometry tests measured a document with no
+# CSS at all, which passes nothing and fails nothing.
+
+def test_every_stylesheet_the_page_asks_for_arrives(page):
+    """A 404 on a stylesheet is silent in a browser. Ask the page what it
+    requested and confirm each one came back as CSS."""
+    hrefs = page.eval_on_selector_all(
+        "link[rel=stylesheet]", "els => els.map(e => e.getAttribute('href'))")
+    assert len(hrefs) >= 8, hrefs
+    for href in hrefs:
+        r = page.request.get(page.url.split("/office.html")[0] + href)
+        assert r.status == 200, (href, r.status)
+        assert "css" in (r.headers.get("content-type") or ""), (href, r.headers)
+
+
+def test_each_stylesheet_contributed_something(page):
+    """One rule from each file, so a sheet that loaded empty or was dropped
+    from the page cannot pass. Each assertion fails to a browser default."""
+    got = page.evaluate(
+        "() => {"
+        " const cs = s => { const e = document.querySelector(s);"
+        "   return e ? getComputedStyle(e) : null; };"
+        " const z = cs('.zone'), w = cs('.who-slot'), b = cs('.who svg.bot');"
+        " const st = cs('.strip'), si = cs('.side'), f = cs('#rooms');"
+        " return { room: z && z.borderRadius,"
+        "          agent: w && w.display,"
+        "          animations: b && b.animationName,"
+        "          panel: st && st.position,"
+        "          office: si && si.borderLeftStyle,"
+        "          floor: f && f.transformOrigin }; }")
+    assert got["room"] and got["room"] != "0px", got        # room.css
+    assert got["agent"] == "flex", got                      # agent.css
+    assert got["animations"] not in (None, "none"), got     # animations/idle.css
+    assert got["panel"] == "absolute", got                  # panel.css
+    assert got["office"] == "solid", got                    # office.css
+    assert got["floor"].startswith("0px"), got              # room.css transform-origin

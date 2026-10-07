@@ -82,7 +82,16 @@ def server():
             name = path.rsplit("/", 1)[-1]
             kind = "text/html"
             asset = STATIC / name
-            if name.endswith((".css", ".js")) and asset.is_file():
+            if "/office/" in path:
+                rel = path.split("/office/", 1)[1]
+                sub = STATIC / "office" / rel
+                if not sub.is_file():
+                    self.send_error(404, "no such asset: %s" % rel)
+                    return
+                body = sub.read_bytes()
+                kind = ("text/css" if rel.endswith(".css")
+                        else "text/javascript")
+            elif name.endswith((".css", ".js")) and asset.is_file():
                 body = asset.read_bytes()
                 kind = "text/css" if name.endswith(".css") else "text/javascript"
             elif path.startswith("/tasks/office"):

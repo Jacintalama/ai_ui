@@ -1,0 +1,111 @@
+/* One agent is one column: the robot, its name and its own Chat pill,
+     stacked in normal flow inside a slot the layout sized for it.
+
+     They used to be three absolutely positioned things with hand-tuned
+     offsets. The offsets stopped agreeing when the robot shrank, so the name
+     label and the Chat pill were drawn on top of each other, and a third
+     agent in one room was pushed out through the room's own wall. Flow
+     layout cannot overlap, and a slot the room reserved cannot spill. */
+  .who-slot {
+    position: absolute; z-index: 12;
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    transition: transform .9s cubic-bezier(.34,.1,.3,1);
+  }
+
+/* a desk behind each agent, so the room is furnished rather than empty */
+  .desk {
+    position: absolute; z-index: 0; left: 50%; width: 84px; height: 32px;
+    top: calc(var(--bot-h) - 20px); transform: translateX(-50%);
+    border: 1px solid #344a68; border-radius: 9px; background: #101f33;
+    box-shadow: 0 8px 18px rgba(0,0,0,.22);
+  }
+
+.desk::before {
+    content: ""; position: absolute; left: 13px; right: 13px; top: 7px; height: 16px;
+    border: 1px solid #425878; border-radius: 4px;
+    background: linear-gradient(145deg, #152b47, #0a1525);
+    box-shadow: inset 0 0 12px rgba(79,130,205,.14);
+  }
+
+/* Smaller than they were. Two agents in one room used to put their name
+     labels within about 108px of each other, and the floor reads as a plan
+     rather than a toy shelf when the robots are the size of the furniture
+     instead of the room. */
+  .who {
+    position: relative; z-index: 1; max-width: 100%;
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    background: none; border: 0; padding: 0;
+    cursor: pointer; font: inherit; color: inherit;
+  }
+
+/* The robot keeps its own box whatever the label beside it is called, so a
+     long agent name stretches the label and never the figure. */
+  .who svg.bot {
+    width: var(--bot-w); height: var(--bot-h);
+    display: block; overflow: visible; flex: 0 0 auto;
+  }
+
+.who[aria-current="true"] svg.bot { filter: drop-shadow(0 0 7px var(--cyan)); }
+
+.who .bot-think { animation: blink 2.2s ease-in-out infinite; }
+
+/* On the robot, not on the slot: the slot is as wide as the widest label
+     and the status light belongs to the figure. */
+  .who .dot {
+    position: absolute; z-index: 2; top: 8px;
+    left: calc(50% + var(--bot-w) / 2 - 14px);
+    width: 12px; height: 12px; border: 2px solid var(--base);
+  }
+
+.who[data-state="working"]::after {
+    content: ""; position: absolute; left: 50%; top: 8px;
+    width: 40px; height: 40px; margin-left: -20px; border-radius: 50%;
+    border: 2px solid var(--cyan); animation: halo 1.5s ease-out infinite;
+  }
+
+/* The tool a working agent is running right now, from the live feed. */
+  .who .tool-now {
+    position: absolute; top: -4px; left: 50%; transform: translateX(-50%);
+    z-index: 3; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; padding: 1px 6px; border-radius: 8px;
+    font: 600 10px/1.4 var(--font-ui); color: var(--text);
+    background: var(--surface); border: 1px solid var(--border);
+  }
+
+/* Never wider than the slot the room reserved. A name nobody predicted is
+     clipped with an ellipsis instead of reaching into the next agent. */
+  .who-label {
+    position: relative; z-index: 2; max-width: 100%;
+    display: flex; align-items: baseline; justify-content: center; gap: 5px;
+    white-space: nowrap; overflow: hidden;
+    padding: 3px 8px; border: 1px solid var(--border-2);
+    border-radius: 8px; background: rgba(7,15,27,.94);
+    font-size: 10px; font-weight: 600; color: var(--text); pointer-events: none;
+  }
+
+.who-label .card-name { overflow: hidden; text-overflow: ellipsis; }
+
+.who-label small {
+    color: var(--muted); font-weight: 500;
+    overflow: hidden; text-overflow: ellipsis; min-width: 0;
+  }
+
+/* A sibling of the robot, never a child: an <a> inside a <button> is
+     invalid and the browser resolves it by dropping one of the two. It is
+     the last thing in the slot, so nothing has to be told where to put it. */
+  .who-chat {
+    position: relative; z-index: 2; max-width: 100%;
+    text-decoration: none; white-space: nowrap; overflow: hidden;
+    padding: 2px 10px; border-radius: 999px;
+    border: 1px solid var(--border-2); background: rgba(7,15,27,.94);
+    font-size: 10px; font-weight: 600; color: var(--muted);
+  }
+
+.who-chat:hover { border-color: var(--cyan); color: var(--cyan); }
+
+/* Idle motion is the one animation here that states nothing, so it is the
+     one that needs no evidence behind it. Everything else on this floor has
+     to come from a row in the database. */
+  .who .bot { animation: breathe 3.4s ease-in-out infinite; }
+
+.who[data-state="working"] .bot { animation: bustle .9s ease-in-out infinite; }

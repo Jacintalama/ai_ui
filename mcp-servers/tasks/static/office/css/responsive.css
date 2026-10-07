@@ -1,0 +1,23 @@
+/* Loaded LAST, and that is the whole point.
+   A media query adds no specificity. `@media (max-width: 1080px) { .side
+   {...} }` sat in the base sheet while .side's own rules moved to panel.css,
+   which loads after it, so the plain rule would have won and the column
+   layout would have quietly stopped working at narrow widths. Order is the
+   only thing deciding this, so these come after every component. */
+
+@media (max-width: 1080px) {
+    .wrap { flex-direction: column; }
+    /* .wrap is align-items:flex-start, which in a column makes every child
+       as wide as its own content instead of the row. The floor collapsed to
+       about 230px inside a 675px frame and the rooms piled onto each other. */
+    .main { width: 100%; }
+    .side { flex: 1 1 auto; border-left: 0; border-top: 1px solid var(--border);
+            position: static; max-height: none; width: 100%; }
+  }
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
