@@ -248,12 +248,25 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   //: slot is in normal flow: the robot, then the name, then the Chat pill.
   //: Nothing here is told where to put itself, which is why nothing here can
   //: land on top of anything else.
-  function whoHtml(m, slot) {
+  //: Where an agent stands. Changed on its own, so the node moves rather
+  //: than being rebuilt somewhere else: a replaced node starts life at the
+  //: new coordinates and jumps, and no transition can animate that.
+  function placeSlot(el, slot) {
+    el.style.left = slot.left + "px";
+    el.style.top = slot.top + "px";
+  }
+
+  //: What an agent shows. Rebuilt only when one of these actually changed,
+  //: because replacing it mid-walk restarts the walk.
+  function slotSignature(m) {
+    var st = stateOf(m.id);
+    return [m.id, m.name, roleOf(m), st.key, st.label, colourOf(m.id),
+            S.SELECTED === m.id, S.TOOL_NOW[m.id] || ""].join("");
+  }
+
+  function slotInner(m) {
     var st = stateOf(m.id), c = colourOf(m.id);
-    return '<div class="who-slot" data-id="' + esc(m.id) + '"' +
-      ' style="left:' + slot.left + 'px;top:' + slot.top + 'px;width:' + SLOT_W +
-        'px;--bot-w:' + BOT_W + 'px;--bot-h:' + BOT_H + 'px">' +
-      '<div class="desk"></div>' +
+    return '<div class="desk"></div>' +
       '<button class="who" data-id="' + esc(m.id) + '" data-state="' + st.key + '"' +
       (S.SELECTED === m.id ? ' aria-current="true"' : "") +
       // No background: the robot IS the avatar now. The colour stays as the
@@ -278,8 +291,47 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
       '<a class="who-chat" data-id="' + esc(m.id) + '" target="_top"' +
         ' title="Ask ' + esc(m.name || m.id) + ' on their own"' +
         ' href="/tasks/agents?ask=' +
-        encodeURIComponent((m.name || m.id) + ", ") + '">Chat</a>' +
-      '</div>';
+        encodeURIComponent((m.name || m.id) + ", ") + '">Chat</a>';
+  }
+
+  //: Bring the agents layer in line with the plan, WITHOUT rebuilding it.
+  //: Nodes that already exist are moved and left alone; only an agent that
+  //: is new gets created, and only one whose signature changed is redrawn.
+  function syncAgents(slots) {
+    var layer = document.getElementById("agents-layer");
+    if (!layer) return;
+    var seen = {};
+    slots.forEach(function (slot) {
+      var m = slot.m, id = m.id;
+      seen[id] = 1;
+      var el = layer.querySelector('.who-slot[data-id="' +
+        (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
+      if (!el) {
+        el = document.createElement("div");
+        el.className = "who-slot";
+        el.setAttribute("data-id", id);
+        el.style.width = SLOT_W + "px";
+        el.style.setProperty("--bot-w", BOT_W + "px");
+        el.style.setProperty("--bot-h", BOT_H + "px");
+        // Placed before it is in the document, so it does not animate in
+        // from the corner the first time it is drawn.
+        placeSlot(el, slot);
+        el.innerHTML = slotInner(m);
+        el.setAttribute("data-sig", slotSignature(m));
+        layer.appendChild(el);
+        return;
+      }
+      placeSlot(el, slot);
+      var sig = slotSignature(m);
+      if (el.getAttribute("data-sig") !== sig) {
+        el.innerHTML = slotInner(m);
+        el.setAttribute("data-sig", sig);
+      }
+    });
+    // An agent the search no longer matches, or one that was deleted.
+    Array.prototype.slice.call(layer.children).forEach(function (el) {
+      if (!seen[el.getAttribute("data-id")]) el.remove();
+    });
   }
 
   //: How long a handoff keeps two robots visibly together. The server only
@@ -306,6 +358,17 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   //: standing beside a colleague long after the fact is the staleness lie
   //: this floor is supposed to avoid.
   function walkThem() {
+    // Clear first. The floor used to be rebuilt by innerHTML on every draw,
+    // which wiped these inline transforms for free; the agents layer now
+    // survives, so a nudge that is never cleared leaves a robot standing
+    // beside a colleague long after the handoff ended. That is the exact
+    // staleness this function's own comment says it exists to avoid.
+    var layer = document.getElementById("agents-layer");
+    if (layer) {
+      Array.prototype.forEach.call(layer.children, function (el) {
+        el.style.transform = "";
+      });
+    }
     S.HANDOFFS.forEach(function (h) {
       if (!h || !h.from || !h.to || h.from === h.to || !_fresh(h)) return;
       var a = S.AT[h.from], b = S.AT[h.to];
@@ -434,13 +497,12 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
         '</span></div></section>';
     }).join("");
 
-    // Agents sit above the rooms, so a label is never clipped by a wall.
-    html += plan.rooms.map(function (r) {
-      return r.slots.map(function (slot) {
-        markAt(slot);
-        return whoHtml(slot.m, slot);
-      }).join("");
-    }).join("");
+    // The agents are NOT part of this string. They live in their own layer
+    // so that redrawing a room does not rebuild a robot mid-walk.
+    var allSlots = [];
+    plan.rooms.forEach(function (r) {
+      r.slots.forEach(function (slot) { markAt(slot); allSlots.push(slot); });
+    });
 
     var working = shown.filter(function (m) { return stateOf(m.id).key === "working"; }).length;
     var newest = recentRows()[0];
@@ -467,7 +529,8 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
           '<a class="btn ghost" target="_top" href="/tasks/agents">Open the chat</a>') +
       '</span></div>';
 
-    document.getElementById("rooms").innerHTML = html + talkHtml();
+    document.getElementById("floor-rooms").innerHTML = html + talkHtml();
+    syncAgents(allSlots);
     walkThem();
     // The canvas just changed shape, so whatever scale was on it is stale.
     drawZoom();

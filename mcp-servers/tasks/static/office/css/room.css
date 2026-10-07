@@ -80,3 +80,16 @@
 .floor-bar .right { margin-left: auto; display: flex; gap: 8px; }
 
 .floor-bar .now, .floor-bar a { pointer-events: auto; }
+
+
+/* The two layers inside the floor. Both fill it, so a child positioned at
+   left:120px;top:40px lands in the same place in either one. */
+.floor-rooms, .agents-layer {
+  position: absolute; inset: 0;
+}
+/* Agents sit above the rooms, so a name label is never clipped by a wall.
+   The layer itself takes no pointer events; the robots and their Chat
+   pills take their own, or the layer would swallow a click meant for the
+   room underneath. */
+.agents-layer { z-index: 12; pointer-events: none; }
+.agents-layer .who-slot { pointer-events: auto; }

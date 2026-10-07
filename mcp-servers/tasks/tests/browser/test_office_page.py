@@ -948,7 +948,11 @@ def test_the_walk_is_undone_when_the_handoff_goes_stale(page):
         status=200, content_type="application/json",
         body=json.dumps({"activity": ACTIVITY, "handoffs": []})))
     page.evaluate("() => window.aiuiRefreshOffice()")
-    page.wait_for_timeout(400)
+    # Long enough for the walk BACK. The agents layer survives a redraw now,
+    # so clearing the nudge animates home over the .9s transition instead of
+    # the node being replaced and teleporting. Measured at 400ms it was still
+    # 7px out, which is the walk working, not the clear failing.
+    page.wait_for_timeout(1300)
     assert page.locator('.who-slot[data-id="agent-research-assistant-0001"]'
                         ).evaluate("el => getComputedStyle(el).transform") == "none"
     assert page.locator(".talk-line").count() == 0

@@ -88,7 +88,18 @@
     </div>
 
     <div id="panel-office">
-      <div class="floor-fit" id="floor-fit"><div class="floor" id="rooms"></div></div>
+      <div class="floor-fit" id="floor-fit">
+        <div class="floor" id="rooms">
+          <!-- Two layers, and the split is what lets an agent walk.
+               The rooms are redrawn wholesale on every change; the agents
+               are not. A node replaced by innerHTML starts life at its new
+               position, so it jumps instead of moving, and no CSS
+               transition can help it. These nodes are created once and
+               only ever have their coordinates changed. -->
+          <div class="floor-rooms" id="floor-rooms"></div>
+          <div class="agents-layer" id="agents-layer"></div>
+        </div>
+      </div>
       <!-- Inside the floor's own box so it can be laid over it on the full
            page, and still simply under it in the dock, where the floor is
            only about 200px tall and an overlay would cover the agents it is
