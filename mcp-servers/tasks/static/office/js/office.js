@@ -128,7 +128,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   //: rather than left to overlap: a card sitting on a room hides the agent
   //: it is reporting on, which is the opposite of what it is for. Zero in
   //: the dock, where the card is under the floor and not over it.
-  var TOP_RESERVE = 150;
+  var TOP_RESERVE = 120;
   function topReserve() {
     try {
       return document.documentElement.classList.contains("embed") ? 0 : TOP_RESERVE;
@@ -848,6 +848,33 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   //: that did not add it back, so the office asked its host for a card
   //: exactly the live activity strip too short, and Fit came out at two
   //: thirds of the height it had sized itself for.
+  //: The height a person can actually see of this document.
+  //:
+  //: Walks up through same-origin frames, intersecting each frame's box with
+  //: its parent's viewport, so a pane taller than the window reports the
+  //: window. Falls back to this document's own height the moment anything is
+  //: unreadable, which is every case this did not use to handle.
+  function visibleHeight() {
+    var h = window.innerHeight || CANVAS_H;
+    try {
+      var w = window, top = 0, bottom = h;
+      while (w !== w.top) {
+        var f = w.frameElement;
+        if (!f) break;                       // framed by another origin
+        var r = f.getBoundingClientRect();
+        var p = w.parent;
+        var ph = p.innerHeight || r.height;
+        // This frame's visible slice, in the parent's coordinates.
+        var vTop = Math.max(r.top, 0), vBottom = Math.min(r.bottom, ph);
+        var slice = vBottom - vTop;
+        if (slice > 0 && slice < bottom - top) bottom = top + slice;
+        w = p;
+      }
+      h = Math.min(h, bottom - top);
+    } catch (e) { /* an ancestor we may not read: the frame's own height */ }
+    return Math.max(160, h);
+  }
+
   function fitBox() {
     var fit = document.getElementById("floor-fit");
     if (!fit) return null;
@@ -888,8 +915,20 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
       }
       node = node.parentElement;
     }
-    var h = Math.max(160,
-                     (window.innerHeight || CANVAS_H) - top - below - 16);
+    //: How tall the window is, or the visible part of it when this page is
+    //: a frame inside another.
+    //:
+    //: In the shell the office is a pane: an iframe at height:100%, and
+    //: window.innerHeight inside it is the IFRAME's height, not what anyone
+    //: can see. When the shell's own page is taller than the browser window,
+    //: the floor sized itself to a box whose bottom is below the fold and
+    //: the bar along its bottom was sliced in half (owner's screenshot,
+    //: 2026-10-08, at /ai-agents/office).
+    //:
+    //: Same origin, so the frames can be measured. Cross-origin throws and
+    //: an ancestor that will not be read leaves the plain height, which is
+    //: what this always did.
+    var h = Math.max(160, visibleHeight() - top - below - 16);
     return { w: w, h: h, top: top, below: below };
   }
 

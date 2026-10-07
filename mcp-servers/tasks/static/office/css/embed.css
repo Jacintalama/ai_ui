@@ -1,3 +1,9 @@
+/* Both sides of the embed distinction, not just the embedded one.
+   `html.embed` rules dress the office as a pane in the agents column;
+   `html:not(.embed)` rules dress it as the whole page. They live together
+   because they answer the same question, and because this file loads after
+   every component so either side wins on order as well as specificity. */
+
 html.embed .side-shut { display: block; }
 
 /* On the whole page the floor is the page, so the activity feed stops
@@ -11,7 +17,7 @@ html.embed .side-shut { display: block; }
      cover most of it. */
   html:not(.embed) .strip {
     position: absolute; z-index: 45; top: 14px; right: 14px;
-    width: min(284px, 30%); max-height: 150px;
+    width: min(284px, 30%); max-height: 128px;
     display: flex; flex-direction: column;
     margin: 0; padding: 10px 12px 12px;
     border: 1px solid var(--border-2); border-top: 1px solid var(--border-2);

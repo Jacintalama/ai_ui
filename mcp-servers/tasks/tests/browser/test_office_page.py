@@ -95,7 +95,19 @@ def _serve(html: bytes):
             # has already happened once on this file.
             path = self.path.split("?")[0]
             body, kind = html, "text/html"
-            if "/office/" in path:
+            if path.startswith("/tall-frame"):
+                # The shell: the office is a pane, an iframe at height:100%
+                # of a container taller than the window. Inside it
+                # window.innerHeight is the IFRAME's height, not what anyone
+                # can see.
+                body = (b'<!doctype html><title>shell</title>'
+                        b'<style>html,body{margin:0;background:#000}'
+                        b'.pane{height:1600px}</style>'
+                        b'<div class="pane">'
+                        b'<iframe src="/office.html" '
+                        b'style="width:100%;height:100%;border:0"></iframe>'
+                        b'</div>')
+            elif "/office/" in path:
                 rel = path.split("/office/", 1)[1]
                 asset = STATIC / "office" / rel
                 if not asset.is_file():
@@ -1362,3 +1374,52 @@ def test_each_stylesheet_contributed_something(page):
     assert got["panel"] == "absolute", got                  # panel.css
     assert got["office"] == "solid", got                    # office.css
     assert got["floor"].startswith("0px"), got              # room.css transform-origin
+
+
+def test_the_floor_fits_what_is_visible_not_the_frame_it_is_in(browser):
+    """In the shell the office is a pane: an iframe at height:100% of a
+    container taller than the browser window. window.innerHeight inside that
+    iframe is the iframe's height, so the floor sized itself to a box whose
+    bottom was below the fold and the bar along it was sliced in half
+    (owner's screenshot, 2026-10-08, at /ai-agents/office)."""
+    srv = _serve((STATIC / "office.html").read_bytes())
+    ctx = browser.new_context(viewport={"width": 1500, "height": 800})
+    pg = ctx.new_page()
+    pg.set_default_timeout(8000)
+
+    def route(r):
+        url = r.request.url
+        # Seven agents, not two. With two the floor is small enough to fit
+        # inside the window whatever height it thinks it has, so the bug
+        # cannot show and this passed against the broken build.
+        body = ({"items": CROWD, "total": len(CROWD)} if "/models/list" in url
+                else {"activity": {}, "handoffs": []} if "/agents/activity" in url
+                else {"stats": {}} if "/agents/stats" in url
+                else {"skills": {}} if "/agents/skills" in url else {})
+        r.fulfill(status=200, content_type="application/json",
+                  body=json.dumps(body))
+
+    pg.route("**/api/**", route)
+    try:
+        pg.goto("http://127.0.0.1:%d/tall-frame" % srv.server_address[1])
+        frame = pg.frame_locator("iframe")
+        frame.locator(".who").first.wait_for(state="visible")
+        # The floor draws, then re-fits once the reads land. Measured too
+        # early this passed on the broken build too, because the box had not
+        # yet grown to the iframe's height.
+        pg.wait_for_timeout(2500)
+        got = pg.frame(url=lambda u: "office.html" in u).evaluate(
+            "() => {"
+            " const f = document.getElementById('floor-fit').getBoundingClientRect();"
+            " const r = document.getElementById('rooms').getBoundingClientRect();"
+            " return { iframeHeight: window.innerHeight,"
+            "          floorBottom: Math.round(f.top + f.height),"
+            "          clipped: Math.round(r.bottom - f.bottom) > 1 }; }")
+        # The iframe really is the tall one, or this proves nothing.
+        assert got["iframeHeight"] > 1200, got
+        # ...and the floor still ends inside what a 800px window can show.
+        assert got["floorBottom"] <= 800, got
+        assert not got["clipped"], got
+    finally:
+        ctx.close()
+        srv.shutdown()
