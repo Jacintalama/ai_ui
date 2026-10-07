@@ -62,7 +62,14 @@ logger = logging.getLogger(__name__)
 #: these do not. The cut-off test in test_agent_activity reads those settings
 #: from wherever it runs, so run it where the settings differ before trusting
 #: these numbers there.
-STALE_AFTER_CHANNEL = timedelta(minutes=21)
+#:
+#: Twenty three, not twenty one, because the free pool grew from three ids
+#: to four on 2026-09-28 (6182406aa) and nothing raised this with it. Each
+#: id costs one more write-up, so the worst turn went from 1170 seconds to
+#: 1290, and twenty one minutes stopped clearing it at all, never mind by a
+#: round. A chat turn past twenty one minutes has been reported as failed
+#: while it was still working ever since.
+STALE_AFTER_CHANNEL = timedelta(minutes=23)
 
 #: A scheduled run uses MAX_TOOL_ITERATIONS (8) and HTTP_TIMEOUT_SECONDS
 #: (240), so twenty minutes of model time alone is healthy before a single
@@ -81,7 +88,17 @@ STALE_AFTER_CHANNEL = timedelta(minutes=21)
 #: three paid rounds, a paid write-up that times out and a free write-up
 #: that spends all three free ids, all at 240 seconds, is 3600 seconds,
 #: sixty minutes, and a round of headroom is sixty four.
-STALE_AFTER_SCHEDULE = timedelta(minutes=65)
+#:
+#: Seventy, not sixty five, for the fourth free id: the count above spends
+#: "all three free ids", and there are four since 6182406aa, which is one
+#: more 240 second write-up. Eight free rounds, three paid rounds, a paid
+#: write-up and a free write-up that spends four ids is 3840 seconds, and a
+#: round of headroom is 4080, sixty eight minutes.
+#:
+#: Both of these follow len(FREE_MODELS). Growing the pool grows every
+#: worst case here, and the two cut-off tests are what say so: they have
+#: been red since the pool grew and nobody ran them.
+STALE_AFTER_SCHEDULE = timedelta(minutes=70)
 
 SOURCE_SCHEDULE = "schedule"
 SOURCE_CHANNEL = "channel"
