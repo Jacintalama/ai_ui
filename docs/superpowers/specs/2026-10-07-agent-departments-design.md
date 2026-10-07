@@ -181,3 +181,19 @@ The collaboration choreography, which is the next piece: agents walking to the
 colleague they are asking, talking there, and walking back. It is listed third
 in the owner's order and wants rooms to be real first, so that an agent walks
 to where it was actually put.
+
+**The meeting table belongs to that piece, not this one.** Decided 2026-10-07:
+when a meeting is called, a table appears in the clear band above the rooms,
+the answering agents walk to it, and it goes away when they are done, so its
+presence always means a meeting is happening right now. It is the same
+mechanic as the handoff walk, which is why it travels with it rather than
+becoming a department.
+
+It needs one thing this spec does not provide and nothing else records:
+**a meeting currently leaves no trace.** `agent_routing.calls_a_meeting()`
+detects one and makes every agent answer, but `start_run` writes only
+`source`, which is `channel`, `schedule` or `colleague`. Five agents convened
+in one meeting are indistinguishable from five answering separately. A run
+started by the meeting rung must record `source = "meeting"`, reusing the
+existing column, before any table can be drawn from fact rather than guessed
+from five runs beginning at once.
