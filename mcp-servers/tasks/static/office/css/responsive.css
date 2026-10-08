@@ -21,3 +21,25 @@
       transition: none !important;
     }
   }
+
+/* --- the office on its own page is one screen ------------------------------
+   The floor stretches to the shape of its box rather than being scaled into
+   it, so there is no off-screen floor: the zoom buttons and the drag would
+   both be reaching for something that is not there, and the page itself has
+   nothing to scroll.
+
+   The DOCK is excluded, and keeps both. It is a few hundred pixels tall, the
+   plan really is bigger than it, and panning around it is how you see the
+   rest.
+
+   A phone is excluded too, deliberately: the agent card stacks under the
+   floor at that width, and pinning the page to one screen would put it
+   somewhere nobody could reach. */
+@media (min-width: 721px) {
+  html:not(.embed), html:not(.embed) body { height: 100%; overflow: hidden; }
+  html:not(.embed) body { display: flex; flex-direction: column; }
+  html:not(.embed) .wrap { flex: 1 1 auto; min-height: 0; }
+  html:not(.embed) .main { min-height: 0; }
+  html:not(.embed) .zoom { display: none; }
+  html:not(.embed) .floor-fit { cursor: default; }
+}

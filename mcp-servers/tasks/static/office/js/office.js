@@ -157,31 +157,20 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   //: it is reporting on, which is the opposite of what it is for. Zero in
   //: the dock, where the card is under the floor and not over it.
   var TOP_RESERVE = 120;
-  //: The table's own height, reserved under the agents standing at it.
-  var TABLE_H = 34;
-  //: Is anybody actually in a meeting? Read here rather than passed in,
-  //: because the band's height has to be decided before the rooms are laid
-  //: out and the activity is already known by then.
-  function meetingCount() {
-    var n = 0;
-    for (var id in S.ACTIVITY) {
-      if (Object.prototype.hasOwnProperty.call(S.ACTIVITY, id)
-          && inMeeting(id)) n++;
-    }
-    return n;
-  }
+  //: The room a meeting happens in. A FIXTURE on the floor from 2026-10-08:
+  //: drawn whether or not anybody is in it, because a room people are called
+  //: to has to be somewhere they can already see. Every other room still
+  //: appears only when somebody works in it.
+  var MEETING_KEY = "meeting";
 
   function topReserve() {
     try {
       if (document.documentElement.classList.contains("embed")) return 0;
-      // Enough to STAND in while a meeting runs, not just enough to float a
-      // card in. At 120 the agents' name labels and Chat pills hung over the
-      // room headings below them, because a whole slot is taller than that.
-      // Two rows and the table between them, when there is more than one
-      // person at it. One person does not need a far side.
-      var n = meetingCount();
-      if (!n) return TOP_RESERVE;
-      return n > 1 ? SLOT_H * 2 + TABLE_H + 22 : SLOT_H + TABLE_H + 18;
+      // Just the live activity card's corner now. The band used to grow to
+      // stand a whole meeting in, because the table floated above the rooms;
+      // the meeting happens in a room on the plan since 2026-10-08, so the
+      // floor no longer reshapes itself when one is called.
+      return TOP_RESERVE;
     } catch (e) { return 0; }
   }
   //: The canvas used to be a fixed 1040px, so the bottom strip always had
@@ -198,6 +187,83 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   //: The shape that shows the floor largest in the room it has. Ties and a
   //: missing box both fall back to the first candidate, so this can never
   //: return nothing.
+  //: Is this the small card on the agents page, or the office itself? The
+  //: two want opposite things from the same floor: a dock is a few hundred
+  //: pixels tall, so it scales the plan down and lets you zoom and drag
+  //: around it, while the full page has room to show the whole thing and
+  //: should simply show it.
+  function embedded() {
+    try { return document.documentElement.classList.contains("embed"); }
+    catch (e) { return false; }
+  }
+
+  //: Stretch the chosen plan until it is the shape of the box it will be
+  //: drawn in, so no strip of floor is left empty down one side and there is
+  //: nothing off-screen to go and look for. bestLayout still CHOOSES on the
+  //: unstretched plans, which is the right order: pick the arrangement that
+  //: fits best, then let it fill.
+  //:
+  //: Full page only. In the dock the plan is deliberately smaller than the
+  //: card, which is what the zoom and the drag are for.
+  function spreadSlots(r, left, w) {
+    // The agents keep their spacing and stay centred in the room they are
+    // standing in, so widening a room does not strand them against a wall.
+    var d = (left + w / 2) - (r.left + r.w / 2);
+    r.slots.forEach(function (s) { s.left = Math.round(s.left + d); });
+  }
+
+  function fillTheBox(plan) {
+    var box = fitBox();
+    if (embedded() || !box || !plan || !plan.rooms || !plan.rooms.length) return plan;
+
+    var rows = {}, order = [];
+    plan.rooms.forEach(function (r) {
+      if (!rows[r.top]) { rows[r.top] = []; order.push(r.top); }
+      rows[r.top].push(r);
+    });
+    order.sort(function (a, b) { return a - b; });
+
+    var aspect = box.w / box.h;
+    var W = Math.max(plan.w, plan.h * aspect);
+    var H = Math.max(plan.h, plan.w / aspect);
+
+    // Across: every row spans the whole band, each room taking the share of
+    // the extra that its own width already earned, so a room holding three
+    // people stays wider than one holding one.
+    order.forEach(function (key) {
+      var row = rows[key].sort(function (a, b) { return a.left - b.left; });
+      var avail = W - BAND_PAD * 2 - ROOM_GAP * (row.length - 1);
+      var sum = row.reduce(function (a, r) { return a + r.w; }, 0);
+      var f = sum > 0 ? avail / sum : 1;
+      var x = BAND_PAD;
+      row.forEach(function (r) {
+        var w = Math.round(r.w * f);
+        spreadSlots(r, x, w);
+        r.left = x; r.w = w;
+        x += w + ROOM_GAP;
+      });
+    });
+
+    // Down: the rows share what is left evenly, and each room's agents are
+    // re-centred in the taller room rather than left clinging to its ceiling.
+    var extra = H - plan.h;
+    if (extra > 0) {
+      var per = extra / order.length, dy = 0;
+      order.forEach(function (key) {
+        rows[key].forEach(function (r) {
+          var lift = Math.round(per / 2);
+          r.top = Math.round(r.top + dy);
+          r.h = Math.round(r.h + per);
+          r.slots.forEach(function (s) { s.top = Math.round(s.top + dy + lift); });
+        });
+        dy += per;
+      });
+    }
+    plan.w = Math.round(W);
+    plan.h = Math.round(H);
+    return plan;
+  }
+
   function bestLayout(rooms) {
     var box = fitBox(), best = null, bestK = -1;
     // Both the shape of a room and the shape of the PLAN are tried: how many
@@ -215,7 +281,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
         if (k > bestK + 0.001) { bestK = k; best = plan; }
       }
     }
-    return best;
+    return fillTheBox(best);
   }
 
   //: One room, sized to the agents in it, and where each of them stands.
@@ -299,7 +365,8 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
             top: innerTop + row2 * (SLOT_H + SLOT_GAP_Y),
           };
         });
-        out.push({ z: rm.z, of: rm.of, left: left, top: top,
+        out.push({ z: rm.z, of: rm.of, residents: rm.residents,
+                   left: left, top: top,
                    w: b.w, h: rowH[ri], slots: slots });
       });
       y += rowH[ri] + ROOM_GAP;
@@ -336,7 +403,10 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   //: How long the slot's own left/top transition runs. The walk animation
   //: is taken off when the journey ends, so a bobbing robot always means
   //: one is actually on its way somewhere.
-  var WALK_MS = 850;
+  //: Raised from 850 with the distances: these are journeys across the floor
+  //: now, not a nudge to the next desk, and at .85s one was over before the
+  //: eye found it. Kept in step with the transition in agent.css.
+  var WALK_MS = 2300;
 
   function placeSlot(el, slot) {
     var moved = el.isConnected &&
@@ -400,38 +470,11 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
     return !!(a && a.state === "working" && a.source === "meeting");
   }
 
-  //: Where the table stands: the middle of the clear band above the rooms,
-  //: which is the only part of the canvas no room occupies.
-  //: The right hand strip the live activity card sits over. The row of
-  //: agents keeps out of it, or the last two at the table stand behind it.
-  var CARD_ZONE = 320;
-
-  //: Seats round the table rather than in a line. Half stand along the top
-  //: edge and half along the bottom, which is what a table looks like with
-  //: people at it, and it halves how wide the gathering has to be.
-  function meetingRows(total) {
-    var top = Math.ceil(total / 2);
-    return { top: top, bottom: total - top };
-  }
-
-  function meetingSeat(i, total) {
-    var rows = meetingRows(total);
-    var atBottom = i >= rows.top;
-    var n = atBottom ? rows.bottom : rows.top;
-    var k = atBottom ? i - rows.top : i;
-    // The row gets the band minus the card's corner. Seats are a slot apart
-    // where there is room and squeezed evenly where there is not: seven
-    // agents at 0.72 of a slot overlapped by a quarter each and read as a
-    // pile rather than a table.
-    var usable = Math.max(SLOT_W, CANVAS_W - CARD_ZONE - BAND_PAD * 2);
-    var step = n > 1 ? Math.min(SLOT_W + 8, (usable - SLOT_W) / (n - 1)) : 0;
-    var span = (n - 1) * step;
-    var cx = BAND_PAD + usable / 2;
-    return {
-      left: Math.round(cx - span / 2 + k * step - SLOT_W / 2),
-      top: atBottom ? BAND_PAD + SLOT_H + TABLE_H + 4 : BAND_PAD,
-    };
-  }
+  //: The seat geometry that used to live here is gone (2026-10-08). The
+  //: table floated in a clear band above the rooms and the agents were
+  //: placed around it by hand, which meant a meeting happened in a place
+  //: that was not on the floor plan. They walk into the meeting room now
+  //: and stand in ordinary slots, so there is nothing left to compute.
 
   //: Bring the agents layer in line with the plan, WITHOUT rebuilding it.
   //: Nodes that already exist are moved and left alone; only an agent that
@@ -485,10 +528,23 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   }
 
 
-  //: How far along the line an asking robot walks. Not all the way: it has to
-  //: stay in its own room to still read as who and where it is, and two
-  //: robots standing on the same spot is a pile rather than a conversation.
-  var WALK_FRACTION = 0.28;
+  //: How far along the line an asking robot walks. Changed 2026-10-08 from a
+  //: FRACTION of the journey to a fixed GAP at the far end, because a
+  //: fraction cannot be right for both lengths: 0.28 of a long walk stopped
+  //: in open floor, and the 0.82 that fixed that landed the walker on top of
+  //: a colleague at the next desk, name chips and all.
+  //:
+  //: The gap is measured from the FIGURE and not from the slot. A slot is
+  //: 140px of mostly padding, so leaving a whole one meant a short trip
+  //: ended before the walker had even left its own room, which is what the
+  //: owner saw and reported as "they are not moving or going to each other".
+  function walkFraction(a, b) {
+    var px = (b.x - a.x) * CANVAS_W / 100;
+    var py = (b.y - a.y) * CANVAS_H / 100;
+    var len = Math.sqrt(px * px + py * py);
+    if (!len) return 0;
+    return Math.max(0, len - (BOT_W + 34)) / len;
+  }
 
   //: Move the asking robot toward the colleague it is actually waiting on.
   //: Applied after the rooms are drawn, so it rides the .who transition and
@@ -518,8 +574,9 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
       // with whoever is standing there now, which is nobody.
       var who = document.querySelector('.who-slot[data-id="' + id + '"]');
       if (!who) return;
-      var dx = (b.x - a.x) * CANVAS_W / 100 * WALK_FRACTION;
-      var dy = (b.y - a.y) * CANVAS_H / 100 * WALK_FRACTION;
+      var f = walkFraction(a, b);
+      var dx = (b.x - a.x) * CANVAS_W / 100 * f;
+      var dy = (b.y - a.y) * CANVAS_H / 100 * f;
       who.style.transform =
         "translate(" + Math.round(dx) + "px," + Math.round(dy) + "px)";
     });
@@ -559,8 +616,9 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
       // Placed where the robot WILL be, not where its desk is: walkThem
       // moves the robot the same fraction along this line, and a bubble left
       // behind at the desk reads as somebody else talking.
-      var sayX = a.x + (b.x - a.x) * WALK_FRACTION;
-      var sayY = a.y + (b.y - a.y) * WALK_FRACTION;
+      var sf = walkFraction(a, b);
+      var sayX = a.x + (b.x - a.x) * sf;
+      var sayY = a.y + (b.y - a.y) * sf;
       out += '<div class="say' + cls + '" style="left:' + sayX + '%;top:' +
         sayY + '%;margin-top:-46px">' +
         esc(refused ? "Could not reach " + to : "Asking " + to + "…") +
@@ -594,11 +652,34 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
       (byZone[z.key] = byZone[z.key] || { z: z, of: [] }).of.push(m);
     });
 
-    // Only rooms somebody works in. An empty room is scenery, and six of them
-    // is what made the earlier floor unreadable.
+    // Whoever is in a meeting is IN THE MEETING ROOM, not at their desk.
+    // Moving them here, BEFORE the layout runs, is the whole mechanism: a
+    // room is however big the agents in it make it, so the meeting room
+    // grows to hold everybody, their slots are ordinary slots in it, and the
+    // change of coordinates IS the walk there. No seat geometry of its own,
+    // no band floating above the floor, and they arrive somewhere that is
+    // really on the plan rather than hovering over it.
+    var met = [], here = {};
+    Object.keys(byZone).forEach(function (k) {
+      here[k] = byZone[k].of.filter(function (m) {
+        if (!inMeeting(m.id)) return true;
+        met.push(m);
+        return false;
+      });
+    });
+
+    // Only rooms somebody works in, plus the meeting room, which is always
+    // there. A room whose people are all in the meeting stays on the plan
+    // with its desks visibly empty, which is the point: you can see they
+    // left. `residents` is who DESKS here and `of` is who is standing here
+    // now, so a room's totals stay its own while a meeting is running.
     var occupied = ZONES.concat([LOUNGE])
-      .filter(function (z) { return byZone[z.key]; })
-      .map(function (z) { return { z: z, of: byZone[z.key].of }; });
+      .filter(function (z) { return z.key === MEETING_KEY || byZone[z.key]; })
+      .map(function (z) {
+        var mine = here[z.key] || [];
+        return { z: z, residents: (byZone[z.key] && byZone[z.key].of) || [],
+                 of: z.key === MEETING_KEY ? mine.concat(met) : mine };
+      });
 
     // The canvas is whatever the rooms need, and the rooms are whatever the
     // agents need. Set before anything is positioned, because AT records
@@ -613,7 +694,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
     }
 
     var html = plan.rooms.map(function (r) {
-      var z = r.z, of = r.of;
+      var z = r.z, of = r.residents || r.of;
       var runs = 0, done = 0, spent = 0, working = 0;
       of.forEach(function (m) {
         var st = S.STATS[m.id] || {};
@@ -638,6 +719,13 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
           (pct == null ? "" : '<span class="zone-badge">' + pct + '% CLEAN</span>') +
         '</div>' +
         '<div class="zone-floor" aria-hidden="true">' + furnitureFor(z) + '</div>' +
+        // Said on the room itself while one is running, so the table in it
+        // is never ambiguous about whether it is in use.
+        (z.key === MEETING_KEY && met.length
+          ? '<div class="meeting-table">' +
+              esc(met.length + (met.length === 1 ? " agent" : " agents") +
+                  " in a meeting") + '</div>'
+          : "") +
         '<div class="zone-foot">' +
           '<span>RUNS: ' + runs + '</span>' +
           '<span>COST: $' + spent.toFixed(2) + '</span>' +
@@ -652,33 +740,11 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
       r.slots.forEach(function (slot) { allSlots.push(slot); });
     });
 
-    // Anybody in a meeting leaves their desk for the table. Their slot is
-    // replaced rather than added to, so they are in one place, and because
-    // the node survives a redraw the change of coordinates IS the walk.
-    var met = allSlots.filter(function (s) { return inMeeting(s.m.id); });
-    met.forEach(function (slot, i) {
-      var seat = meetingSeat(i, met.length);
-      slot.left = seat.left;
-      slot.top = seat.top;
-    });
+    // No seats to assign: whoever is in the meeting was put in the meeting
+    // room above and already has an ordinary slot there.
     document.getElementById("rooms").setAttribute(
       "data-meeting", met.length ? String(met.length) : "");
     allSlots.forEach(markAt);
-
-    // The table itself, in the clear band the rooms leave above them. Drawn
-    // only while somebody is at it: a table standing empty all day would
-    // stop meaning that a meeting is happening.
-    if (met.length) {
-      var rows = meetingRows(met.length);
-      var first = meetingSeat(0, met.length);
-      var last = meetingSeat(rows.top - 1, met.length);
-      html += '<div class="meeting-table" style="top:' +
-        (BAND_PAD + SLOT_H + 2) + 'px;left:' + (first.left - 10) +
-        'px;width:' + (last.left - first.left + SLOT_W + 20) +
-        'px;transform:none">' +
-        esc(met.length + (met.length === 1 ? " agent" : " agents") +
-            " in a meeting") + '</div>';
-    }
 
     var working = shown.filter(function (m) { return stateOf(m.id).key === "working"; }).length;
     var newest = recentRows()[0];
@@ -1185,6 +1251,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
     k = Math.min(Math.max(k, 0.25), 2);
     // Translate before scale, so a drag moves the floor by the number of
     // screen pixels the pointer moved rather than by that many scaled ones.
+    if (!embedded()) { PAN_X = 0; PAN_Y = 0; }
     floor.style.transform =
       "translate(" + Math.round(PAN_X) + "px," + Math.round(PAN_Y) + "px) " +
       "scale(" + k + ")";

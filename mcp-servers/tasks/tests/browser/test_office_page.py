@@ -160,6 +160,43 @@ def page(browser, request):
     srv.shutdown()
 
 
+@pytest.fixture
+def docked(browser):
+    """The office as the small card on the agents page sees it.
+
+    The zoom and the drag live here and nowhere else since 2026-10-08. On the
+    full page the floor is stretched to the shape of its box, so there is no
+    off-screen floor to reach for; in a card a few hundred pixels tall the
+    plan really is bigger than the box, and moving around it is how you see
+    the rest."""
+    html = (STATIC / "office.html").read_bytes()
+    srv = _serve(html)
+    pg = browser.new_page(viewport={"width": 1500, "height": 1000})
+    pg.set_default_timeout(6000)
+
+    def route(r):
+        url = r.request.url
+        if "/models/list" in url:
+            body = {"items": AGENTS, "total": len(AGENTS)}
+        elif "/agents/activity" in url:
+            body = {"activity": ACTIVITY, "handoffs": HANDOFFS}
+        elif "/agents/stats" in url:
+            body = {"stats": STATS}
+        elif "/agents/skills" in url:
+            body = {"skills": SKILLS}
+        else:
+            body = {}
+        r.fulfill(status=200, content_type="application/json",
+                  body=json.dumps(body))
+
+    pg.route("**/api/**", route)
+    pg.goto("http://127.0.0.1:%d/office.html?embed=1" % srv.server_address[1])
+    pg.wait_for_selector(".who", state="visible")
+    yield pg
+    pg.close()
+    srv.shutdown()
+
+
 def test_it_shows_an_agent_per_card_and_nothing_else(page):
     """The model listing carries every model the person can see. Only the
     agent- rows are colleagues; gpt-5 is not one."""
@@ -247,12 +284,13 @@ def test_the_floor_names_the_rooms_that_are_in_use(page):
     """Case-insensitive on purpose: the labels are upper-cased by CSS, and
     inner_text reports what is rendered rather than what is written.
 
-    Only occupied rooms are drawn now, so this names the two the fixture
-    actually fills. Ada holds BOTH code and schedules, and the first matching
-    area wins, so she sits in Development rather than Automation; Iris holds
-    gdrive and sits at the Knowledge base. An empty room is scenery."""
+    Only occupied rooms are drawn, so this names the two the fixture actually
+    fills, plus the meeting room. Ada holds BOTH code and schedules, and the
+    first matching area wins, so she sits in Development rather than
+    Automation; Iris holds gdrive and sits at the Knowledge base. An empty
+    room is scenery, with the one exception below."""
     zones = [z.lower() for z in page.locator(".zone-head > span:first-child").all_inner_texts()]
-    assert sorted(zones) == ["development", "knowledge base"], zones
+    assert sorted(zones) == ["development", "knowledge base", "meeting room"], zones
 
 
 
@@ -395,15 +433,29 @@ SEVEN = [
 def test_each_room_with_somebody_in_it_gets_a_card(page):
     labels = [t.lower() for t in page.locator(".zone-head > span:first-child").all_inner_texts()]
     assert any("knowledge base" in t for t in labels), labels
-    assert len(labels) == 2, labels   # Ada in Automation, Iris at Knowledge base
+    # Ada in Development, Iris at Knowledge base, and the meeting room, which
+    # is on the floor whether or not anybody is in it.
+    assert len(labels) == 3, labels
 
 
 def test_an_empty_room_gets_no_card(page):
     """A row of zeroes against a room nobody works in says nothing and makes
     the floor look busy. Only rooms with agents in them get a headline."""
     labels = " ".join(page.locator(".zone-head > span:first-child").all_inner_texts()).lower()
-    assert "meeting room" not in labels, labels
     assert "research" not in labels, labels
+    assert "automation" not in labels, labels
+
+
+def test_the_meeting_room_is_always_on_the_floor(page):
+    """The one room that is drawn empty, and deliberately. A meeting is
+    agents walking INTO a room now rather than a table appearing in a band
+    above the floor, and a room people are called to has to be somewhere
+    they can already see. Nobody is in a meeting in this fixture."""
+    labels = " ".join(page.locator(".zone-head > span:first-child").all_inner_texts()).lower()
+    assert "meeting room" in labels, labels
+    assert page.locator('.zone[data-room="meeting"]').count() == 1
+    # Empty, so it says nothing about anybody's runs.
+    assert page.locator('.zone[data-room="meeting"] .meeting-table').count() == 0
 
 
 def test_a_room_counts_only_its_own_agents_runs(page):
@@ -493,8 +545,10 @@ def test_a_room_nobody_works_in_is_not_drawn(browser):
     pg.wait_for_timeout(300)
     try:
         labels = [t.lower() for t in pg.locator(".zone-head > span:first-child").all_inner_texts()]
-        assert labels == ["communication"], labels
-        assert pg.locator(".zone").count() == 1
+        # Mia's room, and the meeting room, which is always there. Research,
+        # Development, Knowledge base and Automation are all still scenery.
+        assert labels == ["communication", "meeting room"], labels
+        assert pg.locator(".zone").count() == 2
     finally:
         pg.close()
         srv.shutdown()
@@ -773,7 +827,8 @@ def _empty_floor_point(page):
         " } return null; }")
 
 
-def test_the_floor_can_be_dragged_to_move_around(page):
+def test_the_floor_can_be_dragged_to_move_around(docked):
+    page = docked
     page.locator("#zoom-in").click()
     page.locator("#zoom-in").click()
     page.wait_for_timeout(150)
@@ -790,9 +845,10 @@ def test_the_floor_can_be_dragged_to_move_around(page):
     assert after[1] < before[1] - 20, (before, after)
 
 
-def test_fit_puts_it_back(page):
+def test_fit_puts_it_back(docked):
     """Fit means the whole office, so it has to undo a pan as well as a
     zoom. Otherwise Fit leaves you looking at an empty corner."""
+    page = docked
     page.locator("#zoom-in").click()
     page.wait_for_timeout(120)
     box = page.locator("#floor-fit").bounding_box()
@@ -808,6 +864,40 @@ def test_fit_puts_it_back(page):
         "el => el.getBoundingClientRect().right"
         " - document.getElementById('floor-fit').getBoundingClientRect().right")
     assert spill <= 2, spill
+
+
+def test_the_office_page_needs_no_zoom_and_no_pan(page):
+    """Asked for on 2026-10-08: "the spaces must be entire content so no need
+    to move, the only moving is the agents".
+
+    The floor is stretched to the shape of its box on the full page rather
+    than scaled into it, so there is no off-screen floor. The controls that
+    existed to go and look at it are gone with it, and the page does not
+    scroll in either direction. The dock still has both, which is what
+    test_the_floor_can_be_dragged_to_move_around now covers."""
+    got = page.evaluate(
+        "() => {"
+        " const d = document.documentElement;"
+        " const fit = document.getElementById('floor-fit');"
+        " const rooms = [...document.querySelectorAll('.zone')]"
+        "   .map(z => z.getBoundingClientRect());"
+        " const f = fit.getBoundingClientRect();"
+        " return { zoomShown: getComputedStyle(document.querySelector('.zoom'))"
+        "            .display !== 'none',"
+        "          scrollsDown: d.scrollHeight > d.clientHeight + 1,"
+        "          scrollsAcross: d.scrollWidth > d.clientWidth + 1,"
+        "          transform: document.getElementById('rooms').style.transform,"
+        "          slackRight: Math.round(f.right - Math.max(...rooms.map(r => r.right)))"
+        "        }; }")
+    assert not got["zoomShown"], got
+    assert not got["scrollsDown"] and not got["scrollsAcross"], got
+    # The pan is pinned at zero. The handlers stay bound rather than being
+    # unpicked, because the dock still needs them and a branch that cannot
+    # go stale is worth more than a shorter transform string.
+    assert "translate(0px, 0px)" in got["transform"], got
+    # And the rooms really do reach the far edge, rather than the floor
+    # merely being told it may.
+    assert got["slackRight"] <= 40, got
 
 
 def test_dragging_a_robot_is_not_a_pan(page):
@@ -1471,28 +1561,32 @@ def test_the_agents_in_it_leave_their_desks_for_the_table(page):
 
 
 def test_they_gather_rather_than_scatter(page):
-    """Both sit AT the table, which since seats went round it means facing
-    each other across it rather than side by side. What matters is that they
-    are together: two agents walking to opposite corners is not a meeting.
+    """What matters is that they are together: two agents walking to opposite
+    corners is not a meeting.
 
-    Measured against the table itself rather than against each other, so
-    this keeps meaning the same thing if the seating changes again."""
+    Measured as "both are inside the meeting room", which is now the literal
+    claim the floor makes. It used to be measured against a table floating in
+    a band above the rooms, because the meeting happened in a place that was
+    not on the plan; it happens in a room on the plan now, so containment is
+    both a stronger statement and the one a person would make looking at it."""
     _in_a_meeting(page, ["agent-research-assistant-0001", "agent-iris-a103"])
     got = page.evaluate(
         "() => {"
-        " const t = document.querySelector('.meeting-table').getBoundingClientRect();"
+        " const r = document.querySelector('.zone[data-room=\"meeting\"]')"
+        "   .getBoundingClientRect();"
         " const box = s => document.querySelector('.who-slot[data-id=\"' + s + '\"]')"
         "   .getBoundingClientRect();"
+        " const inside = b => b.left >= r.left - 2 && b.right <= r.right + 2"
+        "   && b.top >= r.top - 2 && b.bottom <= r.bottom + 2;"
         " const a = box('agent-research-assistant-0001'), b = box('agent-iris-a103');"
-        " const near = r => Math.abs((r.left + r.right) / 2 - (t.left + t.right) / 2);"
-        " return { aOff: near(a), bOff: near(b), tableW: t.width,"
-        "          aTouches: a.bottom > t.top - 4 && a.top < t.bottom + 4,"
-        "          bTouches: b.bottom > t.top - 4 && b.top < t.bottom + 4 }; }")
-    # Each stands within the table's own width of its centre...
-    assert got["aOff"] <= got["tableW"], got
-    assert got["bOff"] <= got["tableW"], got
-    # ...and each is alongside the table rather than away from it.
-    assert got["aTouches"] and got["bTouches"], got
+        " return { a: inside(a), b: inside(b),"
+        "          apart: Math.round(Math.abs((a.left + a.right) / 2"
+        "                                   - (b.left + b.right) / 2)),"
+        "          roomW: Math.round(r.width) }; }")
+    assert got["a"] and got["b"], got
+    # And standing together in it, not at opposite walls of a room that grew
+    # to hold them.
+    assert got["apart"] <= got["roomW"] * 0.8, got
 
 
 def test_working_alone_is_not_a_meeting(page):

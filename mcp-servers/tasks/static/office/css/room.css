@@ -92,17 +92,20 @@
    seeing it IS the fact: agents gather here because each of their runs
    recorded source=meeting, never because several started at once. */
 .floor[data-meeting=""] .meeting-table { display: none; }
+/* Inside the meeting room, along the bottom of its interior. It used to
+   float in a band above the floor at z-index 11, because the meeting was
+   not happening anywhere on the plan; the meeting is a room now, so this is
+   a caption on that room and sits UNDER the agents standing in it, the way
+   a table should. */
 .meeting-table {
-  position: absolute; left: 50%; transform: translateX(-50%);
-  width: 46%; height: 34px; border-radius: 999px;
+  position: absolute; left: 12px; right: 12px; bottom: 26px;
+  height: 30px; border-radius: 999px;
   border: 2px solid color-mix(in srgb, #fbbf24 55%, transparent);
   background: color-mix(in srgb, #fbbf24 10%, transparent);
   display: grid; place-items: center;
   font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
   color: color-mix(in srgb, #fbbf24 85%, white);
-  /* Above the rooms, not behind them. At z-index 1 it sat under every
-     room and was simply invisible. */
-  pointer-events: none; z-index: 11;
+  pointer-events: none; z-index: 1;
 }
 
 
