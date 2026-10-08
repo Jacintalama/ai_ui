@@ -232,7 +232,12 @@ def page(browser, tmp_path):
 
 
 def test_your_own_agent_is_listed(page):
-    assert page.locator('[data-agent-id="agent-mine-a1b2"]').count() == 1
+    """Once as a card and, since Phase 1 (2026-10-08), once as a row in the
+    conversation list. It used to count one element page-wide, which the
+    list's row now makes two."""
+    assert page.locator('#my-agents [data-agent-id="agent-mine-a1b2"]').count() == 1
+    assert page.locator(
+        '#roster-list .roster-row[data-agent-id="agent-mine-a1b2"]').count() == 1
 
 
 def test_the_base_model_is_not_listed_as_an_agent(page):

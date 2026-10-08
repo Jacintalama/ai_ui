@@ -762,10 +762,11 @@
          yourself", so the icon and heading here just said it a second time. -->
 
 <div class="agents-layout">
-<div class="agents-main">
-
-    <div class="error box" id="page-error" hidden></div>
-
+<!-- The conversation list (Phase 1, DESIGN.md "Conversation list"): the
+     room first, then one row per agent. Picking a row opens that
+     conversation through window.aiuiTalkTo, the same as a card or a robot in
+     the office. The rows are drawn by drawRoster() from the cards. -->
+<nav class="agents-roster" id="agent-roster" aria-label="Conversations">
     <div class="section-head">
       <h2>Your agents <span class="count" id="mine-count" hidden>0</span></h2>
       <div class="tools">
@@ -781,6 +782,18 @@
         <button class="btn primary" type="button" id="new-agent">+ New agent</button>
       </div>
     </div>
+  <div class="roster-list" id="roster-list" role="list"></div>
+  <div class="roster-foot">
+    <!-- The office on demand: it takes the conversation's place until
+         "Back to conversation". -->
+    <button class="link-btn" type="button" id="office-open">Agent Office</button>
+    <a class="link-btn" id="roster-graph" href="/tasks/graph">Knowledge graph</a>
+  </div>
+</nav>
+<div class="agents-main">
+
+    <div class="error box" id="page-error" hidden></div>
+
     <div class="no-match" id="no-match" hidden>Nothing matches that search.</div>
     <!-- Static, so it is on screen before any script runs. Hidden the moment
          the first load finishes, whether it succeeded or not. -->
@@ -894,9 +907,6 @@
     </div>
     <!-- Only while a private conversation is open. -->
     <button class="btn" type="button" id="ap-everyone" hidden>Back to everyone</button>
-    <!-- The office on demand: it takes this conversation's place until
-         "Back to conversation". Task 2 moves it to the list's footer. -->
-    <button class="btn" type="button" id="office-open">Agent Office</button>
     <!-- One permanent room. Nobody is seated and nothing is listed: every
          agent hears every message, and this is the same conversation you
          left. Clearing it is the only destructive thing here, so it is the
@@ -1662,6 +1672,9 @@
         el.innerHTML = '<span class="dot"></span><span>'
           + STATE_WORD[state] + "</span>";
       }
+      // The conversation list reads its status words off these, and they
+      // arrive after the cards are drawn.
+      document.body.dispatchEvent(new CustomEvent("aiui:activity-drawn"));
     }
 
     async function loadActivity() {
@@ -3023,7 +3036,7 @@
     window.__aiuiAgents = { load: load, render: render, state: state,
                             isAgent: isAgent, buildAgentBody: buildAgentBody,
                             openForm: openForm, duplicate: duplicate,
-                            ready: false };
+                            avatarHue: avatarHue, ready: false };
     // Seeding must finish before the list loads, so a first-time visitor's
     // brand new copies are in the very first render rather than needing a
     // reload to appear. Tool tiles are independent of both and load
@@ -3229,7 +3242,20 @@
         if (mine) all[i].setAttribute("aria-current", "true");
         else all[i].removeAttribute("aria-current");
       }
+      // And so does its row in the conversation list: the agent's row, or
+      // Everyone for the room.
+      var rows = document.querySelectorAll("#roster-list .roster-row");
+      for (var r = 0; r < rows.length; r++) {
+        var here = current.id
+          ? rows[r].getAttribute("data-agent-id") === current.id
+          : rows[r].getAttribute("data-room") === "1";
+        if (here) rows[r].setAttribute("aria-current", "true");
+        else rows[r].removeAttribute("aria-current");
+      }
     }
+    // drawRoster() rebuilds the rows after the cards are drawn, so it marks
+    // the current one through this.
+    window.__aiuiPaintTalk = paint;
 
     function load() {
       // Whatever was said in that conversation before, which for a private
@@ -3274,6 +3300,127 @@
     } catch (e) { current = { id: "", name: "" }; }
     paint();
     if (current.id) load();
+  })();
+
+  // The conversation list.
+  //
+  // Everyone first, then one row per agent, read off the cards that were
+  // just drawn: they are already narrowed by the search and to this
+  // person's own agents, so the list can never show an agent the cards do
+  // not. Every word goes in with textContent; a name is somebody's typing.
+  // Picking a row only switches the conversation. Nothing is sent.
+  (function () {
+    var list = document.getElementById("roster-list");
+    if (!list) return;
+
+    // Only the states that ask for something. Ready says nothing at all
+    // (DESIGN.md, Conversation list).
+    var STATUS_WORD = { waiting: "Needs you", failed: "Failed" };
+
+    function text(tag, cls, words) {
+      var el = document.createElement(tag);
+      el.className = cls;
+      el.textContent = words;
+      return el;
+    }
+
+    function row(attr, value, name, second, hue) {
+      var item = document.createElement("div");
+      item.setAttribute("role", "listitem");
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "roster-row";
+      b.setAttribute(attr, value);
+      if (hue !== null) {
+        var av = text("span", "roster-av", (name || "?").charAt(0).toUpperCase());
+        av.setAttribute("aria-hidden", "true");
+        av.style.background = "hsl(" + hue + " 45% 32%)";
+        b.appendChild(av);
+      }
+      var words = document.createElement("span");
+      words.className = "roster-text";
+      words.appendChild(text("span", "roster-name", name));
+      if (second) words.appendChild(text("span", "roster-role", second));
+      b.appendChild(words);
+      item.appendChild(b);
+      return item;
+    }
+
+    function statusOf(id) {
+      var slots = document.querySelectorAll("#my-agents [data-activity-for]");
+      for (var i = 0; i < slots.length; i++) {
+        if (slots[i].getAttribute("data-activity-for") !== id) continue;
+        for (var key in STATUS_WORD) {
+          if (slots[i].classList.contains(key)) return key;
+        }
+      }
+      return "";
+    }
+
+    // Only the words change on an activity tick, never the rows: rebuilding
+    // them every few seconds would take keyboard focus off the one you are on.
+    function drawStatus() {
+      var rows = list.querySelectorAll(".roster-row[data-agent-id]");
+      for (var i = 0; i < rows.length; i++) {
+        var state = statusOf(rows[i].getAttribute("data-agent-id"));
+        var el = rows[i].querySelector(".roster-status");
+        if (!state) { if (el) el.remove(); continue; }
+        if (!el) {
+          el = document.createElement("span");
+          rows[i].appendChild(el);
+        }
+        el.className = "roster-status " + state;
+        el.textContent = STATUS_WORD[state];
+      }
+    }
+
+    function drawRoster() {
+      var page = window.__aiuiAgents;
+      var hueOf = page && page.avatarHue ? page.avatarHue : function () { return 0; };
+      var cards = document.querySelectorAll("#my-agents .card[data-agent-id]");
+      var agents = [];
+      for (var i = 0; i < cards.length; i++) {
+        var title = cards[i].querySelector(".card-title");
+        var role = cards[i].querySelector(".card-role");
+        var id = cards[i].getAttribute("data-agent-id");
+        agents.push({ id: id,
+                      name: title ? title.textContent : id,
+                      role: role ? role.textContent : "" });
+      }
+      list.textContent = "";
+      list.appendChild(row("data-room", "1", "Everyone",
+        agents.map(function (a) { return a.name; }).join(", "), null));
+      agents.forEach(function (a) {
+        list.appendChild(row("data-agent-id", a.id, a.name, a.role, hueOf(a.name)));
+      });
+      drawStatus();
+      if (typeof window.__aiuiPaintTalk === "function") window.__aiuiPaintTalk();
+    }
+
+    list.addEventListener("click", function (ev) {
+      var b = ev.target.closest(".roster-row");
+      if (!b || typeof window.aiuiTalkTo !== "function") return;
+      if (b.getAttribute("data-room") === "1") { window.aiuiTalkTo("", ""); return; }
+      var name = b.querySelector(".roster-name");
+      window.aiuiTalkTo(b.getAttribute("data-agent-id"),
+                        name ? name.textContent : "");
+    });
+
+    document.body.addEventListener("aiui:cards-drawn", drawRoster);
+    document.body.addEventListener("aiui:activity-drawn", drawStatus);
+
+    // Inside the shell, the Knowledge graph is the shell's own Graph pane
+    // (the aiui:open-pane protocol), so the whole window is never replaced by
+    // a bare page. On its own, the plain link goes to the graph page.
+    var graph = document.getElementById("roster-graph");
+    if (graph) {
+      graph.addEventListener("click", function (ev) {
+        if (window.parent === window) return;
+        ev.preventDefault();
+        window.parent.postMessage({ type: "aiui:open-pane", path: "/graph" },
+                                  window.location.origin);
+      });
+    }
   })();
 
   // The office, on demand in the chat column.

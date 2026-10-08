@@ -17,7 +17,11 @@
   /* 300, down from 340 (2026-10-08). The roster is reference; the office
      and the conversation are the things being used, so the default leans
      their way and the grip is there for anyone who wants it the other way. */
-  grid-template-columns: minmax(0, 1fr) var(--agents-width, 300px);
+  /* 2026-10-08, Phase 1: the conversation list takes a fixed 232px on the
+     left (design doc, Layout), so the three panes are list, conversation,
+     agents. Only at 1181px and wider; below, the media query further down
+     stacks everything in one column. */
+  grid-template-columns: 232px minmax(0, 1fr) var(--agents-width, 300px);
   /* The page is a screen, not a document: it fills what the window gives it
      and nothing outside these two columns scrolls. Before this the cards grew
      the page, so the window scrolled, the conversation scrolled inside it,
@@ -36,10 +40,67 @@
 }
 
 @media (min-width: 1181px) {
-  .agents-main { grid-column: 2; grid-row: 1; }
-  /* The column the office card and the conversation share. */
-  .chat-column { grid-column: 1; grid-row: 1; }
+  .agents-roster { grid-column: 1; grid-row: 1; }
+  /* The column the office view and the conversation take turns in. */
+  .chat-column { grid-column: 2; grid-row: 1; }
+  .agents-main { grid-column: 3; grid-row: 1; }
 }
+
+/* The conversation list (DESIGN.md, "Conversation list"). Panel layer, its
+   own scrolling, the footer links pinned to the bottom. */
+.agents-roster {
+  display: flex; flex-direction: column; gap: 8px;
+  min-width: 0; min-height: 0;
+  padding: 12px; border-radius: var(--radius-lg);
+  background: var(--surface); border: 1px solid var(--border);
+}
+.agents-roster .section-head { margin: 0; gap: 8px; flex-wrap: wrap; }
+.agents-roster .section-head h2 { font-size: 14px; }
+.agents-roster .section-head .tools { width: 100%; flex-wrap: wrap; gap: 8px; }
+.agents-roster .search-wrap { flex: 1 1 100%; }
+.agents-roster .search-wrap input,
+.agents-roster .search-wrap input:focus { width: 100%; }
+.agents-roster .section-head .btn { flex: 1 1 auto; }
+.roster-list {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 2px;
+  /* Room for the focus ring (2px plus a 2px offset), which this scroller
+     would otherwise clip. */
+  padding: 4px;
+}
+.roster-row {
+  width: 100%; min-height: 48px; padding: 8px 10px;
+  display: flex; align-items: center; gap: 10px;
+  background: transparent; border: 0; border-radius: 8px;
+  color: var(--text); font: inherit; font-size: 14px; text-align: left;
+  cursor: pointer;
+}
+.roster-row:hover, .roster-row[aria-current="true"] { background: var(--surface-2); }
+.roster-row[aria-current="true"] .roster-name { font-weight: 600; }
+.roster-av {
+  flex: 0 0 28px; width: 28px; height: 28px; border-radius: 6px;
+  display: grid; place-items: center;
+  color: #ffffff; font-size: 12px; font-weight: 500;
+}
+.roster-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.roster-name, .roster-role {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.roster-name { font-weight: 500; line-height: 1.35; }
+.roster-role { font-size: 13px; color: var(--text-2); line-height: 1.4; }
+.roster-status { flex: 0 0 auto; font-size: 12px; font-weight: 500; }
+.roster-status.waiting { color: #fbbf24; }
+.roster-status.failed { color: #f87171; }
+.roster-foot {
+  display: flex; flex-direction: column; gap: 2px;
+  padding-top: 8px; border-top: 1px solid var(--border);
+}
+.roster-foot .link-btn {
+  display: block; padding: 8px 10px; border: 0; border-radius: 8px;
+  background: none; color: var(--text-2); font: inherit; font-size: 14px;
+  text-align: left; text-decoration: none; cursor: pointer;
+}
+.roster-foot .link-btn:hover { background: var(--surface-2); color: var(--text); }
 
 /* Only while the two columns exist. Below the breakpoint the panel drops
    under the cards and they want the full width back. */
