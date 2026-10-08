@@ -896,16 +896,17 @@
           title="Drag to resize"></button>
   <div class="ap-head">
     <div class="ap-title">
-      <h2 id="ap-who">Chat with your agents</h2>
+      <h2 id="ap-who">Everyone</h2>
       <!-- The panel never said what it was. Everyone who has opened it has
            had to work out from the placeholder that naming an agent picks
            one and saying nothing asks them all. Now it can also be one
            agent's own conversation, and which of the two it is has to be
            impossible to mistake: what you say here is either heard by
            everybody or by nobody else at all. -->
-      <p class="ap-sub" id="ap-sub">Everyone hears you. Name one to ask only them.</p>
+      <p class="ap-sub" id="ap-sub">Your agents hear this. Each answers only if it has something to add.</p>
     </div>
-    <!-- Only while a private conversation is open. -->
+    <!-- Never shown since Phase 1: the Everyone row in the conversation list
+         is the way back. Kept because older code still looks it up. -->
     <button class="btn" type="button" id="ap-everyone" hidden>Back to everyone</button>
     <!-- One permanent room. Nobody is seated and nothing is listed: every
          agent hears every message, and this is the same conversation you
@@ -928,7 +929,7 @@
          after a send would blank it, so it is restored below. -->
     <input type="hidden" name="agent" id="ap-agent" value="">
     <input type="text" name="message" autocomplete="off"
-           placeholder="Ask your agents something">
+           placeholder="Message everyone">
     <button class="btn primary" type="submit">Send</button>
   </form>
 </aside>
@@ -3216,23 +3217,57 @@
       } catch (e) { /* the room is a fine place to come back to */ }
     }
 
+    // Everybody who hears the room: this person's own agents, all of them.
+    // Read off the loaded list rather than the drawn cards, because a search
+    // narrows the cards and the list but takes nobody out of the room.
+    function ownAgents() {
+      var page = window.__aiuiAgents;
+      var st = page && page.state;
+      if (!st || !st.agents) return [];
+      return st.agents.filter(function (m) { return m.user_id === st.me; });
+    }
+
+    // "Iris", "Iris and Bo", "Iris, Bo and Ada", then "All 4 agents".
+    function hearers(agents) {
+      var names = agents.map(function (m) { return m.name || m.id; });
+      if (!names.length) return { words: "Your agents", one: false };
+      if (names.length > 3) {
+        return { words: "All " + names.length + " agents", one: false };
+      }
+      if (names.length === 1) return { words: names[0], one: true };
+      return { words: names.slice(0, -1).join(", ") + " and " +
+                      names[names.length - 1], one: false };
+    }
+
+    function roleOfCurrent() {
+      var mine = ownAgents().filter(function (m) { return m.id === current.id; })[0];
+      var role = mine && mine.meta ? mine.meta.role : null;
+      return typeof role === "string" ? role.trim() : "";
+    }
+
+    // Who hears what you are about to say, before you say it (DESIGN.md,
+    // Do's). Every word goes in with textContent: a name is somebody's typing.
     function paint() {
       field.value = current.id;
-      if (back) back.hidden = !current.id;
+      // The Everyone row in the list is the way back now, so this button is
+      // never shown. It stays because older code still looks it up.
+      if (back) back.hidden = true;
       if (current.id) {
-        who.textContent = "Chat with " + current.name;
-        if (sub) sub.textContent = "Only " + current.name +
-          " sees this and only they answer.";
+        who.textContent = current.name;
+        var role = roleOfCurrent();
+        if (sub) sub.textContent = (role ? role.replace(/[.\s]+$/, "") + ". " : "") +
+          "Only " + current.name + " hears this conversation.";
       } else {
-        who.textContent = "Chat with your agents";
-        if (sub) sub.textContent =
-          "Everyone hears you. Name one to ask only them.";
+        who.textContent = "Everyone";
+        var h = hearers(ownAgents());
+        if (sub) sub.textContent = h.words + (h.one ? " hears" : " hear") +
+          " this. Each answers only if it has something to add.";
       }
       var box = document.querySelector(".ap-composer input[name=message]");
       if (box) {
         box.setAttribute("placeholder", current.id
-          ? "Ask " + current.name + " something"
-          : "Ask your agents something");
+          ? "Message " + current.name
+          : "Message everyone");
       }
       // The card you are in the middle of a conversation with says so.
       var all = document.querySelectorAll(".card-foot .chat-with");

@@ -285,3 +285,113 @@ def test_nothing_is_sent_by_picking(browser, server):
         assert not [u for u in pg.sent if "chat/send" in u], pg.sent
     finally:
         pg.close()
+
+
+# --- Task 3: the conversation header says who hears you ---------------------
+#
+# DESIGN.md, Do's: "say who will hear a message before it is sent". The old
+# header read "Chat with your agents" in the room and "Chat with Iris" in a
+# private conversation, which said where you were but not who would read it.
+
+BOX = ".ap-composer input[name=message]"
+
+
+def _header(root):
+    return (root.locator("#ap-who").inner_text(),
+            root.locator("#ap-sub").inner_text(),
+            root.locator(BOX).get_attribute("placeholder"))
+
+
+def test_the_room_header_names_who_hears_it(browser, server):
+    pg, root = _open(browser, server)
+    try:
+        assert _header(root) == (
+            "Everyone",
+            "Iris and Bo hear this. Each answers only if it has something"
+            " to add.",
+            "Message everyone")
+    finally:
+        pg.close()
+
+
+def test_a_private_header_names_the_agent_and_role(browser, server):
+    pg, root = _open(browser, server)
+    try:
+        root.locator(IRIS_ROW).click()
+        pg.wait_for_timeout(200)
+        assert _header(root) == (
+            "Iris",
+            "Drive librarian. Only Iris hears this conversation.",
+            "Message Iris")
+    finally:
+        pg.close()
+
+
+def test_a_private_header_without_a_role_names_only_the_agent(browser, server):
+    plain = dict(BO, meta={"toolIds": []})
+    pg, root = _open(browser, server, roster=[IRIS, plain])
+    try:
+        root.locator('#roster-list .roster-row[data-agent-id="agent-bo-0002"]').click()
+        pg.wait_for_timeout(200)
+        assert root.locator("#ap-sub").inner_text() == (
+            "Only Bo hears this conversation.")
+    finally:
+        pg.close()
+
+
+def test_three_names_are_listed_and_more_are_counted(browser, server):
+    ada = dict(BO, id="agent-ada-0003", name="Ada", created_at=3)
+    dev = dict(BO, id="agent-dev-0004", name="Dev", created_at=4)
+    pg, root = _open(browser, server, roster=[IRIS, BO, ada])
+    try:
+        assert root.locator("#ap-sub").inner_text().startswith(
+            "Iris, Bo and Ada hear this.")
+    finally:
+        pg.close()
+    pg, root = _open(browser, server, roster=[IRIS, BO, ada, dev])
+    try:
+        assert root.locator("#ap-sub").inner_text().startswith(
+            "All 4 agents hear this.")
+    finally:
+        pg.close()
+
+
+def test_a_search_does_not_change_who_hears_the_room(browser, server):
+    """The search narrows the list; it does not take anybody out of the
+    room. Saying "Bo hears this" while Iris also reads it would be false."""
+    pg, root = _open(browser, server)
+    try:
+        root.locator("#agent-search").fill("bo")
+        pg.wait_for_timeout(300)
+        assert root.locator("#ap-sub").inner_text().startswith(
+            "Iris and Bo hear this.")
+    finally:
+        pg.close()
+
+
+def test_the_header_name_is_text_not_markup(browser, server):
+    evil = "<img src=x onerror=window.__pwned=1>"
+    agent = dict(BO, id="agent-evil-0003", name=evil)
+    pg, root = _open(browser, server, roster=[IRIS, agent])
+    try:
+        assert evil in root.locator("#ap-sub").inner_text()
+        root.locator('#roster-list .roster-row[data-agent-id="agent-evil-0003"]').click()
+        pg.wait_for_timeout(200)
+        assert root.locator("#ap-who").inner_text() == evil
+        assert root.locator(".ap-head img").count() == 0
+        assert pg.evaluate("() => window.__pwned") is None
+    finally:
+        pg.close()
+
+
+def test_the_list_replaces_back_to_everyone(browser, server):
+    """#ap-everyone stays in the DOM (older code looks it up) but is never
+    shown: the Everyone row is the way back."""
+    pg, root = _open(browser, server)
+    try:
+        assert root.locator("#ap-everyone").count() == 1
+        root.locator(IRIS_ROW).click()
+        pg.wait_for_timeout(200)
+        assert root.locator("#ap-everyone").is_hidden()
+    finally:
+        pg.close()

@@ -387,7 +387,7 @@ def test_the_shell_opens_your_agents_own_conversation(browser, server):
                                "name": "Iris"})
         pg.wait_for_timeout(300)
         assert _talking_to(pg) == "agent-iris-a103"
-        assert _pane(pg).locator("#ap-who").inner_text() == "Chat with Iris"
+        assert _pane(pg).locator("#ap-who").inner_text() == "Iris"
         assert _pane(pg).locator(BOX).input_value() == ""
         assert not [u for u in pg.sent if "chat/send" in u], pg.sent
     finally:

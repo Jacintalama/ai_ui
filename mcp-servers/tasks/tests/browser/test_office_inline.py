@@ -561,7 +561,7 @@ def test_the_chat_starts_on_the_room(page):
     """The shared room is still the default and still what the page opens
     on: "that global chat is for all the ai"."""
     assert page.locator("#ap-agent").input_value() == ""
-    assert page.locator("#ap-who").inner_text() == "Chat with your agents"
+    assert page.locator("#ap-who").inner_text() == "Everyone"
     assert page.locator("#ap-everyone").is_hidden()
 
 
@@ -570,20 +570,29 @@ def test_the_header_says_who_you_are_talking_to(page):
     and which of the two has to be impossible to mistake."""
     page.evaluate("() => window.aiuiTalkTo('agent-iris-a103', 'Iris')")
     page.wait_for_timeout(200)
-    assert page.locator("#ap-who").inner_text() == "Chat with Iris"
-    assert "Iris" in page.locator("#ap-sub").inner_text()
-    assert "Iris" in page.locator(
-        ".ap-composer input[name=message]").get_attribute("placeholder")
+    assert page.locator("#ap-who").inner_text() == "Iris"
+    # This fixture signs nobody in, so no agent is "yours" and no role is
+    # known; the role half is covered in test_agents_roster.py.
+    assert page.locator("#ap-sub").inner_text().endswith(
+        "Only Iris hears this conversation.")
+    assert page.locator(
+        ".ap-composer input[name=message]").get_attribute("placeholder") == (
+        "Message Iris")
 
 
 def test_there_is_a_way_back_to_everyone(page):
+    """Since Phase 1 Task 3 the way back is the Everyone row at the top of
+    the conversation list, which calls aiuiTalkTo("", "") (the row itself is
+    tested in test_agents_roster.py). The old "Back to everyone" button
+    stays in the DOM but is never shown: two ways to do one thing is one
+    too many."""
     page.evaluate("() => window.aiuiTalkTo('agent-iris-a103', 'Iris')")
     page.wait_for_timeout(200)
-    assert page.locator("#ap-everyone").is_visible()
-    page.locator("#ap-everyone").click()
+    assert page.locator("#ap-everyone").is_hidden()
+    page.evaluate("() => window.aiuiTalkTo('', '')")
     page.wait_for_timeout(200)
     assert page.locator("#ap-agent").input_value() == ""
-    assert page.locator("#ap-who").inner_text() == "Chat with your agents"
+    assert page.locator("#ap-who").inner_text() == "Everyone"
 
 
 def test_who_you_are_talking_to_is_remembered(page):

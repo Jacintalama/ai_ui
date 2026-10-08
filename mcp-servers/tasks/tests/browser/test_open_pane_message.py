@@ -403,7 +403,7 @@ def test_a_robots_chat_in_the_office_pane_opens_that_agents_conversation(
                 " box %r" % (agents.locator("#ap-agent").input_value(),
                              agents.locator(".ap-composer input[name=message]"
                                             ).input_value()))
-        assert agents.locator("#ap-who").inner_text() == "Chat with Iris"
+        assert agents.locator("#ap-who").inner_text() == "Iris"
         assert agents.locator(".ap-composer input[name=message]").input_value() == ""
     finally:
         page.close()
