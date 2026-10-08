@@ -35,26 +35,24 @@
      attribute alone hides nothing. */
   [hidden] { display: none !important; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: var(--font-ui); }
-  /* One screen, not a document. The page fills the window and the two
-     columns scroll inside it, so the composer is always where it was left
-     and the window itself never gains a scrollbar. Only while both columns
-     exist: below the breakpoint they stack, and stacked columns have to
-     scroll the page or the lower one is unreachable. */
-  @media (min-width: 1181px) {
-    html, body { height: 100%; overflow: hidden; }
-    body { display: flex; flex-direction: column; }
-    /* The chain has to be unbroken from the window down to the two columns.
-       Leaving this a plain block left .agents-layout with nothing to stretch
-       against, so the grid grew to fit the cards, the panel took 100% of
-       THAT, and the composer sat 1700px down a 900px window with
-       overflow:hidden quietly clipping it off. A browser test caught it: the
-       window did not scroll, which is what was asked for, and the thing the
-       page is for was unreachable. */
-    .container {
-      flex: 1; min-height: 0;
-      display: flex; flex-direction: column;
-      padding-top: 18px; padding-bottom: 18px;
-    }
+  /* One screen, not a document. The page fills the window and the panes
+     scroll inside it, so the composer is always where it was left and the
+     window itself never gains a scrollbar. At every width since Phase 1
+     Task 5: two panes from 700 to 1180px and one at a time below that both
+     fit the window, so nothing stacks and nothing needs the page to scroll. */
+  html, body { height: 100%; overflow: hidden; }
+  body { display: flex; flex-direction: column; }
+  /* The chain has to be unbroken from the window down to the panes.
+     Leaving this a plain block left .agents-layout with nothing to stretch
+     against, so the grid grew to fit the cards, the panel took 100% of
+     THAT, and the composer sat 1700px down a 900px window with
+     overflow:hidden quietly clipping it off. A browser test caught it: the
+     window did not scroll, which is what was asked for, and the thing the
+     page is for was unreachable. */
+  .container {
+    flex: 1; min-height: 0;
+    display: flex; flex-direction: column;
+    padding-top: 18px; padding-bottom: 18px;
   }
 
   .topbar {
@@ -84,6 +82,10 @@
     width: 100%; max-width: 1640px; margin: 0 auto;
     padding: 36px clamp(20px, 3vw, 48px) 72px;
   }
+  /* Smaller windows spend their height on the panes, not on margins. On a
+     phone the one pane is the whole screen. */
+  @media (max-width: 1180px) { .container { padding: 12px 16px; } }
+  @media (max-width: 699px) { .container { padding: 0; } }
 
   .head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 30px; }
   .head .icon {
@@ -761,7 +763,9 @@
     <!-- The pane bar above already says "AI Agents / Assistants you build
          yourself", so the icon and heading here just said it a second time. -->
 
-<div class="agents-layout">
+<!-- data-pane picks the one pane a phone shows (list, chat or details). It
+     does nothing at 700px and wider, where the panes sit side by side. -->
+<div class="agents-layout" data-pane="list">
 <!-- The conversation list (Phase 1, DESIGN.md "Conversation list"): the
      room first, then one row per agent. Picking a row opens that
      conversation through window.aiuiTalkTo, the same as a card or a robot in
@@ -794,7 +798,13 @@
      where agents are managed, and only the open agent in a private
      conversation. "Details" in the conversation header opens and closes it. -->
 <div class="agents-main" id="agent-details" aria-labelledby="details-title">
-    <h2 class="details-title" id="details-title">Your agents</h2>
+    <div class="details-head">
+      <h2 class="details-title" id="details-title">Your agents</h2>
+      <!-- Below 1181px the details cover the conversation (a sheet, or the
+           whole phone screen), Details included, so they carry their own
+           way back. Hidden by CSS where they are a column. -->
+      <button class="btn" type="button" id="details-done">Done</button>
+    </div>
 
     <div class="error box" id="page-error" hidden></div>
 
@@ -899,6 +909,9 @@
           aria-orientation="vertical" aria-label="Resize the agents column"
           title="Drag to resize"></button>
   <div class="ap-head">
+    <!-- Back to the conversation list. Shown only under 700px, where the
+         list and the conversation take turns on the screen. -->
+    <button class="btn" type="button" id="pane-back">Agents</button>
     <div class="ap-title">
       <h2 id="ap-who">Everyone</h2>
       <!-- The panel never said what it was. Everyone who has opened it has
@@ -3013,10 +3026,11 @@
       // The page's one Escape handler. Each press closes the top-most thing
       // that is open and nothing under it: an overflow menu, then the clear
       // confirm, then Connections (which can sit on top of the agent form),
-      // then the agent form. One layer per press, so Escape in Connections
-      // never throws away an agent somebody is halfway through writing.
-      // Delete and Forget all are not here: they ask through window.confirm,
-      // which handles its own keys.
+      // then the agent form, then the details sheet on a medium screen. One
+      // layer per press, so Escape in Connections never throws away an
+      // agent somebody is halfway through writing. Delete and Forget all are
+      // not here: they ask through window.confirm, which handles its own
+      // keys.
       document.addEventListener("keydown", function (ev) {
         if (ev.key !== "Escape") return;
         var menu = document.querySelector(".more-menu:not([hidden])");
@@ -3036,6 +3050,13 @@
           return;
         }
         if (closeConnections() || closeDialog("agent-overlay")) {
+          ev.preventDefault();
+          return;
+        }
+        // The details sheet (700 to 1180px). Defined by the details script
+        // further down, which knows whether the panel is a sheet right now.
+        if (typeof window.__aiuiCloseSheet === "function" &&
+            window.__aiuiCloseSheet()) {
           ev.preventDefault();
         }
       });
@@ -3364,26 +3385,86 @@
   // The details panel opens and closes from "Details" in the conversation
   // header, and the choice is remembered. Without one, it starts open only
   // where three panes still leave the conversation room to read.
+  //
+  // Smaller windows (Phase 1, Task 5). From 700 to 1180px the panel is a
+  // sheet over the conversation: it starts closed whatever was chosen on a
+  // wide screen, and its Done or the page's one Escape handler closes it.
+  // Under 700px one pane shows at a time, picked by data-pane on the layout:
+  // the list, the conversation (a row, a question or the office opens it),
+  // or the details. Nothing here ever sends a message.
   (function () {
     var KEY = "aiui-details-open";
     var layout = document.querySelector(".agents-layout");
     var toggle = document.getElementById("details-toggle");
+    var done = document.getElementById("details-done");
+    var back = document.getElementById("pane-back");
     if (!layout || !toggle) return;
+    var wide = window.matchMedia("(min-width: 1181px)");
+    var phone = window.matchMedia("(max-width: 699px)");
     function saved() {
       try { return localStorage.getItem(KEY); } catch (e) { return null; }
     }
     function set(open, remember) {
       layout.classList.toggle("details-closed", !open);
       toggle.setAttribute("aria-expanded", open ? "true" : "false");
-      if (!remember) return;
+      // Only a choice made where the panel is a column is kept. The sheet
+      // starts closed every time, so it must not overwrite that choice.
+      if (!remember || !wide.matches) return;
       try { localStorage.setItem(KEY, open ? "1" : "0"); }
       catch (e) { /* it opens the default way next time */ }
     }
+    function start() {
+      var kept = saved();
+      set(wide.matches &&
+          (kept === "1" || (kept !== "0" && window.innerWidth >= 1440)), false);
+    }
+    function pane(name) { layout.setAttribute("data-pane", name); }
+
     toggle.addEventListener("click", function () {
-      set(layout.classList.contains("details-closed"), true);
+      if (phone.matches) {
+        pane("details");
+        if (done) done.focus();
+        return;
+      }
+      var open = layout.classList.contains("details-closed");
+      set(open, true);
+      // A sheet takes the focus with it, so the keyboard lands on its Done.
+      if (open && !wide.matches && done) done.focus();
     });
-    var kept = saved();
-    set(kept === "1" || (kept !== "0" && window.innerWidth >= 1440), false);
+
+    // Says whether there was a sheet to close, for the Escape handler.
+    function closeSheet() {
+      if (wide.matches || phone.matches) return false;
+      if (layout.classList.contains("details-closed")) return false;
+      set(false, false);
+      toggle.focus();
+      return true;
+    }
+    window.__aiuiCloseSheet = closeSheet;
+
+    if (done) {
+      done.addEventListener("click", function () {
+        if (phone.matches) { pane("chat"); toggle.focus(); return; }
+        closeSheet();
+      });
+    }
+    if (back) back.addEventListener("click", function () { pane("list"); });
+    // A row, a robot's Chat, a shell question or the office's ask: whoever
+    // opened a conversation wants to see it.
+    document.body.addEventListener("aiui:conversation-opened", function () {
+      pane("chat");
+    });
+    // The office opens in the conversation's column, so that column shows.
+    var office = document.getElementById("office-open");
+    if (office) office.addEventListener("click", function () { pane("chat"); });
+
+    // The list, unless the person arrived with a question (?ask=), which is
+    // already in the box by now.
+    var asked = document.querySelector(".ap-composer input[name=message]");
+    pane(asked && asked.value ? "chat" : "list");
+    start();
+    // Crossing the wide line starts that layout the way a visit would.
+    if (wide.addEventListener) wide.addEventListener("change", start);
   })();
 
   // The conversation list.

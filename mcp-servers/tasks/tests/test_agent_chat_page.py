@@ -115,12 +115,21 @@ def test_the_page_itself_does_not_scroll():
     again. The page is a screen now: it fills the window, and the two columns
     scroll inside it.
 
-    Only above the breakpoint. Stacked into one column, the page has to scroll
-    or everything below the fold is unreachable."""
+    At every width since Phase 1 Task 5 (2026-10-08). It used to apply only
+    above 1181px, because below that the columns stacked and a stacked page
+    has to scroll. Nothing stacks any more: two panes from 700 to 1180px, one
+    at a time under 700, and each pane scrolls itself. So the rule is a top
+    level rule, not one inside a media query."""
     page, css = _page(), _styles()
     assert "overflow: hidden" in page, "the page still scrolls as a document"
-    assert "min-width: 1181px" in page, (
-        "the shell must not apply where the columns stack")
+    style = page.split("<style>")[1].split("</style>")[0]
+    sheet = re.sub(r"/\*.*?\*/", "", style, flags=re.S)
+    m = re.search(r"html, body \{ height: 100%; overflow: hidden; \}", sheet)
+    assert m, "the page no longer fills the window"
+    depth = sheet[:m.start()].count("{") - sheet[:m.start()].count("}")
+    assert depth == 0, (
+        "the page fills the window only inside a media query, so it scrolls "
+        "at the widths left out")
     assert "overflow-y: auto" in css.split(".agents-main")[1][:200], (
         "the cards column has to carry its own overflow")
     # The declaration, not the word: the comment above the rule says what it

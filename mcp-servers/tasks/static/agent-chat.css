@@ -19,9 +19,11 @@
      their way and the grip is there for anyone who wants it the other way. */
   /* 2026-10-08, Phase 1: the conversation list takes a fixed 232px on the
      left (design doc, Layout), so the three panes are list, conversation,
-     agents. Only at 1181px and wider; below, the media query further down
-     stacks everything in one column. */
+     agents. Only at 1181px and wider; the media queries further down give
+     medium screens two panes and phones one at a time (Task 5). */
   grid-template-columns: 232px minmax(0, 1fr) var(--agents-width, 300px);
+  /* One row the height of the window, which the panes scroll inside. */
+  grid-template-rows: minmax(0, 1fr);
   /* The page is a screen, not a document: it fills what the window gives it
      and nothing outside these two columns scrolls. Before this the cards grew
      the page, so the window scrolled, the conversation scrolled inside it,
@@ -353,15 +355,53 @@
 .ap-head-actions .btn { padding: 5px 10px; font-size: 12.5px; }
 .asidenote { font-size: 12.5px; color: var(--text-2); }
 
-/* Below this width the cards want the whole row, so the panel goes under. */
-@media (max-width: 1180px) {
-  .agents-layout { grid-template-columns: 1fr; }
-  .agent-panel { position: static; height: auto; max-height: none; }
-  .chat-column { height: auto; }
-  /* The column has no height of its own here, so 100% would be nothing. */
-  #office-dock:not([hidden]) { height: 80vh; }
-  .ap-thread { min-height: 240px; max-height: 60vh; }
-  .aempty { margin: 0; text-align: left; max-width: none; }
+/* Smaller windows (Phase 1, Task 5; DESIGN.md: three panes on wide screens,
+   two on medium, one at a time on phones). Nothing stacks any more, so the
+   page still fills the window and every pane scrolls itself. */
+#pane-back, #details-done { display: none; }
+.details-head { display: flex; align-items: center; gap: 12px; }
+.details-head .details-title { flex: 1 1 auto; min-width: 0; }
+
+/* From 700 to 1180px: the list and the conversation side by side, and the
+   details a sheet over the conversation, on the panel layer with the Float
+   shadow, shown only while Details is open. */
+@media (min-width: 700px) and (max-width: 1180px) {
+  .agents-layout { grid-template-columns: 232px minmax(0, 1fr); gap: 16px; }
+  .agents-roster { grid-column: 1; grid-row: 1; }
+  .chat-column { grid-column: 2; grid-row: 1; }
+  .agents-main {
+    position: fixed; top: 0; right: 0; bottom: 0; z-index: 40;
+    width: min(360px, 92vw); padding: 16px;
+    background: var(--surface); border-left: 1px solid var(--border-2);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.45);
+  }
+  #details-done { display: inline-flex; }
+}
+
+/* Under 700px: one pane at a time, the one data-pane names. Full bleed, so
+   the panes lose the card edges they have beside each other. */
+@media (max-width: 699px) {
+  .agents-layout { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .agents-roster, .chat-column, .agents-main { grid-column: 1; grid-row: 1; }
+  .agents-layout .agents-roster,
+  .agents-layout .chat-column,
+  .agents-layout .agents-main { display: none; }
+  .agents-layout[data-pane="list"] .agents-roster { display: flex; }
+  .agents-layout[data-pane="chat"] .chat-column { display: flex; }
+  .agents-layout[data-pane="details"] .agents-main { display: block; }
+  .agents-roster, .agent-panel, #office-dock { border: 0; border-radius: 0; }
+  .agents-main { padding: 16px; background: var(--surface); }
+  /* The buttons on one line (Agents on the left, Details and Clear on the
+     right) and the name under them with the whole width to itself. */
+  .ap-head { flex-wrap: wrap; row-gap: 8px; }
+  .ap-head .ap-title { order: 1; flex: 1 1 100%; }
+  #pane-back, #details-done { display: inline-flex; }
+  /* DESIGN.md: 44px targets under 700px. */
+  .agents-layout .btn, .agents-layout .link-btn, .agents-layout .more-btn,
+  .agents-layout input[type="search"], .ap-composer input {
+    min-height: 44px; align-items: center;
+  }
+  .agents-layout .more-btn { min-width: 44px; }
 }
 
 /* Sized against the input rather than the panel, so Send reads as the

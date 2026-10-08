@@ -36,6 +36,9 @@ SHELL = (b'<!doctype html><meta charset="utf-8"><title>shell</title>'
          b'});</script>'
          b'<iframe id="pane" src="/agents.html" '
          b'style="width:1400px;height:900px;border:0"></iframe></body>')
+#: The same shell on a phone: the pane is the whole 390px screen.
+SHELL_PHONE = SHELL.replace(b"width:1400px;height:900px",
+                            b"width:390px;height:844px")
 
 IRIS = {"id": "agent-iris-a103", "name": "Iris",
         "meta": {"role": "Drive librarian", "toolIds": ["gdrive"]},
@@ -68,7 +71,9 @@ def server():
             path = self.path.split("?")[0]
             kind = "text/html"
             rel = path[len("/tasks/static/"):]
-            if path.startswith("/shell"):
+            if path.startswith("/phoneshell"):
+                body = SHELL_PHONE
+            elif path.startswith("/shell"):
                 body = SHELL
             elif path.startswith("/tasks/static/") and (STATIC / rel).is_file():
                 body = (STATIC / rel).read_bytes()
@@ -122,7 +127,8 @@ def _open(browser, server, roster=None, url="/agents.html", activity=None,
     pg.route("**/api/**", route)
     pg.route("**/tasks/agents/**", route)
     pg.goto("http://127.0.0.1:%d%s" % (server.server_address[1], url))
-    root = pg.frame_locator("#pane") if url.startswith("/shell") else pg
+    framed = url.startswith(("/shell", "/phoneshell"))
+    root = pg.frame_locator("#pane") if framed else pg
     root.locator("#my-agents .card").first.wait_for(state="attached")
     pg.wait_for_timeout(300)
     pg.sent = sent
@@ -520,5 +526,258 @@ def test_details_sits_beside_clear(browser, server):
         clear = root.locator("#ap-clear").bounding_box()
         gap = clear["x"] - (details["x"] + details["width"])
         assert 0 <= gap <= 16, gap
+    finally:
+        pg.close()
+
+
+# --- Task 5: smaller windows, two panes and then one ------------------------
+#
+# DESIGN.md: three panes on wide screens, two on medium, one at a time on
+# phones. From 700 to 1180px the list and the conversation sit side by side
+# and the details open as a sheet over the conversation. Under 700px one
+# pane fills the screen at a time.
+
+MEDIUM = (1000, 800)
+PHONE = (390, 844)
+LIST = "#agent-roster"
+CHAT = ".chat-column"
+
+
+def _window_stays_still(pg, x, y):
+    pg.mouse.move(x, y)
+    pg.mouse.wheel(0, 1500)
+    pg.wait_for_timeout(150)
+    return pg.evaluate("() => window.scrollY") == 0
+
+
+def _overflow_y(root, sel):
+    return root.locator(sel).evaluate("e => getComputedStyle(e).overflowY")
+
+
+def test_two_panes_at_1000(browser, server):
+    pg, root = _open(browser, server, size=MEDIUM)
+    try:
+        roster = root.locator(LIST).bounding_box()
+        chat = root.locator(CHAT).bounding_box()
+        assert abs(roster["width"] - 232) <= 1, roster
+        # Side by side, not stacked.
+        assert roster["x"] + roster["width"] <= chat["x"], (roster, chat)
+        assert abs(roster["y"] - chat["y"]) <= 1, (roster, chat)
+        assert chat["x"] + chat["width"] <= MEDIUM[0], chat
+        # Details defaults to closed at this width.
+        assert root.locator(DETAILS).is_hidden()
+        toggle = root.locator("#details-toggle")
+        assert toggle.get_attribute("aria-expanded") == "false"
+
+        toggle.click()
+        pg.wait_for_timeout(150)
+        sheet = root.locator(DETAILS)
+        assert sheet.is_visible()
+        assert toggle.get_attribute("aria-expanded") == "true"
+        box = sheet.bounding_box()
+        # A sheet over the conversation, pinned to the right edge, the whole
+        # height of the window.
+        assert abs(box["width"] - 360) <= 1, box
+        assert abs(box["x"] + box["width"] - MEDIUM[0]) <= 1, box
+        assert box["y"] <= 0.5 and abs(box["height"] - MEDIUM[1]) <= 1, box
+        assert box["x"] < chat["x"] + chat["width"], "it is not over the chat"
+        style = sheet.evaluate(
+            "e => { const s = getComputedStyle(e); return [s.position,"
+            " s.borderLeftWidth, s.boxShadow]; }")
+        assert style == ["fixed", "1px", "rgba(0, 0, 0, 0.45) 0px 4px 8px 0px"], style
+
+        pg.keyboard.press("Escape")
+        pg.wait_for_timeout(150)
+        assert sheet.is_hidden()
+        assert toggle.get_attribute("aria-expanded") == "false"
+        assert root.locator(LIST).is_visible() and root.locator(CHAT).is_visible()
+    finally:
+        pg.close()
+
+
+def test_the_sheet_can_be_closed_without_a_keyboard(browser, server):
+    """The sheet covers the right of the conversation header, Details
+    included, so the sheet carries its own Done."""
+    pg, root = _open(browser, server, size=MEDIUM)
+    try:
+        root.locator("#details-toggle").click()
+        pg.wait_for_timeout(150)
+        done = root.locator("#details-done")
+        assert done.is_visible() and done.inner_text() == "Done"
+        done.click()
+        pg.wait_for_timeout(150)
+        assert root.locator(DETAILS).is_hidden()
+        assert root.locator("#details-toggle").get_attribute(
+            "aria-expanded") == "false"
+    finally:
+        pg.close()
+
+
+def test_a_wide_screen_choice_does_not_open_the_sheet(browser, server):
+    """Details open at 1920 is remembered for 1920. At 1000 the sheet would
+    cover the conversation on arrival, so it starts closed there anyway."""
+    pg, root = _open(browser, server, size=MEDIUM)
+    try:
+        pg.evaluate("() => localStorage.setItem('aiui-details-open', '1')")
+        pg.reload()
+        root.locator("#my-agents .card").first.wait_for(state="attached")
+        pg.wait_for_timeout(300)
+        assert root.locator(DETAILS).is_hidden()
+        # And opening the sheet here does not overwrite the wide choice.
+        root.locator("#details-toggle").click()
+        pg.keyboard.press("Escape")
+        assert pg.evaluate(
+            "() => localStorage.getItem('aiui-details-open')") == "1"
+    finally:
+        pg.close()
+
+
+def test_the_medium_layout_fills_the_window_and_each_pane_scrolls(browser, server):
+    pg, root = _open(browser, server, size=MEDIUM)
+    try:
+        assert _window_stays_still(pg, 600, 400)
+        assert _window_stays_still(pg, 100, 400)
+        box = root.locator(".ap-composer").bounding_box()
+        assert box["y"] + box["height"] <= MEDIUM[1] + 1, box
+        assert _overflow_y(root, "#roster-list") == "auto"
+        assert _overflow_y(root, ".ap-thread") == "auto"
+        assert _overflow_y(root, DETAILS) == "auto"
+    finally:
+        pg.close()
+
+
+def test_the_phone_buttons_hide_on_wider_screens(browser, server):
+    for size in (MEDIUM, (1500, 1000)):
+        pg, root = _open(browser, server, size=size)
+        try:
+            assert root.locator("#pane-back").count() == 1
+            assert root.locator("#pane-back").is_hidden(), size
+        finally:
+            pg.close()
+    pg, root = _open(browser, server, size=(1500, 1000))
+    try:
+        # Three panes: the panel is a column, not a sheet, and needs no Done.
+        assert root.locator(DETAILS).is_visible()
+        assert root.locator("#details-done").is_hidden()
+    finally:
+        pg.close()
+
+
+def test_one_pane_at_a_time_on_a_phone(browser, server):
+    pg, root = _open(browser, server, size=PHONE)
+    try:
+        assert root.locator(LIST).is_visible()
+        assert root.locator(CHAT).is_hidden()
+        assert root.locator(DETAILS).is_hidden()
+        assert root.locator(LIST).bounding_box()["width"] >= PHONE[0] - 32
+
+        root.locator(IRIS_ROW).click()
+        pg.wait_for_timeout(200)
+        assert root.locator(LIST).is_hidden()
+        assert root.locator(CHAT).is_visible()
+        assert root.locator(CHAT).bounding_box()["width"] >= PHONE[0] - 32
+        assert root.locator("#ap-who").inner_text() == "Iris"
+        box = root.locator(".ap-composer").bounding_box()
+        assert box["y"] + box["height"] <= PHONE[1] + 1, box
+
+        back = root.locator("#pane-back")
+        assert back.is_visible() and back.inner_text() == "Agents"
+        back.click()
+        pg.wait_for_timeout(150)
+        assert root.locator(LIST).is_visible()
+        assert root.locator(CHAT).is_hidden()
+        assert not [u for u in pg.sent if "chat/send" in u], pg.sent
+    finally:
+        pg.close()
+
+
+def test_details_on_a_phone_fill_the_screen_and_done_goes_back(browser, server):
+    pg, root = _open(browser, server, size=PHONE)
+    try:
+        root.locator(IRIS_ROW).click()
+        pg.wait_for_timeout(200)
+        root.locator("#details-toggle").click()
+        pg.wait_for_timeout(150)
+        assert root.locator(DETAILS).is_visible()
+        assert root.locator(CHAT).is_hidden()
+        assert root.locator(LIST).is_hidden()
+        assert root.locator(DETAILS).bounding_box()["width"] >= PHONE[0] - 32
+        assert root.locator("#details-title").inner_text() == "Iris"
+        assert root.locator(VISIBLE_CARDS).count() == 1
+        done = root.locator("#details-done")
+        assert done.is_visible() and done.inner_text() == "Done"
+        done.click()
+        pg.wait_for_timeout(150)
+        assert root.locator(CHAT).is_visible()
+        assert root.locator(DETAILS).is_hidden()
+    finally:
+        pg.close()
+
+
+def test_the_phone_layout_fills_the_screen_and_each_pane_scrolls(browser, server):
+    pg, root = _open(browser, server, size=PHONE)
+    try:
+        assert _window_stays_still(pg, 195, 500)
+        assert _overflow_y(root, "#roster-list") == "auto"
+        root.locator(IRIS_ROW).click()
+        pg.wait_for_timeout(200)
+        assert _window_stays_still(pg, 195, 400)
+        assert _overflow_y(root, ".ap-thread") == "auto"
+    finally:
+        pg.close()
+
+
+def _targets(root, sel):
+    """[name, height] of every rendered element matching `sel`."""
+    return root.locator("body").evaluate(
+        "(b, sel) => [...document.querySelectorAll(sel)]"
+        ".filter(e => e.getClientRects().length"
+        " && getComputedStyle(e).visibility !== 'hidden')"
+        ".map(e => [e.id || e.className || e.tagName,"
+        " Math.round(e.getBoundingClientRect().height * 10) / 10])", sel)
+
+
+def test_phone_targets_are_44px(browser, server):
+    pg, root = _open(browser, server, size=PHONE)
+    try:
+        targets = _targets(
+            root, "#agent-roster button, #agent-roster a, #agent-roster input")
+        assert len(targets) >= 6, targets
+        small = [t for t in targets if t[1] < 44]
+        assert not small, small
+        root.locator(IRIS_ROW).click()
+        pg.wait_for_timeout(200)
+        targets = _targets(
+            root, ".ap-head button, .ap-composer button, .ap-composer input")
+        assert len(targets) >= 4, targets
+        small = [t for t in targets if t[1] < 44]
+        assert not small, small
+    finally:
+        pg.close()
+
+
+def test_an_ask_on_a_phone_lands_in_the_conversation(browser, server):
+    pg, root = _open(browser, server, url="/agents.html?ask=hello", size=PHONE)
+    try:
+        assert root.locator(CHAT).is_visible()
+        assert root.locator(LIST).is_hidden()
+        assert root.locator(BOX).input_value() == "hello"
+        assert not [u for u in pg.sent if "chat/send" in u], pg.sent
+    finally:
+        pg.close()
+
+
+def test_a_shell_ask_on_a_phone_lands_in_the_conversation(browser, server):
+    pg, root = _open(browser, server, url="/phoneshell", size=PHONE)
+    try:
+        assert root.locator(LIST).is_visible()
+        pg.evaluate(
+            "() => document.getElementById('pane').contentWindow.postMessage("
+            "{type: 'aiui-agents-ask', ask: 'hello'}, location.origin)")
+        pg.wait_for_timeout(300)
+        assert root.locator(CHAT).is_visible()
+        assert root.locator(LIST).is_hidden()
+        assert root.locator(BOX).input_value() == "hello"
+        assert not [u for u in pg.sent if "chat/send" in u], pg.sent
     finally:
         pg.close()
