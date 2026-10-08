@@ -790,7 +790,11 @@
     <a class="link-btn" id="roster-graph" href="/tasks/graph">Knowledge graph</a>
   </div>
 </nav>
-<div class="agents-main">
+<!-- The details panel (DESIGN.md, "Details panel"): every agent in the room,
+     where agents are managed, and only the open agent in a private
+     conversation. "Details" in the conversation header opens and closes it. -->
+<div class="agents-main" id="agent-details" aria-labelledby="details-title">
+    <h2 class="details-title" id="details-title">Your agents</h2>
 
     <div class="error box" id="page-error" hidden></div>
 
@@ -908,6 +912,9 @@
     <!-- Never shown since Phase 1: the Everyone row in the conversation list
          is the way back. Kept because older code still looks it up. -->
     <button class="btn" type="button" id="ap-everyone" hidden>Back to everyone</button>
+    <!-- Opens and closes the details panel on the right. -->
+    <button class="btn" type="button" id="details-toggle" aria-expanded="true"
+            aria-controls="agent-details">Details</button>
     <!-- One permanent room. Nobody is seated and nothing is listed: every
          agent hears every message, and this is the same conversation you
          left. Clearing it is the only destructive thing here, so it is the
@@ -3269,6 +3276,23 @@
           ? "Message " + current.name
           : "Message everyone");
       }
+      // The details panel shows only the open agent's card in a private
+      // conversation, and every card in the room, where agents are managed.
+      var layout = document.querySelector(".agents-layout");
+      if (layout) {
+        if (current.id) layout.setAttribute("data-talking", "1");
+        else layout.removeAttribute("data-talking");
+      }
+      var cards = document.querySelectorAll("#my-agents .card[data-agent-id]");
+      for (var c = 0; c < cards.length; c++) {
+        if (current.id && cards[c].getAttribute("data-agent-id") === current.id) {
+          cards[c].setAttribute("data-current", "");
+        } else {
+          cards[c].removeAttribute("data-current");
+        }
+      }
+      var title = document.getElementById("details-title");
+      if (title) title.textContent = current.id ? current.name : "Your agents";
       // The card you are in the middle of a conversation with says so.
       var all = document.querySelectorAll(".card-foot .chat-with");
       for (var i = 0; i < all.length; i++) {
@@ -3335,6 +3359,31 @@
     } catch (e) { current = { id: "", name: "" }; }
     paint();
     if (current.id) load();
+  })();
+
+  // The details panel opens and closes from "Details" in the conversation
+  // header, and the choice is remembered. Without one, it starts open only
+  // where three panes still leave the conversation room to read.
+  (function () {
+    var KEY = "aiui-details-open";
+    var layout = document.querySelector(".agents-layout");
+    var toggle = document.getElementById("details-toggle");
+    if (!layout || !toggle) return;
+    function saved() {
+      try { return localStorage.getItem(KEY); } catch (e) { return null; }
+    }
+    function set(open, remember) {
+      layout.classList.toggle("details-closed", !open);
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      if (!remember) return;
+      try { localStorage.setItem(KEY, open ? "1" : "0"); }
+      catch (e) { /* it opens the default way next time */ }
+    }
+    toggle.addEventListener("click", function () {
+      set(layout.classList.contains("details-closed"), true);
+    });
+    var kept = saved();
+    set(kept === "1" || (kept !== "0" && window.innerWidth >= 1440), false);
   })();
 
   // The conversation list.

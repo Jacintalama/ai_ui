@@ -92,11 +92,12 @@ def server():
     srv.shutdown()
 
 
-def _open(browser, server, roster=None, url="/agents.html", activity=None):
+def _open(browser, server, roster=None, url="/agents.html", activity=None,
+          size=(1500, 1000)):
     """The agents page signed in as the owner of `roster`. Returns the page
     and the locator root for the agents document (the pane when framed)."""
     agents = ROSTER if roster is None else roster
-    pg = browser.new_page(viewport={"width": 1500, "height": 1000})
+    pg = browser.new_page(viewport={"width": size[0], "height": size[1]})
     pg.set_default_timeout(6000)
     sent = []
 
@@ -393,5 +394,131 @@ def test_the_list_replaces_back_to_everyone(browser, server):
         root.locator(IRIS_ROW).click()
         pg.wait_for_timeout(200)
         assert root.locator("#ap-everyone").is_hidden()
+    finally:
+        pg.close()
+
+
+# --- Task 4: the details panel on the right ---------------------------------
+#
+# DESIGN.md, Details panel: the selected agent's details on the right,
+# collapsible, its open or closed state remembered. In the room every card
+# shows, because that is where agents are managed.
+
+DETAILS = ".agents-main"
+VISIBLE_CARDS = "#my-agents .card[data-agent-id]:visible"
+
+
+def test_three_panes_at_wide_widths(browser, server):
+    pg, root = _open(browser, server)
+    try:
+        roster = root.locator("#agent-roster").bounding_box()
+        chat = root.locator(".chat-column").bounding_box()
+        details = root.locator(DETAILS).bounding_box()
+        assert roster["x"] < chat["x"] < details["x"]
+        assert root.locator("#details-toggle").get_attribute(
+            "aria-expanded") == "true"
+        controls = root.locator("#details-toggle").get_attribute("aria-controls")
+        assert controls and root.locator(DETAILS).get_attribute("id") == controls
+        pg.mouse.move(700, 500)
+        pg.mouse.wheel(0, 1200)
+        pg.wait_for_timeout(120)
+        assert pg.evaluate("() => window.scrollY") == 0
+        box = root.locator(".ap-composer").bounding_box()
+        assert box["y"] + box["height"] <= 1000 + 1
+    finally:
+        pg.close()
+
+
+def test_details_shows_only_the_open_agent(browser, server):
+    pg, root = _open(browser, server)
+    try:
+        root.locator(IRIS_ROW).click()
+        pg.wait_for_timeout(200)
+        cards = root.locator(VISIBLE_CARDS)
+        assert cards.count() == 1
+        assert cards.first.get_attribute("data-agent-id") == "agent-iris-a103"
+        assert root.locator("#details-title").inner_text() == "Iris"
+    finally:
+        pg.close()
+
+
+def test_the_room_shows_every_agent_in_details(browser, server):
+    pg, root = _open(browser, server)
+    try:
+        root.locator(IRIS_ROW).click()
+        pg.wait_for_timeout(200)
+        root.locator(EVERYONE_ROW).click()
+        pg.wait_for_timeout(200)
+        assert root.locator(VISIBLE_CARDS).count() == 2
+        assert root.locator("#details-title").inner_text() == "Your agents"
+    finally:
+        pg.close()
+
+
+def test_details_can_be_closed_and_it_is_remembered(browser, server):
+    pg, root = _open(browser, server)
+    try:
+        before = root.locator(".chat-column").bounding_box()["width"]
+        root.locator("#details-toggle").click()
+        pg.wait_for_timeout(150)
+        assert root.locator(DETAILS).is_hidden()
+        assert root.locator("#details-toggle").get_attribute(
+            "aria-expanded") == "false"
+        # The conversation takes the room the details gave up.
+        assert root.locator(".chat-column").bounding_box()["width"] > before + 200
+        pg.reload()
+        root.locator("#my-agents .card").first.wait_for(state="attached")
+        pg.wait_for_timeout(300)
+        assert root.locator(DETAILS).is_hidden()
+        assert root.locator("#details-toggle").get_attribute(
+            "aria-expanded") == "false"
+        root.locator("#details-toggle").click()
+        pg.wait_for_timeout(150)
+        assert root.locator(DETAILS).is_visible()
+    finally:
+        pg.close()
+
+
+def test_details_start_closed_below_1440(browser, server):
+    """Open by default only where three panes leave the conversation enough
+    room (the plan's 1440px line); a choice the person made wins either way."""
+    pg, root = _open(browser, server, size=(1300, 900))
+    try:
+        assert root.locator(DETAILS).is_hidden()
+        assert root.locator("#details-toggle").get_attribute(
+            "aria-expanded") == "false"
+    finally:
+        pg.close()
+
+
+def test_the_conversation_gets_the_room(browser, server):
+    pg, root = _open(browser, server, size=(1920, 1080))
+    try:
+        assert root.locator(".ap-thread").bounding_box()["height"] >= 700
+    finally:
+        pg.close()
+
+
+def test_the_list_replaces_chat_with_on_the_card(browser, server):
+    """The element stays (Phase 0 code looks it up), but it is not shown:
+    the conversation list is the one way to open a conversation."""
+    pg, root = _open(browser, server)
+    try:
+        assert root.locator("#my-agents .card-foot .chat-with").count() == 2
+        assert root.locator("#my-agents .card-foot .chat-with:visible").count() == 0
+    finally:
+        pg.close()
+
+
+def test_details_sits_beside_clear(browser, server):
+    """The header's actions sit together on the right. Measured in a
+    screenshot: with the head spread space-between, Details floated in the
+    middle of the header, a long way from anything it belongs to."""
+    pg, root = _open(browser, server, size=(1920, 1080))
+    try:
+        details = root.locator("#details-toggle").bounding_box()
+        clear = root.locator("#ap-clear").bounding_box()
+        gap = clear["x"] - (details["x"] + details["width"])
+        assert 0 <= gap <= 16, gap
     finally:
         pg.close()

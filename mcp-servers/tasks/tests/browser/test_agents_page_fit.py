@@ -210,3 +210,29 @@ def test_the_panel_fills_the_window_rather_than_a_guess_at_it(page):
     box = page.locator(".agent-panel").bounding_box()
     assert box["height"] <= height, "the panel is taller than the window"
     assert box["y"] + box["height"] <= height + 1
+
+
+# Phase 1 (docs/plans/2026-10-08-ai-agents-workspace-phase1.md, Task 4): three
+# panes, the conversation list, the conversation and the details. At this
+# laptop size the details start open, and closing them must not cost any of
+# the above: the window still does not move and the composer stays on screen.
+
+def test_the_three_panes_sit_side_by_side(page):
+    roster = page.locator("#agent-roster").bounding_box()
+    chat = page.locator(".chat-column").bounding_box()
+    details = page.locator(".agents-main").bounding_box()
+    assert roster["x"] + roster["width"] <= chat["x"]
+    assert chat["x"] + chat["width"] <= details["x"]
+    assert page.locator("#details-toggle").get_attribute("aria-expanded") == "true"
+
+
+def test_closing_the_details_keeps_the_page_still(page):
+    page.locator("#details-toggle").click()
+    page.wait_for_timeout(120)
+    assert page.locator(".agents-main").is_hidden()
+    page.mouse.move(700, 500)
+    page.mouse.wheel(0, 1200)
+    page.wait_for_timeout(120)
+    assert page.evaluate("() => window.scrollY") == 0
+    box = page.locator(".ap-composer").bounding_box()
+    assert box["y"] + box["height"] <= page.viewport_size["height"] + 1

@@ -44,7 +44,24 @@
   /* The column the office view and the conversation take turns in. */
   .chat-column { grid-column: 2; grid-row: 1; }
   .agents-main { grid-column: 3; grid-row: 1; }
+  /* Details closed: the conversation takes the room they gave up. */
+  .agents-layout.details-closed { grid-template-columns: 232px minmax(0, 1fr); }
 }
+/* "Details" in the conversation header (Phase 1, Task 4). Closed means not
+   on screen at any width, so the button never says one thing while the page
+   shows another; and with nothing to resize, the handle goes too. */
+.agents-layout.details-closed .agents-main,
+.agents-layout.details-closed .ap-resize { display: none; }
+/* In a private conversation the details are that agent's alone. In the room
+   every card shows: that is where agents are managed. */
+.agents-layout[data-talking="1"] #my-agents .card:not([data-current]) { display: none; }
+/* The conversation list is the way into a conversation now. The button stays
+   in the DOM because Phase 0 code looks it up. */
+.card-foot .chat-with { display: none; }
+/* Beside Clear on the right, not adrift in the middle of a space-between
+   head. */
+.ap-head #details-toggle { margin-left: auto; }
+.details-title { margin: 0 0 10px; font-size: 16px; font-weight: 600; line-height: 1.35; }
 
 /* The conversation list (DESIGN.md, "Conversation list"). Panel layer, its
    own scrolling, the footer links pinned to the bottom. */
