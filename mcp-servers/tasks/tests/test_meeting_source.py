@@ -54,3 +54,77 @@ def test_a_meeting_is_watched_on_the_chat_clock_not_the_schedule_one():
     hour-long schedule window would call a dead meeting healthy."""
     assert (agent_activity._stale_after(agent_activity.SOURCE_MEETING)
             == agent_activity._stale_after(agent_activity.SOURCE_CHANNEL))
+
+
+# --- who counts as being in one --------------------------------------------
+# Reported live 2026-10-08, with a screenshot of the office: chatting with
+# the whole team left everybody at their desks, and the live feed said every
+# run was "from channel". The trace was being written for one phrasing only.
+
+import routes_agent_chat
+import agent_routing
+
+TEAM = [{"id": "agent-ada", "name": "Ada"}, {"id": "agent-kai", "name": "Kai"},
+        {"id": "agent-iris", "name": "Iris"}, {"id": "agent-rex", "name": "Rex"}]
+
+
+def _route(text, **kw):
+    return agent_routing.choose_speakers(text, TEAM, **kw)
+
+
+def test_a_plain_message_to_the_room_is_a_meeting():
+    """The bug itself. "hey" reaches everybody, so everybody convenes, even
+    though the ladder calls it ROOM rather than MEETING."""
+    speakers, _may_pass, why = _route("hey")
+    assert why == agent_routing.ROUTE_ROOM
+    assert len(speakers) > 1
+    assert routes_agent_chat._is_a_meeting(speakers) is True
+
+
+def test_calling_one_explicitly_is_still_a_meeting():
+    speakers, _may_pass, why = _route("everyone answer: what is left today")
+    assert why == agent_routing.ROUTE_MEETING
+    assert routes_agent_chat._is_a_meeting(speakers) is True
+
+
+def test_naming_two_of_them_is_a_meeting_of_two():
+    """Two agents answering together is a meeting of two, and the floor says
+    so: the room's caption counts whoever is in it.
+
+    Note the rung is NAMED, not COLLECTIVE. That is the point of keying on
+    how many ANSWER rather than on the label: naming two people is still
+    convening two people, and a rule written against route names would have
+    missed this one the same way it missed a plain "hey"."""
+    speakers, _may_pass, why = _route("Ada and Kai, can you both look")
+    assert why == agent_routing.ROUTE_NAMED
+    assert len(speakers) == 2
+    assert routes_agent_chat._is_a_meeting(speakers) is True
+
+
+def test_asking_one_agent_is_not_a_meeting():
+    """The guard. One agent answering is a conversation, and dragging it into
+    the meeting room would make the room meaningless."""
+    speakers, _may_pass, why = _route("Iris, find the invoice")
+    assert why == agent_routing.ROUTE_NAMED
+    assert speakers and len(speakers) == 1
+    assert routes_agent_chat._is_a_meeting(speakers) is False
+
+
+def test_a_follow_on_to_one_agent_is_not_a_meeting():
+    speakers, _may_pass, why = _route("go ahead", last_speaker=TEAM[0])
+    assert why == agent_routing.ROUTE_CONTINUATION
+    assert routes_agent_chat._is_a_meeting(speakers) is False
+
+
+def test_answering_a_held_question_is_not_a_meeting():
+    """"Yes" belongs to whoever asked. Putting it to the room is the bug the
+    approval rung exists to stop, and it must not become a meeting either."""
+    speakers, _may_pass, why = _route("yes", last_speaker=TEAM[2],
+                                      has_pending=True)
+    assert why == agent_routing.ROUTE_APPROVAL
+    assert routes_agent_chat._is_a_meeting(speakers) is False
+
+
+def test_nobody_answering_is_not_a_meeting():
+    assert routes_agent_chat._is_a_meeting([]) is False
+    assert routes_agent_chat._is_a_meeting(None) is False

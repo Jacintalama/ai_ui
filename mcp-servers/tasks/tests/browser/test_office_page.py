@@ -1538,6 +1538,68 @@ def _in_a_meeting(page, ids):
     page.wait_for_timeout(1400)
 
 
+def _mid_round(page, speaking, done):
+    """A meeting as it really looks mid-round: one agent mid-turn and the
+    others already finished.
+
+    The panel asks each agent in turn and awaits it, so at any instant most
+    of the room has already spoken. `now` rather than a fixed timestamp,
+    because whether a finished run still counts is a question about age."""
+    import datetime
+    at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    act = {i: {"state": "working", "running_for_seconds": 2,
+               "last_run_at": at, "source": "meeting"} for i in speaking}
+    act.update({i: {"state": "ready", "last_status": "completed",
+                    "last_run_at": at, "source": "meeting"} for i in done})
+    page.route("**/agents/activity**", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"activity": act, "handoffs": []})))
+    page.evaluate("() => window.aiuiRefreshOffice()")
+    page.wait_for_timeout(1400)
+
+
+def test_an_agent_that_has_already_spoken_stays_in_the_meeting(page):
+    """Reported live 2026-10-08 with a screenshot: chatting with the whole
+    team left everybody at their desks.
+
+    Half of that was the trace (see tests/test_meeting_source.py). This is
+    the other half: a round goes round the table ONE AGENT AT A TIME, so
+    asking "is this agent working right now" would put a single robot in the
+    meeting room while the rest sat at their desks, and a gathering would
+    never appear however the round was recorded."""
+    a, b = "agent-research-assistant-0001", "agent-iris-a103"
+    _mid_round(page, speaking=[a], done=[b])
+    got = page.evaluate(
+        "() => {"
+        " const r = document.querySelector('.zone[data-room=\"meeting\"]')"
+        "   .getBoundingClientRect();"
+        " const inside = s => { const e ="
+        "   document.querySelector('.who-slot[data-id=\"' + s + '\"]');"
+        "   if (!e) return false; const x = e.getBoundingClientRect();"
+        "   return x.left >= r.left - 2 && x.right <= r.right + 2"
+        "     && x.top >= r.top - 2 && x.bottom <= r.bottom + 2; };"
+        " return { speaking: inside('%s'), finished: inside('%s') }; }" % (a, b))
+    assert got["speaking"], got
+    assert got["finished"], got
+    assert "2 agents" in page.locator(".meeting-table").inner_text().lower()
+
+
+def test_a_meeting_that_is_over_sends_them_back(page):
+    """The window is what makes them leave together. An old meeting run is
+    somewhere an agent WAS, and a floor that kept drawing it would be making
+    the staleness claim this page exists to avoid."""
+    old = "2026-10-08T02:00:00+00:00"   # hours before the test runs
+    act = {i: {"state": "ready", "last_status": "completed",
+               "last_run_at": old, "source": "meeting"}
+           for i in ("agent-research-assistant-0001", "agent-iris-a103")}
+    page.route("**/agents/activity**", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"activity": act, "handoffs": []})))
+    page.evaluate("() => window.aiuiRefreshOffice()")
+    page.wait_for_timeout(1400)
+    assert page.locator(".meeting-table").count() == 0
+
+
 def test_no_meeting_means_no_table(page):
     """The default fixture has nobody in a meeting. A table standing there
     all day would stop meaning anything."""

@@ -465,9 +465,34 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   //: `meeting` (agent_activity.SOURCE_MEETING). Guessing it instead, from
   //: several runs beginning at about the same time, would draw a meeting
   //: that nobody called.
+  //: How long after the last word a meeting is still standing. A round goes
+  //: round the table ONE AGENT AT A TIME: the panel asks each in turn and
+  //: awaits it, so at any instant six of seven are already finished. Asking
+  //: "is this agent working right now" put a single robot in the meeting
+  //: room while the rest sat at their desks, and a gathering never appeared.
+  var MEETING_SECONDS = 90;
+
+  //: Is a meeting happening at all? True while anybody is mid-turn in one,
+  //: and for a short while after the last of them finished, so the team
+  //: arrives and leaves together instead of trickling through one at a time.
+  function meetingIsOn() {
+    var newest = 0;
+    for (var id in S.ACTIVITY) {
+      var a = S.ACTIVITY[id];
+      if (!a || a.source !== "meeting") continue;
+      if (a.state === "working") return true;
+      var at = Date.parse(a.last_run_at || "");
+      if (at > newest) newest = at;
+    }
+    return !!newest && (Date.now() - newest) / 1000 <= MEETING_SECONDS;
+  }
+
   function inMeeting(id) {
     var a = S.ACTIVITY[id];
-    return !!(a && a.state === "working" && a.source === "meeting");
+    if (!a || a.source !== "meeting") return false;
+    // Still recorded, still in the room: the source is the run's own, so
+    // this never puts an agent in a meeting it was not part of.
+    return a.state === "working" || meetingIsOn();
   }
 
   //: The seat geometry that used to live here is gone (2026-10-08). The

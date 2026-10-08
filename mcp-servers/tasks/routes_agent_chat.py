@@ -304,6 +304,25 @@ def _speakers_for(text: str, agents: list[dict], last_speaker: dict | None = Non
     return speakers, may_pass
 
 
+def _is_a_meeting(speakers) -> bool:
+    """More than one agent answering the same message.
+
+    Pure, so the rule is testable against the real routing ladder without a
+    session, a database or a model.
+
+    Reported live 2026-10-08: chatting with the whole team put nobody in the
+    meeting room. Only the explicit "everyone answer:" wording counted, and
+    a plain "hey" to the room is ROUTE_ROOM. But every rung that reaches the
+    whole room convenes the team just as much; what separates ROOM and
+    COLLECTIVE from MEETING is whether an agent may PASS, which is a
+    different question from who was ASKED.
+
+    One speaker is never a meeting however it was routed, which is what
+    keeps NAMED, CONTINUATION, OWNER and APPROVAL out of the room.
+    """
+    return len(speakers or []) > 1
+
+
 def _last_speaker(messages: list[dict], agents: list[dict]) -> dict | None:
     """The agent that answered most recently, if it is still one of these.
 
@@ -523,7 +542,18 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
         # Without this, five agents convened together were indistinguishable
         # from five asked separately, and the office could not draw a
         # meeting it could not see.
-        meeting = (agent_activity.meeting_round() if why == agent_routing.ROUTE_MEETING
+        #
+        # And a meeting is MORE THAN ONE AGENT ANSWERING THE SAME MESSAGE,
+        # not only the phrasing that explicitly calls one. Reported live
+        # 2026-10-08: chatting with the whole team put nobody in the meeting
+        # room, because a plain "hey" is ROUTE_ROOM and only the
+        # "everyone answer:" wording was ROUTE_MEETING. Every other rung that
+        # reaches the whole room (COLLECTIVE, ROOM) convenes the team just as
+        # much; what separates them is whether an agent may pass, which is a
+        # different question from who was asked. One speaker is never a
+        # meeting, however it was routed, which is what keeps NAMED,
+        # CONTINUATION, OWNER and APPROVAL out of the room.
+        meeting = (agent_activity.meeting_round() if _is_a_meeting(speakers)
                    else contextlib.nullcontext())
         with meeting, agent_escalation.asking(agent_escalation.Intent(
                 person_text=asked, may_pass=may_pass)):
