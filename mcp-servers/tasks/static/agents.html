@@ -853,23 +853,26 @@
 </div><!-- .agents-main -->
 
 <div class="chat-column">
-<!-- The floor is its own card, above the conversation rather than inside it.
-     It was a floating window, then a section of the chat card: "separaete the
-     card for each office and chat". Two cards, one column, the grip between
-     them deciding how the height is shared. -->
-<section class="office-card" id="office-dock" aria-label="The agent office">
+<!-- The floor is its own card, never inside the conversation's. It was a
+     floating window, then a section of the chat card, then a card stacked
+     above the conversation. Since Phase 1 (2026-10-08) it is on demand:
+     "Agent Office" swaps it into the conversation's place, the whole height
+     of the column, and "Back to conversation" swaps it out again. Hidden in
+     the markup so a first visit never flashes it. -->
+<section class="office-card" id="office-dock" aria-label="The agent office" hidden>
   <div class="ap-office-head">
     <strong>Agent Office</strong>
     <span class="ap-sub">Whoever is answering lights up while you watch.</span>
-    <button class="btn" type="button" id="office-close">Hide</button>
+    <button class="btn" type="button" id="office-close">Back to conversation</button>
   </div>
   <div class="ap-office-body" id="office-body"></div>
 </section>
-<!-- A button, not a div, so it is reachable by keyboard: the same reason the
-     column's own resize handle is one. Arrow keys move it too. -->
+<!-- The grip that shared the column between the stacked floor and the
+     conversation. The office view has the column to itself, so it is never
+     shown; it stays because the dock script still looks it up. -->
 <button class="ap-office-grip" id="office-grip" type="button" role="separator"
         aria-orientation="horizontal" aria-label="Resize the office"
-        title="Drag to resize the office"></button>
+        title="Drag to resize the office" hidden></button>
 
 <aside class="agent-panel" id="agent-panel">
   <!-- Drag to give the conversation more room, or the agents more. A button
@@ -891,9 +894,9 @@
     </div>
     <!-- Only while a private conversation is open. -->
     <button class="btn" type="button" id="ap-everyone" hidden>Back to everyone</button>
-    <!-- The office is IN the column now, not over it. This only brings it
-         back after somebody hides it. -->
-    <button class="btn" type="button" id="office-open" hidden>Show the office</button>
+    <!-- The office on demand: it takes this conversation's place until
+         "Back to conversation". Task 2 moves it to the list's footer. -->
+    <button class="btn" type="button" id="office-open">Agent Office</button>
     <!-- One permanent room. Nobody is seated and nothing is listed: every
          agent hears every message, and this is the same conversation you
          left. Clearing it is the only destructive thing here, so it is the
@@ -3052,6 +3055,11 @@
     function prefillAsk(text) {
       var box = document.querySelector(".ap-composer input[name=message]");
       if (!box) return false;
+      // A question goes in the conversation, so the conversation has to be
+      // on screen: the office view, if open, gives way first (the dock
+      // script below listens). Before the value, so focus lands in a box
+      // that is shown.
+      document.body.dispatchEvent(new CustomEvent("aiui:conversation-opened"));
       box.value = text;
       box.focus();
       return true;
@@ -3237,6 +3245,10 @@
       remember();
       paint();
       load();
+      // Whoever opened it, a card, the list or a robot in the office, the
+      // conversation is what they asked for, so the office view gives way.
+      // First, so the focus below lands in a box that is on screen.
+      document.body.dispatchEvent(new CustomEvent("aiui:conversation-opened"));
       var box = document.querySelector(".ap-composer input[name=message]");
       if (box) box.focus();
     };
@@ -3264,17 +3276,20 @@
     if (current.id) load();
   })();
 
-  // The office, inline in the chat column.
+  // The office, on demand in the chat column.
   //
-  // It was a floating window you clicked to open. "where is the office in
-  // this page... put it inline instead of clicking it... make sure it can be
-  // able to resize but the user." So it is a section stacked in the same
-  // column as the conversation and the composer: nothing overlaps anything,
-  // it is there without being opened, and the grip under it decides how much
-  // of the column it takes.
+  // It was a floating window you clicked to open, then a section stacked
+  // above the conversation with a grip deciding how the column was shared
+  // ("put it inline instead of clicking it... make sure it can be able to
+  // resize"). The chat-first workspace (design 2026-10-05, Phase 1
+  // 2026-10-08) gives the conversation the column and the office a view of
+  // its own: "Agent Office" swaps the floor into the conversation's place at
+  // the column's full height, and "Back to conversation", or anything that
+  // opens a conversation, swaps it back.
   //
-  // The frame is built once and kept. Rebuilding it reloads the whole floor
-  // and throws away what it had drawn, which is the opposite of watching.
+  // The frame is built the first time it is opened, then kept. Rebuilding it
+  // reloads the whole floor and throws away what it had drawn, which is the
+  // opposite of watching.
   (function () {
     // If this page ever finds itself loaded INSIDE the office frame, then
     // something served the wrong document for /tasks/office. Building another
@@ -3290,26 +3305,17 @@
     var grip = document.getElementById("office-grip");
     var body = document.getElementById("office-body");
     if (!dock || !body || !grip) return;
+    var panel = document.getElementById("agent-panel");
 
-    //: Versioned, and deliberately. A remembered height is a choice about a
-    //: particular floor, and on 2026-09-29 the floor stopped being a fixed
-    //: 1040x680 canvas and started being sized by the rooms in it. A height
-    //: chosen for the old shape is not a choice about the new one: the
-    //: owner's own saved value left the office a sliver with the rooms cut
-    //: off, and because a saved height blocks the floor's suggestion below,
-    //: it would have stayed that way for good. The new key ignores the old
-    //: value exactly once, then remembers the next drag as usual.
-    var HEIGHT_KEY = "aiuiOfficeHeight2";
-    var SHUT_KEY = "aiuiOfficeShut";
-    var MIN = 140;
-    //: Whether the height is the person's rather than the floor's suggestion.
-    //: Set the moment they touch the grip, not when the drag ends: the floor
-    //: re-sends its suggestion on every resize, so a drag in progress was
-    //: being snapped straight back to the suggested height.
-    var chosen = false;
+    //: "1" while the office view is open, so a reload comes back to it. A new
+    //: key on purpose: the stacked design's aiuiOfficeShut defaulted to
+    //: shown, and an absent flag must now mean the conversation. Its height
+    //: keys (aiuiOfficeHeight, aiuiOfficeHeight2) are no longer read: the
+    //: view has the whole column, so there is no share to remember.
+    var VIEW_KEY = "aiuiOfficeView";
 
     // Every storage touch is guarded: a private window throws on access, and
-    // the office should simply take its default height when it does.
+    // the page should simply open on the conversation when it does.
     function saved(key) {
       try { return localStorage.getItem(key); } catch (e) { return null; }
     }
@@ -3318,23 +3324,6 @@
         if (value === null) localStorage.removeItem(key);
         else localStorage.setItem(key, value);
       } catch (e) { /* not worth losing the office over */ }
-    }
-
-    // Never taller than the column can give: the thread and the composer
-    // still need their share, and a floor that ate the conversation would be
-    // the floating window's problem all over again.
-    function ceiling() {
-      var column = dock.parentElement;
-      var room = column ? column.getBoundingClientRect().height : 0;
-      // What is left has to stay a usable conversation: a thread worth
-      // reading plus the box you type in.
-      return room ? Math.max(MIN, room - 240) : 620;
-    }
-    function setHeight(px, remember) {
-      var h = Math.round(Math.min(Math.max(px, MIN), ceiling()));
-      dock.style.height = h + "px";
-      if (remember) save(HEIGHT_KEY, String(h));
-      return h;
     }
 
     function offerToHost(frame) {
@@ -3361,22 +3350,15 @@
       body.appendChild(f);
     }
 
+    // The office view: the floor in the conversation's place, the column's
+    // whole height (agent-chat.css), so there is nothing for the grip to do.
     function show() {
       dock.hidden = false;
-      grip.hidden = false;
-      if (open) open.hidden = true;
-      save(SHUT_KEY, null);
+      grip.hidden = true;
+      if (panel) panel.hidden = true;
+      save(VIEW_KEY, "1");
       build();
-      if (saved(HEIGHT_KEY) != null) chosen = true;
-      var h = parseInt(saved(HEIGHT_KEY) || "", 10);
-      // A whole floor needs 570 here: its own 460 minimum plus this
-      // dock's header, the frame's padding and the Brain chip. But the
-      // column can only give about 608 before the conversation has
-      // nothing left, so opening at 570 would hand almost the entire
-      // panel to the office. It opens at 420 instead, which shows most
-      // of the floor and leaves the chat usable. Drag it up for the
-      // rest; that is what gets remembered.
-      setHeight(isNaN(h) ? 420 : h, false);
+      dock.style.height = "";
       // Shown again by this page's own button, which the shell never sees,
       // so the floor is told here that it is back on screen. It makes up a
       // re-read it skipped while hidden instead of waiting for its next tick.
@@ -3391,12 +3373,15 @@
     function hide() {
       dock.hidden = true;
       grip.hidden = true;
-      if (open) open.hidden = false;
-      save(SHUT_KEY, "1");
+      if (panel) panel.hidden = false;
+      save(VIEW_KEY, null);
     }
 
     if (open) open.addEventListener("click", show);
     if (close) close.addEventListener("click", hide);
+    // Anything that opens a conversation (aiuiTalkTo, a question put in the
+    // box) brings the conversation back over the office.
+    document.body.addEventListener("aiui:conversation-opened", hide);
 
     // The shell tells this page when its pane is back on screen. The floor is
     // a frame inside this page that the shell cannot see, so it is told here,
@@ -3414,49 +3399,12 @@
       } catch (e) { /* not loaded yet: it catches up on its own tick */ }
     });
 
-    if (saved(SHUT_KEY) === "1") hide();
-    else show();
-
-    // Dragging the grip. Pointer events rather than mouse, so a touch or a
-    // pen resizes it too, and the capture keeps the drag alive when the
-    // pointer leaves the 10px strip.
-    var from = null;
-    grip.addEventListener("pointerdown", function (e) {
-      chosen = true;
-      from = { y: e.clientY, h: dock.getBoundingClientRect().height };
-      dock.classList.add("sizing");
-      try { grip.setPointerCapture(e.pointerId); } catch (err) { /* older */ }
-      e.preventDefault();
-    });
-    grip.addEventListener("pointermove", function (e) {
-      if (!from) return;
-      setHeight(from.h + (e.clientY - from.y), false);
-    });
-    function done() {
-      if (!from) return;
-      from = null;
-      dock.classList.remove("sizing");
-      save(HEIGHT_KEY, String(Math.round(dock.getBoundingClientRect().height)));
-    }
-    grip.addEventListener("pointerup", done);
-    grip.addEventListener("pointercancel", done);
-
-    // The same reason the column's own handle takes them: a drag handle that
-    // only answers a mouse is one a keyboard cannot reach.
-    grip.addEventListener("keydown", function (e) {
-      var step = e.shiftKey ? 48 : 16;
-      chosen = true;
-      if (e.key === "ArrowDown") setHeight(dock.getBoundingClientRect().height + step, true);
-      else if (e.key === "ArrowUp") setHeight(dock.getBoundingClientRect().height - step, true);
-      else return;
-      e.preventDefault();
-    });
-
-    // The window got narrower or the column was resized: a height that was
-    // legal before can be taller than the room that is left.
-    window.addEventListener("resize", function () {
-      if (!dock.hidden) setHeight(dock.getBoundingClientRect().height, false);
-    });
+    // Back to the office view after a reload, unless the person arrived with
+    // a question (?ask=), which is already in the conversation's box and
+    // would be hidden behind the floor.
+    var asked = document.querySelector(".ap-composer input[name=message]");
+    if (saved(VIEW_KEY) === "1" && !(asked && asked.value)) show();
+    else hide();
 
     // The office asking on the person's behalf. Clicking Chat on a robot
     // sends the question out here rather than following its own link, which
@@ -3474,16 +3422,10 @@
       var msg = ev.data;
       // The frame finished before we could greet it. Answer now.
       if (msg && msg.type === "aiui-office-ready") { offerToHost(frame); return; }
-      // The floor knows how tall it has to be for all of it to show at this
-      // width. Only while nobody has chosen a height: once somebody drags the
-      // grip, that is the answer and the floor fits itself into it instead.
-      if (msg && msg.type === "aiui-office-size") {
-        if (!chosen && saved(HEIGHT_KEY) == null && typeof msg.height === "number") {
-          var head = dock.querySelector(".ap-office-head");
-          setHeight(msg.height + (head ? head.offsetHeight : 40), false);
-        }
-        return;
-      }
+      // The floor says how tall it would like to be. The stacked dock obeyed;
+      // the office view is the column's whole height whatever it asks, and
+      // the floor fits itself into that.
+      if (msg && msg.type === "aiui-office-size") return;
       if (msg && msg.type === "aiui-office-open") { openPane(msg.path); return; }
       if (msg && msg.type === "aiui-office-edit") { editAgent(msg.id); return; }
       if (!msg || msg.type !== "aiui-office-ask" || typeof msg.ask !== "string") return;
@@ -3501,9 +3443,12 @@
       }
       // No agent: a question for the room, such as the meeting button's
       // "everyone answer: ". Asked in a private conversation only that one
-      // agent would hear it, so the room comes back first.
+      // agent would hear it, so the room comes back first. The conversation
+      // replaces the floor before the box is filled, so the focus lands in a
+      // box that is on screen.
       var field = document.getElementById("ap-agent");
       if (talk && field && field.value) talk("", "");
+      hide();
       prefill(msg.ask);
     });
 

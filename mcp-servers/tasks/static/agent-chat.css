@@ -91,6 +91,10 @@
   padding: 16px; border-radius: var(--radius-lg);
   background: var(--surface); border: 1px solid var(--border);
 }
+/* The office view (Phase 1): while open, the office takes the conversation's
+   place and the column's whole height. An id selector, so it wins over the
+   stacked dock's fixed 420px in agents.html. */
+#office-dock:not([hidden]) { flex: 1 1 auto; height: 100%; }
 .ap-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .ap-head h2 { margin: 0; font-size: 15px; }
 .ap-thread {
@@ -276,6 +280,8 @@
   .agents-layout { grid-template-columns: 1fr; }
   .agent-panel { position: static; height: auto; max-height: none; }
   .chat-column { height: auto; }
+  /* The column has no height of its own here, so 100% would be nothing. */
+  #office-dock:not([hidden]) { height: 80vh; }
   .ap-thread { min-height: 240px; max-height: 60vh; }
   .aempty { margin: 0; text-align: left; max-width: none; }
 }

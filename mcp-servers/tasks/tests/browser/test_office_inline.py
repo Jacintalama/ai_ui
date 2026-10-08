@@ -11,6 +11,12 @@ overlap something on a single screen, and the thing it landed on was the
 composer. Stacked in the column it covers nothing: the floor, the conversation
 and the box you type in each get their own room, and the grip between them
 decides how that room is shared.
+
+Phase 1 (2026-10-08, docs/plans/2026-10-08-ai-agents-workspace-phase1.md)
+makes it a fourth shape: on demand. The conversation owns the column, and
+"Agent Office" swaps the floor into the conversation's place until "Back to
+conversation" or a Chat on a robot brings the conversation back. The tests
+about the floor's own content open it first with _open_office.
 """
 import http.server
 import json
@@ -166,17 +172,157 @@ def _overlap(a, b):
                 or b["y"] + b["height"] <= a["y"] + 1)
 
 
-# --- it is simply there -----------------------------------------------------
+def _open_office(page):
+    """The office is on demand since Phase 1 (2026-10-08): the conversation
+    owns the column until somebody asks for the floor. `page` may be a page
+    or a frame locator around the agents page."""
+    page.locator("#office-open").click()
+    page.locator("#office-body iframe").wait_for(state="attached")
 
-def test_the_office_is_on_the_page_without_being_opened(page):
-    """No button, no click. It is part of the column."""
+
+# --- it opens on demand (Phase 1, 2026-10-08) --------------------------------
+#
+# The design (docs/plans/2026-10-05-ai-agents-workspace-design.md) takes the
+# office off the main surface: the conversation fills the column, and the
+# office takes the conversation's place only while it is open.
+
+def test_the_office_is_not_on_screen_until_it_is_opened(page):
+    assert page.locator("#office-dock").is_hidden()
+    assert page.locator("#office-body iframe").count() == 0
+    assert page.locator("#agent-panel").is_visible()
+
+
+def test_opening_the_office_gives_it_the_conversations_place(page):
+    page.click("#office-open")
+    page.locator("#office-body iframe").wait_for(state="attached")
     assert page.locator("#office-dock").is_visible()
-    assert page.locator("#office-body iframe").count() == 1
+    assert page.locator("#agent-panel").is_hidden()
+    col = page.locator(".chat-column").bounding_box()
+    dock = page.locator("#office-dock").bounding_box()
+    assert dock["height"] > col["height"] * 0.9
 
+
+def test_back_to_conversation_closes_the_office(page):
+    page.click("#office-open")
+    page.click("#office-close")
+    assert page.locator("#office-dock").is_hidden()
+    assert page.locator("#agent-panel").is_visible()
+    assert page.locator("#office-close").inner_text() == "Back to conversation"
+
+
+def test_a_robots_chat_returns_to_that_conversation(page):
+    page.click("#office-open")
+    frame = page.frame_locator("#office-body iframe")
+    frame.locator('.who-chat[data-id="agent-iris-a103"]').click()
+    page.wait_for_timeout(400)
+    assert page.locator("#office-dock").is_hidden()
+    assert page.locator("#agent-panel").is_visible()
+    assert page.locator("#ap-agent").input_value() == "agent-iris-a103"
+
+
+def test_the_open_office_is_remembered(page):
+    page.click("#office-open")
+    page.reload()
+    page.wait_for_selector("#office-dock", state="attached")
+    page.wait_for_timeout(300)
+    assert page.locator("#office-dock").is_visible()
+
+
+def test_the_meeting_button_returns_to_the_conversation(page):
+    """The meeting button fills the room's box. A filled box behind the floor
+    is one nobody can see, so the conversation comes back with it."""
+    _open_office(page)
+    frame = page.frame_locator("#office-body iframe")
+    meeting = frame.locator(".floor-bar a.btn").first
+    meeting.wait_for()
+    meeting.click()
+    page.wait_for_timeout(400)
+    assert page.locator("#office-dock").is_hidden()
+    assert page.locator("#agent-panel").is_visible()
+    assert page.locator(".ap-composer input[name=message]").input_value(
+        ) == "everyone answer: "
+
+
+def test_a_question_from_the_shell_brings_the_conversation_back(browser, server):
+    """The shell hands the pane a question (aiui-agents-ask) while the floor
+    is open. Filled into a box behind the floor, nobody would see it."""
+    ctx, pg = _as_owner(browser, server, url="/shell-agents")
+    try:
+        pane = pg.frame_locator("#pane")
+        _open_office(pane)
+        pg.evaluate(
+            "() => document.getElementById('pane').contentWindow.postMessage("
+            "{type: 'aiui-agents-ask', ask: 'everyone answer: '},"
+            " location.origin)")
+        pg.wait_for_timeout(400)
+        assert pane.locator("#office-dock").is_hidden()
+        assert pane.locator("#agent-panel").is_visible()
+        assert pane.locator(".ap-composer input[name=message]").input_value(
+            ) == "everyone answer: "
+    finally:
+        ctx.close()
+
+
+def test_an_ask_link_is_not_hidden_behind_a_remembered_office(browser, server):
+    """?ask= fills the box on arrival. A remembered office view must not
+    open over it."""
+    pg = browser.new_page(viewport={"width": 1500, "height": 1000})
+    try:
+        pg.add_init_script(
+            "try{localStorage.setItem('aiuiOfficeView','1')}catch(e){}")
+        pg.route("**/api/**", lambda r: r.fulfill(
+            status=200, content_type="application/json",
+            body=json.dumps({"items": [], "total": 0})))
+        pg.route("**/tasks/agents/chat/**", lambda r: r.fulfill(
+            status=200, content_type="text/html", body=""))
+        pg.goto("http://127.0.0.1:%d/agents.html?ask=hello"
+                % server.server_address[1])
+        pg.wait_for_selector("#office-dock", state="attached")
+        pg.wait_for_timeout(300)
+        assert pg.locator("#office-dock").is_hidden()
+        assert pg.locator(".ap-composer input[name=message]").input_value(
+            ) == "hello"
+    finally:
+        pg.close()
+
+
+def test_the_label_names_the_office(page):
+    """The button that opens it says what it opens."""
+    assert page.locator("#office-open").is_visible()
+    assert page.locator("#office-open").inner_text() == "Agent Office"
+
+
+def test_the_old_shut_flag_does_not_open_or_shut_anything(browser, server):
+    """aiuiOfficeShut belonged to the stacked design, where shown was the
+    default. A browser that never pressed Hide holds no flag, one that did
+    holds "1"; neither may decide the new view."""
+    for value in (None, "1"):
+        pg = browser.new_page(viewport={"width": 1500, "height": 1000})
+        try:
+            if value is not None:
+                pg.add_init_script(
+                    "try{localStorage.setItem('aiuiOfficeShut','%s')}catch(e){}"
+                    % value)
+            pg.route("**/api/**", lambda r: r.fulfill(
+                status=200, content_type="application/json",
+                body=json.dumps({"items": [], "total": 0})))
+            pg.route("**/tasks/agents/chat/**", lambda r: r.fulfill(
+                status=200, content_type="text/html", body=""))
+            pg.goto("http://127.0.0.1:%d/agents.html" % server.server_address[1])
+            pg.wait_for_selector("#office-dock", state="attached")
+            pg.wait_for_timeout(300)
+            assert pg.locator("#office-dock").is_hidden(), value
+            assert pg.locator("#agent-panel").is_visible(), value
+        finally:
+            pg.close()
+
+
+# --- it is a part of the column, not a window over it ------------------------
 
 def test_it_is_not_a_floating_window(page):
     """Fixed or absolute is the old shape. Inline means it takes its own room
     in the flow and moves the rest of the column down."""
+    _open_office(page)
     how = page.evaluate(
         "() => getComputedStyle(document.getElementById('office-dock')).position")
     assert how in ("static", "relative"), how
@@ -191,90 +337,70 @@ def test_the_office_and_the_chat_are_separate_cards(page):
     assert page.locator(".chat-column > #agent-panel").count() == 1
 
 
-# --- and it costs nothing else its place ------------------------------------
+# --- the office and the conversation take turns -----------------------------
+#
+# Replaces test_it_covers_neither_the_conversation_nor_the_composer and
+# test_the_floor_is_above_the_conversation (2026-10-08). Those pinned the
+# stacked column: floor, then thread, then composer. In Phase 1 the office
+# takes the conversation's place instead of sharing the column with it, so
+# what must hold is that the two are never on screen at once and that
+# nothing of the floor sits over the composer when the conversation is back.
 
-def test_it_covers_neither_the_conversation_nor_the_composer(page):
-    """The whole reason for moving it inline. The floating version landed on
-    the composer, which is the one thing that has to stay reachable."""
-    dock = _box(page, "#office-dock")
-    assert not _overlap(dock, _box(page, ".ap-composer"))
-    assert not _overlap(dock, _box(page, ".ap-thread"))
-
-
-def test_the_floor_is_above_the_conversation(page):
-    """Order in the column: the floor, then what was said, then the box. The
-    newest message stays next to the composer, where it is read."""
-    assert _box(page, "#office-dock")["y"] < _box(page, ".ap-thread")["y"]
-    assert _box(page, ".ap-thread")["y"] < _box(page, ".ap-composer")["y"]
-
-
-# --- the person decides how much room it gets -------------------------------
-
-def _drag_grip(page, by):
-    grip = _box(page, "#office-grip")
-    x = grip["x"] + grip["width"] / 2
-    page.mouse.move(x, grip["y"] + 5)
-    page.mouse.down()
-    page.mouse.move(x, grip["y"] + 5 + by, steps=8)
-    page.mouse.up()
-    page.wait_for_timeout(200)
+def test_the_office_and_the_conversation_are_never_on_screen_together(page):
+    assert not (page.locator("#office-dock").is_visible()
+                and page.locator("#agent-panel").is_visible())
+    _open_office(page)
+    assert page.locator("#office-dock").is_visible()
+    assert page.locator("#agent-panel").is_hidden()
+    page.locator("#office-close").click()
+    assert page.locator("#office-dock").is_hidden()
+    assert page.locator(".ap-composer").is_visible()
 
 
-def test_the_user_can_resize_it_by_dragging(page):
-    """"make sure it can be able to resize but the user."
+# --- the office fills the column; nothing to drag ---------------------------
+#
+# Replaces test_the_user_can_resize_it_by_dragging,
+# test_it_can_be_dragged_smaller_again, test_resizing_it_never_costs_the_composer,
+# test_the_size_you_chose_is_remembered and test_the_keyboard_can_resize_it_too
+# (2026-10-08). The grip shared one column between the floor and the
+# conversation. The office view has the column to itself, so there is no
+# share to choose: the grip stays in the DOM but is not offered, and a height
+# remembered from the stacked design must not shrink the view.
 
-    Shrink first, then grow. The card opens at the height the floor asked for,
-    which can already be as tall as the column will allow, and a test that
-    only grows would be measuring the ceiling rather than the grip."""
-    start = _box(page, "#office-dock")["height"]
-    _drag_grip(page, -150)
-    smaller = _box(page, "#office-dock")["height"]
-    assert smaller < start - 80, (start, smaller)
-    _drag_grip(page, 110)
-    assert _box(page, "#office-dock")["height"] > smaller + 60
-
-
-def test_it_can_be_dragged_smaller_again(page):
-    bigger = _box(page, "#office-dock")["height"]
-    _drag_grip(page, -90)
-    assert _box(page, "#office-dock")["height"] < bigger - 40
+def test_the_grip_is_not_offered_in_the_office_view(page):
+    _open_office(page)
+    assert page.locator("#office-grip").count() == 1
+    assert page.locator("#office-grip").is_hidden()
 
 
-def test_resizing_it_never_costs_the_composer(page):
-    """Growing the floor must not push the box you type in out of the panel.
-    Dragged past every limit, the composer still has to be where it was."""
-    was = _box(page, ".ap-composer")
-    _drag_grip(page, 4000)
-    now = _box(page, ".ap-composer")
-    assert abs(now["y"] - was["y"]) < 2, (was, now)
-    assert not _overlap(_box(page, "#office-dock"), now)
+def test_a_height_saved_by_the_old_grip_does_not_shrink_the_office(browser, server):
+    pg = browser.new_page(viewport={"width": 1500, "height": 1000})
+    try:
+        pg.add_init_script(
+            "try{localStorage.setItem('aiuiOfficeHeight2','150')}catch(e){}")
+        pg.route("**/api/**", lambda r: r.fulfill(
+            status=200, content_type="application/json",
+            body=json.dumps({"items": OFFICE_AGENTS, "total": 2})))
+        pg.route("**/tasks/agents/chat/**", lambda r: r.fulfill(
+            status=200, content_type="text/html", body=""))
+        pg.goto("http://127.0.0.1:%d/agents.html" % server.server_address[1])
+        pg.wait_for_selector("#office-dock", state="attached")
+        _open_office(pg)
+        # Long enough for the floor to report the size it wants, which the
+        # stacked dock obeyed.
+        pg.wait_for_timeout(1500)
+        col = _box(pg, ".chat-column")
+        dock = _box(pg, "#office-dock")
+        assert dock["height"] > col["height"] * 0.9, (col, dock)
+    finally:
+        pg.close()
 
 
-def test_the_size_you_chose_is_remembered(page):
-    """A floor you have to resize on every visit is one you stop using."""
-    _drag_grip(page, 100)
-    chosen = _box(page, "#office-dock")["height"]
-    page.reload()
-    page.wait_for_selector("#office-dock", state="visible")
-    page.wait_for_timeout(350)
-    assert abs(_box(page, "#office-dock")["height"] - chosen) < 4
-
-
-def test_the_keyboard_can_resize_it_too(page):
-    """A drag handle only a mouse can reach is one a keyboard user cannot use
-    at all. The column's own handle already takes arrow keys."""
-    before = _box(page, "#office-dock")["height"]
-    page.locator("#office-grip").focus()
-    for _ in range(5):
-        page.keyboard.press("ArrowUp")
-    page.wait_for_timeout(200)
-    assert _box(page, "#office-dock")["height"] < before
-
-
-# --- always there, but not inescapable --------------------------------------
+# --- open, and a way back ---------------------------------------------------
 
 def test_it_can_be_hidden_and_brought_back(page):
-    """Always there is right. Always there with no way out is not."""
+    """Open on demand, and never with no way out."""
+    _open_office(page)
     page.locator("#office-close").click()
     page.wait_for_timeout(180)
     assert page.locator("#office-dock").is_hidden()
@@ -285,6 +411,7 @@ def test_it_can_be_hidden_and_brought_back(page):
 
 
 def test_hiding_it_is_remembered(page):
+    _open_office(page)
     page.locator("#office-close").click()
     page.wait_for_timeout(180)
     page.reload()
@@ -296,6 +423,7 @@ def test_hiding_it_is_remembered(page):
 def test_bringing_it_back_keeps_the_same_frame(page):
     """Rebuilding the frame reloads the whole floor and throws away what it
     had drawn, which is the opposite of watching."""
+    _open_office(page)
     was = page.locator("#office-body iframe").get_attribute("src")
     page.locator("#office-close").click()
     page.wait_for_timeout(150)
@@ -311,6 +439,7 @@ def test_chatting_from_the_office_opens_that_agents_own_conversation(page):
     """A chat link that navigated would tear the floor down and rebuild it on
     every click. It switches the conversation in place instead, and to that
     agent's own thread rather than typing their name into the room."""
+    _open_office(page)
     frame = page.frame_locator("#office-body iframe")
     frame.locator('.who-chat[data-id="agent-iris-a103"]').wait_for()
     page.evaluate("() => { window.__stillHere = true; }")
@@ -324,6 +453,7 @@ def test_chatting_from_the_office_opens_that_agents_own_conversation(page):
 def test_it_opens_the_conversation_and_sends_nothing(page):
     """Switching rooms is free. Sending is not: a turn costs money and can
     run tools, so nothing is ever sent on the person's behalf."""
+    _open_office(page)
     frame = page.frame_locator("#office-body iframe")
     frame.locator('.who-chat[data-id="agent-iris-a103"]').wait_for()
     frame.locator('.who-chat[data-id="agent-iris-a103"]').click()
@@ -354,6 +484,7 @@ def test_the_embedded_office_drops_its_own_header(page):
     """The dock already says Agent Office. The floor's own top bar repeated
     the title, the search box and New agent inside the frame, so the column
     carried two headers stacked on each other."""
+    _open_office(page)
     frame = page.frame_locator("#office-body iframe")
     assert frame.locator(".top").count() == 1      # still in the markup
     assert not frame.locator(".top").is_visible()  # but not shown here
@@ -371,12 +502,17 @@ def _spill(page):
         " - document.documentElement.clientHeight")
 
 
-def test_the_whole_floor_can_be_reached_by_making_it_bigger(page):
+# Rewritten 2026-10-08. Both used to drag the grip: bigger until the whole
+# floor fitted, smaller to show the floor scales rather than crops. The office
+# view has the whole column and no grip, so the first now holds without any
+# dragging and the second shrinks the window instead of the card.
+
+def test_the_whole_floor_is_reached_without_dragging_anything(page):
     """A whole floor needs 570 in this dock: its own 460 minimum plus the
-    header, the frame's padding and the Brain chip. The column can only give
-    about 608 before the conversation has nothing left, so it does not open
-    that tall. Dragging up has to get there."""
-    _drag_grip(page, 400)
+    header, the frame's padding and the Brain chip. The stacked column could
+    not give that without starving the conversation; the office view can."""
+    _open_office(page)
+    page.wait_for_timeout(600)
     assert _spill(page) <= 2, _spill(page)
 
 
@@ -384,12 +520,16 @@ def test_the_whole_floor_stays_visible_however_small_the_card_gets(page):
     """"can you zoom out the office." Rooms are percentages of the floor but a
     robot is a fixed 76px, so reflowing a narrow floor packs six rooms into
     strips too small to hold one and they pile up. The floor is one fixed
-    canvas scaled to fit instead, so shrinking the card shrinks the office
-    rather than cropping it."""
+    canvas scaled to fit instead, so a smaller card shrinks the office rather
+    than cropping it."""
+    _open_office(page)
+    page.wait_for_timeout(600)
     before = _floor(page).evaluate("el => el.getBoundingClientRect().width")
-    _drag_grip(page, -4000)
+    page.set_viewport_size({"width": 1500, "height": 560})
+    page.wait_for_timeout(800)
     after = _floor(page).evaluate("el => el.getBoundingClientRect().width")
     assert after < before, (before, after)
+    assert _spill(page) <= 2, _spill(page)
 
 
 def test_the_shell_pane_keeps_its_own_header(page, server):
@@ -406,6 +546,7 @@ def test_the_floor_bar_does_not_swallow_the_chat_pill(page):
     transparent gaps. It sat on top of the Chat pill of whoever stood in the
     bottom row, so clicking them did nothing and the click reported
     "<div class=floor-bar> intercepts pointer events"."""
+    _open_office(page)
     frame = page.frame_locator("#office-body iframe")
     frame.locator(".floor-bar").wait_for()
     assert frame.locator(".floor-bar").evaluate(
@@ -470,6 +611,8 @@ def test_fit_leaves_nothing_hanging_below_the_view(page):
     page was 81px taller than the frame, so the card showed a scrollbar and
     the bottom of the office was cut off. The fit reserved room for what sits
     ABOVE the floor and nothing for the live activity strip below it."""
+    _open_office(page)
+    page.wait_for_timeout(600)
     over = page.frame_locator("#office-body iframe").locator("body").evaluate(
         "() => document.documentElement.scrollHeight"
         " - document.documentElement.clientHeight")
@@ -569,8 +712,9 @@ def _dock(browser, server, zoom=None, stale=False):
             "localStorage.setItem('aiuiOfficeHeight','150')}catch(e){}")
     pg.goto("http://127.0.0.1:%d/agents.html" % server.server_address[1])
     pg.wait_for_selector("#office-dock", state="attached")
-    # The card resizes itself once the office reports what it needs, so this
-    # waits for the settled layout rather than the first paint.
+    _open_office(pg)
+    # The floor fits itself once it has measured the room it was given, so
+    # this waits for the settled layout rather than the first paint.
     pg.wait_for_timeout(2500)
     return ctx, pg
 
@@ -602,7 +746,8 @@ def test_fit_uses_the_width_the_dock_gives_it(browser, server):
     """The office asks the page for a card tall enough to show the whole
     floor. If it asks for too little, Fit shrinks to the height it was given
     and leaves a third of the width empty, which is what the screenshot
-    showed."""
+    showed. In the office view (2026-10-08) the card is the whole column
+    whatever the floor asks for, and Fit must still use the width."""
     ctx, pg = _dock(browser, server)
     try:
         got = pg.evaluate(_DOCK)
@@ -695,6 +840,7 @@ def _as_owner(browser, server, agents=None, url="/agents.html"):
 def test_the_embedded_office_does_not_offer_to_open_the_page_it_is_in(page):
     """"Open the chat" points at /tasks/agents, which is the page around the
     floor. Followed, it reloaded the page; it has nothing to do here."""
+    _open_office(page)
     frame = page.frame_locator("#office-body iframe")
     frame.locator(".floor-bar").wait_for()
     said = frame.locator(".floor-bar a").all_inner_texts()
@@ -708,6 +854,7 @@ def test_the_meeting_button_fills_the_room_in_place(page):
     for the room first: in Iris's own thread only Iris would hear it."""
     page.evaluate("() => window.aiuiTalkTo('agent-iris-a103', 'Iris')")
     page.wait_for_timeout(200)
+    _open_office(page)
     frame = page.frame_locator("#office-body iframe")
     meeting = frame.locator(".floor-bar a.btn").first
     meeting.wait_for()
@@ -725,6 +872,7 @@ def test_a_skill_opens_that_agents_conversation_with_the_question(browser, serve
     conversation and leaves the question in the box, unsent."""
     ctx, pg = _as_owner(browser, server, agents=SKILLED)
     try:
+        _open_office(pg)
         frame = pg.frame_locator("#office-body iframe")
         frame.locator('.who[data-id="agent-iris-a103"]').click()
         skill = frame.locator("#side a.skill").first
@@ -747,6 +895,7 @@ def test_edit_agent_in_the_office_opens_the_form_on_this_page(browser, server):
     try:
         pg.wait_for_selector('#my-agents .card[data-agent-id="agent-iris-a103"]',
                              state="attached")
+        _open_office(pg)
         frame = pg.frame_locator("#office-body iframe")
         frame.locator('.who[data-id="agent-iris-a103"]').click()
         edit = frame.locator("#side a", has_text="Edit agent")
@@ -768,6 +917,7 @@ def test_the_brain_opens_the_graph_pane_and_leaves_the_page_alone(browser, serve
     not replaced and the agents page stays where it is."""
     ctx, pg = _as_owner(browser, server, url="/shell-agents")
     try:
+        _open_office(pg.frame_locator("#pane"))
         office = pg.frame_locator("#pane").frame_locator("#office-body iframe")
         office.locator(".brain a").wait_for()
         pg.wait_for_timeout(300)
@@ -821,6 +971,7 @@ def test_in_the_shell_the_brain_asks_for_the_graph_pane(page, server):
 def test_on_its_own_the_agents_page_still_opens_the_graph(page):
     """Guard, passes before and after: /tasks/agents with no shell around it
     has no pane to open, so The Brain still reaches the graph page."""
+    _open_office(page)
     frame = page.frame_locator("#office-body iframe")
     frame.locator(".brain a").wait_for()
     page.wait_for_timeout(300)

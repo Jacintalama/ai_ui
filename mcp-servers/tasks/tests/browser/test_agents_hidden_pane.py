@@ -133,8 +133,15 @@ def shell(browser, server):
     pg.wait_for_selector("[data-aiui-agents]")
     pg.locator("[data-aiui-agents]").click()
     pg.wait_for_selector(AGENTS_OPEN)
-    pg.frame_locator("[data-aiui-embed] iframe").first.locator(
-        "#office-body iframe").wait_for(state="attached")
+    # The office is on demand since Phase 1 (2026-10-08): no frame exists
+    # until the page's own Agent Office button asks for it.
+    pane = pg.frame_locator("[data-aiui-embed] iframe").first
+    pane.locator("#office-open").click()
+    pane.locator("#office-body iframe").wait_for(state="attached")
+    # That click put keyboard focus inside the pane, where the shell's own
+    # Escape (the "closed" case below) cannot hear the key. Give focus back
+    # to the shell document, where it was before the click.
+    pg.evaluate("() => { document.activeElement.blur(); window.focus(); }")
     agents = next(f for f in pg.frames if "/tasks/agents" in f.url)
     agents.wait_for_function(
         "() => window.__aiuiAgents && window.__aiuiAgents.ready")
