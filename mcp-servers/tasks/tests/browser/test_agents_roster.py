@@ -47,6 +47,10 @@ BO = {"id": "agent-bo-0002", "name": "Bo",
       "meta": {"role": "Researcher", "toolIds": []},
       "params": {}, "user_id": "me", "created_at": 2, "updated_at": 2}
 ROSTER = [IRIS, BO]
+#: What /api/tasks/agents/templates answers, so the gallery has a card to show.
+TEMPLATES = [{"slug": "researcher", "name": "Researcher",
+              "instructions": "Find sources and summarise them.",
+              "tool_ids": []}]
 
 ROWS = "#roster-list .roster-row"
 IRIS_ROW = '#roster-list .roster-row[data-agent-id="agent-iris-a103"]'
@@ -101,7 +105,8 @@ def _open(browser, server, roster=None, url="/agents.html", activity=None,
           size=(1500, 1000)):
     """The agents page signed in as the owner of `roster`. Returns the page
     and the locator root for the agents document (the pane when framed)."""
-    agents = ROSTER if roster is None else roster
+    # A copy, because a delete below takes the agent out of it.
+    agents = list(ROSTER if roster is None else roster)
     pg = browser.new_page(viewport={"width": size[0], "height": size[1]})
     pg.set_default_timeout(6000)
     sent = []
@@ -110,12 +115,18 @@ def _open(browser, server, roster=None, url="/agents.html", activity=None,
         u = r.request.url
         if r.request.method == "POST":
             sent.append(u)
-        if "/api/v1/auths/" in u:
+        if "/model/delete" in u:
+            gone = u.split("id=", 1)[1].split("&")[0]
+            agents[:] = [a for a in agents if a["id"] != gone]
+            body = {"ok": True}
+        elif "/api/v1/auths/" in u:
             body = {"id": "me", "email": "me@example.test"}
         elif "/models/list" in u:
             body = {"items": agents, "total": len(agents)}
         elif "/agents/activity" in u:
             body = {"activity": activity or {}, "handoffs": []}
+        elif "/agents/templates" in u:
+            body = {"templates": TEMPLATES}
         elif "/agents/chat/" in u:
             r.fulfill(status=200, content_type="text/html", body="")
             return
@@ -129,10 +140,19 @@ def _open(browser, server, roster=None, url="/agents.html", activity=None,
     pg.goto("http://127.0.0.1:%d%s" % (server.server_address[1], url))
     framed = url.startswith(("/shell", "/phoneshell"))
     root = pg.frame_locator("#pane") if framed else pg
-    root.locator("#my-agents .card").first.wait_for(state="attached")
-    pg.wait_for_timeout(300)
+    _wait_drawn(pg, root, bool(agents))
     pg.sent = sent
     return pg, root
+
+
+def _wait_drawn(pg, root, has_agents=True):
+    """Until the first list has been drawn. With no agents there is no card
+    to wait for, so the count, which is hidden until the first render."""
+    if has_agents:
+        root.locator("#my-agents .card").first.wait_for(state="attached")
+    else:
+        root.locator("#mine-count:not([hidden])").wait_for(state="attached")
+    pg.wait_for_timeout(300)
 
 
 def _row_names(root):
@@ -759,6 +779,9 @@ def test_phone_targets_are_44px(browser, server):
 def test_an_ask_on_a_phone_lands_in_the_conversation(browser, server):
     pg, root = _open(browser, server, url="/agents.html?ask=hello", size=PHONE)
     try:
+        # The list must exist for "hidden" to mean anything. A page without
+        # one passed this test, because a missing element is also hidden.
+        assert root.locator(LIST).count() == 1
         assert root.locator(CHAT).is_visible()
         assert root.locator(LIST).is_hidden()
         assert root.locator(BOX).input_value() == "hello"
@@ -797,5 +820,199 @@ def test_the_standalone_bar_stays_on_one_line_on_a_phone(browser, server):
         # One line of text, plus the link's 6px padding top and bottom.
         tall = [l for l in lines if l[1] > l[2] + 12 + 1]
         assert not tall, lines
+    finally:
+        pg.close()
+
+
+# --- Review fixes, 2026-10-08 -----------------------------------------------
+#
+# Edge states a reviewer reproduced against the real page: a conversation
+# with an agent that no longer exists, a first visit with no agents below
+# 1440px, and the phone and medium layouts keeping aria-expanded and the
+# office in step with what is actually on screen.
+
+IRIS_CARD = '#my-agents .card[data-agent-id="agent-iris-a103"]'
+
+
+def _in_the_room(root):
+    assert root.locator("#ap-who").inner_text() == "Everyone"
+    assert root.locator("#ap-agent").input_value() == ""
+    assert root.locator(EVERYONE_ROW).get_attribute("aria-current") == "true"
+    assert root.locator("#details-title").inner_text() == "Your agents"
+
+
+def test_deleting_the_open_agent_goes_back_to_the_room(browser, server):
+    pg, root = _open(browser, server)
+    try:
+        root.locator(IRIS_ROW).click()
+        pg.wait_for_timeout(200)
+        assert root.locator("#ap-who").inner_text() == "Iris"
+        pg.on("dialog", lambda d: d.accept())
+        root.locator(IRIS_CARD + " .more-btn").click()
+        root.locator(IRIS_CARD + ' [data-act="delete"]').click()
+        root.locator(IRIS_ROW).wait_for(state="detached")
+        pg.wait_for_timeout(300)
+        _in_the_room(root)
+        assert root.locator(VISIBLE_CARDS).count() == 1
+        assert pg.evaluate("() => localStorage.getItem('aiuiTalkingTo')") is None
+        assert not [u for u in pg.sent if "chat/send" in u], pg.sent
+    finally:
+        pg.close()
+
+
+def test_a_saved_conversation_with_a_missing_agent_opens_the_room(browser, server):
+    pg, root = _open(browser, server)
+    try:
+        pg.evaluate("() => localStorage.setItem('aiuiTalkingTo',"
+                    " JSON.stringify({id: 'agent-gone', name: 'Gone'}))")
+        pg.reload()
+        _wait_drawn(pg, root)
+        _in_the_room(root)
+        assert root.locator(VISIBLE_CARDS).count() == 2
+    finally:
+        pg.close()
+
+
+def test_the_header_takes_the_agents_name_from_the_list(browser, server):
+    """A conversation saved before the agent was renamed shows the new name."""
+    pg, root = _open(browser, server)
+    try:
+        pg.evaluate("() => localStorage.setItem('aiuiTalkingTo',"
+                    " JSON.stringify({id: 'agent-iris-a103', name: 'Old name'}))")
+        pg.reload()
+        _wait_drawn(pg, root)
+        assert root.locator("#ap-who").inner_text() == "Iris"
+        assert root.locator("#details-title").inner_text() == "Iris"
+        assert root.locator(BOX).get_attribute("placeholder") == "Message Iris"
+    finally:
+        pg.close()
+
+
+@pytest.mark.parametrize("size", [(1366, 900), MEDIUM, PHONE])
+def test_no_agents_shows_the_templates_at_every_width(browser, server, size):
+    """The empty state and the templates live in the details panel, which
+    starts closed below 1440px. With nothing to manage they are the page,
+    so they are shown, without that becoming the remembered choice."""
+    pg, root = _open(browser, server, roster=[], size=size)
+    try:
+        root.locator("#template-gallery .card").first.wait_for(state="attached")
+        assert root.locator("#template-gallery").is_visible(), size
+        assert root.locator("#mine-empty").is_visible(), size
+        assert root.locator("#details-toggle").get_attribute(
+            "aria-expanded") == "true", size
+        assert pg.evaluate(
+            "() => localStorage.getItem('aiui-details-open')") is None, size
+    finally:
+        pg.close()
+
+
+def test_a_remembered_office_builds_nothing_on_a_phone(browser, server):
+    """On a phone the page opens on the list, so the office view would be a
+    hidden frame loading the whole floor for nobody."""
+    pg, root = _open(browser, server, size=PHONE)
+    try:
+        pg.evaluate("() => localStorage.setItem('aiuiOfficeView', '1')")
+        pg.reload()
+        _wait_drawn(pg, root)
+        assert root.locator(LIST).is_visible()
+        assert root.locator("#office-body iframe").count() == 0
+    finally:
+        pg.close()
+
+
+def test_crossing_breakpoints_keeps_details_expanded_honest(browser, server):
+    pg, root = _open(browser, server, size=MEDIUM)
+    try:
+        toggle = root.locator("#details-toggle")
+        toggle.click()
+        pg.wait_for_timeout(150)
+        assert toggle.get_attribute("aria-expanded") == "true"
+        pg.set_viewport_size({"width": PHONE[0], "height": PHONE[1]})
+        pg.wait_for_timeout(300)
+        assert root.locator(DETAILS).is_hidden()
+        assert toggle.get_attribute("aria-expanded") == "false"
+        pg.set_viewport_size({"width": MEDIUM[0], "height": MEDIUM[1]})
+        pg.wait_for_timeout(300)
+        assert root.locator(DETAILS).is_hidden()
+        assert toggle.get_attribute("aria-expanded") == "false"
+    finally:
+        pg.close()
+
+
+def test_phone_details_say_they_are_expanded(browser, server):
+    pg, root = _open(browser, server, size=PHONE)
+    try:
+        root.locator(IRIS_ROW).click()
+        pg.wait_for_timeout(200)
+        toggle = root.locator("#details-toggle")
+        assert toggle.get_attribute("aria-expanded") == "false"
+        toggle.click()
+        pg.wait_for_timeout(150)
+        assert root.locator(DETAILS).is_visible()
+        assert toggle.get_attribute("aria-expanded") == "true"
+        root.locator("#details-done").click()
+        pg.wait_for_timeout(150)
+        assert toggle.get_attribute("aria-expanded") == "false"
+    finally:
+        pg.close()
+
+
+def test_escape_on_phone_details_goes_back_to_the_conversation(browser, server):
+    pg, root = _open(browser, server, size=PHONE)
+    try:
+        root.locator(IRIS_ROW).click()
+        pg.wait_for_timeout(200)
+        root.locator("#details-toggle").click()
+        pg.wait_for_timeout(150)
+        assert root.locator(DETAILS).is_visible()
+        pg.keyboard.press("Escape")
+        pg.wait_for_timeout(150)
+        assert root.locator(DETAILS).is_hidden()
+        assert root.locator(CHAT).is_visible()
+        assert root.locator("#details-toggle").get_attribute(
+            "aria-expanded") == "false"
+        assert pg.evaluate("() => document.activeElement.id") == "details-toggle"
+    finally:
+        pg.close()
+
+
+def test_a_search_that_hides_the_open_agent_says_so(browser, server):
+    """In Iris's conversation the details show Iris alone. A search for "bo"
+    takes her card away, which left an empty panel with no word of why."""
+    pg, root = _open(browser, server)
+    try:
+        root.locator(IRIS_ROW).click()
+        pg.wait_for_timeout(200)
+        root.locator("#agent-search").fill("bo")
+        pg.wait_for_timeout(300)
+        assert root.locator(VISIBLE_CARDS).count() == 0
+        assert root.locator("#no-match").is_visible()
+        # Bo's own conversation has Bo's card, so nothing is missing there.
+        root.locator('#roster-list .roster-row[data-agent-id="agent-bo-0002"]').click()
+        pg.wait_for_timeout(200)
+        assert root.locator(VISIBLE_CARDS).count() == 1
+        assert root.locator("#no-match").is_hidden()
+    finally:
+        pg.close()
+
+
+def test_a_search_does_not_change_who_the_everyone_row_names(browser, server):
+    """The header and the Everyone row say the same thing: the search
+    narrows the list, not the room."""
+    pg, root = _open(browser, server)
+    try:
+        root.locator("#agent-search").fill("bo")
+        pg.wait_for_timeout(300)
+        assert "Iris, Bo" in root.locator(EVERYONE_ROW).inner_text()
+    finally:
+        pg.close()
+
+
+def test_the_details_panel_is_a_named_region(browser, server):
+    pg, root = _open(browser, server)
+    try:
+        details = root.locator(DETAILS)
+        assert details.get_attribute("role") == "region"
+        assert details.get_attribute("aria-labelledby") == "details-title"
     finally:
         pg.close()

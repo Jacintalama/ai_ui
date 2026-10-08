@@ -806,7 +806,8 @@
 <!-- The details panel (DESIGN.md, "Details panel"): every agent in the room,
      where agents are managed, and only the open agent in a private
      conversation. "Details" in the conversation header opens and closes it. -->
-<div class="agents-main" id="agent-details" aria-labelledby="details-title">
+<div class="agents-main" id="agent-details" role="region"
+     aria-labelledby="details-title">
     <div class="details-head">
       <h2 class="details-title" id="details-title">Your agents</h2>
       <!-- Below 1181px the details cover the conversation (a sheet, or the
@@ -1102,8 +1103,11 @@
     // defaultModel is the platform default, sent by GET /api/tasks/agents/tools
     // (AGENT_DEFAULT_MODEL on the server). Null until that answers, or when an
     // older service does not send it.
+    //: listed turns true once the agent list has loaded. Until then an empty
+    //: `agents` means "not known yet", not "this person has none", and the
+    //: scripts below that act on "none" (the room, the templates) wait for it.
     var state = { me: null, email: null, agents: [], models: [], query: "",
-                  defaultModel: null };
+                  defaultModel: null, listed: false };
 
     function authHeaders() {
       var h = { "Content-Type": "application/json" };
@@ -1969,6 +1973,7 @@
         var body = await getJson("/api/models");
         state.models = body.data || (Array.isArray(body) ? body : []);
         state.agents = items.filter(isAgent);
+        state.listed = true;
         render();
 
         // Belt and braces: if the count still does not add up, say so rather
@@ -3032,7 +3037,8 @@
       // The page's one Escape handler. Each press closes the top-most thing
       // that is open and nothing under it: an overflow menu, then the clear
       // confirm, then Connections (which can sit on top of the agent form),
-      // then the agent form, then the details sheet on a medium screen. One
+      // then the agent form, then the details sheet on a medium screen or
+      // the details pane on a phone. One
       // layer per press, so Escape in Connections never throws away an
       // agent somebody is halfway through writing. Delete and Forget all are
       // not here: they ask through window.confirm, which handles its own
@@ -3059,8 +3065,9 @@
           ev.preventDefault();
           return;
         }
-        // The details sheet (700 to 1180px). Defined by the details script
-        // further down, which knows whether the panel is a sheet right now.
+        // The details sheet (700 to 1180px), or the details pane on a phone,
+        // which goes back to the conversation. Defined by the details script
+        // further down, which knows which of the two the panel is right now.
         if (typeof window.__aiuiCloseSheet === "function" &&
             window.__aiuiCloseSheet()) {
           ev.preventDefault();
@@ -3282,6 +3289,15 @@
     // Who hears what you are about to say, before you say it (DESIGN.md,
     // Do's). Every word goes in with textContent: a name is somebody's typing.
     function paint() {
+      // The name comes from the list whenever the agent is in it, so a
+      // conversation saved before a rename shows the name it has now.
+      var listed = current.id && ownAgents().filter(function (m) {
+        return m.id === current.id;
+      })[0];
+      if (listed && (listed.name || listed.id) !== current.name) {
+        current.name = listed.name || listed.id;
+        remember();
+      }
       field.value = current.id;
       // The Everyone row in the list is the way back now, so this button is
       // never shown. It stays because older code still looks it up.
@@ -3311,12 +3327,25 @@
         else layout.removeAttribute("data-talking");
       }
       var cards = document.querySelectorAll("#my-agents .card[data-agent-id]");
+      var found = false;
       for (var c = 0; c < cards.length; c++) {
         if (current.id && cards[c].getAttribute("data-agent-id") === current.id) {
           cards[c].setAttribute("data-current", "");
+          found = true;
         } else {
           cards[c].removeAttribute("data-current");
         }
+      }
+      // A search can take away the one card a private conversation shows,
+      // which left the details empty with no word of why. Decided here,
+      // after every drawing and every switch of conversation, because only
+      // this script knows which card the details are showing. In the room
+      // it is render()'s own rule: searching, and no card at all.
+      var noMatch = document.getElementById("no-match");
+      var page = window.__aiuiAgents;
+      var searching = !!(page && page.state && (page.state.query || "").trim());
+      if (noMatch) {
+        noMatch.hidden = !searching || (current.id ? found : cards.length > 0);
       }
       var title = document.getElementById("details-title");
       if (title) title.textContent = current.id ? current.name : "Your agents";
@@ -3376,9 +3405,33 @@
       if (field.value !== current.id) field.value = current.id;
     });
 
+    // A conversation with an agent that is not one of this person's any
+    // more: deleted here, deleted somewhere else, or saved in this browser
+    // before it went. The header kept its name and the hidden field its id,
+    // so the next message went to nobody. The room always exists, so that
+    // is where it goes back to. Only once the list has loaded: before that
+    // an empty list means "not known yet".
+    //
+    // The same reset aiuiTalkTo("", "") does, without the part that
+    // announces a conversation opened, which would close the office and, on
+    // a phone, take the person off the list on a plain reload.
+    function forgetIfGone() {
+      var page = window.__aiuiAgents;
+      var st = page && page.state;
+      if (!current.id || !st || !st.me || !st.listed) return;
+      var still = ownAgents().some(function (m) { return m.id === current.id; });
+      if (still) return;
+      current = { id: "", name: "" };
+      remember();
+      load();
+    }
+
     // Cards are drawn after this runs and again on every search, so the
     // highlight is re-applied rather than set once.
-    document.body.addEventListener("aiui:cards-drawn", paint);
+    document.body.addEventListener("aiui:cards-drawn", function () {
+      forgetIfGone();
+      paint();
+    });
 
     try {
       var kept = JSON.parse(localStorage.getItem(TALK_KEY) || "null");
@@ -3423,8 +3476,18 @@
       var kept = saved();
       set(wide.matches &&
           (kept === "1" || (kept !== "0" && window.innerWidth >= 1440)), false);
+      // On a phone the details are a pane rather than a column or a sheet,
+      // so Details follows the pane that is showing.
+      if (phone.matches) pane(layout.getAttribute("data-pane") || "list");
     }
-    function pane(name) { layout.setAttribute("data-pane", name); }
+    function pane(name) {
+      layout.setAttribute("data-pane", name);
+      // Expanded exactly while the phone shows the details pane. Wider, the
+      // panes sit side by side and set() alone says whether details show.
+      if (phone.matches) {
+        toggle.setAttribute("aria-expanded", name === "details" ? "true" : "false");
+      }
+    }
 
     toggle.addEventListener("click", function () {
       if (phone.matches) {
@@ -3438,9 +3501,17 @@
       if (open && !wide.matches && done) done.focus();
     });
 
-    // Says whether there was a sheet to close, for the Escape handler.
+    // Says whether there was a sheet to close, for the Escape handler. On a
+    // phone the details pane is the sheet, and closing it goes back to the
+    // conversation, the same as its Done.
     function closeSheet() {
-      if (wide.matches || phone.matches) return false;
+      if (phone.matches) {
+        if (layout.getAttribute("data-pane") !== "details") return false;
+        pane("chat");
+        toggle.focus();
+        return true;
+      }
+      if (wide.matches) return false;
       if (layout.classList.contains("details-closed")) return false;
       set(false, false);
       toggle.focus();
@@ -3448,12 +3519,7 @@
     }
     window.__aiuiCloseSheet = closeSheet;
 
-    if (done) {
-      done.addEventListener("click", function () {
-        if (phone.matches) { pane("chat"); toggle.focus(); return; }
-        closeSheet();
-      });
-    }
+    if (done) done.addEventListener("click", closeSheet);
     if (back) back.addEventListener("click", function () { pane("list"); });
     // A row, a robot's Chat, a shell question or the office's ask: whoever
     // opened a conversation wants to see it.
@@ -3469,8 +3535,30 @@
     var asked = document.querySelector(".ap-composer input[name=message]");
     pane(asked && asked.value ? "chat" : "list");
     start();
-    // Crossing the wide line starts that layout the way a visit would.
+    // Crossing the wide line or the phone line starts that layout the way a
+    // visit would, so a sheet left open on a medium screen does not leave
+    // Details saying expanded on a phone that is showing the list.
     if (wide.addEventListener) wide.addEventListener("change", start);
+    if (phone.addEventListener) phone.addEventListener("change", start);
+
+    // No agents yet. The empty state and the templates are then the whole
+    // point of the page, and they live in the details, which start closed
+    // below 1440px. So they are shown: the column on a wide screen, the
+    // sheet on a medium one, the details pane on a phone that is still on
+    // the list. Once each time the count reaches zero, so closing them
+    // sticks, and never saved as the person's own choice.
+    var shownEmpty = false;
+    document.body.addEventListener("aiui:cards-drawn", function () {
+      var page = window.__aiuiAgents;
+      var st = page && page.state;
+      if (!st || !st.me || !st.listed) return;
+      var owned = st.agents.filter(function (m) { return m.user_id === st.me; });
+      if (owned.length) { shownEmpty = false; return; }
+      if (shownEmpty || (st.query || "").trim()) return;
+      shownEmpty = true;
+      if (!phone.matches) set(true, false);
+      else if (layout.getAttribute("data-pane") === "list") pane("details");
+    });
   })();
 
   // The conversation list.
@@ -3558,9 +3646,16 @@
                       name: title ? title.textContent : id,
                       role: role ? role.textContent : "" });
       }
+      // Everyone names the whole room, the same list the conversation header
+      // reads. The cards are narrowed by the search, and a search takes
+      // nobody out of the room.
+      var st = page && page.state;
+      var room = st && st.me
+        ? st.agents.filter(function (m) { return m.user_id === st.me; })
+            .map(function (m) { return m.name || m.id; })
+        : agents.map(function (a) { return a.name; });
       list.textContent = "";
-      list.appendChild(row("data-room", "1", "Everyone",
-        agents.map(function (a) { return a.name; }).join(", "), null));
+      list.appendChild(row("data-room", "1", "Everyone", room.join(", "), null));
       agents.forEach(function (a) {
         list.appendChild(row("data-agent-id", a.id, a.name, a.role, hueOf(a.name)));
       });
@@ -3720,8 +3815,17 @@
     // Back to the office view after a reload, unless the person arrived with
     // a question (?ask=), which is already in the conversation's box and
     // would be hidden behind the floor.
+    //
+    // Not on a phone that opens on the list: the office would be a hidden
+    // frame loading the whole floor for nobody. Nothing is called at all
+    // there, so the dock stays hidden as the markup has it and the choice is
+    // kept for the next visit on a wider screen.
     var asked = document.querySelector(".ap-composer input[name=message]");
-    if (saved(VIEW_KEY) === "1" && !(asked && asked.value)) show();
+    var layout = document.querySelector(".agents-layout");
+    var onPhoneList = window.matchMedia("(max-width: 699px)").matches &&
+      !!layout && layout.getAttribute("data-pane") === "list";
+    if (onPhoneList) { /* the list is showing; the office waits to be asked */ }
+    else if (saved(VIEW_KEY) === "1" && !(asked && asked.value)) show();
     else hide();
 
     // The office asking on the person's behalf. Clicking Chat on a robot
