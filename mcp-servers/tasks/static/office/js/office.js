@@ -141,8 +141,15 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   //: No room is narrower than the name written across it. A room holding one
   //: person would otherwise be sized by that one slot and print its own
   //: department as "COMMUNICAT...".
-  var ROOM_MIN_W = 172;
+  //: Wide enough for the header to fit on one line: a lit dot, the longest
+  //: department name at 11px with wide letter-spacing, and the clean badge
+  //: beside it. At 172 "COMMUNICATION" was ellipsised down to "COMMUN...",
+  //: which names nothing.
+  var ROOM_MIN_W = 252;
   var ROOM_PAD = 14, ROOM_GAP = 18, BAND_PAD = 18;
+  //: The strip along a room's bottom edge carrying its runs and its cost.
+  //: Reserved, or the lowest agent in a room stands on top of it.
+  var ROOM_FOOT = 24;
   var FLOOR_BAR = 52;      // the strip along the bottom, which is not a room
   //: Clear canvas above the rooms for the live activity card, which on the
   //: whole page is laid over the floor in the top right corner. Reserved
@@ -219,7 +226,8 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
       cols: cols, rows: rows,
       w: Math.max(ROOM_MIN_W,
                   ROOM_PAD * 2 + cols * SLOT_W + (cols - 1) * SLOT_GAP_X),
-      h: ROOM_HEAD + rows * SLOT_H + (rows - 1) * SLOT_GAP_Y + ROOM_PAD,
+      h: ROOM_HEAD + rows * SLOT_H + (rows - 1) * SLOT_GAP_Y
+         + ROOM_PAD + ROOM_FOOT,
     };
   }
 
@@ -622,12 +630,18 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
       return '<section class="zone" data-room="' + esc(z.key) + '"' +
         ' style="--glow:' + z.glow + ';left:' + r.left +
         'px;top:' + r.top + 'px;width:' + r.w + 'px;height:' + r.h + 'px">' +
-        '<div class="zone-head"><span>' + esc(z.label) + '</span>' +
-        '<span class="card-room"><span>RUNS <b>' + runs + '</b></span>' +
-        (pct == null ? "" : '<span>CLEAN <b>' + pct + '%</b></span>') +
-        (spent ? '<span>$<b>' + spent.toFixed(2) + '</b></span>' : "") +
-        '</span></div>' +
+        // Header, interior, footer, as in the owner's reference: a lit dot
+        // and the name on the left, how cleanly this room's runs finished on
+        // the right, and the totals along the bottom edge.
+        '<div class="zone-head">' +
+          '<span class="zone-name"><i class="zone-dot"></i>' + esc(z.label) + '</span>' +
+          (pct == null ? "" : '<span class="zone-badge">' + pct + '% CLEAN</span>') +
+        '</div>' +
         '<div class="zone-floor" aria-hidden="true">' + furnitureFor(z) + '</div>' +
+        '<div class="zone-foot">' +
+          '<span>RUNS: ' + runs + '</span>' +
+          '<span>COST: $' + spent.toFixed(2) + '</span>' +
+        '</div>' +
         '</section>';
     }).join("");
 
@@ -675,7 +689,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
     // "simulate collaboration": agents cannot address each other, and a
     // button that pretends otherwise is the one thing this page must not do.
     html += '<div class="floor-bar">' +
-      '<span class="now"><i class="dot ' + (working ? "working" : "ready") + '"></i> ' +
+      '<span class="now tick"><i class="dot ' + (working ? "working" : "ready") + '"></i> ' +
         (working ? '<b>' + working + '</b> working now'
                  : (newest ? '<b>' + esc(newest.name) + '</b> ' +
                     esc(newest.a.state === "working" ? "is working"

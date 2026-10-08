@@ -29,63 +29,20 @@
   }
 
 .zone {
-    position: absolute; z-index: 2; border-radius: 14px;
-    /* The department's colour on all four sides at 1px, not a 3px stripe
-       down the left: DESIGN.md rules out side stripes as an accent. Mixed
-       into the plain border so six rooms do not read as six neon frames. */
-    border: 1px solid color-mix(in srgb, var(--glow, var(--cyan)) 55%, var(--border-2));
-    background: rgba(14,29,47,.72);
-    box-shadow: inset 0 0 45px rgba(74,105,157,.05);
-  }
-
-.zone-head {
-    position: absolute; left: 13px; top: 10px; right: 13px;
-    display: flex; align-items: baseline; gap: 4px 10px;
-    flex-wrap: wrap; overflow: hidden;
-  }
-
-.zone-head > span:first-child {
-    color: var(--glow, var(--cyan)); font-size: 10px; font-weight: 800;
-    letter-spacing: .12em; text-transform: uppercase;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-
-/* Always its own line, never sometimes. Left to wrap on its own the
-     stats sat beside a short department name and under a long one, so two
-     rooms side by side printed their numbers at different heights. */
-  .card-room {
-    flex: 0 0 100%; display: flex; justify-content: flex-end; gap: 10px;
-    font-size: 10px; color: var(--muted);
-  }
-
-.card-room b { color: var(--text); font-weight: 700; }
-
-.floor-bar {
-    position: absolute; z-index: 40; left: 16px; right: 16px; bottom: 14px;
-    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
-    /* A full width strip with transparent gaps must not swallow what is
-       under it: it was eating the Chat pill of whoever stood in the bottom
-       row, so clicking them did nothing at all. Only its own controls take
-       the pointer. */
-    pointer-events: none;
-  }
-
-.floor-bar .now {
-    padding: 8px 12px; border: 1px solid var(--border-2); border-radius: 10px;
-    background: rgba(6,14,25,.9); font-size: 11.5px; color: var(--muted);
-  }
-
-.floor-bar .now b { color: var(--text); }
-
-.floor-bar .right { margin-left: auto; display: flex; gap: 8px; }
-
-.floor-bar .now, .floor-bar a { pointer-events: auto; }
-
-
-/* The two layers inside the floor. Both fill it, so a child positioned at
-   left:120px;top:40px lands in the same place in either one. */
-.floor-rooms, .agents-layer {
-  position: absolute; inset: 0;
+  position: absolute; z-index: 2; border-radius: 16px;
+  /* Glass, from the reference: a dark translucent pane, the department's
+     colour at low alpha on the border, and a lift on hover. The old rule
+     was a 1px outline on a flat background, which is why the floor read as
+     a wireframe rather than a room. */
+  background: color-mix(in srgb, #0f172a 62%, transparent);
+  border: 1px solid color-mix(in srgb, var(--glow, var(--cyan)) 30%, transparent);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .35),
+              inset 0 1px 0 rgba(255, 255, 255, .03);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  transition: border-color .2s ease, box-shadow .2s ease;
+}
+.zone:hover {
+  border-color: color-mix(in srgb, var(--glow, var(--cyan)) 60%, transparent);
 }
 /* Agents sit above the rooms, so a name label is never clipped by a wall.
    The layer itself takes no pointer events; the robots and their Chat
@@ -103,7 +60,8 @@
    Behind the agents and deaf to the pointer: a desk must never take a click
    meant for the room, or for the robot standing at it. */
 .zone-floor {
-  position: absolute; left: 12px; right: 12px; bottom: 12px;
+  /* Clear of the footer. At 12px the desks sat behind "RUNS: 120". */
+  position: absolute; left: 12px; right: 12px; bottom: 30px;
   height: 46%; display: flex; align-items: flex-end;
   justify-content: space-around; gap: 10px;
   pointer-events: none; z-index: 0; opacity: .5;
@@ -145,4 +103,78 @@
   /* Above the rooms, not behind them. At z-index 1 it sat under every
      room and was simply invisible. */
   pointer-events: none; z-index: 11;
+}
+
+
+/* --- the room's own chrome -------------------------------------------------
+   Header and footer from the owner's reference: a lit dot and the name, the
+   clean rate as a badge, and the totals along the bottom edge in mono. Every
+   number here is real. CLEAN is this room's runs weighted by their own
+   success rate, not an average of percentages, so a room with eight hundred
+   runs is not outvoted by one with three. */
+.zone-head {
+  position: absolute; left: 12px; right: 12px; top: 10px;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; overflow: hidden;
+}
+.zone-name {
+  display: flex; align-items: center; gap: 7px; min-width: 0;
+  font-size: 11px; font-weight: 700; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.zone-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto;
+  background: var(--glow, var(--cyan));
+  box-shadow: 0 0 8px var(--glow, var(--cyan));
+}
+.zone-badge {
+  flex: 0 0 auto; font-size: 9.5px; font-weight: 600; letter-spacing: .06em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  padding: 2px 7px; border-radius: 6px;
+  color: var(--glow, var(--cyan));
+  background: color-mix(in srgb, var(--glow, var(--cyan)) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--glow, var(--cyan)) 25%, transparent);
+}
+.zone-foot {
+  position: absolute; left: 12px; right: 12px; bottom: 9px;
+  display: flex; justify-content: space-between; gap: 8px;
+  font-size: 9.5px; letter-spacing: .04em; color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  pointer-events: none;
+}
+
+/* --- restored 2026-10-08 ---------------------------------------------------
+   Lost by a careless regex: the .zone rule it replaced closed with an
+   indented "  }", so a non-greedy match for a newline followed by a closing brace
+   ran past the end of that rule and swallowed everything up to the next brace at column zero. These
+   are back verbatim, and the ones genuinely replaced (.card-room and the old
+   .zone-head child selector) are not, because the header is built from
+   .zone-name and .zone-badge now. */
+
+.floor-bar {
+    position: absolute; z-index: 40; left: 16px; right: 16px; bottom: 14px;
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    /* A full width strip with transparent gaps must not swallow what is
+       under it: it was eating the Chat pill of whoever stood in the bottom
+       row, so clicking them did nothing at all. Only its own controls take
+       the pointer. */
+    pointer-events: none;
+}
+
+.floor-bar .now {
+    padding: 8px 12px; border: 1px solid var(--border-2); border-radius: 10px;
+    background: rgba(6,14,25,.9); font-size: 11.5px; color: var(--muted);
+}
+
+.floor-bar .now b { color: var(--text); }
+
+.floor-bar .right { margin-left: auto; display: flex; gap: 8px; }
+
+.floor-bar .now, .floor-bar a { pointer-events: auto; }
+
+/* The two layers inside the floor. Both fill it, so a child positioned at
+   left:120px;top:40px lands in the same place in either one. */
+.floor-rooms, .agents-layer {
+  position: absolute; inset: 0;
 }

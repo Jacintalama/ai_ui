@@ -79,3 +79,18 @@ a.tag.skill:hover { border-color: var(--cyan); color: var(--cyan); }
     border-radius: var(--radius); padding: 9px 12px; min-width: 216px;
     font-size: 12.5px; display: flex; gap: 8px; align-items: center;
   }
+
+/* The line along the bottom of the floor, as a terminal readout rather than
+   a pill. From the owner's reference: a prompt, the agent's name, what it
+   did. Still the same sentence the floor already had, and still built from
+   the most recent run rather than from anything invented. */
+.floor-bar .now.tick {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px; letter-spacing: .02em;
+  border-color: color-mix(in srgb, var(--cyan) 22%, transparent);
+  background: rgba(6, 12, 22, .92);
+}
+.floor-bar .now.tick::before {
+  content: ">_ ACTIVITY: ";
+  color: var(--cyan); font-weight: 700; letter-spacing: .06em;
+}
