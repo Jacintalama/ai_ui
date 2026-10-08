@@ -65,8 +65,8 @@
     display: flex; align-items: center; justify-content: center; color: #0a0a0b;
   }
   .topbar .mark svg { width: 18px; height: 18px; }
-  .topbar .title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
-  .topbar .sub { font-size: 11px; color: var(--muted); }
+  .topbar .title { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+  .topbar .sub { font-size: 12px; color: var(--muted); }
   .topbar .spacer { flex: 1; }
   .topbar .back {
     display: inline-flex; align-items: center; gap: 6px;
@@ -96,12 +96,12 @@
     color: #0a0a0b; box-shadow: 0 6px 18px rgba(124,140,255,0.30);
   }
   .head .icon svg { width: 24px; height: 24px; }
-  h1 { font-size: 24px; font-weight: 650; letter-spacing: -0.025em; margin: 0; }
-  .lead { color: var(--text-2); font-size: 13.5px; line-height: 1.6; margin-top: 6px; max-width: 68ch; }
+  h1 { font-size: 20px; font-weight: 650; letter-spacing: -0.025em; margin: 0; }
+  .lead { color: var(--text-2); font-size: 14px; line-height: 1.6; margin-top: 6px; max-width: 68ch; }
 
   .pill {
     display: inline-flex; align-items: center; gap: 6px;
-    font-size: 11px; font-weight: 600; letter-spacing: 0.02em;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.02em;
     color: var(--accent); background: rgba(124,140,255,0.10);
     border: 1px solid rgba(124,140,255,0.30);
     padding: 3px 10px; border-radius: 999px; margin-top: 12px;
@@ -113,19 +113,19 @@
     border-radius: var(--radius-lg); padding: 18px;
   }
   .card h2 { font-size: 14px; font-weight: 650; margin: 0 0 6px 0; }
-  .card p { color: var(--text-2); font-size: 12.5px; line-height: 1.6; margin: 0; }
+  .card p { color: var(--text-2); font-size: 13px; line-height: 1.6; margin: 0; }
   .card .step {
     display: inline-flex; align-items: center; justify-content: center;
     width: 20px; height: 20px; border-radius: 6px; margin-bottom: 10px;
     background: var(--surface-2); border: 1px solid var(--border-2);
-    color: var(--muted); font-size: 11px; font-weight: 700;
+    color: var(--muted); font-size: 12px; font-weight: 700;
   }
 
   .note {
     margin-top: 30px; padding: 14px 16px;
     background: var(--surface); border: 1px solid var(--border);
     border-left: 2px solid var(--accent); border-radius: var(--radius);
-    color: var(--text-2); font-size: 12.5px; line-height: 1.6;
+    color: var(--text-2); font-size: 13px; line-height: 1.6;
   }
   .note strong { color: var(--text); font-weight: 600; }
 
@@ -160,33 +160,35 @@
   .avatar {
     flex-shrink: 0; width: 34px; height: 34px; border-radius: 9px;
     display: flex; align-items: center; justify-content: center;
-    background: linear-gradient(150deg, var(--accent), var(--accent-2));
-    color: #0a0a0b; font-size: 12.5px; font-weight: 700; letter-spacing: 0.02em;
+    /* card() and the templates set the agent's own hue inline; this is
+       only what an avatar without one gets. Solid, never a gradient. */
+    background: hsl(240 45% 32%);
+    color: #ffffff; font-size: 12px; font-weight: 500;
   }
   .card-heading { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
   .tag {
     align-self: flex-start;
     display: inline-flex; align-items: center; gap: 5px;
-    font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.02em;
     padding: 2px 8px; border-radius: 999px;
     color: var(--accent); background: rgba(124,140,255,0.10);
     border: 1px solid rgba(124,140,255,0.28);
   }
   .tag .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 
-  /* The avatar already gives every agent a colour. The card borrows it for
-     its border so a wall of cards is scannable by colour before you read a
-     single name. Kept low: this is identification, not decoration, and the
-     hover state is what should draw the eye. */
+  /* The card used to borrow the avatar's hue for its border. DESIGN.md,
+     Agent identity: the hue is on the avatar and nowhere else, so a card is
+     framed by the neutral --border and hovering brings up --border-2 (the
+     .card rules above). */
   /* Tightened 2026-10-08 so the roster reads at a narrower width and
      leaves the office and the conversation the room. */
-  .card { padding: 12px 13px 10px; border-radius: var(--radius-lg);
-          border-color: hsl(var(--agent-hue, 240) 30% 24%); }
-  .card:hover { border-color: hsl(var(--agent-hue, 240) 45% 40%); }
+  .card { padding: 12px 13px 10px; border-radius: var(--radius-lg); }
   .card-head { align-items: center; gap: 10px; }
+  /* The same mark as the conversation list's .roster-av and the thread's
+     .aav: 28px, 6px corners, a white initial on the agent's solid hue. */
   .avatar {
-    width: 30px; height: 30px; border-radius: 9px; flex: 0 0 30px;
-    font-size: 11px; font-weight: 700; letter-spacing: 0.3px;
+    width: 28px; height: 28px; border-radius: 6px; flex: 0 0 28px;
+    font-size: 12px; font-weight: 500;
   }
   /* Two lines, not one. The name carries the state beside it, the way you
      read a person's name and then whether they are in. The role drops to its
@@ -195,15 +197,15 @@
                   align-items: stretch; min-width: 0; }
   .card-name-row { display: flex; align-items: center; gap: 9px;
                    min-width: 0; }
-  .card-title { font-size: 13.5px; font-weight: 650; letter-spacing: -0.1px; }
+  .card-title { font-size: 14px; font-weight: 650; letter-spacing: -0.1px; }
   /* The model an agent thinks with is the second thing you want to know and
      the card never showed it. Quiet, because it is reference, not identity. */
-  .card-model { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .card-model { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
   /* The role takes the line the model id used to have, so it is the thing
      you read after the name. Slightly stronger than .card-model because it
      is the more useful of the two, and clipped rather than wrapped: a long
      role must not push the card's own layout around. */
-  .card-role { font-size: 11.5px; color: var(--text); opacity: 0.7;
+  .card-role { font-size: 12px; color: var(--text); opacity: 0.7;
                white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
                flex: 1; }
   /* No glyph on this one, so it does not want .card-tools .chip's smaller
@@ -217,7 +219,7 @@
                 margin-top: 7px; min-height: 0; }
   .card-chips .chip {
     display: inline-flex; align-items: center; gap: 5px;
-    padding: 2px 7px; font-size: 10.5px; }
+    padding: 2px 7px; font-size: 12px; }
   .card-chips .chip svg { width: 12px; height: 12px; flex: 0 0 12px;
                           color: var(--muted); }
   .card-chips .chip.skill { color: var(--accent);
@@ -237,7 +239,7 @@
      "used 8 hours ago" every time you glance at a card is what made the old
      line feel like noise. */
   .card-activity { display: inline-flex; align-items: center; gap: 6px;
-                   font-size: 11.5px; color: var(--muted); flex: 0 0 auto;
+                   font-size: 12px; color: var(--muted); flex: 0 0 auto;
                    white-space: nowrap; }
   /* The dot carries the state on its own, so a row of cards can be read
      without reading any of the words: green while a run is actually in
@@ -275,7 +277,7 @@
      are memory-note and not note, because this page already has a .note rule
      for a callout box, and a row that silently inherited its top margin and
      accent border would read as one. */
-  .card-memory { font-size: 11px; color: var(--muted); margin: 5px 0 1px; }
+  .card-memory { font-size: 12px; color: var(--muted); margin: 5px 0 1px; }
   .card-memory .link-btn {
     background: none; border: 0; padding: 0 0 0 8px; color: inherit;
     text-decoration: underline; cursor: pointer; font: inherit;
@@ -313,7 +315,7 @@
   .more-wrap { position: relative; }
   .more-btn {
     width: 28px; height: 28px; border-radius: 7px; border: 1px solid transparent;
-    background: none; color: var(--muted); cursor: pointer; font-size: 15px;
+    background: none; color: var(--muted); cursor: pointer; font-size: 14px;
     line-height: 1; display: grid; place-items: center;
   }
   .more-btn:hover { background: var(--surface-2); border-color: var(--border-2); color: var(--text-2); }
@@ -325,13 +327,13 @@
   }
   .more-menu button {
     display: block; width: 100%; text-align: left; background: none; border: 0;
-    color: #f87171; font: inherit; font-size: 12.5px; padding: 7px 9px;
+    color: #f87171; font: inherit; font-size: 13px; padding: 7px 9px;
     border-radius: 6px; cursor: pointer;
   }
   .more-menu button:hover { background: rgba(248,113,113,0.10); }
   .card-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
   .chip {
-    font-size: 11px; padding: 3px 8px; border-radius: 999px;
+    font-size: 12px; padding: 3px 8px; border-radius: 999px;
     background: var(--surface-2); border: 1px solid var(--border-2);
     color: var(--text-2); white-space: nowrap;
   }
@@ -364,12 +366,12 @@
   .sk-line { height: 11px; margin-top: 9px; }
   .sk-chips { display: flex; gap: 6px; margin-top: 14px; }
   .sk-chip { height: 20px; width: 76px; border-radius: 999px; }
-  .section-head h2 { font-size: 15px; font-weight: 650; margin: 0; }
+  .section-head h2 { font-size: 16px; font-weight: 650; margin: 0; }
   .count { display: inline-flex; align-items: center; justify-content: center;
            min-width: 20px; height: 20px; padding: 0 6px; margin-left: 6px;
            border-radius: 999px; background: var(--surface-2);
            border: 1px solid var(--border-2); color: var(--muted);
-           font-size: 11px; font-weight: 700; }
+           font-size: 12px; font-weight: 700; }
   /* No align-items: start. Cards in a row stretch to match, which is what
      lets card-actions sit on the bottom edge instead of floating wherever the
      instructions happened to end. */
@@ -520,7 +522,7 @@
                 color: var(--text); font: inherit; text-align: left;
                 min-width: 0; }
   .skill-name { font-weight: 600; white-space: nowrap; }
-  .skill-tagline { color: var(--muted); font-size: 11px; white-space: nowrap;
+  .skill-tagline { color: var(--muted); font-size: 12px; white-space: nowrap;
                    overflow: hidden; text-overflow: ellipsis; }
   .skill-chev { color: var(--muted); flex: 0 0 auto; margin-left: auto;
                 padding-left: 10px; transition: transform 0.15s ease; }
@@ -534,7 +536,7 @@
                     margin-top: 6px; }
   .skill-tags { display: flex; flex-wrap: wrap; gap: 5px; }
   .tag-chip { background: var(--surface-2); border: 1px solid var(--border);
-              border-radius: 999px; padding: 2px 9px; font-size: 11px;
+              border-radius: 999px; padding: 2px 9px; font-size: 12px;
               color: var(--text-2); cursor: pointer; font-family: inherit;
               white-space: nowrap; }
   .tag-chip:hover { border-color: var(--border-2); color: var(--text); }
@@ -553,7 +555,7 @@
     #agent-form .form-cols { grid-template-columns: 1fr; }
     #agent-form .form-col > :first-child { margin-top: 14px; }
   }
-  .modal h2 { font-size: 17px; font-weight: 650; margin: 0 0 16px; }
+  .modal h2 { font-size: 20px; font-weight: 650; margin: 0 0 16px; }
   .modal label { display: block; font-size: 12px; color: var(--text-2);
                  margin: 14px 0 6px; }
   /* password too: the Connections panel asks for API tokens, and a
@@ -574,7 +576,7 @@
     background-repeat: no-repeat; background-position: right 11px center;
     background-size: 15px; cursor: pointer; }
   .modal select:focus { border-color: var(--accent); }
-  .hint { color: var(--muted); font-size: 11px; margin-top: 5px; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 5px; }
   .switch { display: flex; align-items: center; gap: 9px; margin-top: 16px;
             cursor: pointer; }
   .switch input[type=checkbox] {
@@ -595,7 +597,7 @@
      control that decides what an agent may do to somebody's mail. Each
      option is its own row you can see is chosen, and says what it means. */
   .access .radio { display: flex; align-items: flex-start; gap: 9px;
-                   font-size: 13.5px; cursor: pointer; padding: 9px 11px;
+                   font-size: 14px; cursor: pointer; padding: 9px 11px;
                    border: 1px solid var(--border); border-radius: var(--radius);
                    background: var(--surface-2); transition: border-color .12s; }
   .access .radio:hover { border-color: var(--border-2); }
@@ -618,7 +620,7 @@
            gap: 8px; margin-top: 14px; }
   .tools label {
     display: flex; align-items: center; gap: 9px; margin: 0; cursor: pointer;
-    font-size: 12.5px; color: var(--text-2); padding: 9px 11px;
+    font-size: 13px; color: var(--text-2); padding: 9px 11px;
     background: var(--surface-2); border: 1px solid var(--border);
     border-radius: 9px; transition: border-color 0.12s, color 0.12s, background 0.12s;
   }
@@ -655,7 +657,7 @@
   }
   .tools label.not-connected svg { color: var(--muted); }
   .tools label .tool-connect {
-    color: var(--muted); font-size: 11px; text-decoration: underline;
+    color: var(--muted); font-size: 12px; text-decoration: underline;
   }
   .tools label .tool-connect:hover { color: var(--text); }
   .switch.not-connected { color: var(--muted); cursor: not-allowed; }
@@ -666,19 +668,19 @@
               border-bottom: 1px solid var(--border); }
   .conn-row:last-of-type { border-bottom: 0; }
   .conn-name { flex: 1; font-size: 13px; }
-  .conn-name small { display: block; color: var(--muted); font-size: 11.5px;
+  .conn-name small { display: block; color: var(--muted); font-size: 12px;
                      margin-top: 2px; }
-  .conn-state { font-size: 11.5px; color: var(--muted); }
+  .conn-state { font-size: 12px; color: var(--muted); }
   .conn-state.on { color: #4ade80; }
   .conn-form { padding: 4px 0 14px; }
   .conn-form input { width: 100%; margin-bottom: 8px; }
-  .conn-where { color: var(--muted); font-size: 11.5px; margin-bottom: 9px; }
+  .conn-where { color: var(--muted); font-size: 12px; margin-bottom: 9px; }
   .conn-err { color: #f87171; font-size: 12px; min-height: 0; margin-bottom: 8px; }
-  .form-error { color: #f87171; font-size: 12.5px; min-height: 0; margin-top: 16px; }
+  .form-error { color: #f87171; font-size: 13px; min-height: 0; margin-top: 16px; }
   .form-error:empty { margin-top: 0; }
   .ap-title { min-width: 0; }
   .ap-title h2 { margin-bottom: 2px; }
-  .ap-sub { margin: 0; font-size: 11.5px; color: var(--muted);
+  .ap-sub { margin: 0; font-size: 12px; color: var(--muted);
             line-height: 1.45; }
   .form-actions { display: flex; gap: 9px; justify-content: flex-end; margin-top: 6px; }
   /* Saving used to say nothing at all, so there was no way to tell a save
@@ -1273,9 +1275,6 @@
       var el = document.createElement("div");
       el.className = "card";
       el.setAttribute("data-agent-id", m.id);
-      // Same hue the avatar is built from, so the border and the badge always
-      // agree about which agent this is.
-      el.style.setProperty("--agent-hue", String(avatarHue(m.name)));
       // Same blanking as duplicate: a ready-made agent's params come back
       // empty because it is read-only to you, so fall back to the meta copy or
       // its card would be a blank rectangle.
@@ -1290,9 +1289,10 @@
       var skills = skillsOf(m);
       el.innerHTML =
         '<div class="card-head">' +
-          '<div class="avatar" style="background:linear-gradient(150deg,'
-            + "hsl(" + hue + " 58% 46%),hsl(" + ((hue + 26) % 360) + " 58% 34%))"
-            + '">' + esc(initials(m.name)) + "</div>" +
+          // One solid hue per agent, the same as its row in the list and its
+          // avatar in the thread (DESIGN.md, Agent identity).
+          '<div class="avatar" style="background:hsl(' + hue + ' 45% 32%)">'
+            + esc(initials(m.name)) + "</div>" +
           '<div class="card-heading">' +
             '<div class="card-name-row">' +
             // Only the name goes in here. A test asserts this text equals the
@@ -1390,9 +1390,8 @@
         el.setAttribute("data-template", t.slug);
         el.innerHTML =
           '<div class="card-head">' +
-            '<div class="avatar" style="background:linear-gradient(150deg,'
-              + "hsl(" + hue + " 58% 46%),hsl(" + ((hue + 26) % 360) + " 58% 34%))"
-              + '">' + esc(initials(t.name)) + "</div>" +
+            '<div class="avatar" style="background:hsl(' + hue + ' 45% 32%)">'
+              + esc(initials(t.name)) + "</div>" +
             '<div class="card-heading">' +
               '<div class="card-title">' + esc(t.name) + "</div>" +
               '<div class="card-model">template</div>' +

@@ -50,9 +50,12 @@ def _hue(name: str) -> int:
 
 
 def _avatar(name: str) -> str:
+    """The agent's mark: one solid hsl(hue 45% 32%), the same fill as its row
+    in the conversation list and its card (DESIGN.md, Agent identity). No
+    gradient. `h` is an int, so nothing here needs escaping beyond the
+    letters, which _initials already escapes."""
     h = _hue(name)
-    return (f'<div class="aav" style="background:linear-gradient(150deg,'
-            f'hsl({h} 58% 46%),hsl({(h + 26) % 360} 58% 34%))">'
+    return (f'<div class="aav" style="background:hsl({h} 45% 32%)">'
             f'{_initials(name)}</div>')
 
 

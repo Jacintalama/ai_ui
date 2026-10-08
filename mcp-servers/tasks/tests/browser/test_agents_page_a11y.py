@@ -24,6 +24,8 @@ import threading
 
 import pytest
 
+import agent_chat_render as render
+
 playwright_api = pytest.importorskip(
     "playwright.sync_api", reason="playwright not installed")
 
@@ -432,3 +434,136 @@ def test_escape_closes_an_open_card_menu_and_returns_to_its_button(page):
     page.keyboard.press("Escape")
     assert menu.is_hidden()
     assert _active(page)["act"] == "more", _active(page)
+
+
+# --- Task 6: one type scale, a reading width, solid avatars ------------------
+#
+# DESIGN.md: only 12, 13, 14, 16 and 20px exist; message text sits in a
+# centred column at most 760px wide and is capped at 68ch; each agent is one
+# solid hsl(hue 45% 32%) avatar with white letters, and its hue appears
+# nowhere else, so a card's border is the neutral --border.
+
+SIZES = {"12px", "13px", "14px", "16px", "20px"}
+
+#: A conversation drawn by the real renderer, so the thread's own classes
+#: (.aturn, .awho, .atext, .aquote, .afail, .aav) are the ones on screen.
+LONG = " ".join(["This answer runs long on purpose, so the line length shows."] * 12)
+CALLS = [{"function": {"name": "send_email",
+                       "arguments": '{"to": "boss@example.com"}'}}]
+THREAD = render.thread([
+    {"role": "user", "content": "What did we decide about the launch? " * 6,
+     "turn_id": "aaa111"},
+    {"role": "note", "content": "Ada asked Mia"},
+    {"role": "assistant", "agent_name": "Ada", "content": LONG,
+     "replying_to": "What did we decide about the launch?"},
+    {"role": "failure", "agent_name": "Mia", "reason": "It ran out of time.",
+     "fix": "Ask again in a minute."},
+    {"role": "assistant", "agent_name": "Mia", "content": "",
+     "awaiting": {"ask_id": "ask-1", "calls": CALLS}},
+])
+
+
+def _draw_thread(page):
+    page.evaluate("h => { document.getElementById('agent-thread').innerHTML = h; }",
+                  THREAD)
+
+
+def _sizes_on_screen(page):
+    """{font-size: [what uses it]} for every element that is rendered."""
+    return page.evaluate(
+        "() => { const out = {};"
+        " for (const e of document.querySelectorAll('body *')) {"
+        "  if (!e.getClientRects().length) continue;"
+        "  const s = getComputedStyle(e);"
+        "  if (s.visibility === 'hidden') continue;"
+        "  const who = e.id || e.getAttribute('class') || e.tagName;"
+        "  (out[s.fontSize] = out[s.fontSize] || []).push(who); }"
+        " return out; }")
+
+
+def _colour_of(page, css):
+    """What the browser computes for a CSS colour on this page."""
+    return page.evaluate(
+        "css => { const d = document.createElement('div');"
+        " d.style.color = css; document.body.appendChild(d);"
+        " const c = getComputedStyle(d).color; d.remove(); return c; }", css)
+
+
+def test_only_the_five_sizes_are_used(page):
+    assert page.locator("#agent-details").is_visible(), "details are not open"
+    _draw_thread(page)
+    _open_form(page)
+    odd = {k: v[:6] for k, v in _sizes_on_screen(page).items() if k not in SIZES}
+    assert not odd, odd
+    page.locator("#agent-cancel").click()
+    page.locator("#open-connections").click()
+    page.wait_for_selector("#connections-panel", state="visible")
+    odd = {k: v[:6] for k, v in _sizes_on_screen(page).items() if k not in SIZES}
+    assert not odd, odd
+
+
+def test_the_stylesheets_declare_only_the_five_sizes():
+    """The rendered check sees one state of the page. This one sees every
+    rule, including the ones for states nobody opened in that test."""
+    sources = {"agents.html": (STATIC / "agents.html").read_text(encoding="utf-8"),
+               "agent-chat.css": (STATIC / "agent-chat.css").read_text(encoding="utf-8")}
+    odd = []
+    for name, text in sources.items():
+        text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+        for value in re.findall(r"font-size:\s*([^;\"'}]+)", text):
+            value = value.strip()
+            if value != "inherit" and value not in SIZES:
+                odd.append((name, value))
+    assert not odd, odd
+
+
+def test_messages_have_a_reading_width(page):
+    page.set_viewport_size({"width": 1920, "height": 1080})
+    _draw_thread(page)
+    got = page.evaluate(
+        "() => { const t = document.getElementById('agent-thread').getBoundingClientRect();"
+        " const ch = el => { const p = document.createElement('span');"
+        "  p.style.cssText = 'display:inline-block;width:68ch';"
+        "  el.appendChild(p); const w = p.getBoundingClientRect().width;"
+        "  p.remove(); return w; };"
+        " const turn = document.querySelector('.aturn').getBoundingClientRect();"
+        " const text = document.querySelector('.am.agent .atext');"
+        " const mine = document.querySelector('.am.user .ab');"
+        " return { thread: [t.left, t.right], turn: [turn.left, turn.right, turn.width],"
+        "  text: text.getBoundingClientRect().width, textCap: ch(text),"
+        "  mine: mine.getBoundingClientRect().width, mineCap: ch(mine) }; }")
+    left, right, width = got["turn"]
+    assert width <= 760.5, got
+    # Centred in the conversation, not pinned to its left edge.
+    assert abs((left - got["thread"][0]) - (got["thread"][1] - right)) <= 12, got
+    assert got["text"] <= min(760, got["textCap"]) + 0.5, got
+    assert got["mine"] <= got["mineCap"] + 0.5, got
+
+
+def test_avatars_are_solid(page):
+    """No gradient anywhere an agent's mark is drawn: the list, the card and
+    the thread (whose avatar comes from agent_chat_render)."""
+    _draw_thread(page)
+    hue = page.evaluate("() => window.__aiuiAgents.avatarHue('Ada')")
+    solid = _colour_of(page, "hsl(%d 45%% 32%%)" % hue)
+    for sel in ('#roster-list .roster-row[data-agent-id="agent-ada-0001"] .roster-av',
+                '#my-agents [data-agent-id="agent-ada-0001"] .avatar',
+                "#agent-thread .am.agent .aav"):
+        style = page.locator(sel).first.evaluate(
+            "e => { const s = getComputedStyle(e);"
+            " return [s.backgroundImage, s.backgroundColor, s.color]; }")
+        assert style == ["none", solid, "rgb(255, 255, 255)"], (sel, style)
+
+
+def test_a_cards_border_is_the_neutral_border(page):
+    """The hue is the avatar's alone (DESIGN.md, Agent identity): a card is
+    framed by --border, and hovering it brings up --border-2, not a tint."""
+    card = page.locator('#my-agents .card[data-agent-id="agent-ada-0001"]')
+    border = _colour_of(page, "var(--border)")
+    assert border == "rgb(36, 36, 42)", border
+    assert card.evaluate("e => getComputedStyle(e).borderTopColor") == border
+    assert card.evaluate("e => getComputedStyle(e).borderLeftColor") == border
+    card.hover()
+    page.wait_for_timeout(250)
+    assert card.evaluate("e => getComputedStyle(e).borderTopColor") == (
+        _colour_of(page, "var(--border-2)"))

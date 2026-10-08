@@ -222,16 +222,19 @@ def test_the_avatar_hue_matches_the_pages_algorithm():
 
 
 def test_an_agent_bubble_carries_its_own_colour_and_letters():
+    """DESIGN.md, Agent identity: one solid hsl(hue 45% 32%) per agent, the
+    same fill as its row in the conversation list. No gradient avatars."""
     html = render.agent_bubble("Ada", "hello")
-    assert "linear-gradient" in html
-    assert f"hsl({render._hue('Ada')} 58% 46%)" in html
+    assert "gradient" not in html
+    assert f'class="aav" style="background:hsl({render._hue("Ada")} 45% 32%)"' in html
     assert ">AD<" in html
     assert "\n" not in html
 
 
 def test_an_approval_bubble_carries_the_same_mark():
     html = render.approval_bubble("Mia", "ask-1", CALLS)
-    assert "linear-gradient" in html
+    assert "gradient" not in html
+    assert f'class="aav" style="background:hsl({render._hue("Mia")} 45% 32%)"' in html
     assert ">MI<" in html
     assert "\n" not in html
 
