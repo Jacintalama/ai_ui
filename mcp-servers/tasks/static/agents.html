@@ -176,13 +176,15 @@
      its border so a wall of cards is scannable by colour before you read a
      single name. Kept low: this is identification, not decoration, and the
      hover state is what should draw the eye. */
-  .card { padding: 15px 16px 12px; border-radius: var(--radius-lg);
+  /* Tightened 2026-10-08 so the roster reads at a narrower width and
+     leaves the office and the conversation the room. */
+  .card { padding: 12px 13px 10px; border-radius: var(--radius-lg);
           border-color: hsl(var(--agent-hue, 240) 30% 24%); }
   .card:hover { border-color: hsl(var(--agent-hue, 240) 45% 40%); }
-  .card-head { align-items: center; gap: 12px; }
+  .card-head { align-items: center; gap: 10px; }
   .avatar {
-    width: 38px; height: 38px; border-radius: 10px; flex: 0 0 38px;
-    font-size: 12.5px; font-weight: 700; letter-spacing: 0.3px;
+    width: 30px; height: 30px; border-radius: 9px; flex: 0 0 30px;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.3px;
   }
   /* Two lines, not one. The name carries the state beside it, the way you
      read a person's name and then whether they are in. The role drops to its
@@ -191,7 +193,7 @@
                   align-items: stretch; min-width: 0; }
   .card-name-row { display: flex; align-items: center; gap: 9px;
                    min-width: 0; }
-  .card-title { font-size: 15px; font-weight: 650; letter-spacing: -0.1px; }
+  .card-title { font-size: 13.5px; font-weight: 650; letter-spacing: -0.1px; }
   /* The model an agent thinks with is the second thing you want to know and
      the card never showed it. Quiet, because it is reference, not identity. */
   .card-model { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -209,11 +211,11 @@
   /* Skills get their own row above the tools. What an agent knows how to do
      is now the more interesting fact about it than what it can reach, and
      the tools row already carries the connected-apps chip and the model. */
-  .card-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 5px;
-                margin-top: 10px; min-height: 24px; }
+  .card-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
+                margin-top: 7px; min-height: 0; }
   .card-chips .chip {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 3px 9px; font-size: 11px; }
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 7px; font-size: 10.5px; }
   .card-chips .chip svg { width: 12px; height: 12px; flex: 0 0 12px;
                           color: var(--muted); }
   .card-chips .chip.skill { color: var(--accent);
@@ -271,7 +273,7 @@
      are memory-note and not note, because this page already has a .note rule
      for a callout box, and a row that silently inherited its top margin and
      accent border would read as one. */
-  .card-memory { font-size: 12px; color: var(--muted); margin: 6px 0 2px; }
+  .card-memory { font-size: 11px; color: var(--muted); margin: 5px 0 1px; }
   .card-memory .link-btn {
     background: none; border: 0; padding: 0 0 0 8px; color: inherit;
     text-decoration: underline; cursor: pointer; font: inherit;
@@ -374,19 +376,24 @@
      columns, so a person with two agents saw two cards and three holes. */
   /* 280 rather than 330 so widening the agents panel past about 600px gives
      two columns instead of one long ribbon. */
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-          gap: 12px; max-width: 792px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(258px, 1fr));
+          gap: 9px; max-width: 792px; }
   @media (min-width: 1800px) { .grid { max-width: 1188px; } }
   .card-title { font-size: 14px; font-weight: 650; margin-bottom: 6px; }
   /* The clamp is a backstop only. preview() already cuts on a word boundary
      at a length that fits three lines, so the browser ellipsis, which cuts
      wherever the line happens to end, should never be what the reader sees. */
-  .card-sys { color: var(--text-2); font-size: 12.5px; line-height: 1.6;
-              display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  /* Two lines rather than three. It is a reminder of what this agent is
+     for, not the place to read its instructions. */
+  .card-sys { color: var(--text-2); font-size: 12px; line-height: 1.55;
+              display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
               overflow: hidden; }
-  .card-actions { display: flex; gap: 8px; margin-top: auto; padding-top: 12px;
+  .card-actions { display: flex; gap: 6px; margin-top: auto; padding-top: 9px;
                   border-top: 1px solid var(--border); }
-  .card-sys { margin-top: 11px; }
+  /* Not the page's button size: these are three to a row inside a column
+     that is now 300px wide. */
+  .card-actions .btn { padding: 6px 10px; font-size: 12px; }
+  .card-sys { margin-top: 8px; }
   .btn { padding: 8px 12px; border: 1px solid var(--border-2); border-radius: var(--radius);
          background: var(--surface-2); color: var(--text); font-size: 13px;
          font-weight: 500; cursor: pointer; }

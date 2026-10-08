@@ -172,6 +172,46 @@ def test_the_width_is_clamped_so_a_column_cannot_be_dragged_away():
     assert "Math.max" in js and "Math.min" in js
 
 
+def _int_after(js, name):
+    import re
+    m = re.search(r"var %s = (\d+);" % name, js)
+    assert m, name + " is not a plain number any more"
+    return int(m.group(1))
+
+
+def test_a_width_saved_above_the_ceiling_is_pulled_back():
+    """Reported 2026-10-08 with a screenshot: the office and the conversation
+    were squeezed because the roster had been dragged out wide in an earlier
+    session and the width is remembered per browser.
+
+    Nobody should have to clear their storage to get the room back. The
+    restore puts the stored value through applyWidth, and applyWidth clamps,
+    so lowering the ceiling is what rescues a column already wider than it.
+    This pins that path: the restore must NOT set the width directly."""
+    js = _script()
+    restore = js.split("function restoreWidth()")[1].split("})()")[0]
+    assert "applyWidth(" in restore, (
+        "the saved width has to go through the clamp, or an old wide value "
+        "survives for ever")
+    assert "setProperty" not in restore, (
+        "restoring by writing the variable straight out would skip the clamp")
+
+
+def test_the_roster_leaves_the_room_to_the_office_and_the_chat():
+    """The roster is reference; the office and the conversation are what the
+    page is for. The numbers are a judgement rather than a law, so this pins
+    only the direction: a default that is not most of the page, and a ceiling
+    low enough that the chat column keeps the larger half on a normal
+    screen."""
+    js, css = _script(), _styles()
+    assert _int_after(js, "MAX_AGENTS") <= 460, "the roster can still hog the page"
+    assert _int_after(js, "MIN_AGENTS") >= 200, "too narrow to read a card in"
+    import re
+    m = re.search(r"var\(--agents-width, (\d+)px\)", css)
+    assert m, "the default width is not in the variable any more"
+    assert int(m.group(1)) <= 320, "the default leans the wrong way"
+
+
 def test_escape_is_handled_in_one_place():
     """Two Escape handlers, each closing "its" dialog, close two layers on
     one press. agents.html has the page's one handler, which closes only the

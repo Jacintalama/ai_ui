@@ -14,7 +14,10 @@
   /* The agents column is draggable, so its width is a variable the
      script writes and remembers. The fallback is what a first visit
      gets. */
-  grid-template-columns: minmax(0, 1fr) var(--agents-width, 340px);
+  /* 300, down from 340 (2026-10-08). The roster is reference; the office
+     and the conversation are the things being used, so the default leans
+     their way and the grip is there for anyone who wants it the other way. */
+  grid-template-columns: minmax(0, 1fr) var(--agents-width, 300px);
   /* The page is a screen, not a document: it fills what the window gives it
      and nothing outside these two columns scrolls. Before this the cards grew
      the page, so the window scrolled, the conversation scrolled inside it,

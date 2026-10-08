@@ -152,8 +152,14 @@
   // the guards: a panel that will not open because a preference could not be
   // read would be a poor trade for remembering a width.
   var WIDTH_KEY = "aiui-agents-width";
-  var MIN_AGENTS = 260;
-  var MAX_AGENTS = 640;
+  // 2026-10-08: the ceiling came down from 640 to 420, which also RESCUES a
+  // width already saved above it. restoreWidth puts the stored value through
+  // applyWidth, and applyWidth clamps, so a column dragged out to 620 in an
+  // earlier session comes back to 420 on the next load without anybody
+  // having to clear their storage. The office was reported as cramped for
+  // exactly that reason.
+  var MIN_AGENTS = 240;
+  var MAX_AGENTS = 420;
   var layout = document.querySelector(".agents-layout");
   var grip = document.getElementById("ap-resize");
 
