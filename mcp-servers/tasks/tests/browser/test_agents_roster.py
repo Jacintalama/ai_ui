@@ -781,3 +781,21 @@ def test_a_shell_ask_on_a_phone_lands_in_the_conversation(browser, server):
         assert not [u for u in pg.sent if "chat/send" in u], pg.sent
     finally:
         pg.close()
+
+
+def test_the_standalone_bar_stays_on_one_line_on_a_phone(browser, server):
+    """Outside the shell the page keeps its own bar with Back to app. Task 6
+    moved its text up to the type scale (11 to 12px, 15 to 16px), and at
+    390px the link and the subtitle wrapped onto two lines each."""
+    pg, root = _open(browser, server, size=PHONE)
+    try:
+        lines = root.locator(".topbar").evaluate(
+            "b => [...b.querySelectorAll('.back, .title, .sub')].map(e => {"
+            " const s = getComputedStyle(e);"
+            " return [e.className, Math.round(e.getBoundingClientRect().height),"
+            "  Math.round(parseFloat(s.lineHeight) || parseFloat(s.fontSize) * 1.3)]; })")
+        # One line of text, plus the link's 6px padding top and bottom.
+        tall = [l for l in lines if l[1] > l[2] + 12 + 1]
+        assert not tall, lines
+    finally:
+        pg.close()

@@ -75,6 +75,13 @@
     transition: background 0.15s, color 0.15s;
   }
   .topbar .back:hover { background: var(--surface-2); color: var(--text); }
+  /* One line each, however narrow the window: on a phone the link and the
+     subtitle wrapped, and the subtitle is the one that gives way. */
+  .topbar > div { min-width: 0; }
+  .topbar .back { white-space: nowrap; flex-shrink: 0; }
+  .topbar .title, .topbar .sub {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
 
   .container {
     /* 1000px left half a 1920 screen empty. The cron page settled on this
