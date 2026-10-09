@@ -967,6 +967,49 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   //: (connectLive) normally drives the floor, with a 30 second poll as the
   //: fallback; the hook exists so a test can prove what the floor does with
   //: a given set of rows instead of waiting.
+  //: The conversation shuts and opens like a messenger window, and stays
+  //: how it was left. Per browser, not per session: it is a preference about
+  //: this screen, and localStorage can throw outright in a private window,
+  //: so every read and write is guarded and the page renders fine without it.
+  var CHAT_KEY = "aiuiOfficeChatShut";
+
+  (function deskChat() {
+    var box = document.getElementById("deskchat");
+    var bar = document.getElementById("deskchat-toggle");
+    var dot = document.getElementById("deskchat-new");
+    if (!box || !bar) return;
+
+    function setShut(shut, remember) {
+      box.classList.toggle("shut", shut);
+      bar.setAttribute("aria-expanded", shut ? "false" : "true");
+      // Opening it is reading it, so whatever arrived is no longer new.
+      if (!shut && dot) dot.hidden = true;
+      if (!remember) return;
+      try {
+        if (shut) localStorage.setItem(CHAT_KEY, "1");
+        else localStorage.removeItem(CHAT_KEY);
+      } catch (e) { /* a preference that cannot be stored is still obeyed now */ }
+    }
+
+    try { if (localStorage.getItem(CHAT_KEY) === "1") setShut(true, false); }
+    catch (e) { /* unreadable storage means the default, which is open */ }
+
+    bar.addEventListener("click", function () {
+      setShut(!box.classList.contains("shut"), true);
+    });
+
+    // Something said while it was shut. Watched on the thread rather than
+    // hooked into the send, because an answer arrives on the stream long
+    // after the message went, and a reply from an agent is exactly the thing
+    // worth a dot.
+    if (dot && window.MutationObserver) {
+      new MutationObserver(function () {
+        if (box.classList.contains("shut")) dot.hidden = false;
+      }).observe(document.getElementById("agent-thread"),
+                 { childList: true, subtree: true });
+    }
+  })();
+
   window.aiuiRefreshOffice = async function () {
     // Everything the floor shows that can change, not just the activity.
     // The to-do was left out at first and simply never refreshed: it is a

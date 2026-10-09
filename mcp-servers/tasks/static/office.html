@@ -148,7 +148,18 @@
          it already has one: two threads on one screen would both open the
          stream and both draw the same round. -->
     <section class="deskchat" id="deskchat">
-      <h2>Ask your agents</h2>
+      <!-- The whole bar is the control, the way a messenger window's title
+           is: a 10px caret is a target nobody hits. It stays in the column
+           when shut rather than disappearing, so there is always something
+           to click to get back. -->
+      <button class="deskchat-bar" type="button" id="deskchat-toggle"
+              aria-expanded="true" aria-controls="deskchat-body">
+        <span class="deskchat-title">Ask your agents</span>
+        <i class="deskchat-new" id="deskchat-new" hidden
+           title="Something was said while this was shut"></i>
+        <span class="deskchat-caret" aria-hidden="true"></span>
+      </button>
+      <div class="deskchat-body" id="deskchat-body">
       <div class="ap-thread" id="agent-thread"
            hx-get="/tasks/agents/chat/thread" hx-trigger="load"
            hx-swap="innerHTML">
@@ -163,6 +174,7 @@
                placeholder="Message everyone" aria-label="Message everyone">
         <button class="btn primary" type="submit">Send</button>
       </form>
+      </div><!-- .deskchat-body -->
     </section>
   </aside>
 </div>

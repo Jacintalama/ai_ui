@@ -1705,6 +1705,81 @@ def test_the_office_page_has_a_conversation(page):
     assert got["input"] > got["btn"] * 2, got
 
 
+def test_the_conversation_shuts_and_opens_like_a_messenger_window(page):
+    """Asked for 2026-10-09: "be able to close it like a facebook chat".
+
+    A conversation you cannot get out of the way eats the column the agent
+    card is in."""
+    box, bar = page.locator("#deskchat"), page.locator("#deskchat-toggle")
+    assert bar.get_attribute("aria-expanded") == "true"
+    assert page.locator("#deskchat-body").is_visible()
+
+    bar.click()
+    page.wait_for_timeout(250)
+    assert "shut" in (box.get_attribute("class") or "")
+    assert not page.locator("#deskchat-body").is_visible()
+    assert bar.get_attribute("aria-expanded") == "false"
+    # The bar itself stays, or there is nothing left to click to get back.
+    assert bar.is_visible()
+
+    bar.click()
+    page.wait_for_timeout(250)
+    assert page.locator("#deskchat-body").is_visible()
+    assert bar.get_attribute("aria-expanded") == "true"
+
+
+def test_it_is_still_shut_when_you_come_back(page):
+    """A preference about this screen, so it survives a reload."""
+    page.locator("#deskchat-toggle").click()
+    page.wait_for_timeout(250)
+    page.reload()
+    page.wait_for_selector(".who", state="visible")
+    page.wait_for_timeout(500)
+    assert "shut" in (page.locator("#deskchat").get_attribute("class") or "")
+    assert not page.locator("#deskchat-body").is_visible()
+
+
+def test_shutting_it_gives_the_column_back(page):
+    """Not merely hidden: the space goes to the agent card above it."""
+    before = page.locator("#side-agent").bounding_box()["height"]
+    page.locator("#deskchat-toggle").click()
+    page.wait_for_timeout(300)
+    after = page.locator("#side-agent").bounding_box()["height"]
+    assert after > before, (before, after)
+
+
+def test_something_said_while_it_was_shut_is_marked(page):
+    """A dot, not a count. The thread is where you find out what was said,
+    and a number would be a claim about how much that nothing tracks."""
+    page.locator("#deskchat-toggle").click()
+    page.wait_for_timeout(250)
+    assert page.locator("#deskchat-new").is_hidden()
+    # An answer arriving on the stream, which is what lands in the thread.
+    page.evaluate(
+        "() => { const t = document.getElementById('agent-thread');"
+        " const d = document.createElement('div');"
+        " d.className = 'am agent'; d.textContent = 'Ada: here you go';"
+        " t.appendChild(d); }")
+    page.wait_for_timeout(300)
+    assert page.locator("#deskchat-new").is_visible()
+
+    # Opening it is reading it.
+    page.locator("#deskchat-toggle").click()
+    page.wait_for_timeout(300)
+    assert page.locator("#deskchat-new").is_hidden()
+
+
+def test_nothing_is_marked_while_it_is_open(page):
+    """The dot means "you missed this". With the thread in front of you,
+    you did not."""
+    page.evaluate(
+        "() => { const t = document.getElementById('agent-thread');"
+        " const d = document.createElement('div'); d.className = 'am agent';"
+        " d.textContent = 'Ada: here you go'; t.appendChild(d); }")
+    page.wait_for_timeout(300)
+    assert page.locator("#deskchat-new").is_hidden()
+
+
 def test_the_dock_has_no_conversation_of_its_own(docked):
     """The agents page around the dock already has one, and two threads on
     one screen would both open the stream and both draw the same round."""

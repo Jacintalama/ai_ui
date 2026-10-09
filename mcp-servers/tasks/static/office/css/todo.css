@@ -93,9 +93,44 @@
   min-height: 0; max-height: 46%;
   border-top: 1px solid var(--border); padding-top: 12px;
 }
-.deskchat h2 {
-  margin: 0 0 8px; font-size: 11px; font-weight: 700;
-  letter-spacing: .12em; text-transform: uppercase; color: var(--muted);
+/* The bar: the whole title row is the button, the way a messenger window's
+   is. Shut, this is all that is left of the conversation. */
+.deskchat-bar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+  width: 100%; margin: 0 0 8px; padding: 6px 2px;
+  background: none; border: 0; cursor: pointer; text-align: left;
+  color: var(--muted); font: inherit;
+}
+.deskchat-bar:hover .deskchat-title { color: var(--text); }
+.deskchat-bar:focus-visible {
+  outline: 2px solid var(--cyan, #22d3ee); outline-offset: 2px;
+  border-radius: 6px;
+}
+.deskchat-title {
+  font-size: 11px; font-weight: 700;
+  letter-spacing: .12em; text-transform: uppercase;
+}
+/* Something was said while it was shut. A dot, not a number: the thread is
+   the place to find out what, and a count would be a claim about how much
+   that nothing here actually tracks. */
+.deskchat-new {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--cyan, #22d3ee); flex: 0 0 7px;
+}
+.deskchat-caret {
+  margin-left: auto; width: 7px; height: 7px;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translate(-2px, -2px);
+  transition: transform .18s ease;
+}
+.deskchat.shut .deskchat-caret { transform: rotate(-135deg) translate(-2px, -2px); }
+.deskchat-body { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
+/* Shut, it gives the column back to the agent card above it rather than
+   holding its height empty. */
+.deskchat.shut { max-height: none; }
+.deskchat.shut .deskchat-body { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .deskchat-caret { transition: none; }
 }
 /* The thread scrolls inside the block rather than growing the column, so
    the composer stays where it was left. */
