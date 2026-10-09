@@ -47,6 +47,12 @@
 <link rel="stylesheet" href="/tasks/static/office/animations/working.css">
 <link rel="stylesheet" href="/tasks/static/office/animations/speaking.css">
 <link rel="stylesheet" href="/tasks/static/office/css/embed.css">
+<!-- The conversation, styled by the same file the agents page uses, so it
+     does not drift from it. Every selector in there is an .a-prefixed
+     component or one of that page's layout classes, which simply do not
+     match here, so nothing of the office is restyled by loading it. -->
+<link rel="stylesheet" href="/tasks/static/agent-chat.css">
+<link rel="stylesheet" href="/tasks/static/office/css/todo.css">
 <link rel="stylesheet" href="/tasks/static/office/css/responsive.css">
 </head>
 <script>
@@ -123,10 +129,45 @@
   </main>
 
   <aside class="side" id="side">
-    <p class="empty">Pick an agent to see what it has been doing.</p>
+    <!-- What the team still has to do, above whoever is selected. Read from
+         tasks.items, which has recorded it since migration 001 and which
+         nothing on this surface has ever shown: the live feed says what
+         happened in the last few minutes and forgets a job the moment it
+         ends, so there was nowhere to see what is still outstanding. -->
+    <section class="todo" id="todo" aria-label="What the team has to do"></section>
+
+    <!-- The agent card. Its own element because drawSide replaces it
+         wholesale, and the list above and the conversation below must
+         survive that. -->
+    <div id="side-agent">
+      <p class="empty">Pick an agent to see what it has been doing.</p>
+    </div>
+
+    <!-- The conversation, so the office is somewhere you can ask as well as
+         watch. Hidden in the dock (html.embed), where the agents page around
+         it already has one: two threads on one screen would both open the
+         stream and both draw the same round. -->
+    <section class="deskchat" id="deskchat">
+      <h2>Ask your agents</h2>
+      <div class="ap-thread" id="agent-thread"
+           hx-get="/tasks/agents/chat/thread" hx-trigger="load"
+           hx-swap="innerHTML">
+        <div class="aempty">Ask anything. Every agent hears it, and the ones
+          with something to say answer. Name one and only they reply.</div>
+      </div>
+      <form class="ap-composer" hx-post="/tasks/agents/chat/send"
+            hx-target="#agent-thread" hx-swap="beforeend"
+            hx-on::after-request="this.reset()">
+        <input type="hidden" name="agent" id="ap-agent" value="">
+        <input type="text" name="message" autocomplete="off"
+               placeholder="Message everyone" aria-label="Message everyone">
+        <button class="btn primary" type="submit">Send</button>
+      </form>
+    </section>
   </aside>
 </div>
 
+<script src="/tasks/static/vendor/htmx.min.js"></script>
 <script type="module" src="/tasks/static/office/js/office.js"></script>
 </body>
 </html>

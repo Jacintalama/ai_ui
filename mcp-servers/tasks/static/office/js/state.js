@@ -26,6 +26,8 @@ export const S = {
   AT: {},
   //: The tool each agent started and has not finished, for its badge.
   TOOL_NOW: {},
+  //: What the team still has to do, from tasks.items.
+  TODO: { open: [], done: [] },
 };
 
 export function nameOf(id) {

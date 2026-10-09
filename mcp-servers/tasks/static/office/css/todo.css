@@ -1,0 +1,127 @@
+/* The to-do above the agent card, and the conversation below it.
+   Added 2026-10-09, asked for as "a direct chat in here and task in the top
+   of agents like have todo".
+
+   The column is a stack of three now: what the team still has to do, then
+   whoever is selected, then somewhere to ask. The card in the middle is the
+   only one that is redrawn, so the other two keep their state. */
+
+.side {
+  display: flex; flex-direction: column; gap: 14px;
+  min-height: 0;
+}
+/* The card takes the slack, so the list stays at the top and the composer
+   stays at the bottom however tall the column is. */
+#side-agent { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+
+/* --- what the team has to do --------------------------------------------- */
+.todo { flex: 0 0 auto; }
+.todo-head {
+  display: flex; align-items: baseline; gap: 8px;
+  margin-bottom: 8px;
+}
+.todo-head h2 {
+  margin: 0; font-size: 11px; font-weight: 700;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--muted);
+}
+.todo-n {
+  margin-left: auto; font-size: 10.5px; font-weight: 600;
+  letter-spacing: .06em; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.todo-none { margin: 0; font-size: 12.5px; color: var(--muted); }
+
+.todo-list { list-style: none; margin: 0; padding: 0;
+             display: flex; flex-direction: column; gap: 2px; }
+.todo-recent { margin-top: 6px; padding-top: 6px;
+               border-top: 1px solid var(--border); }
+
+.todo-item {
+  display: grid; grid-template-columns: 9px minmax(0, 1fr) auto;
+  align-items: baseline; gap: 8px;
+  padding: 5px 6px; border-radius: 7px;
+  font-size: 12.5px; line-height: 1.4;
+}
+.todo-item:hover { background: var(--surface-2, rgba(255, 255, 255, .03)); }
+
+/* The dot carries the state on its own, so the list can be scanned without
+   reading any of the words. */
+.todo-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--border-2); align-self: center;
+}
+.todo-item[data-status="running"] .todo-dot {
+  background: #4ade80; animation: todoPulse 1.6s ease-in-out infinite;
+}
+/* Stopped on a question, which is the one state that needs a person. */
+.todo-item[data-status="awaiting_input"] .todo-dot { background: #fbbf24; }
+.todo-item[data-status="pending"] .todo-dot,
+.todo-item[data-status="claimed_manual"] .todo-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--border-2);
+}
+.todo-item.done .todo-dot { background: color-mix(in srgb, #4ade80 45%, transparent); }
+
+@keyframes todoPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .todo-item[data-status="running"] .todo-dot { animation: none; }
+}
+
+.todo-what {
+  min-width: 0; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.todo-item.done .todo-what { color: var(--muted); text-decoration: line-through;
+                             text-decoration-color: var(--border-2); }
+/* Critical work says so, and nothing else shouts. A list where every line
+   is urgent is a list with no priorities in it. */
+.todo-item[data-pri="critical"]:not(.done) .todo-what { color: #fca5a5; }
+
+.todo-meta {
+  display: flex; align-items: baseline; gap: 7px;
+  font-size: 10.5px; color: var(--muted); white-space: nowrap;
+}
+.todo-who { font-weight: 600; color: var(--text-2, var(--muted)); }
+.todo-state { letter-spacing: .04em; }
+
+/* --- the conversation ----------------------------------------------------- */
+.deskchat {
+  flex: 0 0 auto; display: flex; flex-direction: column;
+  min-height: 0; max-height: 46%;
+  border-top: 1px solid var(--border); padding-top: 12px;
+}
+.deskchat h2 {
+  margin: 0 0 8px; font-size: 11px; font-weight: 700;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--muted);
+}
+/* The thread scrolls inside the block rather than growing the column, so
+   the composer stays where it was left. */
+.deskchat .ap-thread {
+  flex: 1 1 auto; min-height: 90px; overflow-y: auto;
+}
+.deskchat .ap-composer {
+  flex: 0 0 auto; display: flex; gap: 6px; margin-top: 10px;
+}
+.deskchat .ap-composer input[type="text"] {
+  flex: 1 1 auto; min-width: 0;
+  padding: 7px 10px; font-size: 12.5px;
+  border: 1px solid var(--border-2); border-radius: var(--radius, 8px);
+  background: var(--surface-2, rgba(255, 255, 255, .03)); color: var(--text);
+}
+.deskchat .ap-composer input[type="text"]:focus {
+  outline: none; border-color: var(--cyan, #22d3ee);
+}
+/* width:auto is the load-bearing part. The side column styles its buttons
+   as full-width blocks, which is right for "Chat with Ada" and wrong here:
+   Send took the whole row and left the input 22px wide. */
+.deskchat .ap-composer .btn {
+  flex: 0 0 auto; width: auto; padding: 7px 12px; font-size: 12.5px;
+}
+
+/* In the dock the agents page around this already has a conversation, and
+   two threads on one screen would both open the stream and both draw the
+   same round. */
+html.embed .deskchat { display: none; }

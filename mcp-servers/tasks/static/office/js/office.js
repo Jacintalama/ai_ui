@@ -834,7 +834,11 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   }
 
   function drawSide() {
-    var side = document.getElementById("side");
+    // The CARD, not the whole column. The to-do above it and the
+    // conversation below it are not redrawn, and must not be: rebuilding the
+    // thread would throw away the round in flight.
+    var side = document.getElementById("side-agent");
+    if (!side) return;
     var m = S.AGENTS.filter(function (a) { return a.id === S.SELECTED; })[0];
     // In the card the details are an overlay, not a column: standing empty it
     // was taking 340px of the width the floor needed, which is most of why
@@ -964,7 +968,10 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   //: fallback; the hook exists so a test can prove what the floor does with
   //: a given set of rows instead of waiting.
   window.aiuiRefreshOffice = async function () {
-    await loadActivity();
+    // Everything the floor shows that can change, not just the activity.
+    // The to-do was left out at first and simply never refreshed: it is a
+    // list of work in flight, so a stale one is worse than none.
+    await Promise.all([loadActivity(), loadTodo()]);
     draw();
   };
 
@@ -974,6 +981,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
     document.getElementById("strip").hidden = TAB !== "office";
     if (TAB === "office") { drawRooms(); drawLive(); } else { drawActivity(); }
     drawSide();
+    drawTodo();
     // The side panel opening or closing changes how wide the floor's column
     // is, and a hidden tab measures as zero, so the fit is recomputed after
     // every draw rather than only on resize.
@@ -1106,7 +1114,10 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   //: page (the shell, or the agents page) says it is back on screen.
   var RESYNC_MISSED = false;
   function pollWhenOnScreen() {
-    if (onScreen()) { RESYNC_MISSED = false; resync(); }
+    // The list rides the same 30s tick as the activity re-read. It changes
+    // when a job starts or finishes, which the stream already tells us
+    // about, so it does not need a clock of its own.
+    if (onScreen()) { RESYNC_MISSED = false; loadTodo(); resync(); }
     else RESYNC_MISSED = true;
   }
   function catchUp() {
@@ -1130,6 +1141,46 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
       var got = (await getJson("/api/tasks/agents/skills")).skills || [];
       got.forEach(function (s) { S.SKILLS[s.name] = s; });
     } catch (e) { console.warn("[office] skill catalogue unavailable", e); }
+  }
+
+  async function loadTodo() {
+    try { S.TODO = await getJson("/api/tasks/agents/todo"); }
+    catch (e) { console.warn("[office] the to-do list is unavailable", e); }
+  }
+
+  //: What the team still has to do. Every line is a tasks.items row: the
+  //: office invents nothing here, the same rule the floor follows.
+  function drawTodo() {
+    var el = document.getElementById("todo");
+    if (!el) return;
+    var open = (S.TODO && S.TODO.open) || [];
+    var done = (S.TODO && S.TODO.done) || [];
+    if (!open.length && !done.length) {
+      // Said plainly rather than hidden. An empty panel reads as broken;
+      // "nothing outstanding" is a fact worth knowing.
+      el.innerHTML = '<div class="todo-head"><h2>To do</h2></div>' +
+        '<p class="todo-none">Nothing outstanding.</p>';
+      return;
+    }
+    function line(t, isDone) {
+      var who = t.who ? '<span class="todo-who">' + esc(t.who) + '</span>' : "";
+      var when = isDone && t.at ? '<span class="todo-when">' + esc(ago(t.at)) + '</span>' : "";
+      return '<li class="todo-item' + (isDone ? " done" : "") +
+        '" data-status="' + esc(t.status) + '" data-pri="' + esc(t.priority) + '">' +
+        '<i class="todo-dot" aria-hidden="true"></i>' +
+        '<span class="todo-what" title="' + esc(t.what) + '">' + esc(t.what) + '</span>' +
+        '<span class="todo-meta">' + who +
+          (isDone ? when : '<span class="todo-state">' + esc(t.status.replace(/_/g, " ")) + '</span>') +
+        '</span></li>';
+    }
+    el.innerHTML =
+      '<div class="todo-head"><h2>To do</h2>' +
+        (open.length ? '<span class="todo-n">' + open.length + ' open</span>' : "") +
+      '</div>' +
+      (open.length ? '<ul class="todo-list">' + open.map(function (t) { return line(t, false); }).join("") + '</ul>'
+                   : '<p class="todo-none">Nothing outstanding.</p>') +
+      (done.length ? '<ul class="todo-list todo-recent">' +
+         done.map(function (t) { return line(t, true); }).join("") + '</ul>' : "");
   }
 
   document.getElementById("rooms").addEventListener("click", function (ev) {
@@ -1502,7 +1553,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
       console.warn("[office] could not list agents", e);
       return;
     }
-    await Promise.all([loadActivity(), loadStats(), loadSkills()]);
+    await Promise.all([loadActivity(), loadStats(), loadSkills(), loadTodo()]);
     // Not in the card: a panel that opens by itself takes the width the
     // floor was moved inline to get. On its own page the column is always
     // there, so showing somebody in it beats showing an empty prompt.

@@ -28,6 +28,7 @@ from sqlalchemy import text as sql_text
 from sse_starlette.sse import EventSourceResponse
 
 import agent_activity
+import agent_todo
 import agent_events
 import agent_memory
 import agent_skills
@@ -409,6 +410,19 @@ async def tools_for_email(email: str) -> dict:
     })
 
     return {"tools": tools}
+
+
+@router.get("/todo")
+async def todo(user: CurrentUser = Depends(current_user)) -> dict:
+    """What this person's agents still have to do, and what just finished.
+
+    Scoped to the caller like /activity, for the same reason: an admin's
+    listing carries everybody, and one person's work is not another's.
+
+    Read from tasks.items, which has recorded all of this since migration
+    001 and which nothing on this surface has ever shown.
+    """
+    return await agent_todo.todo_for(user.email)
 
 
 @router.get("/activity")

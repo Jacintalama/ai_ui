@@ -107,6 +107,32 @@ def _serve(html: bytes):
                         b'<iframe src="/office.html" '
                         b'style="width:100%;height:100%;border:0"></iframe>'
                         b'</div>')
+            elif path.startswith("/tasks/agents/chat/"):
+                # The conversation's own routes. Answering these with the
+                # page itself HUNG THE WHOLE SUITE: htmx loads the thread on
+                # load, the page came back, and the page carries the same
+                # hx-get, so it fetched itself for ever. Worth knowing
+                # outside the tests too, since an auth redirect to a login
+                # page would do the same thing in a browser.
+                body, kind = b'<div class="aempty">nothing yet</div>', "text/html"
+                if path.endswith("/stream"):
+                    self.send_response(204)
+                    self.end_headers()
+                    return
+            elif path.endswith("/agent-chat.css") or path.endswith("/htmx.min.js"):
+                # The conversation in the side column is styled by the agents
+                # page's own stylesheet and driven by htmx. Answering those
+                # with the page itself served HTML where a stylesheet was
+                # asked for, which is the exact trap the comment above
+                # describes, one directory over.
+                rel = path.rsplit("/", 1)[1]
+                asset = (STATIC / rel if (STATIC / rel).is_file()
+                         else STATIC / "vendor" / rel)
+                if not asset.is_file():
+                    self.send_error(404, "no such asset: %s" % rel)
+                    return
+                body = asset.read_bytes()
+                kind = "text/css" if rel.endswith(".css") else "text/javascript"
             elif "/office/" in path:
                 rel = path.split("/office/", 1)[1]
                 asset = STATIC / "office" / rel
@@ -789,7 +815,7 @@ def test_clicking_the_robot_still_selects_it(page):
     click that opens the panel."""
     page.locator('.who[data-id="agent-iris-a103"]').click()
     page.wait_for_timeout(150)
-    assert page.locator("#side h2").inner_text() == "Iris"
+    assert page.locator("#side-agent h2").inner_text() == "Iris"
 
 
 # --- moving around the floor -------------------------------------------------
@@ -905,7 +931,7 @@ def test_dragging_a_robot_is_not_a_pan(page):
     than be swallowed by the thing that moves the floor."""
     page.locator('.who[data-id="agent-iris-a103"]').click()
     page.wait_for_timeout(200)
-    assert page.locator("#side h2").inner_text() == "Iris"
+    assert page.locator("#side-agent h2").inner_text() == "Iris"
 
 
 # --- collaboration the floor is allowed to draw ------------------------------
@@ -1598,6 +1624,104 @@ def test_a_meeting_that_is_over_sends_them_back(page):
     page.evaluate("() => window.aiuiRefreshOffice()")
     page.wait_for_timeout(1400)
     assert page.locator(".meeting-table").count() == 0
+
+
+# --- what the team still has to do, and somewhere to ask -------------------
+# Asked for 2026-10-09: "can you add a direct chat in here and task in the top
+# of agents like have todo". Both already existed elsewhere. tasks.items has
+# recorded the work since migration 001 and nothing on this surface showed it;
+# the conversation is the agents page's own component, reused rather than
+# rebuilt, styled by the same stylesheet so it cannot drift from it.
+
+def _with_todo(page, open_items, done=()):
+    page.route("**/agents/todo**", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"open": list(open_items), "done": list(done)})))
+    page.evaluate("() => window.aiuiRefreshOffice()")
+    page.wait_for_timeout(900)
+
+
+def test_nothing_outstanding_is_said_rather_than_left_blank(page):
+    """The default fixture answers /todo with nothing. An empty panel reads
+    as broken; saying so is a fact worth knowing."""
+    assert page.locator("#todo").count() == 1
+    assert "nothing outstanding" in page.locator("#todo").inner_text().lower()
+
+
+def test_the_to_do_lists_the_work_that_is_recorded(page):
+    _with_todo(page, [
+        {"id": "1", "what": "Build the shoe website", "who": "Rex",
+         "priority": "important", "status": "running", "kind": "build", "at": None},
+        {"id": "2", "what": "Research the competitors", "who": "Vera",
+         "priority": "critical", "status": "awaiting_input", "kind": "research", "at": None},
+    ])
+    txt = page.locator("#todo").inner_text()
+    assert "Build the shoe website" in txt, txt
+    assert "Rex" in txt and "Vera" in txt, txt
+    # The count is the open ones, and the state is on the line rather than
+    # only in a colour, which a colour alone could not tell anybody.
+    assert "2 open" in txt, txt
+    assert "awaiting input" in txt, txt
+    assert page.locator("#todo .todo-item").count() == 2
+
+
+def test_a_finished_job_is_separated_from_the_open_ones(page):
+    _with_todo(page,
+               [{"id": "1", "what": "Still going", "who": "Rex",
+                 "priority": "important", "status": "running", "kind": "build", "at": None}],
+               [{"id": "9", "what": "Weekly report", "who": "Ada",
+                 "priority": "important", "status": "completed", "kind": "research",
+                 "at": "2026-10-09T11:00:00+00:00"}])
+    assert page.locator("#todo .todo-item.done").count() == 1
+    assert "1 open" in page.locator("#todo").inner_text()
+    # The open count must not include what is already done.
+    assert page.locator("#todo .todo-item:not(.done)").count() == 1
+
+
+def test_the_to_do_escapes_what_it_is_given(page):
+    """It is a description somebody typed, rendered into the page."""
+    _with_todo(page, [{"id": "1", "what": "<img src=x onerror=alert(1)>",
+                       "who": "Rex", "priority": "important",
+                       "status": "running", "kind": "build", "at": None}])
+    assert page.locator("#todo img").count() == 0
+    assert "<img" in page.locator("#todo .todo-what").inner_text()
+
+
+def test_the_office_page_has_a_conversation(page):
+    """The office is somewhere you can ask as well as watch."""
+    assert page.locator("#deskchat").is_visible()
+    assert page.locator("#deskchat #agent-thread").count() == 1
+    form = page.locator("#deskchat .ap-composer")
+    assert form.get_attribute("hx-post") == "/tasks/agents/chat/send"
+    # Send must not eat the row. The side column styles its buttons as
+    # full-width blocks, which is right for "Chat with Ada" and left the
+    # message box 22px wide here.
+    got = page.evaluate(
+        "() => { const f = document.querySelector('.deskchat .ap-composer');"
+        " const i = f.querySelector('input[type=text]');"
+        " const b = f.querySelector('button');"
+        " return { input: i.getBoundingClientRect().width,"
+        "          btn: b.getBoundingClientRect().width }; }")
+    assert got["input"] > got["btn"] * 2, got
+
+
+def test_the_dock_has_no_conversation_of_its_own(docked):
+    """The agents page around the dock already has one, and two threads on
+    one screen would both open the stream and both draw the same round."""
+    assert docked.locator("#deskchat").count() == 1
+    assert not docked.locator("#deskchat").is_visible()
+
+
+def test_the_card_is_redrawn_without_taking_the_rest_with_it(page):
+    """The column is a stack of three and only the middle one is rebuilt.
+    Redrawing the whole column would throw away the round in flight."""
+    page.evaluate("() => { document.querySelector('#deskchat #agent-thread')"
+                  ".setAttribute('data-kept', 'yes'); }")
+    page.locator('.who[data-id="agent-iris-a103"]').click()
+    page.wait_for_timeout(400)
+    assert page.locator("#side-agent h2").inner_text() == "Iris"
+    assert page.locator('#deskchat #agent-thread[data-kept="yes"]').count() == 1
+    assert page.locator("#todo").count() == 1
 
 
 def test_no_meeting_means_no_table(page):
