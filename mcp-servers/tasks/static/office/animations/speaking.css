@@ -13,21 +13,52 @@
    an agent said reads as said rather than as a label that was always
    there. Both are short: the bubble is over a working floor, not a toast. */
 @keyframes bubble-pop {
-  0%   { transform: translate(-50%, 10px) scale(.62); opacity: 0; }
-  60%  { transform: translate(-50%, -5px) scale(1.05); opacity: 1; }
-  100% { transform: translate(-50%, 0) scale(1); opacity: 1; }
+  0%   { transform: translate(-50%, calc(-100% + 10px)) scale(.62); opacity: 0; }
+  60%  { transform: translate(-50%, calc(-100% - 5px)) scale(1.05); opacity: 1; }
+  100% { transform: translate(-50%, -100%) scale(1); opacity: 1; }
 }
 @keyframes bubble-float-out {
-  0%   { opacity: 1; transform: translate(-50%, 0); }
-  100% { opacity: 0; transform: translate(-50%, -22px); }
+  0%   { opacity: 1; transform: translate(-50%, -100%); }
+  100% { opacity: 0; transform: translate(-50%, calc(-100% - 22px)); }
 }
 
-/* The walk itself. Applied only while an agent is actually travelling, and
-   taken off when it arrives, so a bobbing robot always means one is on its
-   way somewhere. */
-@keyframes robot-walk {
-  0%, 100% { transform: translateY(0) rotate(0deg); }
-  25%      { transform: translateY(-4px) rotate(-3deg); }
-  75%      { transform: translateY(-4px) rotate(3deg); }
+/* --- answering somebody ----------------------------------------------------
+   `data-speaking` is put on a robot by office.js while its run is working
+   AND that run was started by a conversation (source meeting, channel or
+   colleague, from tasks.agent_run). A schedule runs in silence. So the
+   mouth moving here and "Ada is working..." in the thread beside the floor
+   are two views of the same recorded row, and they start and stop together. */
+.who[data-speaking="1"] .bot-mouth {
+  transform-box: fill-box; transform-origin: center;
+  animation: talk .32s ease-in-out infinite alternate;
 }
-.who-slot.walking .bot { animation: robot-walk .35s ease-in-out infinite; }
+@keyframes talk { from { transform: scaleY(1); } to { transform: scaleY(2.4); } }
+
+/* Three dots over the shoulder, the universal sign for "typing". Pops in
+   like the bubble and shares its tail. */
+.who .talk-dots {
+  position: absolute; z-index: 3; top: -6px;
+  right: calc(50% + var(--bot-w) / 2 - 10px);
+  display: flex; gap: 3px; align-items: center;
+  padding: 5px 6px; border-radius: 9px 9px 2px 9px;
+  background: var(--surface); border: 1px solid var(--cyan);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, .4);
+  animation: dots-pop .3s cubic-bezier(.34, 1.56, .64, 1) both;
+}
+.who .talk-dots i {
+  width: 4px; height: 4px; border-radius: 50%; background: var(--cyan);
+  animation: dot-bounce .9s ease-in-out infinite;
+}
+.who .talk-dots i:nth-child(2) { animation-delay: .15s; }
+.who .talk-dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes dots-pop { from { opacity: 0; transform: scale(.6); } }
+@keyframes dot-bounce {
+  0%, 60%, 100% { transform: translateY(0);    opacity: .45; }
+  30%           { transform: translateY(-3px); opacity: 1; }
+}
+/* One thing over a head at a time: a robot that is asking a colleague has
+   that to say, and the dots would only repeat it. */
+.who-slot:has(.say) .talk-dots { display: none; }
+
+/* The walk itself lives in walking.css now, with the arms, the shadow
+   and the arrival that go with it. */

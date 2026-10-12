@@ -5,6 +5,10 @@
      because it is no longer a fake. */
   .talk-line {
     position: absolute; z-index: 8; height: 2px; transform-origin: 0 50%;
+    /* The angle is a variable, not an inline transform, so the drawing
+       animation in walking.css can scale the line along itself without
+       throwing the angle away. */
+    transform: rotate(var(--rot, 0deg));
     background: linear-gradient(90deg,
       color-mix(in srgb, var(--cyan) 15%, transparent),
       var(--cyan),
@@ -18,9 +22,13 @@
     background-size: 220% 100%; opacity: .75; animation-duration: 2.6s;
   }
 
-/* What one robot is saying to another, over its head. */
+/* What one robot is saying to another, over its head. A child of the
+   robot's own slot, so when the robot walks the bubble walks with it: it
+   used to be pinned where the robot was GOING to be and hung in empty air
+   for the length of the walk. */
   .say {
-    position: absolute; z-index: 30; transform: translate(-50%, -100%);
+    position: absolute; z-index: 30; left: 50%; top: -4px;
+    transform: translate(-50%, -100%);
     max-width: 150px; padding: 5px 9px; border-radius: 10px;
     background: var(--surface); border: 1px solid var(--cyan);
     color: var(--text); font-size: 10px; font-weight: 600;

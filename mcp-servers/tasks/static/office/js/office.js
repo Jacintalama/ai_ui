@@ -10,7 +10,7 @@
 
 import { S, nameOf } from "./state.js";
 import { getJson, esc, ago, saying } from "./util.js";
-import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
+import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   from "./agent.js";
 
 (function () {
@@ -84,44 +84,28 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   // code and schedules sits in Development.
   // Six rooms on a plan, laid out as in the owner's mockup: three across the
   // top, three across the bottom, with the middle left open.
-  //: `style` is the furniture a room wears. Drawn from divs rather than an
-  //: illustration per room, because a department is something the owner
-  //: invents: a file called research.svg cannot furnish a room called
-  //: Sales. Anything unrecognised gets `plain`, so a room is never bare.
+  //: No furniture. The rooms wore little drawn desks, screens, shelves
+  //: and plants from 2026-10-08 to 2026-10-12, and the owner circled every
+  //: one of them: "remove this that kinda messy please fix make it clean".
+  //: A room is its name, its numbers and the people in it; each agent
+  //: still has a desk of its own (.desk, agent.css) under its feet.
   var ZONES = [
     { key: "research",   label: "Research",       tools: ["server:mcp-proxy", "fusion"],
-      glow: "#22D3EE", style: "lab" },
+      glow: "#22D3EE" },
     { key: "dev",        label: "Development",    tools: ["code"],
-      glow: "#60a5fa", style: "desks" },
+      glow: "#60a5fa" },
     { key: "comms",      label: "Communication",  tools: ["gmail"],
-      glow: "#f472b6", style: "comms" },
+      glow: "#f472b6" },
     { key: "meeting",    label: "Meeting room",   tools: ["calendar"],
-      glow: "#34d399", style: "table" },
+      glow: "#34d399" },
     { key: "knowledge",  label: "Knowledge base", tools: ["gdrive", "documents"],
-      glow: "#a78bfa", style: "shelves" },
+      glow: "#a78bfa" },
     { key: "automation", label: "Automation",     tools: ["schedules", "excel_creator", "executive_dashboard"],
-      glow: "#fbbf24", style: "racks" },
+      glow: "#fbbf24" },
   ];
   // An agent whose owner picked no tools reaches everything, so it has no one
   // room. It gets a room of its own rather than being hidden.
-  var LOUNGE = { key: "lounge", label: "Open floor", tools: [], glow: "#8296b5",
-                 style: "plain" };
-
-  //: The furniture itself. Every piece is a div the room's own colour tints,
-  //: so a room looks built without a single image being fetched.
-  var FURNITURE = {
-    lab:     '<i class="f-bench"></i><i class="f-screen"></i><i class="f-plant"></i>',
-    desks:   '<i class="f-desk"></i><i class="f-screen"></i><i class="f-desk"></i>',
-    comms:   '<i class="f-dish"></i><i class="f-wave"></i><i class="f-plant"></i>',
-    table:   '<i class="f-table"></i>',
-    shelves: '<i class="f-shelf"></i><i class="f-shelf"></i><i class="f-plant"></i>',
-    racks:   '<i class="f-rack"></i><i class="f-rack"></i><i class="f-screen"></i>',
-    plain:   '<i class="f-plant"></i>',
-  };
-
-  function furnitureFor(z) {
-    return FURNITURE[z && z.style] || FURNITURE.plain;
-  }
+  var LOUNGE = { key: "lounge", label: "Open floor", tools: [], glow: "#8296b5" };
 
   //: --- the floor's measurements -------------------------------------------
   //: Rooms used to be fixed percentages of a fixed 1040x680 canvas, which
@@ -150,6 +134,11 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   //: The strip along a room's bottom edge carrying its runs and its cost.
   //: Reserved, or the lowest agent in a room stands on top of it.
   var ROOM_FOOT = 24;
+  //: The strip the meeting table takes along the bottom of the meeting
+  //: room while a meeting is on. Reserved only then, and only there: the
+  //: table used to be laid across the Chat pills of whoever stood in the
+  //: bottom row (screenshot, 2026-10-12, five agents in a meeting).
+  var TABLE_SPACE = 36;
   var FLOOR_BAR = 52;      // the strip along the bottom, which is not a room
   //: Clear canvas above the rooms for the live activity card, which on the
   //: whole page is laid over the floor in the top right corner. Reserved
@@ -285,7 +274,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   }
 
   //: One room, sized to the agents in it, and where each of them stands.
-  function roomBox(n, rowCap) {
+  function roomBox(n, rowCap, extra) {
     var cols = Math.max(1, Math.ceil(n / Math.max(1, rowCap)));
     var rows = Math.max(1, Math.ceil(n / cols));
     return {
@@ -293,7 +282,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
       w: Math.max(ROOM_MIN_W,
                   ROOM_PAD * 2 + cols * SLOT_W + (cols - 1) * SLOT_GAP_X),
       h: ROOM_HEAD + rows * SLOT_H + (rows - 1) * SLOT_GAP_Y
-         + ROOM_PAD + ROOM_FOOT,
+         + ROOM_PAD + ROOM_FOOT + (extra || 0),
     };
   }
 
@@ -309,7 +298,11 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   //: that fits largest, so the floor uses the width it has rather than
   //: leaving 400px of it empty beside a floor that shrank to fit the height.
   function layoutFloor(rooms, rowCap, cols) {
-    var boxes = rooms.map(function (r) { return roomBox(r.of.length, rowCap); });
+    var boxes = rooms.map(function (r) {
+      // The meeting room holds its table under the people in it.
+      var table = r.z.key === MEETING_KEY && r.of.length ? TABLE_SPACE : 0;
+      return roomBox(r.of.length, rowCap, table);
+    });
     cols = Math.max(1, Math.min(cols || boxes.length, boxes.length));
     var rowCount = Math.ceil(boxes.length / cols);
 
@@ -393,45 +386,147 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   }
 
 
-  //: One agent, in the slot the room reserved for it. Everything inside the
-  //: slot is in normal flow: the robot, then the name, then the Chat pill.
-  //: Nothing here is told where to put itself, which is why nothing here can
-  //: land on top of anything else.
+  //: --- the clock every movement reads --------------------------------------
+  //: A robot crosses the floor at ONE pace, so the length of a journey comes
+  //: from its distance: a step to the next desk is quick and a walk to the
+  //: meeting room takes as long as it should. The duration is written on
+  //: the slot as --d (agent.css reads it for left, top and transform), and
+  //: the longest journey in a draw is written on the rooms and the floor,
+  //: so a room is finished growing at the moment its last agent steps in.
+  //:
+  //: It used to be a fixed 2.1s in agent.css and a fixed 2300 here, which
+  //: had to be kept in step by hand and made a 30px shuffle take as long as
+  //: a trip across the office.
+  var WALK_SPEED = 0.42;   // canvas px per ms
+  var WALK_MIN = 450, WALK_MAX = 2600;
+  function walkDuration(dist) {
+    if (!(dist > 0.5)) return 0;
+    return Math.round(Math.min(WALK_MAX, Math.max(WALK_MIN, dist / WALK_SPEED)));
+  }
+
+  //: The settle at the end of a walk, in walking.css.
+  var SETTLE_MS = 500;
+
+  //: One slot is on its way. `walking` goes on now and comes off when the
+  //: transition actually ends (transitionend, below, with a timer as the
+  //: net for a tab that was hidden), so a bobbing robot always means one
+  //: that is moving, for exactly as long as it moves. The lean is the
+  //: direction of travel, and nothing else on the slot is touched.
+  function startWalk(el, dx, dur) {
+    if (!dur) return;
+    var until = Date.now() + dur;
+    el._walkUntil = Math.max(el._walkUntil || 0, until);
+    el.style.setProperty("--d", dur + "ms");
+    el.style.setProperty("--lean", (dx > 8 ? 4 : dx < -8 ? -4 : 0) + "deg");
+    el.classList.remove("arrived");
+    el.classList.add("walking");
+    clearTimeout(el._walk);
+    el._walk = setTimeout(function () { arrive(el); }, dur + 120);
+  }
+
+  function arrive(el) {
+    // Another journey was started on this slot since: let that one end it.
+    if (Date.now() < (el._walkUntil || 0) - 50) return;
+    clearTimeout(el._walk);
+    if (!el.classList.contains("walking")) return;
+    el.classList.remove("walking");
+    el.style.setProperty("--lean", "0deg");
+    el.classList.add("arrived");
+    clearTimeout(el._settle);
+    el._settle = setTimeout(function () { el.classList.remove("arrived"); }, SETTLE_MS);
+  }
+
+  function watchArrival(el) {
+    el.addEventListener("transitionend", function (e) {
+      if (e.target !== el) return;
+      if (["left", "top", "transform"].indexOf(e.propertyName) < 0) return;
+      arrive(el);
+    });
+  }
+
   //: Where an agent stands. Changed on its own, so the node moves rather
   //: than being rebuilt somewhere else: a replaced node starts life at the
   //: new coordinates and jumps, and no transition can animate that.
-  //: How long the slot's own left/top transition runs. The walk animation
-  //: is taken off when the journey ends, so a bobbing robot always means
-  //: one is actually on its way somewhere.
-  //: Raised from 850 with the distances: these are journeys across the floor
-  //: now, not a nudge to the next desk, and at .85s one was over before the
-  //: eye found it. Kept in step with the transition in agent.css.
-  var WALK_MS = 2300;
-
+  //: Returns the length of the walk this placing started, or 0.
   function placeSlot(el, slot) {
-    var moved = el.isConnected &&
-      (el.style.left !== slot.left + "px" || el.style.top !== slot.top + "px");
-    el.style.left = slot.left + "px";
-    el.style.top = slot.top + "px";
-    if (!moved) return;
-    el.classList.add("walking");
-    clearTimeout(el._walk);
-    el._walk = setTimeout(function () { el.classList.remove("walking"); },
-                          WALK_MS);
+    var nx = slot.left + "px", ny = slot.top + "px";
+    if (!el.isConnected || (el.style.left === nx && el.style.top === ny)) {
+      el.style.left = nx;
+      el.style.top = ny;
+      return 0;
+    }
+    var dx = slot.left - (parseFloat(el.style.left) || 0);
+    var dy = slot.top - (parseFloat(el.style.top) || 0);
+    var dur = walkDuration(Math.sqrt(dx * dx + dy * dy));
+    startWalk(el, dx, dur);
+    el.style.left = nx;
+    el.style.top = ny;
+    return dur;
   }
 
-  //: What an agent shows. Rebuilt only when one of these actually changed,
-  //: because replacing it mid-walk restarts the walk.
-  function slotSignature(m) {
-    var st = stateOf(m.id);
-    return [m.id, m.name, roleOf(m), st.key, st.label, colourOf(m.id),
-            S.SELECTED === m.id, S.TOOL_NOW[m.id] || ""].join("");
+  //: How long each slot's walk will be, BEFORE anything is moved, so the
+  //: rooms and the floor can be given the longest of them. Reads the slots
+  //: already on the floor and changes nothing.
+  function measureWalks(slots) {
+    var layer = document.getElementById("agents-layer"), longest = 0;
+    if (!layer) return 0;
+    slots.forEach(function (slot) {
+      var el = slotEl(layer, slot.m.id);
+      if (!el) return;
+      var dx = slot.left - (parseFloat(el.style.left) || 0);
+      var dy = slot.top - (parseFloat(el.style.top) || 0);
+      longest = Math.max(longest, walkDuration(Math.sqrt(dx * dx + dy * dy)));
+    });
+    return longest;
   }
+
+  function slotEl(layer, id) {
+    return layer.querySelector('.who-slot[data-id="' +
+      (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
+  }
+
+  //: Answering somebody, as opposed to running a schedule in silence. A run
+  //: started from a conversation records where it came from
+  //: (agent_activity SOURCE_MEETING, SOURCE_CHANNEL, SOURCE_COLLEAGUE), and
+  //: that row is the only thing the moving mouth and the dots are drawn
+  //: from. The thread beside the floor says "is working..." from the same
+  //: row, so the two start and stop together.
+  var SPEAKING_SOURCES = { meeting: 1, channel: 1, colleague: 1 };
+  function speaking(id) {
+    var a = S.ACTIVITY[id];
+    return !!(a && a.state === "working" && SPEAKING_SOURCES[a.source]);
+  }
+
+  //: Each robot a little out of step with the next. Decoration, so it may
+  //: come from nothing more than the id.
+  function breathOf(id) {
+    var h = 0, s = String(id || "");
+    for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 3400;
+    return "-" + h + "ms";
+  }
+
+  //: What has to be REBUILT rather than patched: the figure's colour runs
+  //: through its gradient, its hands and its face, and a renamed agent is a
+  //: new label. Everything else about an agent is changed in place, below,
+  //: so a change of state no longer restarts its breathing or its stride.
+  function slotStructure(m) {
+    return [m.id, m.name || "", colourOf(m.id)].join("|");
+  }
+
+  function labelFor(m, st) {
+    // The role normally, but the STATE the moment there is one worth
+    // reading. A dot alone says something is happening without saying
+    // what, and "Working 12s" is the whole reason to look at this floor.
+    return st.key === "ready" || st.key === "idle" ? (roleOf(m) || "no role") : st.label;
+  }
+
+  var DOTS = '<span class="talk-dots" aria-hidden="true"><i></i><i></i><i></i></span>';
 
   function slotInner(m) {
     var st = stateOf(m.id), c = colourOf(m.id);
     return '<div class="desk"></div>' +
       '<button class="who" data-id="' + esc(m.id) + '" data-state="' + st.key + '"' +
+      (speaking(m.id) ? ' data-speaking="1"' : "") +
       (S.SELECTED === m.id ? ' aria-current="true"' : "") +
       // No background: the robot IS the avatar now. The colour stays as the
       // element's own colour so the dot and the label pick it up.
@@ -439,14 +534,11 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
       ' title="' + esc(st.label) + '">' +
       robot(m.id, st.key) +
       '<i class="dot ' + st.key + '"></i>' +
+      (speaking(m.id) ? DOTS : "") +
       (st.key === "working" && S.TOOL_NOW[m.id]
         ? '<span class="tool-now">' + esc(S.TOOL_NOW[m.id]) + '</span>' : "") +
-      // The role normally, but the STATE the moment there is one worth
-      // reading. A dot alone says something is happening without saying
-      // what, and "Working 12s" is the whole reason to look at this floor.
       '<span class="who-label"><span class="card-name">' + esc(m.name || m.id) +
-        '</span><small>' + esc(st.key === "ready" || st.key === "idle"
-          ? (roleOf(m) || "no role") : st.label) + '</small></span>' +
+        '</span><small>' + esc(labelFor(m, st)) + '</small></span>' +
       '</button>' +
       // Every agent carries its own, because one button on whoever happens to
       // be selected means you must pick somebody before you can talk to them.
@@ -456,6 +548,55 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
         ' title="Ask ' + esc(m.name || m.id) + ' on their own"' +
         ' href="/tasks/agents?ask=' +
         encodeURIComponent((m.name || m.id) + ", ") + '">Chat</a>';
+  }
+
+  //: Bring a slot that already exists up to date WITHOUT rebuilding it.
+  //: Only what changed is touched: the state and its face, the light, the
+  //: badge, the label. The figure itself, mid-breath or mid-stride, is left
+  //: exactly where its animation has it.
+  function patchSlot(el, m) {
+    var who = el.querySelector(".who");
+    if (!who) { el.innerHTML = slotInner(m); return; }
+    var st = stateOf(m.id);
+    if (who.getAttribute("data-state") !== st.key) {
+      who.setAttribute("data-state", st.key);
+      who.setAttribute("title", st.label);
+      var f = who.querySelector(".bot-face");
+      if (f) {
+        f.innerHTML = face(m.id, st.key);
+        // Restarted on purpose: a face that changed is a thing that
+        // happened, and the short fade in speaking.css says so.
+        f.classList.remove("swap");
+        void f.getBoundingClientRect();
+        f.classList.add("swap");
+      }
+      var dot = who.querySelector(".dot");
+      if (dot) dot.className = "dot " + st.key;
+    }
+    var talking = speaking(m.id), dots = who.querySelector(".talk-dots");
+    if (talking && !dots) {
+      who.setAttribute("data-speaking", "1");
+      who.querySelector(".dot").insertAdjacentHTML("afterend", DOTS);
+    } else if (!talking && dots) {
+      who.removeAttribute("data-speaking");
+      dots.remove();
+    }
+    if ((S.SELECTED === m.id) !== (who.getAttribute("aria-current") === "true")) {
+      if (S.SELECTED === m.id) who.setAttribute("aria-current", "true");
+      else who.removeAttribute("aria-current");
+    }
+    var tool = st.key === "working" ? (S.TOOL_NOW[m.id] || "") : "";
+    var badge = who.querySelector(".tool-now");
+    if (tool && !badge) {
+      who.querySelector(".who-label").insertAdjacentHTML("beforebegin",
+        '<span class="tool-now">' + esc(tool) + '</span>');
+    } else if (!tool && badge) {
+      badge.remove();
+    } else if (badge && badge.textContent !== tool) {
+      badge.textContent = tool;
+    }
+    var small = who.querySelector(".who-label small"), label = labelFor(m, st);
+    if (small && small.textContent !== label) small.textContent = label;
   }
 
   //: Who is in a meeting right now.
@@ -495,15 +636,9 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
     return a.state === "working" || meetingIsOn();
   }
 
-  //: The seat geometry that used to live here is gone (2026-10-08). The
-  //: table floated in a clear band above the rooms and the agents were
-  //: placed around it by hand, which meant a meeting happened in a place
-  //: that was not on the floor plan. They walk into the meeting room now
-  //: and stand in ordinary slots, so there is nothing left to compute.
-
   //: Bring the agents layer in line with the plan, WITHOUT rebuilding it.
-  //: Nodes that already exist are moved and left alone; only an agent that
-  //: is new gets created, and only one whose signature changed is redrawn.
+  //: Nodes that already exist are moved and patched; only an agent that is
+  //: new gets created, and only one whose colour or name changed is redrawn.
   function syncAgents(slots) {
     var layer = document.getElementById("agents-layer");
     if (!layer) return;
@@ -511,8 +646,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
     slots.forEach(function (slot) {
       var m = slot.m, id = m.id;
       seen[id] = 1;
-      var el = layer.querySelector('.who-slot[data-id="' +
-        (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
+      var el = slotEl(layer, id);
       if (!el) {
         el = document.createElement("div");
         el.className = "who-slot";
@@ -520,19 +654,23 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
         el.style.width = SLOT_W + "px";
         el.style.setProperty("--bot-w", BOT_W + "px");
         el.style.setProperty("--bot-h", BOT_H + "px");
+        el.style.setProperty("--breath", breathOf(id));
         // Placed before it is in the document, so it does not animate in
         // from the corner the first time it is drawn.
         placeSlot(el, slot);
         el.innerHTML = slotInner(m);
-        el.setAttribute("data-sig", slotSignature(m));
+        el.setAttribute("data-sig", slotStructure(m));
+        watchArrival(el);
         layer.appendChild(el);
         return;
       }
       placeSlot(el, slot);
-      var sig = slotSignature(m);
+      var sig = slotStructure(m);
       if (el.getAttribute("data-sig") !== sig) {
         el.innerHTML = slotInner(m);
         el.setAttribute("data-sig", sig);
+      } else {
+        patchSlot(el, m);
       }
     });
     // An agent the search no longer matches, or one that was deleted.
@@ -552,7 +690,6 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
     return (Date.now() - at) / 1000 <= TALK_SECONDS;
   }
 
-
   //: How far along the line an asking robot walks. Changed 2026-10-08 from a
   //: FRACTION of the journey to a fixed GAP at the far end, because a
   //: fraction cannot be right for both lengths: 0.28 of a long walk stopped
@@ -563,93 +700,174 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   //: 140px of mostly padding, so leaving a whole one meant a short trip
   //: ended before the walker had even left its own room, which is what the
   //: owner saw and reported as "they are not moving or going to each other".
+  //:
+  //: The gap depends on the DIRECTION of approach (2026-10-12). A slot is
+  //: a column, a robot with its name and its Chat pill under it, so a
+  //: walker arriving from above with a side-by-side gap stood on the
+  //: colleague's head, name chip across their face. Beside a colleague the
+  //: gap is the figure's width; above or below it is the slot's height.
   function walkFraction(a, b) {
     var px = (b.x - a.x) * CANVAS_W / 100;
     var py = (b.y - a.y) * CANVAS_H / 100;
     var len = Math.sqrt(px * px + py * py);
     if (!len) return 0;
-    return Math.max(0, len - (BOT_W + 34)) / len;
+    var ux = px / len, uy = py / len;
+    var gap = Math.sqrt(Math.pow(ux * (BOT_W + 34), 2) +
+                        Math.pow(uy * (SLOT_H + 4), 2));
+    return Math.max(0, len - gap) / len;
   }
 
-  //: Move the asking robot toward the colleague it is actually waiting on.
-  //: Applied after the rooms are drawn, so it rides the .who transition and
-  //: reads as a walk rather than a jump. Cleared on every draw, so the moment
-  //: a handoff falls out of the data the robot walks back: a robot left
-  //: standing beside a colleague long after the fact is the staleness lie
-  //: this floor is supposed to avoid.
-  function walkThem() {
-    // Clear first. The floor used to be rebuilt by innerHTML on every draw,
-    // which wiped these inline transforms for free; the agents layer now
-    // survives, so a nudge that is never cleared leaves a robot standing
-    // beside a colleague long after the handoff ended. That is the exact
-    // staleness this function's own comment says it exists to avoid.
-    var layer = document.getElementById("agents-layer");
-    if (layer) {
-      Array.prototype.forEach.call(layer.children, function (el) {
-        el.style.transform = "";
-      });
-    }
+  //: Every collaboration the floor may draw right now, worked out ONCE per
+  //: draw and shared by the walk, the line and the bubble, so the three
+  //: cannot disagree about where anybody is going or how long it takes.
+  //: Drawn ONLY from HANDOFFS, which is ONLY tasks.agent_step rows. Nothing
+  //: here may be invented: a line between the wrong pair states a
+  //: collaboration that did not happen, which is worse than drawing none.
+  //:
+  //:   lines   one per pair, from the asker's desk to the colleague
+  //:   nudges  one per asker (the latest), how far it walks along that line
+  function planTalk() {
+    var lines = [], nudges = {}, seen = {};
     S.HANDOFFS.forEach(function (h) {
       if (!h || !h.from || !h.to || h.from === h.to || !_fresh(h)) return;
-      var a = S.AT[h.from], b = S.AT[h.to];
-      if (!a || !b) return;
-      var id = window.CSS && CSS.escape ? CSS.escape(h.from) : h.from;
-      // The whole slot walks, so the robot keeps its own name and its own
-      // Chat pill with it. Left behind, that pill would offer a conversation
-      // with whoever is standing there now, which is nobody.
-      var who = document.querySelector('.who-slot[data-id="' + id + '"]');
-      if (!who) return;
-      var f = walkFraction(a, b);
-      var dx = (b.x - a.x) * CANVAS_W / 100 * f;
-      var dy = (b.y - a.y) * CANVAS_H / 100 * f;
-      who.style.transform =
-        "translate(" + Math.round(dx) + "px," + Math.round(dy) + "px)";
-    });
-  }
-
-  //: The line between two robots, plus what the asking one is saying over its
-  //: head. Drawn ONLY from HANDOFFS, which is ONLY tasks.agent_step rows.
-  //: Nothing here may be invented: a line between the wrong pair states a
-  //: collaboration that did not happen, which is worse than drawing none.
-  function talkHtml() {
-    var out = "", seen = {};
-    S.HANDOFFS.forEach(function (h) {
-      if (!h || !h.from || !h.to || h.from === h.to) return;
-      if (!_fresh(h)) return;
       var a = S.AT[h.from], b = S.AT[h.to];
       // One of them is filtered out of the search, or in a room nobody is
       // drawing. A line to nowhere is worse than no line.
       if (!a || !b) return;
       var key = h.from + ">" + h.to;
-      if (seen[key]) return;
-      seen[key] = 1;
-
       var refused = h.status === "refused" || h.status === "failed";
-      var cls = refused ? " refused" : "";
       // Percentages are of different axes, so the angle is computed in the
       // floor's own pixel space and the line is placed back in percentages.
-      var dx = (b.x - a.x) * CANVAS_W / 100;
-      var dy = (b.y - a.y) * CANVAS_H / 100;
-      var len = Math.sqrt(dx * dx + dy * dy);
-      var deg = Math.atan2(dy, dx) * 180 / Math.PI;
-      out += '<div class="talk-line' + cls + '"' +
-        ' data-from="' + esc(h.from) + '" data-to="' + esc(h.to) + '"' +
-        ' style="left:' + a.x + '%;top:' + a.y + '%;width:' + Math.round(len) +
-        'px;transform:rotate(' + deg.toFixed(2) + 'deg)"></div>';
-
-      var to = nameOf(h.to) || "a colleague";
-      // Placed where the robot WILL be, not where its desk is: walkThem
-      // moves the robot the same fraction along this line, and a bubble left
-      // behind at the desk reads as somebody else talking.
-      var sf = walkFraction(a, b);
-      var sayX = a.x + (b.x - a.x) * sf;
-      var sayY = a.y + (b.y - a.y) * sf;
-      out += '<div class="say' + cls + '" style="left:' + sayX + '%;top:' +
-        sayY + '%;margin-top:-46px">' +
-        esc(refused ? "Could not reach " + to : "Asking " + to + "…") +
-        '</div>';
+      var px = (b.x - a.x) * CANVAS_W / 100;
+      var py = (b.y - a.y) * CANVAS_H / 100;
+      var len = Math.sqrt(px * px + py * py);
+      var f = walkFraction(a, b);
+      var nudge = { from: h.from, to: h.to, key: key, refused: refused,
+                    dx: Math.round(px * f), dy: Math.round(py * f),
+                    dist: len * f };
+      nudges[h.from] = nudge;
+      if (seen[key]) return;
+      seen[key] = 1;
+      lines.push({ key: key, from: h.from, to: h.to, refused: refused,
+                   x: a.x, y: a.y, len: Math.round(len),
+                   rot: (Math.atan2(py, px) * 180 / Math.PI).toFixed(2),
+                   dur: walkDuration(nudge.dist) });
     });
-    return out;
+    return { lines: lines, nudges: nudges };
+  }
+
+  //: The longest journey the nudges will start THIS draw. A nudge already
+  //: standing is not a journey.
+  function measureNudges(nudges) {
+    var layer = document.getElementById("agents-layer"), longest = 0;
+    if (!layer) return 0;
+    Array.prototype.forEach.call(layer.children, function (el) {
+      var id = el.getAttribute("data-id"), n = nudges[id];
+      var want = n ? "translate(" + n.dx + "px," + n.dy + "px)" : "";
+      if (el.style.transform === want) return;
+      var dist = n ? n.dist : (el._nudge ? el._nudge.dist : 0);
+      longest = Math.max(longest, walkDuration(dist));
+    });
+    return longest;
+  }
+
+  //: Move each asking robot toward the colleague it is actually waiting on,
+  //: and walk it home the moment the handoff falls out of the data: a robot
+  //: left standing beside a colleague long after the fact is the staleness
+  //: lie this floor is supposed to avoid.
+  //:
+  //: Only a CHANGE starts a walk. The transform is compared with what the
+  //: slot already has, so a redraw mid-journey (an event, the poll) leaves
+  //: the journey alone instead of restarting its stride.
+  function applyNudges(nudges) {
+    var layer = document.getElementById("agents-layer");
+    if (!layer) return;
+    Array.prototype.forEach.call(layer.children, function (el) {
+      var id = el.getAttribute("data-id"), n = nudges[id];
+      var want = n ? "translate(" + n.dx + "px," + n.dy + "px)" : "";
+      if (el.style.transform === want) return;
+      if (n) {
+        startWalk(el, n.dx, walkDuration(n.dist));
+        el._nudge = n;
+      } else if (el._nudge) {
+        startWalk(el, -el._nudge.dx, walkDuration(el._nudge.dist));
+        el._nudge = null;
+      }
+      // The whole slot walks, so the robot keeps its own name and its own
+      // Chat pill with it. Left behind, that pill would offer a conversation
+      // with whoever is standing there now, which is nobody.
+      el.style.transform = want;
+    });
+  }
+
+  //: The lines between robots, kept across redraws like everything else on
+  //: this floor: a new one is DRAWN, at the pace the asking robot walks it,
+  //: and one whose handoff has gone stale fades rather than vanishing.
+  function syncLines(lines) {
+    var layer = document.getElementById("floor-lines");
+    if (!layer) return;
+    var seen = {};
+    lines.forEach(function (ln) {
+      seen[ln.key] = 1;
+      var el = layer.querySelector('.talk-line[data-key="' +
+        (window.CSS && CSS.escape ? CSS.escape(ln.key) : ln.key) + '"]');
+      if (!el) {
+        el = document.createElement("div");
+        el.className = "talk-line drawing";
+        el.setAttribute("data-key", ln.key);
+        el.setAttribute("data-from", ln.from);
+        el.setAttribute("data-to", ln.to);
+        el.style.setProperty("--d", ln.dur + "ms");
+        el.addEventListener("animationend", function (e) {
+          if (e.animationName === "line-draw") el.classList.remove("drawing");
+          if (e.animationName === "line-fade") el.remove();
+        });
+        layer.appendChild(el);
+      }
+      el.classList.remove("fading");
+      el.classList.toggle("refused", ln.refused);
+      el.style.left = ln.x + "%";
+      el.style.top = ln.y + "%";
+      el.style.width = ln.len + "px";
+      el.style.setProperty("--rot", ln.rot + "deg");
+    });
+    Array.prototype.slice.call(layer.children).forEach(function (el) {
+      if (seen[el.getAttribute("data-key")]) return;
+      if (el.classList.contains("fading")) return;
+      el.classList.add("fading");
+      // The net, for a tab whose animations are paused.
+      setTimeout(function () { el.remove(); }, 700);
+    });
+  }
+
+  //: What the asking robot is saying, over its own head. The bubble is a
+  //: child of the robot's slot, so it goes where the robot goes: it used to
+  //: be pinned where the robot WOULD be and hung in empty air for the
+  //: length of the walk, which read as somebody else talking.
+  function syncSays(nudges) {
+    var layer = document.getElementById("agents-layer");
+    if (!layer) return;
+    Array.prototype.forEach.call(layer.children, function (el) {
+      var id = el.getAttribute("data-id"), n = nudges[id];
+      var say = el.querySelector(".say");
+      if (!n) {
+        if (say && !say.classList.contains("going")) {
+          say.classList.add("going");
+          setTimeout(function () { say.remove(); }, 650);
+        }
+        return;
+      }
+      var to = nameOf(n.to) || "a colleague";
+      var text = n.refused ? "Could not reach " + to : "Asking " + to + "…";
+      if (!say || say.classList.contains("going")) {
+        if (say) say.remove();
+        say = document.createElement("div");
+        say.className = "say";
+        el.appendChild(say);
+      }
+      say.classList.toggle("refused", n.refused);
+      if (say.textContent !== text) say.textContent = text;
+    });
   }
 
   //: Where a talk line finds the two robots it joins: the middle of the
@@ -661,6 +879,116 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
       y: (slot.top + BOT_H / 2) / CANVAS_H * 100,
     };
   }
+
+  //: The room's header and footer, as in the owner's reference: a lit dot
+  //: and the name on the left, how cleanly this room's runs finished on the
+  //: right, and the totals along the bottom edge. CLEAN is this room's runs
+  //: weighted by their own success rate, not an average of percentages, so
+  //: a room with eight hundred runs is not outvoted by one with three.
+  function roomNumbers(residents) {
+    var runs = 0, done = 0, spent = 0, working = 0;
+    residents.forEach(function (m) {
+      var st = S.STATS[m.id] || {};
+      runs += st.runs || 0;
+      if (st.runs && st.success_pct != null) done += st.runs * st.success_pct / 100;
+      spent += st.cost_usd || 0;
+      if (stateOf(m.id).key === "working") working++;
+    });
+    return { runs: runs, spent: spent, working: working,
+             pct: runs ? Math.round(100 * done / runs) : null };
+  }
+
+  function headHtml(z, n) {
+    return '<span class="zone-name"><i class="zone-dot"></i>' + esc(z.label) + '</span>' +
+      (n.pct == null ? "" : '<span class="zone-badge">' + n.pct + '% CLEAN</span>');
+  }
+  function footHtml(n) {
+    return '<span>RUNS: ' + n.runs + '</span>' +
+      '<span>COST: $' + n.spent.toFixed(2) + '</span>';
+  }
+
+  //: The rooms, kept across draws the way the agents are. A room that is
+  //: already on the floor is MOVED to its new place and size, on the same
+  //: clock as the people walking into it (--d), and only the words on it
+  //: that changed are rewritten. Rebuilding the rooms by innerHTML, which
+  //: this did until 2026-10-12, snapped every wall to its new place while
+  //: the robots were still halfway across the floor.
+  //:
+  //: `longest` is the longest walk this draw started, so the meeting table
+  //: in a room is laid when the last agent arrives and not before.
+  function syncRooms(plan, met, longest) {
+    var layer = document.getElementById("floor-rooms");
+    if (!layer) return;
+    var seen = {}, live = met.length > 0;
+    plan.rooms.forEach(function (r) {
+      var z = r.z, key = z.key;
+      seen[key] = 1;
+      var n = roomNumbers(r.residents || r.of);
+      var el = layer.querySelector('.zone[data-room="' + esc(key) + '"]');
+      if (!el) {
+        el = document.createElement("section");
+        el.className = "zone arriving";
+        el.setAttribute("data-room", key);
+        el.style.setProperty("--glow", z.glow);
+        el.innerHTML =
+          '<div class="zone-head">' + headHtml(z, n) + '</div>' +
+          '<div class="zone-foot">' + footHtml(n) + '</div>';
+        el.addEventListener("animationend", function (e) {
+          if (e.animationName === "room-in") el.classList.remove("arriving");
+          if (e.animationName === "room-out") el.remove();
+        });
+        // Placed before it is in the document, so it appears where it
+        // belongs rather than sliding in from the corner.
+        el.style.left = r.left + "px"; el.style.top = r.top + "px";
+        el.style.width = r.w + "px"; el.style.height = r.h + "px";
+        layer.appendChild(el);
+      } else {
+        el.classList.remove("leaving");
+        clearTimeout(el._leave);
+        el.style.setProperty("--d", longest + "ms");
+        el.style.left = r.left + "px"; el.style.top = r.top + "px";
+        el.style.width = r.w + "px"; el.style.height = r.h + "px";
+        var head = el.querySelector(".zone-head"), hh = headHtml(z, n);
+        if (head && head.innerHTML !== hh) head.innerHTML = hh;
+        var foot = el.querySelector(".zone-foot"), fh = footHtml(n);
+        if (foot && foot.innerHTML !== fh) foot.innerHTML = fh;
+      }
+      // The lights: on while somebody who desks here is working. From the
+      // same recorded state as the robot's face, so the two cannot disagree.
+      el.setAttribute("data-busy", n.working ? "1" : "0");
+
+      if (key !== MEETING_KEY) return;
+      // Said on the room itself while a meeting is running, so the table in
+      // it is never ambiguous about whether it is in use. Laid when the
+      // team ARRIVES (--d is the walk), cleared when the meeting is over.
+      el.setAttribute("data-live", live ? "1" : "0");
+      var table = el.querySelector(".meeting-table");
+      var words = met.length + (met.length === 1 ? " agent" : " agents") + " in a meeting";
+      if (live) {
+        if (!table || table.classList.contains("leaving")) {
+          if (table) table.remove();
+          table = document.createElement("div");
+          table.className = "meeting-table";
+          table.style.setProperty("--d", longest + "ms");
+          el.insertBefore(table, el.querySelector(".zone-foot"));
+        }
+        if (table.textContent !== words) table.textContent = words;
+      } else if (table && !table.classList.contains("leaving")) {
+        table.classList.add("leaving");
+        setTimeout(function () { table.remove(); }, 450);
+      }
+    });
+    // A room whose last agent the search hid, or that emptied.
+    Array.prototype.slice.call(layer.querySelectorAll(".zone")).forEach(function (el) {
+      if (seen[el.getAttribute("data-room")] || el.classList.contains("leaving")) return;
+      el.classList.add("leaving");
+      el._leave = setTimeout(function () { el.remove(); }, 600);
+    });
+  }
+
+  //: Has the floor been drawn once? Until then it has no shape worth
+  //: easing from, and the first plan has to simply appear.
+  var FLOOR_DRAWN = false;
 
   function drawRooms() {
     var q = (document.getElementById("q").value || "").trim().toLowerCase();
@@ -712,64 +1040,39 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
     var plan = bestLayout(occupied);
     CANVAS_W = plan.w;
     CANVAS_H = plan.h;
-    var floor = document.getElementById("rooms");
-    if (floor) {
-      floor.style.width = CANVAS_W + "px";
-      floor.style.height = CANVAS_H + "px";
-    }
 
-    var html = plan.rooms.map(function (r) {
-      var z = r.z, of = r.residents || r.of;
-      var runs = 0, done = 0, spent = 0, working = 0;
-      of.forEach(function (m) {
-        var st = S.STATS[m.id] || {};
-        runs += st.runs || 0;
-        // success_pct is a percentage of that agent's OWN runs, so it is
-        // weighted back into runs before rooms can be compared. Averaging the
-        // percentages would let an agent with three runs outvote one with
-        // eight hundred.
-        if (st.runs && st.success_pct != null) done += st.runs * st.success_pct / 100;
-        spent += st.cost_usd || 0;
-        if (stateOf(m.id).key === "working") working++;
-      });
-      var pct = runs ? Math.round(100 * done / runs) : null;
-      return '<section class="zone" data-room="' + esc(z.key) + '"' +
-        ' style="--glow:' + z.glow + ';left:' + r.left +
-        'px;top:' + r.top + 'px;width:' + r.w + 'px;height:' + r.h + 'px">' +
-        // Header, interior, footer, as in the owner's reference: a lit dot
-        // and the name on the left, how cleanly this room's runs finished on
-        // the right, and the totals along the bottom edge.
-        '<div class="zone-head">' +
-          '<span class="zone-name"><i class="zone-dot"></i>' + esc(z.label) + '</span>' +
-          (pct == null ? "" : '<span class="zone-badge">' + pct + '% CLEAN</span>') +
-        '</div>' +
-        '<div class="zone-floor" aria-hidden="true">' + furnitureFor(z) + '</div>' +
-        // Said on the room itself while one is running, so the table in it
-        // is never ambiguous about whether it is in use.
-        (z.key === MEETING_KEY && met.length
-          ? '<div class="meeting-table">' +
-              esc(met.length + (met.length === 1 ? " agent" : " agents") +
-                  " in a meeting") + '</div>'
-          : "") +
-        '<div class="zone-foot">' +
-          '<span>RUNS: ' + runs + '</span>' +
-          '<span>COST: $' + spent.toFixed(2) + '</span>' +
-        '</div>' +
-        '</section>';
-    }).join("");
-
-    // The agents are NOT part of this string. They live in their own layer
+    // The agents are NOT part of the rooms. They live in their own layer
     // so that redrawing a room does not rebuild a robot mid-walk.
     var allSlots = [];
     plan.rooms.forEach(function (r) {
       r.slots.forEach(function (slot) { allSlots.push(slot); });
     });
-
     // No seats to assign: whoever is in the meeting was put in the meeting
     // room above and already has an ordinary slot there.
-    document.getElementById("rooms").setAttribute(
-      "data-meeting", met.length ? String(met.length) : "");
     allSlots.forEach(markAt);
+
+    // How long this draw's journeys take, measured BEFORE anything moves,
+    // so the rooms and the floor can be put on the same clock as the
+    // longest of them. Nothing moving means nothing to ease: a resize or a
+    // first draw simply takes its shape.
+    var talk = planTalk();
+    var longest = Math.max(measureWalks(allSlots), measureNudges(talk.nudges));
+
+    var floor = document.getElementById("rooms");
+    if (floor) {
+      floor.classList.toggle("reflow", FLOOR_DRAWN && longest > 0);
+      floor.style.setProperty("--d", longest + "ms");
+      floor.style.width = CANVAS_W + "px";
+      floor.style.height = CANVAS_H + "px";
+      floor.setAttribute("data-meeting", met.length ? String(met.length) : "");
+    }
+
+    syncRooms(plan, met, longest);
+    syncAgents(allSlots);
+    applyNudges(talk.nudges);
+    syncLines(talk.lines);
+    syncSays(talk.nudges);
+    FLOOR_DRAWN = true;
 
     var working = shown.filter(function (m) { return stateOf(m.id).key === "working"; }).length;
     var newest = recentRows()[0];
@@ -779,8 +1082,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
     // every agent answers and none may pass. There is deliberately no
     // "simulate collaboration": agents cannot address each other, and a
     // button that pretends otherwise is the one thing this page must not do.
-    html += '<div class="floor-bar">' +
-      '<span class="now tick"><i class="dot ' + (working ? "working" : "ready") + '"></i> ' +
+    var bar = '<span class="now tick"><i class="dot ' + (working ? "working" : "ready") + '"></i> ' +
         (working ? '<b>' + working + '</b> working now'
                  : (newest ? '<b>' + esc(newest.name) + '</b> ' +
                     esc(newest.a.state === "working" ? "is working"
@@ -794,11 +1096,16 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
         // around this floor, so following it only reloaded that page.
         (document.documentElement.classList.contains("embed") ? "" :
           '<a class="btn ghost" target="_top" href="/tasks/agents">Open the chat</a>') +
-      '</span></div>';
+      '</span>';
+    var rooms = document.getElementById("floor-rooms");
+    var barEl = rooms && rooms.querySelector(".floor-bar");
+    if (rooms && !barEl) {
+      barEl = document.createElement("div");
+      barEl.className = "floor-bar";
+      rooms.appendChild(barEl);
+    }
+    if (barEl && barEl.innerHTML !== bar) barEl.innerHTML = bar;
 
-    document.getElementById("floor-rooms").innerHTML = html + talkHtml();
-    syncAgents(allSlots);
-    walkThem();
     // The canvas just changed shape, so whatever scale was on it is stale.
     drawZoom();
 
@@ -927,24 +1234,94 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
     });
   }
 
+  //: --- the activity log ----------------------------------------------------
+  //: The live activity card used to be the most recent run of EACH AGENT,
+  //: redrawn from the poll: a job vanished from it the moment the next one
+  //: started, a tool call never appeared at all, and nothing in it said
+  //: what happened in what order. It is a log now ("add logs activity",
+  //: 2026-10-12): seeded once from what the server knows, then every event
+  //: the stream delivers is written to it as it arrives, newest first, so
+  //: what the card says and what the floor is doing are the same events at
+  //: the same moment. Each line is still a recorded row and nothing else.
+  var LOG = [], LOG_MAX = 40;
+
+  function logLine(id, key, text, at) {
+    LOG.unshift({ id: id, name: nameOf(id) || id, key: key, text: text,
+                  at: at ? Date.parse(at) || Date.now() : Date.now() });
+    if (LOG.length > LOG_MAX) LOG.length = LOG_MAX;
+  }
+
+  //: Is this already in the log? The same agent, the same state, at or
+  //: after the same moment. The stream and the poll describe the same run
+  //: twice (an event lands, then the re-read finds the row it wrote), and
+  //: the log must say it once.
+  function logged(id, key, at) {
+    for (var i = 0; i < LOG.length; i++) {
+      var l = LOG[i];
+      if (l.id === id && l.key === key && l.at >= at - 2000) return true;
+    }
+    return false;
+  }
+
+  //: What the server's own rows say, each agent's latest run: the whole
+  //: log at load, and the fallback's only source when there is no stream
+  //: (no EventSource, a 401, a gap the heartbeat missed). A row whose state
+  //: the log has not seen yet becomes a line; one it has is left alone.
+  function logFromActivity() {
+    var added = false;
+    recentRows().forEach(function (r) {
+      var key = stateOf(r.id).key;
+      var at = Date.parse(r.a.last_run_at || "") || 0;
+      if (!at || logged(r.id, key, at)) return;
+      logLine(r.id, key,
+        (r.a.state === "working" ? "is working" : (r.a.last_status || "finished")) +
+        (r.a.source ? " from " + r.a.source : ""), r.a.last_run_at);
+      added = true;
+    });
+    // Newest first. The sort is stable, so a finish found by the same read
+    // as its start, at the same recorded moment, stays above it.
+    if (added) LOG.sort(function (x, y) { return y.at - x.at; });
+  }
+
+  //: One stream event, in the log's words. A tool that finished cleanly is
+  //: left out: "is using X" already said it, and a card of "finished X"
+  //: lines would bury the runs between them.
+  function logEvent(e) {
+    if (!e || !e.agent_id || !nameOf(e.agent_id)) return;
+    var id = e.agent_id;
+    if (e.event === "run_started") logLine(id, "working", "started working", e.at);
+    else if (e.event === "tool_started") logLine(id, "working", "is using " + (e.tool || "a tool"), e.at);
+    else if (e.event === "tool_finished") {
+      if (e.status && e.status !== "ok") logLine(id, "failed", (e.tool || "a tool") + " failed", e.at);
+    } else if (e.event === "handoff") {
+      var to = nameOf(e.target_agent_id) || "a colleague";
+      var refused = e.status === "refused" || e.status === "failed";
+      logLine(id, refused ? "failed" : "working",
+              refused ? "could not reach " + to : "asked " + to, e.at);
+    } else if (e.event === "run_finished") {
+      logLine(id, e.status === "failed" ? "failed" : e.status === "waiting" ? "waiting" : "ready",
+              e.status === "failed" ? "failed" : e.status === "waiting" ? "is waiting on you" : "finished",
+              e.at);
+    }
+  }
+
   function drawLive() {
-    var rows = recentRows(), live = document.getElementById("live");
+    logFromActivity();
+    var live = document.getElementById("live");
     // Marked so the overlay on the whole page can take itself away entirely
     // when there is nothing to report, rather than sit over a room header
     // saying so. The bar along the bottom of the floor already says nothing
     // has run.
     var strip = document.getElementById("strip");
-    if (strip) strip.setAttribute("data-empty", rows.length ? "0" : "1");
-    if (!rows.length) {
+    if (strip) strip.setAttribute("data-empty", LOG.length ? "0" : "1");
+    if (!LOG.length) {
       live.innerHTML = '<li><span class="empty">Nothing has run yet.</span></li>';
       return;
     }
-    live.innerHTML = rows.slice(0, 8).map(function (r) {
-      var st = stateOf(r.id);
-      return '<li><i class="dot ' + st.key + '"></i><span><b>' + esc(r.name) + '</b> ' +
-        esc(r.a.state === "working" ? "is working" : (r.a.last_status || "finished")) +
-        (r.a.source ? " from " + esc(r.a.source) : "") + '</span>' +
-        '<span class="when">' + esc(ago(r.a.last_run_at)) + '</span></li>';
+    live.innerHTML = LOG.map(function (l) {
+      return '<li><i class="dot ' + l.key + '"></i><span><b>' + esc(l.name) + '</b> ' +
+        esc(l.text) + '</span>' +
+        '<span class="when">' + esc(ago(new Date(l.at).toISOString())) + '</span></li>';
     }).join("");
   }
 
@@ -1064,6 +1441,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
   //: events that arrived while it was reading.
   function applyEvent(e) {
     if (!e || !e.agent_id) return;
+    logEvent(e);
     var a = S.ACTIVITY[e.agent_id] || {};
     if (e.event === "run_started") {
       var since = a.state === "working" && a._since != null ? a._since : Date.now();
@@ -1362,10 +1740,15 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
     return Math.min(box.w / CANVAS_W, box.h / CANVAS_H);
   }
 
-  function drawZoom() {
+  //: `instant` is a zoom, a drag or a window resize: the hand asked, so the
+  //: floor answers at once. Without it the floor keeps whatever easing the
+  //: last draw gave it (.reflow, room.css), which is how a plan that grew
+  //: for a meeting reshapes on the same clock as the people walking in.
+  function drawZoom(instant) {
     var fit = document.getElementById("floor-fit");
     var floor = document.getElementById("rooms");
     if (!fit || !floor) return;
+    if (instant === true) floor.classList.remove("reflow");
     var k = ZOOM == null ? fitScale() : ZOOM;
     k = Math.min(Math.max(k, 0.25), 2);
     // Translate before scale, so a drag moves the floor by the number of
@@ -1421,7 +1804,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
       if (k == null) localStorage.removeItem(ZOOM_KEY);
       else localStorage.setItem(ZOOM_KEY, String(k));
     } catch (e) { /* it will fit again next time */ }
-    drawZoom();
+    drawZoom(true);
   }
 
   (function () {
@@ -1434,7 +1817,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
     // Back to showing everything, which is the one thing a person wants often
     // enough to deserve its own button.
     if (fitBtn) fitBtn.addEventListener("click", function () { setZoom(null); });
-    window.addEventListener("resize", drawZoom);
+    window.addEventListener("resize", function () { drawZoom(true); });
 
     // Dragging the floor. Pointer events rather than mouse, so a touch or a
     // pen moves it too, and the capture keeps the drag alive when the
@@ -1455,14 +1838,14 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot }
         if (!from) return;
         PAN_X = from.px + (e.clientX - from.x);
         PAN_Y = from.py + (e.clientY - from.y);
-        drawZoom();
+        drawZoom(true);
       });
       function released() { from = null; fit.classList.remove("panning"); }
       fit.addEventListener("pointerup", released);
       fit.addEventListener("pointercancel", released);
     }
 
-    drawZoom();
+    drawZoom(true);
   })();
 
   // Asking from inside the frame.

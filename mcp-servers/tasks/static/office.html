@@ -45,6 +45,7 @@
 <link rel="stylesheet" href="/tasks/static/office/css/panel.css">
 <link rel="stylesheet" href="/tasks/static/office/animations/idle.css">
 <link rel="stylesheet" href="/tasks/static/office/animations/working.css">
+<link rel="stylesheet" href="/tasks/static/office/animations/walking.css">
 <link rel="stylesheet" href="/tasks/static/office/animations/speaking.css">
 <link rel="stylesheet" href="/tasks/static/office/css/embed.css">
 <!-- The conversation, styled by the same file the agents page uses, so it
@@ -103,6 +104,10 @@
                transition can help it. These nodes are created once and
                only ever have their coordinates changed. -->
           <div class="floor-rooms" id="floor-rooms"></div>
+          <!-- The lines between robots, between the rooms and the agents:
+               a layer of their own so a room can be kept across a redraw
+               and MOVED, the way the agents are, instead of rebuilt. -->
+          <div class="floor-lines" id="floor-lines"></div>
           <div class="agents-layer" id="agents-layer"></div>
         </div>
       </div>

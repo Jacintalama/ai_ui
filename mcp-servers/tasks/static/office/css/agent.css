@@ -12,12 +12,14 @@
     /* left and top, not just transform: a walk is a change of coordinates
      now, and the node survives a redraw so the browser has something to
      animate FROM. transform stays for the nudge a handoff gives. */
-  /* 2.1s, not .85s: an agent asking a colleague now walks the whole way
-     to them rather than leaning a quarter of it, and that is the width of
-     the floor. Kept in step with WALK_MS in office.js. */
-  transition: left 2.1s cubic-bezier(.25,1,.5,1),
-              top 2.1s cubic-bezier(.25,1,.5,1),
-              transform 2.2s cubic-bezier(.34,.1,.3,1);
+  /* The journey's length is --d, set inline by office.js from the
+     DISTANCE: a robot crosses the floor at one steady pace, so a step to
+     the next desk is quick and a walk to the meeting room takes as long as
+     it should. left, top and transform share one duration and one curve,
+     so a diagonal walk and a handoff nudge arrive at the same instant. */
+  transition: left var(--d, var(--walk)) var(--ease-walk),
+              top var(--d, var(--walk)) var(--ease-walk),
+              transform var(--d, var(--walk)) var(--ease-walk);
   }
 
 /* a desk behind each agent, so the room is furnished rather than empty */
@@ -114,6 +116,11 @@
 /* Idle motion is the one animation here that states nothing, so it is the
      one that needs no evidence behind it. Everything else on this floor has
      to come from a row in the database. */
-  .who .bot { animation: breathe 3.4s ease-in-out infinite; }
+  .who .bot {
+    animation: breathe 3.4s ease-in-out infinite;
+    /* Each robot a little out of step with the next: --breath comes from
+       the agent's id, so a floor of six is not six metronomes. */
+    animation-delay: var(--breath, 0s);
+  }
 
 .who[data-state="working"] .bot { animation: bustle .9s ease-in-out infinite; }
