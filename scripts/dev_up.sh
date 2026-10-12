@@ -6,9 +6,13 @@
 #   bash scripts/dev_up.sh reset         # stop and delete the aiui-dev volumes
 #   bash scripts/dev_up.sh logs <svc>    # follow one service's logs
 #   bash scripts/dev_up.sh model         # which model, and which compose files
+#   bash scripts/dev_up.sh config [args] # docker compose config, as up sees it
 #
 # Run from Git Bash. Always passes --env-file .env.dev: without it compose
-# would read the production-shaped .env in the repo root.
+# would read the production-shaped .env in the repo root (and fail, since
+# the dev compose files interpolate only DEV_ names). Always passes
+# -p aiui-dev too: a COMPOSE_PROJECT_NAME in the shell beats the file's
+# `name: aiui-dev`, and would put the stack under another project.
 #
 # LOCAL_MODEL in .env.dev picks the model: fake (dev/fake-llm, the default)
 # or real (OpenRouter's free models, docker-compose.dev.real.yml on top).
@@ -53,7 +57,7 @@ compose() {
     files="$(compose_files)"
     # $files is unquoted on purpose: it is two or four words.
     # shellcheck disable=SC2086
-    docker compose --env-file "$ENV_FILE" $files "$@"
+    docker compose -p "$PROJECT" --env-file "$ENV_FILE" $files "$@"
 }
 
 # Real mode needs a key, and a switch needs a fresh Open WebUI volume,
@@ -63,8 +67,8 @@ compose() {
 check_model_switch() {
     local mode last
     mode="$(local_model)"
-    if [ "$mode" = "real" ] && [ -z "$(env_value OPENROUTER_API_KEY)" ]; then
-        echo "LOCAL_MODEL=real needs OPENROUTER_API_KEY in $ENV_FILE" >&2
+    if [ "$mode" = "real" ] && [ -z "$(env_value DEV_OPENROUTER_API_KEY)" ]; then
+        echo "LOCAL_MODEL=real needs DEV_OPENROUTER_API_KEY in $ENV_FILE" >&2
         exit 1
     fi
     last="$(cat "$MODE_STAMP" 2>/dev/null | tr -d '\r' || true)"
@@ -137,9 +141,15 @@ wait_for() {
     echo "ready after ${waited}s: $url"
 }
 
+# Create .env.dev, or migrate an old one to the DEV_ names in place (values
+# kept). Prints key names only.
+ensure_env() {
+    python scripts/dev_env.py --path "$ENV_FILE"
+}
+
 cmd_up() {
     ensure_docker
-    python scripts/dev_env.py
+    ensure_env
     check_model_switch
     ensure_workspace
     compose up -d --build
@@ -154,6 +164,7 @@ cmd_up() {
 }
 
 cmd_down() {
+    ensure_env
     compose down
 }
 
@@ -167,6 +178,7 @@ cmd_reset() {
     fi
     # down -v removes only the volumes this compose project declares, and
     # every one of them is named $PROJECT_<name>.
+    ensure_env
     compose down -v
 }
 
@@ -178,14 +190,24 @@ cmd_logs() {
     compose logs -f --tail 200 "$1"
 }
 
+# A plain assignment, not "$(compose_files)" inside echo: set -e ignores a
+# failing substitution in an argument, so the old one-liner printed an empty
+# file list and exited 0 for an invalid LOCAL_MODEL.
+cmd_model() {
+    local files
+    files="$(compose_files)"
+    echo "LOCAL_MODEL=$(local_model); project: $PROJECT; compose files: $files"
+}
+
 case "${1:-}" in
     up) cmd_up ;;
     down) cmd_down ;;
     reset) cmd_reset ;;
     logs) shift; cmd_logs "$@" ;;
-    model) echo "LOCAL_MODEL=$(local_model); compose files: $(compose_files)" ;;
+    model) cmd_model ;;
+    config) shift; compose config "$@" ;;
     *)
-        echo "usage: $0 up|down|reset|logs <service>|model" >&2
+        echo "usage: $0 up|down|reset|logs <service>|model|config" >&2
         exit 2
         ;;
 esac

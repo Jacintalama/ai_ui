@@ -21,6 +21,7 @@ bash scripts/dev_up.sh down        # stop; the data is kept
 bash scripts/dev_up.sh reset       # delete the aiui-dev volumes (asks first)
 bash scripts/dev_up.sh logs tasks  # follow one service's logs
 bash scripts/dev_up.sh model       # which model mode, and which compose files
+bash scripts/dev_up.sh config      # the compose config exactly as up sees it
 
 python scripts/dev_check.py        # the layer check on its own (6 PASS lines)
 python scripts/dev_e2e.py          # a real agent turn in a browser
@@ -28,9 +29,35 @@ python scripts/dev_e2e.py --headed # the same, visibly
 ```
 
 `up` writes `.env.dev` the first time (`scripts/dev_env.py`, random values,
-gitignored). Every compose call passes `--env-file .env.dev`, so the
-production `.env` is never read. The compose project is `aiui-dev`, so no
-container, network or volume can clash with production names.
+gitignored). Every compose call in `dev_up.sh` passes `--env-file .env.dev`
+and `-p aiui-dev`. The dev compose files interpolate only `DEV_` names
+(`DEV_POSTGRES_PASSWORD`, `DEV_WEBUI_SECRET_KEY`, `DEV_AIUI_FERNET_KEY`,
+`DEV_CRON_SHARED_SECRET`, and `DEV_OPENROUTER_API_KEY` in real mode), each
+with `:?`, and the production `.env` has no `DEV_` names. So a plain
+`docker compose -f docker-compose.dev.yml up`, which reads the repo-root
+`.env`, stops with "run bash scripts/dev_up.sh up" instead of starting on
+production values (`scripts/test_dev_env.py` checks both). The compose
+project is `aiui-dev`, so no container, network or volume can clash with
+production names, and `-p` keeps it so even with `COMPOSE_PROJECT_NAME` set
+in your shell.
+
+An `.env.dev` from before the `DEV_` names is migrated in place by the next
+`up` (or `down`, `reset`): each value moves to its `DEV_` name unchanged, so
+the Postgres volume keeps its password and encrypted rows stay readable.
+
+`python scripts/dev_env.py --force` regenerates every value. On a stack that
+has already run that breaks it (Postgres keeps its first password, old
+encrypted rows no longer decrypt), so follow it with
+`bash scripts/dev_up.sh reset`, then `up`.
+
+The tasks code defaults that name production are overridden. Production's
+n8n (`N8N_WEBHOOK_BASE`, `WEEKLY_RECAP_WEBHOOK`) and `api.openai.com`
+(`OPENAI_API_BASE`) become `.invalid` hosts, which never resolve.
+`CRON_SHARED_SECRET` is set (empty would skip the `/cron/weekly-recap` auth
+check). The public-link settings (`AIUI_PUBLIC_DOMAIN`, `AIUI_SERVER_IP`,
+`PUBLIC_BASE_URL`) point at localhost. Slack, Discord and Telegram calls
+need a bot token from the local database, which has none unless you link
+one.
 
 ## Signing in
 
@@ -56,7 +83,7 @@ after 1.5 s (`FAKE_DELAY_MS`). A keyword anywhere in the message picks a scene:
 
 ## A real model
 
-Set `LOCAL_MODEL=real` and your own `OPENROUTER_API_KEY` in `.env.dev`, never
+Set `LOCAL_MODEL=real` and your own `DEV_OPENROUTER_API_KEY` in `.env.dev`, never
 the production key. Then run `reset` and `up`: Open WebUI keeps its saved
 connection after first boot, so a switch needs a fresh volume. `up` warns when
 the mode changed since the last run. The agents then run on
@@ -67,9 +94,13 @@ free agent-pool ids, and paid escalation is off. The overrides are in
 ## Where App Builder output goes
 
 tasks mounts `dev/workspace`, not the repo, at `/workspace/ai_ui`. It is a git
-repo of its own, gitignored, made by `up`. The docs sweep and the commit sweep
-write and commit `apps/<slug>/` there, and never into your checkout (checked
-2026-10-12).
+repo of its own, gitignored, made by `up`. Anything tasks writes or commits
+under `/workspace/ai_ui`, including the docs sweep and the commit sweep on
+`apps/<slug>/`, lands there and cannot reach your checkout. Evidence, from
+2026-10-12: a probe app, `apps/zz-iso-probe/`, was committed into
+`dev/workspace` (commit `fba238c`, still in its reflog) and then reset; this
+checkout has no such path and no commit touching it. No full App Builder build has run locally (there is
+no build key), so the sweeps have not been exercised end to end here.
 
 ## Not in the local stack
 

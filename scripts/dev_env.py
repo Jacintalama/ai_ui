@@ -1,10 +1,25 @@
 """Generate .env.dev, the secrets file for the local Docker stack.
 
-    python scripts/dev_env.py            # create .env.dev if it is missing
-    python scripts/dev_env.py --force    # regenerate every value
+    python scripts/dev_env.py            # create .env.dev, or migrate it in place
+    python scripts/dev_env.py --force    # regenerate every value (see below)
 
 The values are fresh random ones. Nothing is read from the production .env,
 and nothing but key names is ever printed. .env.dev is gitignored.
+
+Every name the dev compose files interpolate starts with DEV_, and the
+production .env has none, so a compose call that reads the production .env
+by mistake fails instead of starting the dev stack on production secrets.
+
+Migration: an .env.dev written before the DEV_ names (WEBUI_SECRET_KEY,
+POSTGRES_PASSWORD, AIUI_FERNET_KEY, OPENROUTER_API_KEY) is rewritten in
+place, each value moved to its DEV_ name unchanged, so the existing Postgres
+volume keeps its password and Fernet-encrypted rows stay readable. Keys that
+are missing (DEV_CRON_SHARED_SECRET, say) are added with fresh values.
+
+--force on a stack that has already run breaks it: Postgres keeps the
+password it was initialised with, and rows encrypted with the old Fernet key
+no longer decrypt. After --force run `bash scripts/dev_up.sh reset` (deletes
+the aiui-dev volumes), then `bash scripts/dev_up.sh up`.
 """
 import argparse
 import os
@@ -22,41 +37,103 @@ HEADER = (
     "# Local only: gitignored, never commit, never copy to a server.\n"
 )
 
+# Old name -> new name. The old names are production .env names too.
+RENAMES = {
+    "WEBUI_SECRET_KEY": "DEV_WEBUI_SECRET_KEY",
+    "POSTGRES_PASSWORD": "DEV_POSTGRES_PASSWORD",
+    "AIUI_FERNET_KEY": "DEV_AIUI_FERNET_KEY",
+    "OPENROUTER_API_KEY": "DEV_OPENROUTER_API_KEY",
+}
+
 
 def generate() -> dict:
     return {
-        "WEBUI_SECRET_KEY": secrets.token_urlsafe(48),
-        "POSTGRES_PASSWORD": secrets.token_urlsafe(24),
-        "AIUI_FERNET_KEY": Fernet.generate_key().decode(),
+        "DEV_WEBUI_SECRET_KEY": secrets.token_urlsafe(48),
+        "DEV_POSTGRES_PASSWORD": secrets.token_urlsafe(24),
+        "DEV_AIUI_FERNET_KEY": Fernet.generate_key().decode(),
+        # tasks skips the /cron/weekly-recap auth check when this is empty.
+        "DEV_CRON_SHARED_SECRET": secrets.token_urlsafe(32),
         "DEV_ADMIN_EMAIL": "admin@local.test",
         "DEV_ADMIN_PASSWORD": secrets.token_urlsafe(18),
         "LOCAL_MODEL": "fake",
-        "OPENROUTER_API_KEY": "",
+        "DEV_OPENROUTER_API_KEY": "",
     }
 
 
 def write(path: Path, values: dict) -> None:
     body = HEADER + "".join(f"{k}={v}\n" for k, v in values.items())
+    _write_text(path, body)
+
+
+def _write_text(path: Path, body: str) -> None:
     tmp = path.with_name(path.name + ".tmp")
     with open(tmp, "w", encoding="utf-8", newline="\n") as f:
         f.write(body)
     os.replace(tmp, path)
 
 
+def migrate(text: str) -> tuple[str, list, list]:
+    """Rename old keys to DEV_ names and add missing keys, keeping every
+    other line (comments included) as it is. Returns (new text, renamed
+    pairs, added names)."""
+    lines = text.splitlines()
+    present = set()
+    for line in lines:
+        k, sep, _ = line.strip().partition("=")
+        if sep and not k.startswith("#"):
+            present.add(k)
+
+    out, renamed = [], []
+    for line in lines:
+        k, sep, v = line.strip().partition("=")
+        if sep and k in RENAMES:
+            new = RENAMES[k]
+            if new in present:
+                continue  # the DEV_ value wins; drop the stale old line
+            out.append(f"{new}={v}")
+            present.add(new)
+            renamed.append((k, new))
+        else:
+            out.append(line)
+
+    added = []
+    for k, v in generate().items():
+        if k not in present:
+            out.append(f"{k}={v}")
+            added.append(k)
+    return "\n".join(out) + "\n", renamed, added
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--force", action="store_true", help="regenerate an existing file")
+    ap.add_argument("--force", action="store_true",
+                    help="regenerate every value; then run "
+                         "'bash scripts/dev_up.sh reset' before 'up'")
     ap.add_argument("--path", type=Path, default=DEFAULT_PATH, help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
 
     if args.path.exists() and not args.force:
-        print(f"{args.path} exists, left unchanged (pass --force to regenerate)")
+        old = args.path.read_text(encoding="utf-8")
+        new, renamed, added = migrate(old)
+        if new.replace("\r", "") == old.replace("\r", "") and not renamed and not added:
+            print(f"{args.path} is up to date, left unchanged "
+                  "(--force regenerates; then run dev_up.sh reset)")
+            return 0
+        _write_text(args.path, new)
+        print(f"migrated {args.path} in place")
+        for o, n in renamed:
+            print(f"renamed {o} -> {n} (value kept)")
+        if added:
+            print("added: " + ", ".join(added))
         return 0
 
     values = generate()
     write(args.path, values)
     print(f"wrote {args.path}")
     print("keys: " + ", ".join(values))
+    if args.force:
+        print("If the aiui-dev volumes exist, run 'bash scripts/dev_up.sh reset' "
+              "then 'up': Postgres and encrypted rows still use the old values.")
     return 0
 
 

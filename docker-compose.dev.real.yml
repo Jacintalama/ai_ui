@@ -8,7 +8,7 @@
 #       -f docker-compose.dev.real.yml up -d
 #
 # Agents then answer from OpenRouter's FREE models instead of dev/fake-llm.
-# Needs OPENROUTER_API_KEY in .env.dev (your own key, never the production
+# Needs DEV_OPENROUTER_API_KEY in .env.dev (your own key, never the production
 # one). The ids below are the production agent pool (AGENT_FREE_MODELS in
 # docker-compose.unified.yml, 2026-10-12); ids rotate, so sweep them against
 # that file when a model stops answering.
@@ -24,7 +24,7 @@ services:
     environment:
       # One connection, OpenRouter, replacing the fake model.
       OPENAI_API_BASE_URLS: https://openrouter.ai/api/v1
-      OPENAI_API_KEYS: "${OPENROUTER_API_KEY}"
+      OPENAI_API_KEYS: "${DEV_OPENROUTER_API_KEY:?set DEV_OPENROUTER_API_KEY in .env.dev, then run bash scripts/dev_up.sh up}"
       # Allowlist, free ids only. Unlike production there is no paid id here,
       # so nothing reachable from the local stack can spend money.
       OPENAI_API_CONFIGS: '{"0":{"enable":true,"model_ids":["nvidia/nemotron-3-super-120b-a12b:free","nvidia/nemotron-3-ultra-550b-a55b:free","nvidia/nemotron-3.5-lightning:free","cohere/north-mini-code:free"]}}'

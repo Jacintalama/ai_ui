@@ -2,16 +2,22 @@
 # Local dev stack. A standalone copy of the platform at http://localhost:8090
 # =============================================================================
 #
-#   python scripts/dev_env.py          # once: writes .env.dev (gitignored)
-#   docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
+#   bash scripts/dev_up.sh up          # writes .env.dev, then starts this
+#
+# By hand: docker compose -p aiui-dev --env-file .env.dev #              -f docker-compose.dev.yml up -d --build
 #
 # Standalone, NOT an override of docker-compose.unified.yml. The project name
 # aiui-dev prefixes every container, network and volume, and no service sets
 # container_name, so nothing here can collide with production names.
 #
-# Its secrets come from .env.dev, never from the production .env. Every env
-# var name below was checked against docker-compose.unified.yml on 2026-10-12;
-# where this file differs from production it says why.
+# Its secrets come from .env.dev, never from the production .env. Every
+# value interpolated here is a DEV_ name with :? (fail closed). The
+# production .env has no DEV_ names, so a plain `docker compose -f
+# docker-compose.dev.yml up`, which reads the repo-root .env, stops with
+# "run bash scripts/dev_up.sh up" instead of starting on production secrets.
+# Every container env var name below was checked against
+# docker-compose.unified.yml on 2026-10-12; where this file differs from
+# production it says why.
 #
 # Left out on purpose: mcp-proxy, pipelines, video, the bots, n8n, the MCP
 # servers, and the /etc/proxy-server/agent_ssh_key mount (Linux host only).
@@ -25,7 +31,7 @@ services:
     environment:
       POSTGRES_DB: openwebui
       POSTGRES_USER: openwebui
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_PASSWORD: "${DEV_POSTGRES_PASSWORD:?run bash scripts/dev_up.sh up}"
     volumes:
       - pg:/var/lib/postgresql/data
       # Same init script as production: the vector extension and the
@@ -64,11 +70,11 @@ services:
       fake-llm:
         condition: service_started
     environment:
-      WEBUI_SECRET_KEY: "${WEBUI_SECRET_KEY}"
-      DATABASE_URL: "postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui"
+      WEBUI_SECRET_KEY: "${DEV_WEBUI_SECRET_KEY:?run bash scripts/dev_up.sh up}"
+      DATABASE_URL: "postgresql://openwebui:${DEV_POSTGRES_PASSWORD:?run bash scripts/dev_up.sh up}@postgres:5432/openwebui"
       VECTOR_DB: pgvector
       # Production's name for this (unified.yml), not PGVECTOR_DB_URL.
-      PGVECTOR_CONNECTION_STRING: "postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui"
+      PGVECTOR_CONNECTION_STRING: "postgresql://openwebui:${DEV_POSTGRES_PASSWORD:?run bash scripts/dev_up.sh up}@postgres:5432/openwebui"
       ENABLE_REDIS: "true"
       REDIS_URL: redis://redis:6379/0
       WEBUI_URL: http://localhost:8090
@@ -106,10 +112,10 @@ services:
       open-webui:
         condition: service_started
     environment:
-      DATABASE_URL: "postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui"
-      WEBUI_SECRET_KEY: "${WEBUI_SECRET_KEY}"
+      DATABASE_URL: "postgresql://openwebui:${DEV_POSTGRES_PASSWORD:?run bash scripts/dev_up.sh up}@postgres:5432/openwebui"
+      WEBUI_SECRET_KEY: "${DEV_WEBUI_SECRET_KEY:?run bash scripts/dev_up.sh up}"
       # tasks crashes at import without it (crypto_utils.py).
-      AIUI_FERNET_KEY: "${AIUI_FERNET_KEY}"
+      AIUI_FERNET_KEY: "${DEV_AIUI_FERNET_KEY:?run bash scripts/dev_up.sh up}"
       OPENWEBUI_URL: http://open-webui:8080
       AGENT_DEFAULT_MODEL: fake-agent
       AGENT_FREE_MODELS: fake-agent
@@ -124,14 +130,32 @@ services:
       AIUI_PUBLIC_BASE_URL: http://localhost:8090
       GATEWAY_PUBLIC_URL: http://localhost:8090
       VIDEO_PUBLIC_BASE: http://localhost:8090
+      # The same for the tasks code defaults that name production hosts:
+      # routes_projects/routes_aiuibuilder (preview and subdomain links, and
+      # the DNS target shown for custom domains), routes_vercel and
+      # routes_connections (OAuth redirect URIs).
+      AIUI_PUBLIC_DOMAIN: localhost
+      AIUI_SERVER_IP: 127.0.0.1
+      PUBLIC_BASE_URL: http://localhost:8090
+      # Outbound integrations. The code defaults are production's n8n on
+      # Hostinger (outreach.py N8N_WEBHOOK_BASE, routes_cron.py
+      # WEEKLY_RECAP_WEBHOOK) and api.openai.com (fusion_engine,
+      # graph_embeddings, routes_knowledge_graph). .invalid never resolves
+      # (RFC 2606), so a local POST fails fast instead of reaching them.
+      N8N_WEBHOOK_BASE: http://n8n.invalid
+      WEEKLY_RECAP_WEBHOOK: http://n8n.invalid/webhook/cronjob-weekly-recap
+      OPENAI_API_BASE: http://openai.invalid/v1
+      # routes_cron.py skips the X-Cron-Secret check when this is empty.
+      CRON_SHARED_SECRET: "${DEV_CRON_SHARED_SECRET:?run bash scripts/dev_up.sh up}"
     volumes:
       # NOT the repo. Production mounts its checkout here and the App Builder
       # commits apps/<slug>/ into it (app_git.sweep_app_commit, rollback,
       # version history), so mounting ./ would let a local build commit into
       # the developer's own checkout. dev/workspace is a separate git repo
       # with an empty apps/, made by scripts/dev_up.sh, and gitignored.
-      # Everything in tasks that reads /workspace/ai_ui only touches apps/
-      # and runs git there, so this is all it needs.
+      # tasks may read or write anywhere under /workspace/ai_ui; the
+      # isolation comes from mounting only dev/workspace there, so nothing
+      # it does can reach this checkout.
       # Fix (2026-10-12): the commit sweep failed with "Author identity
       # unknown" here, because a task with no assignee commits with the
       # repo's default identity and this container has none. dev_up.sh sets
@@ -148,8 +172,8 @@ services:
       open-webui:
         condition: service_started
     environment:
-      WEBUI_SECRET_KEY: "${WEBUI_SECRET_KEY}"
-      DATABASE_URL: "postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui"
+      WEBUI_SECRET_KEY: "${DEV_WEBUI_SECRET_KEY:?run bash scripts/dev_up.sh up}"
+      DATABASE_URL: "postgresql://openwebui:${DEV_POSTGRES_PASSWORD:?run bash scripts/dev_up.sh up}@postgres:5432/openwebui"
       OPEN_WEBUI_URL: http://open-webui:8080
       TASKS_URL: http://tasks:8210
       # Production's limits; the code defaults (100 and 1000) are lower.
