@@ -121,6 +121,11 @@ def main() -> int:
     check("5 /api/tasks/agents/tools answers 200", status == 200,
           f"status {status}")
 
+    names = owned_agent_names(token) if token else []
+    want = ["Ada", "Mia", "Dev"]
+    check("6 the dev admin's agents include Ada, Mia and Dev",
+          all(n in names for n in want), f"agents {sorted(n for n in names if n)}")
+
     return 0 if all(results) else 1
 
 
