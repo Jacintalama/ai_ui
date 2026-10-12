@@ -251,8 +251,30 @@
   0%, 100% { opacity: .25; transform: scale(.8); }
   50%      { opacity: 1;   transform: scale(1.15); }
 }
+/* The line arrives rather than appears, the same way a message does, so
+   the thread reads as one conversation moving and not as rows being
+   stamped onto it. */
+.aworking { animation: msg-in .3s ease-out both; }
+
+/* --- motion in the thread --------------------------------------------------
+   A message that has just landed rises into place. Short and small (a
+   quarter second, six pixels): the thread is read, not watched, and a
+   replayed conversation of forty turns has to settle at once rather than
+   cascade. The office floor beside this thread moves on the same recorded
+   events, so a robot's mouth starts moving as "is working..." appears here,
+   and its answer lands here as the robot sits back down there. */
+.am, .afail, .acard { animation: msg-in .28s cubic-bezier(.2, .7, .2, 1) both; }
+@keyframes msg-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* The room's own lines (a skipped agent, a hint) fade without rising:
+   they are not from anybody, so they should not arrive like somebody. */
+.am.note { animation: note-in .35s ease-out both; }
+@keyframes note-in { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
   .aworking::before { animation: none; opacity: .8; }
+  .aworking, .am, .afail, .acard, .am.note { animation: none; }
 }
 .acalls { margin: 6px 0; padding-left: 18px; font-size: 13px; }
 .aargs { color: var(--text-2); overflow-wrap: anywhere; }

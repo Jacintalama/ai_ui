@@ -57,11 +57,34 @@ def browser():
 def _serve(html: bytes):
     class Handler(http.server.SimpleHTTPRequestHandler):
         def do_GET(self):                                    # noqa: N802
+            # The page, or one of its own files. The office's script moved
+            # out of the page on 2026-10-08, and answering every path with
+            # the HTML served a module that could not parse, so no robot
+            # ever appeared and every test here errored at setup.
+            path = self.path.split("?", 1)[0]
+            body, kind = html, "text/html"
+            if "/office/" in path:
+                rel = path.split("/office/", 1)[1]
+                asset = STATIC / "office" / rel
+                if not asset.is_file():
+                    self.send_error(404, "no such asset: %s" % rel)
+                    return
+                body = asset.read_bytes()
+                kind = "text/css" if rel.endswith(".css") else "text/javascript"
+            elif path.endswith("/agent-chat.css") or path.endswith("/htmx.min.js"):
+                rel = path.rsplit("/", 1)[1]
+                asset = (STATIC / rel if (STATIC / rel).is_file()
+                         else STATIC / "vendor" / rel)
+                if not asset.is_file():
+                    self.send_error(404, "no such asset: %s" % rel)
+                    return
+                body = asset.read_bytes()
+                kind = "text/css" if rel.endswith(".css") else "text/javascript"
             self.send_response(200)
-            self.send_header("Content-Type", "text/html")
-            self.send_header("Content-Length", str(len(html)))
+            self.send_header("Content-Type", kind)
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(html)
+            self.wfile.write(body)
 
         def log_message(self, *a):
             pass
@@ -194,3 +217,51 @@ def test_without_event_source_the_slow_poll_still_updates(page):
     assert working.count() == 0
     page.clock.fast_forward(25000)
     working.wait_for(timeout=3000)
+
+
+# --- the activity log --------------------------------------------------------
+# "add logs activity" (2026-10-12). The live activity card is a log of what
+# the stream delivered, newest first, not a list of each agent's latest run
+# that forgot a job the moment the next one started.
+
+def test_an_event_is_written_to_the_activity_log(iris_starts_a_tool, page):
+    page.locator('.who[data-id="%s"][data-state="working"]' % IRIS).wait_for(timeout=3000)
+    page.wait_for_timeout(300)
+    lines = page.locator("#live li").all_inner_texts()
+    assert any("Iris" in ln and "search_drive" in ln for ln in lines), lines
+    assert any("Iris" in ln and "started working" in ln for ln in lines), lines
+    # Newest first: the tool call came after the run started.
+    tool = next(i for i, ln in enumerate(lines) if "search_drive" in ln)
+    run = next(i for i, ln in enumerate(lines) if "started working" in ln)
+    assert tool < run, lines
+
+
+def test_a_finished_run_stays_in_the_log(iris_runs_and_finishes, page):
+    page.wait_for_timeout(1500)
+    lines = page.locator("#live li").all_inner_texts()
+    assert any("Iris" in ln and "finished" in ln for ln in lines), lines
+    assert any("search_drive" in ln for ln in lines), lines
+
+
+def test_an_agent_not_on_this_floor_is_not_logged(a_stranger_starts, page):
+    page.wait_for_timeout(1000)
+    assert not any("agent-not-mine" in ln for ln in page.locator("#live li").all_inner_texts())
+
+
+@pytest.mark.parametrize("page", [{"no_event_source": True, "clock": True}],
+                         indirect=True)
+def test_the_poll_writes_to_the_log_too(page):
+    """No stream: the 30 second re-read is the only source, and a run it
+    finds still gets a line, once."""
+    SERVED["activity"] = {IRIS: {"state": "working", "running_for_seconds": 3,
+                                 "last_run_at": "2026-09-30T10:00:00+00:00",
+                                 "source": "channel"}}
+    page.clock.fast_forward(31000)
+    page.locator('.who[data-id="%s"][data-state="working"]' % IRIS).wait_for(timeout=3000)
+    lines = page.locator("#live li").all_inner_texts()
+    assert [ln for ln in lines if "Iris" in ln and "is working from channel" in ln], lines
+    # A second read of the same row says nothing new.
+    page.clock.fast_forward(31000)
+    page.wait_for_timeout(300)
+    again = page.locator("#live li").all_inner_texts()
+    assert sum("is working from channel" in ln for ln in again) == 1, again

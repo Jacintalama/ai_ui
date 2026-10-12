@@ -12,6 +12,18 @@
     --warn:      #fbbf24;
     --bad:       #fb7185;
     --radius:    10px;
+    /* --- one clock for the whole floor -----------------------------------
+       Every journey on this floor (an agent walking, a room moving over
+       to make space, the floor itself reshaping, a talk line being drawn)
+       reads its length from --d, which office.js sets per draw from the
+       longest walk in it, and its curve from --ease-walk. One number, so
+       the room is finished growing at the exact moment the last agent
+       steps into it. --walk is the fallback for anything drawn before the
+       script has measured a journey. --stride is one full cycle of the
+       walk itself: two steps, two bobs, one swing of each arm. */
+    --walk:      2100ms;
+    --ease-walk: cubic-bezier(.45, .05, .25, 1);
+    --stride:    560ms;
     --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
   }
 

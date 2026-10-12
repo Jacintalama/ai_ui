@@ -980,6 +980,18 @@ def test_everyone_is_breathing(page):
 
 # --- with a real handoff in the data ----------------------------------------
 
+def _settled(page, timeout=6000):
+    """Wait for every journey on the floor to end.
+
+    `walking` is put on a slot when its coordinates change and taken off by
+    the transition ending, so "no slot is walking" is the floor's own word
+    that everybody has arrived. A fixed wait was a guess about a duration
+    that now depends on the distance."""
+    page.wait_for_function(
+        "() => !document.querySelector('.who-slot.walking')", timeout=timeout)
+    page.wait_for_timeout(50)
+
+
 def _with_handoff(page, status="ok"):
     """Serve one real-shaped handoff row and let the floor redraw from it.
 
@@ -1064,13 +1076,14 @@ def test_the_walk_is_undone_when_the_handoff_goes_stale(page):
         status=200, content_type="application/json",
         body=json.dumps({"activity": ACTIVITY, "handoffs": []})))
     page.evaluate("() => window.aiuiRefreshOffice()")
-    # Long enough for the walk BACK. The agents layer survives a redraw now,
-    # so clearing the nudge animates home over the .9s transition instead of
-    # the node being replaced and teleporting. Measured at 400ms it was still
-    # 7px out, which is the walk working, not the clear failing.
-    page.wait_for_timeout(1300)
+    # The walk BACK. The agents layer survives a redraw, so clearing the
+    # nudge animates home rather than teleporting, and the floor's own
+    # `walking` class says when it has got there.
+    _settled(page)
     assert page.locator('.who-slot[data-id="agent-research-assistant-0001"]'
                         ).evaluate("el => getComputedStyle(el).transform") == "none"
+    # The line fades rather than vanishing, so give it its moment.
+    page.wait_for_timeout(800)
     assert page.locator(".talk-line").count() == 0
 
 
@@ -1561,7 +1574,7 @@ def _in_a_meeting(page, ids):
         status=200, content_type="application/json",
         body=json.dumps({"activity": act, "handoffs": []})))
     page.evaluate("() => window.aiuiRefreshOffice()")
-    page.wait_for_timeout(1400)
+    _settled(page)
 
 
 def _mid_round(page, speaking, done):
@@ -1581,7 +1594,7 @@ def _mid_round(page, speaking, done):
         status=200, content_type="application/json",
         body=json.dumps({"activity": act, "handoffs": []})))
     page.evaluate("() => window.aiuiRefreshOffice()")
-    page.wait_for_timeout(1400)
+    _settled(page)
 
 
 def test_an_agent_that_has_already_spoken_stays_in_the_meeting(page):
@@ -1862,3 +1875,301 @@ def test_working_alone_is_not_a_meeting(page):
     page.evaluate("() => window.aiuiRefreshOffice()")
     page.wait_for_timeout(600)
     assert page.locator(".meeting-table").count() == 0
+
+
+# --- the floor moves as one -------------------------------------------------
+#
+# "Make the animations smooth and perfectly synchronized with their actions"
+# (2026-10-12). Every movement here is still drawn from a recorded row; what
+# these pin down is that the movements AGREE with each other: a walk lasts
+# exactly as long as the robot is moving, the thing it says travels with it,
+# the room it walks into finishes growing as it arrives, and the lights in a
+# room are the same fact as the face of the robot working in it.
+
+def _activity(page, act, handoffs=()):
+    page.route("**/agents/activity**", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"activity": act, "handoffs": list(handoffs)})))
+    page.evaluate("() => window.aiuiRefreshOffice()")
+
+
+def test_a_robot_walks_only_while_it_is_moving(page):
+    """The walk cycle is on for the journey and off at the end of it: it is
+    taken off by the transition ending, not by a timer guessed to match."""
+    import datetime
+    at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    _activity(page, {"agent-iris-a103": {"state": "working", "running_for_seconds": 2,
+                                          "last_run_at": at, "source": "meeting"}})
+    iris = page.locator('.who-slot[data-id="agent-iris-a103"]')
+    iris.locator("xpath=self::*[contains(@class, 'walking')]").wait_for(timeout=1000)
+    assert "walking" in (iris.get_attribute("class") or "")
+    _settled(page)
+    assert "walking" not in (iris.get_attribute("class") or "")
+    # And she has actually arrived: the slot's inline place is where the
+    # browser has it, with no transition left to run.
+    inside = page.evaluate(
+        "() => {"
+        " const r = document.querySelector('.zone[data-room=\"meeting\"]')"
+        "   .getBoundingClientRect();"
+        " const x = document.querySelector('.who-slot[data-id=\"agent-iris-a103\"]')"
+        "   .getBoundingClientRect();"
+        " return x.left >= r.left - 2 && x.right <= r.right + 2"
+        "   && x.top >= r.top - 2 && x.bottom <= r.bottom + 2; }")
+    assert inside
+
+
+def test_the_walk_takes_as_long_as_the_distance(page):
+    """One pace for the whole floor. A longer journey is a longer walk, and
+    the duration is written on the slot for the stylesheet to read."""
+    import datetime
+    at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    _activity(page, {"agent-iris-a103": {"state": "working", "running_for_seconds": 2,
+                                          "last_run_at": at, "source": "meeting"}})
+    got = page.evaluate(
+        "() => {"
+        " const el = document.querySelector('.who-slot[data-id=\"agent-iris-a103\"]');"
+        " return { d: el.style.getPropertyValue('--d'),"
+        "          lean: el.style.getPropertyValue('--lean') }; }")
+    ms = int(got["d"].replace("ms", ""))
+    assert 450 <= ms <= 2600, got
+    assert got["lean"] in ("4deg", "-4deg", "0deg"), got
+    _settled(page)
+
+
+def test_what_a_robot_says_travels_with_it(page):
+    """The bubble is a child of the asking robot's slot, so wherever the
+    walk takes the robot the bubble is over its head. It used to be pinned
+    to the destination and hung in empty air for the length of the walk."""
+    _with_handoff(page)
+    inside = page.locator(
+        '.who-slot[data-id="agent-research-assistant-0001"] .say')
+    assert inside.count() == 1
+    assert "Iris" in inside.inner_text()
+    assert page.locator(".say").count() == 1
+
+
+def test_the_line_is_drawn_at_the_walkers_pace(page):
+    """The line from the asker's desk to the colleague draws itself in the
+    time the asker takes to walk it: the same --d on both."""
+    _with_handoff(page)
+    got = page.evaluate(
+        "() => {"
+        " const line = document.querySelector('.talk-line');"
+        " const who = document.querySelector('.who-slot[data-id=\"agent-research-assistant-0001\"]');"
+        " return { drawing: line.classList.contains('drawing'),"
+        "          lineD: line.style.getPropertyValue('--d'),"
+        "          walkD: who.style.getPropertyValue('--d'),"
+        "          rot: line.style.getPropertyValue('--rot') }; }")
+    assert got["drawing"], got
+    assert got["lineD"] == got["walkD"], got
+    assert got["rot"].endswith("deg"), got
+
+
+def test_a_redraw_does_not_restart_a_walk(page):
+    """An event or a poll lands mid-journey. The slot is MOVED, never
+    rebuilt, so a redraw with the same destination leaves the figure where
+    its stride has it instead of starting the stride again."""
+    import datetime
+    at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    act = {"agent-iris-a103": {"state": "working", "running_for_seconds": 2,
+                               "last_run_at": at, "source": "meeting"}}
+    _activity(page, act)
+    page.wait_for_timeout(200)
+    page.evaluate("() => { document.querySelector('.who-slot[data-id=\"agent-iris-a103\"]')._keep = 1; }")
+    page.evaluate("() => window.aiuiRefreshOffice()")
+    page.wait_for_timeout(200)
+    got = page.evaluate(
+        "() => { const el = document.querySelector('.who-slot[data-id=\"agent-iris-a103\"]');"
+        " return { same: el._keep === 1, walking: el.classList.contains('walking'),"
+        "          bot: !!el.querySelector('svg.bot') }; }")
+    assert got == {"same": True, "walking": True, "bot": True}, got
+    _settled(page)
+
+
+def test_a_change_of_state_changes_the_face_not_the_figure(page):
+    """Ada finishes. Her face changes and her light changes; the figure that
+    was breathing is the same node, still breathing."""
+    page.evaluate("() => { document.querySelector('.who[data-id=\"agent-research-assistant-0001\"] svg.bot')._keep = 1; }")
+    act = dict(ACTIVITY)
+    act["agent-research-assistant-0001"] = {
+        "state": "ready", "last_status": "completed",
+        "last_run_at": "2026-09-24T10:02:22+00:00", "source": "channel"}
+    _activity(page, act)
+    page.wait_for_timeout(200)
+    got = page.evaluate(
+        "() => { const who = document.querySelector('.who[data-id=\"agent-research-assistant-0001\"]');"
+        " return { state: who.dataset.state, same: who.querySelector('svg.bot')._keep === 1,"
+        "          smile: !!who.querySelector('.bot-face path.bot-mouth'),"
+        "          dot: who.querySelector('.dot').className }; }")
+    assert got == {"state": "ready", "same": True, "smile": True, "dot": "dot ready"}, got
+
+
+def test_a_robot_answering_a_conversation_is_speaking(page):
+    """Ada is working from a channel in the default fixture: her mouth moves
+    and the dots are over her shoulder. Iris, idle, says nothing."""
+    ada = page.locator('.who[data-id="agent-research-assistant-0001"]')
+    assert ada.get_attribute("data-speaking") == "1"
+    assert ada.locator(".talk-dots").count() == 1
+    assert ada.locator(".bot-mouth").evaluate(
+        "el => getComputedStyle(el).animationName") == "talk"
+    iris = page.locator('.who[data-id="agent-iris-a103"]')
+    assert iris.get_attribute("data-speaking") is None
+    assert iris.locator(".talk-dots").count() == 0
+
+
+def test_a_schedule_runs_in_silence(page):
+    """Working is not talking. A run a schedule started has nobody to answer,
+    so the robot works (bustle, halo, badge) without moving its mouth."""
+    _activity(page, {"agent-iris-a103": {"state": "working", "running_for_seconds": 2,
+                                          "last_run_at": "2026-09-24T10:02:22+00:00",
+                                          "source": "schedule"}})
+    page.wait_for_timeout(200)
+    iris = page.locator('.who[data-id="agent-iris-a103"]')
+    assert iris.get_attribute("data-state") == "working"
+    assert iris.get_attribute("data-speaking") is None
+    assert iris.locator(".talk-dots").count() == 0
+
+
+def test_the_dots_stop_when_the_answer_is_in(page):
+    act = dict(ACTIVITY)
+    act["agent-research-assistant-0001"] = {
+        "state": "ready", "last_status": "completed",
+        "last_run_at": "2026-09-24T10:02:22+00:00", "source": "channel"}
+    _activity(page, act)
+    page.wait_for_timeout(200)
+    ada = page.locator('.who[data-id="agent-research-assistant-0001"]')
+    assert ada.get_attribute("data-speaking") is None
+    assert ada.locator(".talk-dots").count() == 0
+
+
+def test_a_room_somebody_is_working_in_has_its_lights_on(page):
+    """Ada is working in Development; nobody is working in Knowledge base.
+    The room's lights are the same recorded state as the robot's face."""
+    assert page.locator('.zone[data-room="dev"]').get_attribute("data-busy") == "1"
+    assert page.locator('.zone[data-room="knowledge"]').get_attribute("data-busy") == "0"
+    assert page.locator('.zone[data-room="dev"] .zone-dot').evaluate(
+        "el => getComputedStyle(el).animationName") == "pulse"
+    assert page.locator('.zone[data-room="knowledge"] .zone-dot').evaluate(
+        "el => getComputedStyle(el).animationName") == "none"
+
+
+def test_the_lights_go_off_when_the_work_is_done(page):
+    act = dict(ACTIVITY)
+    act["agent-research-assistant-0001"] = {
+        "state": "ready", "last_status": "completed",
+        "last_run_at": "2026-09-24T10:02:22+00:00", "source": "channel"}
+    _activity(page, act)
+    page.wait_for_timeout(200)
+    assert page.locator('.zone[data-room="dev"]').get_attribute("data-busy") == "0"
+
+
+def test_the_meeting_room_is_lit_while_a_meeting_is_on(page):
+    import datetime
+    at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    room = page.locator('.zone[data-room="meeting"]')
+    assert room.get_attribute("data-live") == "0"
+    _activity(page, {"agent-iris-a103": {"state": "working", "running_for_seconds": 2,
+                                          "last_run_at": at, "source": "meeting"}})
+    page.wait_for_timeout(100)
+    assert room.get_attribute("data-live") == "1"
+    _settled(page)
+    _activity(page, {"agent-iris-a103": {"state": "ready", "last_status": "completed",
+                                          "last_run_at": "2026-10-08T02:00:00+00:00",
+                                          "source": "meeting"}})
+    page.wait_for_timeout(100)
+    assert room.get_attribute("data-live") == "0"
+    _settled(page)
+
+
+def test_the_room_grows_on_the_same_clock_as_the_people_walking_in(page):
+    """The meeting room, the floor and the longest walk share one --d, so
+    the room is finished growing at the moment the last agent steps in, and
+    the table is laid then and not before."""
+    import datetime
+    at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    _activity(page, {i: {"state": "working", "running_for_seconds": 2,
+                          "last_run_at": at, "source": "meeting"}
+                      for i in ("agent-research-assistant-0001", "agent-iris-a103")})
+    got = page.evaluate(
+        "() => {"
+        " const ms = s => parseInt((s || '0').replace('ms', ''), 10);"
+        " const walks = [...document.querySelectorAll('.who-slot')]"
+        "   .map(el => ms(el.style.getPropertyValue('--d')));"
+        " const room = document.querySelector('.zone[data-room=\"meeting\"]');"
+        " const table = room.querySelector('.meeting-table');"
+        " return { longest: Math.max(...walks),"
+        "          room: ms(room.style.getPropertyValue('--d')),"
+        "          floor: ms(document.getElementById('rooms').style.getPropertyValue('--d')),"
+        "          table: table && ms(table.style.getPropertyValue('--d')),"
+        "          tableDelay: table && getComputedStyle(table).animationDelay,"
+        "          reflow: document.getElementById('rooms').classList.contains('reflow') }; }")
+    assert got["longest"] > 0, got
+    assert got["room"] == got["longest"], got
+    assert got["floor"] == got["longest"], got
+    assert got["table"] == got["longest"], got
+    assert got["tableDelay"] == "%ss" % (got["longest"] / 1000), got
+    assert got["reflow"], got
+    _settled(page)
+
+
+def test_a_room_is_moved_across_a_redraw_not_rebuilt(page):
+    """The rooms are kept the way the agents are: the same node, moved. A
+    rebuilt room cannot ease to its new place, so it snapped there while the
+    robots were still halfway across the floor."""
+    page.evaluate("() => { document.querySelector('.zone[data-room=\"dev\"]')._keep = 1; }")
+    import datetime
+    at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    _activity(page, {"agent-iris-a103": {"state": "working", "running_for_seconds": 2,
+                                          "last_run_at": at, "source": "meeting"}})
+    page.wait_for_timeout(100)
+    assert page.evaluate(
+        "() => document.querySelector('.zone[data-room=\"dev\"]')._keep === 1")
+    assert page.locator('.zone[data-room="dev"]').count() == 1
+    _settled(page)
+
+
+def test_a_zoom_answers_at_once(docked):
+    """The floor eases only for a layout the agents are walking into. A zoom
+    is the hand asking, and it must not wait two seconds for an answer."""
+    page = docked
+    page.locator("#zoom-in").click()
+    assert not page.evaluate(
+        "() => document.getElementById('rooms').classList.contains('reflow')")
+    page.wait_for_timeout(60)
+    assert page.locator("#zoom-fit").inner_text() != "Fit"
+
+
+def test_the_robots_do_not_breathe_in_unison(page):
+    """Decoration, so it needs no evidence; but six robots breathing as one
+    reads as a screensaver. Each is offset by its own id."""
+    delays = page.locator(".who .bot").evaluate_all(
+        "els => els.map(el => getComputedStyle(el).animationDelay)")
+    assert len(set(delays)) == len(delays), delays
+
+
+def test_every_moving_part_of_the_walk_is_still_off_under_reduced_motion(page):
+    import datetime
+    at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    page.emulate_media(reduced_motion="reduce")
+    _activity(page, {"agent-iris-a103": {"state": "working", "running_for_seconds": 2,
+                                          "last_run_at": at, "source": "meeting"}})
+    page.wait_for_timeout(100)
+    names = page.evaluate(
+        "() => {"
+        " const a = el => el ? getComputedStyle(el).animationName : 'gone';"
+        " const s = document.querySelector('.who-slot[data-id=\"agent-iris-a103\"]');"
+        " return [a(s.querySelector('.bot')), a(s.querySelector('.bot-arm-l')),"
+        "         a(s.querySelector('.bot-shadow')),"
+        "         a(document.querySelector('.who[data-id=\"agent-research-assistant-0001\"] .bot-mouth')),"
+        "         a(document.querySelector('.zone[data-room=\"dev\"] .zone-dot')),"
+        "         getComputedStyle(s).transitionDuration]; }")
+    assert names == ["none"] * 5 + ["0s"], names
+
+
+def test_a_room_is_not_cluttered_with_furniture(page):
+    """"remove this that kinda messy please fix make it clean" (2026-10-12,
+    every drawn desk, screen, shelf and plant circled). A room is its name,
+    its numbers and the people in it; the only desk is the agent's own."""
+    assert page.locator(".zone .zone-floor").count() == 0
+    assert page.locator(".zone i:not(.zone-dot)").count() == 0
+    assert page.locator(".who-slot .desk").count() == page.locator(".who-slot").count()

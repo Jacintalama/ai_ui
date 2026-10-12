@@ -77,6 +77,12 @@ export function pickColour(id, hue) {
 // this size: head, face, body, arms and feet. The legs and the walking
 // animation in the reference are for a 220px portrait and turn to mud on a
 // floor tile.
+//
+// EVERY MOVING PART HAS A CLASS, and the stylesheet moves it; nothing here
+// animates. The arms are groups (arm and hand together, so a swinging arm
+// takes its hand with it), the face is a group so a change of state can
+// swap the face without rebuilding the figure mid-walk, and the mouth is
+// named so it can move while the agent is answering somebody.
 //: The face, from the agent's REAL state and nothing else.
 //:
 //: There is no mood to set, by a button or otherwise. A robot looking
@@ -94,28 +100,36 @@ function faceFor(state, a) {
   if (state === "working") {
     return '<ellipse class="bot-eye bot-think" cx="58" cy="70" rx="8" ry="9" fill="' + a.accent + '"/>' +
       '<rect class="bot-eye bot-think" x="74" y="68" width="16" height="4" rx="2" fill="' + a.accent + '"/>' +
-      '<rect x="60" y="86" width="20" height="3" rx="1.5" fill="' + a.accent + '" opacity=".75"/>';
+      '<rect class="bot-mouth" x="60" y="86" width="20" height="3" rx="1.5" fill="' + a.accent + '" opacity=".75"/>';
   }
   if (state === "waiting") {
     return '<ellipse class="bot-eye" cx="58" cy="70" rx="9.5" ry="10.5" fill="' + a.accent + '"/>' +
       '<ellipse class="bot-eye" cx="82" cy="70" rx="9.5" ry="10.5" fill="' + a.accent + '"/>' +
       '<circle cx="55" cy="66" r="2.8" fill="' + w + '"/><circle cx="79" cy="66" r="2.8" fill="' + w + '"/>' +
-      '<ellipse cx="70" cy="87" rx="5" ry="4" fill="none" stroke="' + a.accent + '" stroke-width="2.4"/>';
+      '<ellipse class="bot-mouth" cx="70" cy="87" rx="5" ry="4" fill="none" stroke="' + a.accent + '" stroke-width="2.4"/>';
   }
   if (state === "failed") {
     return '<rect class="bot-eye" x="50" y="68" width="16" height="3.4" rx="1.7" fill="#fb7185"/>' +
       '<rect class="bot-eye" x="74" y="68" width="16" height="3.4" rx="1.7" fill="#fb7185"/>' +
-      '<path d="M60 90 Q70 83 80 90" stroke="#fb7185" stroke-width="2.6" fill="none" stroke-linecap="round"/>';
+      '<path class="bot-mouth" d="M60 90 Q70 83 80 90" stroke="#fb7185" stroke-width="2.6" fill="none" stroke-linecap="round"/>';
   }
   if (state === "ready") {
     return '<path class="bot-eye" d="M50 72 Q58 63 66 72" stroke="' + a.accent + '" stroke-width="3.2" fill="none" stroke-linecap="round"/>' +
       '<path class="bot-eye" d="M74 72 Q82 63 90 72" stroke="' + a.accent + '" stroke-width="3.2" fill="none" stroke-linecap="round"/>' +
-      '<path d="M58 83 Q70 93 82 83 Z" fill="' + a.accent + '" opacity=".9"/>';
+      '<path class="bot-mouth" d="M58 83 Q70 93 82 83 Z" fill="' + a.accent + '" opacity=".9"/>';
   }
   return '<ellipse class="bot-eye" cx="58" cy="70" rx="8" ry="9" fill="' + a.accent + '"/>' +
     '<ellipse class="bot-eye" cx="82" cy="70" rx="8" ry="9" fill="' + a.accent + '"/>' +
     '<circle cx="55" cy="67" r="2.4" fill="' + w + '"/><circle cx="79" cy="67" r="2.4" fill="' + w + '"/>' +
-    '<rect x="62" y="86" width="16" height="3" rx="1.5" fill="' + a.accent + '" opacity=".5"/>';
+    '<rect class="bot-mouth" x="62" y="86" width="16" height="3" rx="1.5" fill="' + a.accent + '" opacity=".5"/>';
+}
+
+//: The face on its own, for swapping into a robot that is already drawn.
+//: A change of state used to rebuild the whole figure, which restarted its
+//: breathing and, mid-walk, its stride; now only the face changes.
+export function face(id, state) {
+  if (state === true) state = "working";
+  return faceFor(state, paletteOf(id));
 }
 
 //: `state` is one of idle/working/waiting/failed/ready. It used to be a
@@ -130,22 +144,31 @@ export function robot(id, state, ns) {
     '<defs><linearGradient id="g' + uid + '" x1="0" y1="0" x2="1" y2="1">' +
       '<stop offset="0%" stop-color="' + a.body + '"/>' +
       '<stop offset="100%" stop-color="' + a.body2 + '"/></linearGradient></defs>' +
-    '<ellipse cx="70" cy="170" rx="38" ry="7" fill="#000" opacity=".26"/>' +
-    '<rect class="bot-arm" x="16" y="102" width="15" height="48" rx="7" fill="url(#g' + uid + ')"/>' +
-    '<rect class="bot-arm" x="109" y="102" width="15" height="48" rx="7" fill="url(#g' + uid + ')"/>' +
-    '<circle cx="23" cy="154" r="8" fill="' + a.accent + '"/>' +
-    '<circle cx="117" cy="154" r="8" fill="' + a.accent + '"/>' +
+    '<ellipse class="bot-shadow" cx="70" cy="170" rx="38" ry="7" fill="#000" opacity=".26"/>' +
+    // The figure, as one group, so the walk can bob the robot and leave its
+    // shadow on the floor where it belongs.
+    '<g class="bot-figure">' +
+    '<g class="bot-arm bot-arm-l">' +
+      '<rect x="16" y="102" width="15" height="48" rx="7" fill="url(#g' + uid + ')"/>' +
+      '<circle cx="23" cy="154" r="8" fill="' + a.accent + '"/></g>' +
+    '<g class="bot-arm bot-arm-r">' +
+      '<rect x="109" y="102" width="15" height="48" rx="7" fill="url(#g' + uid + ')"/>' +
+      '<circle cx="117" cy="154" r="8" fill="' + a.accent + '"/></g>' +
     '<rect class="bot-body" x="34" y="90" width="72" height="72" rx="18" ' +
       'fill="' + a.body + '"/>' +
     '<rect x="46" y="104" width="48" height="30" rx="10" fill="#0c1220"/>' +
     '<rect x="54" y="140" width="32" height="8" rx="4" fill="#0c1220"/>' +
-    '<circle cx="70" cy="144" r="3" fill="' + a.accent + '"/>' +
+    '<circle class="bot-lamp" cx="70" cy="144" r="3" fill="' + a.accent + '"/>' +
     '<rect x="62" y="14" width="16" height="34" rx="8" fill="url(#g' + uid + ')"/>' +
     '<line x1="70" y1="6" x2="70" y2="16" stroke="' + a.accent + '" stroke-width="3" stroke-linecap="round"/>' +
-    '<circle cx="70" cy="6" r="5" fill="' + a.accent + '"/>' +
+    '<circle class="bot-antenna" cx="70" cy="6" r="5" fill="' + a.accent + '"/>' +
+    '<g class="bot-head">' +
     '<rect x="30" y="46" width="80" height="46" rx="16" fill="url(#g' + uid + ')"/>' +
-    '<rect x="42" y="58" width="56" height="24" rx="8" fill="#0c1220"/>' + eyes +
+    '<rect x="42" y="58" width="56" height="24" rx="8" fill="#0c1220"/>' +
+    '<g class="bot-face">' + eyes + '</g>' +
     '<rect x="44" y="15" width="10" height="24" rx="5" fill="' + a.accent + '" opacity=".8"/>' +
     '<rect x="86" y="15" width="10" height="24" rx="5" fill="' + a.accent + '" opacity=".8"/>' +
+    '</g>' +
+    '</g>' +
     '</svg>';
 }
