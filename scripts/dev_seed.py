@@ -11,9 +11,8 @@ import secrets
 import sys
 import time
 
-from dev_check import model_ids, owned_agent_names, read_env, request, signin
+from dev_check import agent_model, model_ids, owned_agent_names, read_env, request, signin
 
-MODEL = "fake-agent"
 DEV_AGENT = {
     "name": "Dev",
     "role": "Developer",
@@ -39,17 +38,17 @@ def ensure_admin(env: dict) -> str:
     return token
 
 
-def wait_for_model(token: str, limit: float = 120.0) -> None:
+def wait_for_model(token: str, model: str, limit: float = 120.0) -> None:
     """A failed seed is never retried (routes_agents.seed_for_email marks the
     email done either way), so never seed before Open WebUI lists the model
     the agents are created on."""
     deadline = time.monotonic() + limit
     while time.monotonic() < deadline:
-        if MODEL in model_ids(token):
-            print(f"model: {MODEL} listed")
+        if model in model_ids(token):
+            print(f"model: {model} listed")
             return
         time.sleep(3)
-    sys.exit(f"model: {MODEL} not listed after {int(limit)} s; not seeding")
+    sys.exit(f"model: {model} not listed after {int(limit)} s; not seeding")
 
 
 def seed_starters(token: str) -> None:
@@ -60,7 +59,7 @@ def seed_starters(token: str) -> None:
     print(f"seed: seeded={body.get('seeded')} created={body.get('created')}")
 
 
-def ensure_dev(token: str, names: list) -> None:
+def ensure_dev(token: str, names: list, model: str) -> None:
     """Create Dev the way the New agent form does (static/agents.html,
     buildAgentBody): Open WebUI's /api/v1/models/create, private to its
     owner."""
@@ -71,7 +70,7 @@ def ensure_dev(token: str, names: list) -> None:
     body = {
         "id": "agent-dev-" + secrets.token_hex(2),
         "name": DEV_AGENT["name"],
-        "base_model_id": MODEL,
+        "base_model_id": model,
         "meta": {"description": instructions[:120], "toolIds": [],
                  "agent_instructions": instructions,
                  "role": DEV_AGENT["role"]},
@@ -88,9 +87,11 @@ def ensure_dev(token: str, names: list) -> None:
 def main() -> int:
     env = read_env()
     token = ensure_admin(env)
-    wait_for_model(token)
+    # Ada and Mia get tasks' AGENT_DEFAULT_MODEL; Dev gets the same one here.
+    model = agent_model(env)
+    wait_for_model(token, model)
     seed_starters(token)
-    ensure_dev(token, owned_agent_names(token))
+    ensure_dev(token, owned_agent_names(token), model)
     names = sorted(n for n in owned_agent_names(token) if n)
     print("agents: " + ", ".join(names))
     return 0

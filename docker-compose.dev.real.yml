@@ -1,0 +1,44 @@
+# =============================================================================
+# Local dev stack, real-model switch. An override of docker-compose.dev.yml.
+# =============================================================================
+#
+# Used when .env.dev says LOCAL_MODEL=real; scripts/dev_up.sh adds it:
+#
+#   docker compose --env-file .env.dev -f docker-compose.dev.yml \
+#       -f docker-compose.dev.real.yml up -d
+#
+# Agents then answer from OpenRouter's FREE models instead of dev/fake-llm.
+# Needs OPENROUTER_API_KEY in .env.dev (your own key, never the production
+# one). The ids below are the production agent pool (AGENT_FREE_MODELS in
+# docker-compose.unified.yml, 2026-10-12); ids rotate, so sweep them against
+# that file when a model stops answering.
+#
+# Switching needs a fresh Open WebUI volume: saved connection config in the
+# database (config table, openai.api_configs) beats these env values after
+# first boot. So: set LOCAL_MODEL, then `bash scripts/dev_up.sh reset` and
+# `up`. Or edit the connection by hand under Admin > Settings > Connections.
+# =============================================================================
+
+services:
+  open-webui:
+    environment:
+      # One connection, OpenRouter, replacing the fake model.
+      OPENAI_API_BASE_URLS: https://openrouter.ai/api/v1
+      OPENAI_API_KEYS: "${OPENROUTER_API_KEY}"
+      # Allowlist, free ids only. Unlike production there is no paid id here,
+      # so nothing reachable from the local stack can spend money.
+      OPENAI_API_CONFIGS: '{"0":{"enable":true,"model_ids":["nvidia/nemotron-3-super-120b-a12b:free","nvidia/nemotron-3-ultra-550b-a55b:free","nvidia/nemotron-3.5-lightning:free","cohere/north-mini-code:free"]}}'
+
+  tasks:
+    environment:
+      AGENT_DEFAULT_MODEL: nvidia/nemotron-3-super-120b-a12b:free
+      # Same order as production: the tool loop falls down this list.
+      AGENT_FREE_MODELS: "nvidia/nemotron-3-super-120b-a12b:free,nvidia/nemotron-3-ultra-550b-a55b:free,nvidia/nemotron-3.5-lightning:free,cohere/north-mini-code:free"
+      AGENT_FREE_REASONING: none
+      AGENT_REFLECT_MODEL: nvidia/nemotron-3-super-120b-a12b:free
+      # Production uses auto_router.auto, an Open WebUI pipe the local stack
+      # does not install.
+      GATEWAY_MODEL: nvidia/nemotron-3-super-120b-a12b:free
+      # Paid escalation stays off: 0 turns a day, and no paid model named.
+      AGENT_PAID_DAILY_CAP: "0"
+      AGENT_PAID_MODEL: ""

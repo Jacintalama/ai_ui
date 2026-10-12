@@ -14,6 +14,17 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 BASE = "http://localhost:8090"
 
+# The model agents run on, by LOCAL_MODEL in .env.dev. "real" must match
+# AGENT_DEFAULT_MODEL in docker-compose.dev.real.yml.
+MODELS = {"fake": "fake-agent", "real": "nvidia/nemotron-3-super-120b-a12b:free"}
+
+
+def agent_model(env: dict) -> str:
+    mode = env.get("LOCAL_MODEL", "fake") or "fake"
+    if mode not in MODELS:
+        sys.exit(f"LOCAL_MODEL must be one of {sorted(MODELS)}, not {mode!r}")
+    return MODELS[mode]
+
 
 def read_env(path: Path = REPO / ".env.dev") -> dict:
     values = {}
@@ -114,7 +125,8 @@ def main() -> int:
           bool(token), f"status {status}")
 
     ids = model_ids(token) if token else []
-    check("4 /api/models lists fake-agent", "fake-agent" in ids,
+    want_model = agent_model(env)
+    check(f"4 /api/models lists {want_model}", want_model in ids,
           f"models {ids}")
 
     status, _ = request("GET", "/api/tasks/agents/tools", token=token) if token else (0, "")

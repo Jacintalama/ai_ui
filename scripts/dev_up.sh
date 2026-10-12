@@ -5,22 +5,75 @@
 #   bash scripts/dev_up.sh down          # stop; data is kept
 #   bash scripts/dev_up.sh reset         # stop and delete the aiui-dev volumes
 #   bash scripts/dev_up.sh logs <svc>    # follow one service's logs
+#   bash scripts/dev_up.sh model         # which model, and which compose files
 #
 # Run from Git Bash. Always passes --env-file .env.dev: without it compose
 # would read the production-shaped .env in the repo root.
+#
+# LOCAL_MODEL in .env.dev picks the model: fake (dev/fake-llm, the default)
+# or real (OpenRouter's free models, docker-compose.dev.real.yml on top).
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
 
-ENV_FILE=".env.dev"
+# DEV_ENV_FILE is for checking the switch against a throwaway env file.
+ENV_FILE="${DEV_ENV_FILE:-.env.dev}"
 COMPOSE_FILE="docker-compose.dev.yml"
+REAL_FILE="docker-compose.dev.real.yml"
 PROJECT="aiui-dev"
 BASE_URL="http://localhost:8090"
 WORKSPACE="dev/workspace"
+# The mode the stack was last brought up in (dev/ is gitignored here).
+MODE_STAMP="dev/out/last-model"
+
+# One value from the env file, CR stripped. Only ever used for LOCAL_MODEL
+# and for testing whether the key is empty: never echo a secret.
+env_value() {
+    [ -f "$ENV_FILE" ] || return 0
+    grep -E "^$1=" "$ENV_FILE" | tail -n 1 | cut -d= -f2- | tr -d '\r'
+}
+
+local_model() {
+    local mode
+    mode="$(env_value LOCAL_MODEL)"
+    echo "${mode:-fake}"
+}
+
+compose_files() {
+    case "$(local_model)" in
+        fake) echo "-f $COMPOSE_FILE" ;;
+        real) echo "-f $COMPOSE_FILE -f $REAL_FILE" ;;
+        *) echo "LOCAL_MODEL must be fake or real" >&2; exit 2 ;;
+    esac
+}
 
 compose() {
-    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+    local files
+    files="$(compose_files)"
+    # $files is unquoted on purpose: it is two or four words.
+    # shellcheck disable=SC2086
+    docker compose --env-file "$ENV_FILE" $files "$@"
+}
+
+# Real mode needs a key, and a switch needs a fresh Open WebUI volume,
+# because the connection saved in its database beats the env after first
+# boot. Say so up front rather than let the seed time out on a model that
+# is never listed.
+check_model_switch() {
+    local mode last
+    mode="$(local_model)"
+    if [ "$mode" = "real" ] && [ -z "$(env_value OPENROUTER_API_KEY)" ]; then
+        echo "LOCAL_MODEL=real needs OPENROUTER_API_KEY in $ENV_FILE" >&2
+        exit 1
+    fi
+    last="$(cat "$MODE_STAMP" 2>/dev/null | tr -d '\r' || true)"
+    if [ -n "$last" ] && [ "$last" != "$mode" ]; then
+        echo "WARNING: the stack last ran with LOCAL_MODEL=$last, now $mode."
+        echo "Open WebUI keeps its saved connection, so run"
+        echo "'bash scripts/dev_up.sh reset' first, or edit the connection"
+        echo "under Admin > Settings > Connections."
+    fi
 }
 
 # Docker Desktop may be stopped. Start it and wait for the engine.
@@ -87,8 +140,11 @@ wait_for() {
 cmd_up() {
     ensure_docker
     python scripts/dev_env.py
+    check_model_switch
     ensure_workspace
     compose up -d --build
+    mkdir -p "$(dirname "$MODE_STAMP")"
+    local_model > "$MODE_STAMP"
     # Open WebUI's first boot runs its migrations and can take minutes.
     wait_for "$BASE_URL/tasks/healthz" 300
     # Not /health: Caddy answers that itself. /api/config needs Open WebUI.
@@ -127,8 +183,9 @@ case "${1:-}" in
     down) cmd_down ;;
     reset) cmd_reset ;;
     logs) shift; cmd_logs "$@" ;;
+    model) echo "LOCAL_MODEL=$(local_model); compose files: $(compose_files)" ;;
     *)
-        echo "usage: $0 up|down|reset|logs <service>" >&2
+        echo "usage: $0 up|down|reset|logs <service>|model" >&2
         exit 2
         ;;
 esac
