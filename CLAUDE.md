@@ -103,6 +103,20 @@ a function body.
   `sed -i 's/\r$//'` on the server, or a compose value becomes `true\r` and
   silently reads as false.
 
+### Local first
+Try every change in the local Docker stack before it goes to the server
+(`docs/LOCAL_DEV.md`). It runs on a fake model, so it costs nothing.
+1. Change the code.
+2. Run the unit and browser tests.
+3. `bash scripts/dev_up.sh up`, then check the change in a browser at
+   `http://localhost:8090`. When agents are involved, run
+   `python scripts/dev_e2e.py`.
+4. Only then deploy, with the hash-checked method below.
+5. In the deploy notes, say what was checked locally.
+
+The local stack has no bots, no MCP servers, no video and no n8n. A change to
+one of those still needs its own check on the server.
+
 ### Backend services (tasks, api-gateway, MCP servers, Caddy, compose)
 Use the orchestrator script — it diffs against the last-deployed SHA, rsyncs only changed files, rebuilds only affected services, and smoke-tests `/healthz` (and will NOT record success if the smoke fails):
 ```bash
