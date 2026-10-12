@@ -125,7 +125,18 @@ services:
       GATEWAY_PUBLIC_URL: http://localhost:8090
       VIDEO_PUBLIC_BASE: http://localhost:8090
     volumes:
-      - ./:/workspace/ai_ui
+      # NOT the repo. Production mounts its checkout here and the App Builder
+      # commits apps/<slug>/ into it (app_git.sweep_app_commit, rollback,
+      # version history), so mounting ./ would let a local build commit into
+      # the developer's own checkout. dev/workspace is a separate git repo
+      # with an empty apps/, made by scripts/dev_up.sh, and gitignored.
+      # Everything in tasks that reads /workspace/ai_ui only touches apps/
+      # and runs git there, so this is all it needs.
+      # Fix (2026-10-12): the commit sweep failed with "Author identity
+      # unknown" here, because a task with no assignee commits with the
+      # repo's default identity and this container has none. dev_up.sh sets
+      # user.name/user.email in dev/workspace/.git/config on every up.
+      - ./dev/workspace:/workspace/ai_ui
 
   api-gateway:
     build: ./api-gateway
