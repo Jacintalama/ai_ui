@@ -1,0 +1,161 @@
+# =============================================================================
+# Local dev stack. A standalone copy of the platform at http://localhost:8090
+# =============================================================================
+#
+#   python scripts/dev_env.py          # once: writes .env.dev (gitignored)
+#   docker compose --env-file .env.dev -f docker-compose.dev.yml up -d --build
+#
+# Standalone, NOT an override of docker-compose.unified.yml. The project name
+# aiui-dev prefixes every container, network and volume, and no service sets
+# container_name, so nothing here can collide with production names.
+#
+# Its secrets come from .env.dev, never from the production .env. Every env
+# var name below was checked against docker-compose.unified.yml on 2026-10-12;
+# where this file differs from production it says why.
+#
+# Left out on purpose: mcp-proxy, pipelines, video, the bots, n8n, the MCP
+# servers, and the /etc/proxy-server/agent_ssh_key mount (Linux host only).
+# =============================================================================
+
+name: aiui-dev
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: openwebui
+      POSTGRES_USER: openwebui
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+    volumes:
+      - pg:/var/lib/postgresql/data
+      # Same init script as production: the vector extension and the
+      # mcp_proxy schema the gateway queries.
+      - ./scripts/init-db-hetzner.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openwebui -d openwebui"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # Scripted OpenAI-compatible model (dev/fake-llm). Open WebUI's only
+  # OpenAI connection, so every agent turn lands here.
+  fake-llm:
+    build: ./dev/fake-llm
+    environment:
+      FAKE_DELAY_MS: "1500"
+
+  open-webui:
+    # Must match production exactly: openwebui-overrides/index.html hardcodes
+    # this version's asset hashes.
+    image: ghcr.io/open-webui/open-webui:v0.11.4
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      fake-llm:
+        condition: service_started
+    environment:
+      WEBUI_SECRET_KEY: "${WEBUI_SECRET_KEY}"
+      DATABASE_URL: "postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui"
+      VECTOR_DB: pgvector
+      # Production's name for this (unified.yml), not PGVECTOR_DB_URL.
+      PGVECTOR_CONNECTION_STRING: "postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui"
+      ENABLE_REDIS: "true"
+      REDIS_URL: redis://redis:6379/0
+      WEBUI_URL: http://localhost:8090
+      ENABLE_SIGNUP: "true"
+      ENABLE_LOGIN_FORM: "true"
+      DEFAULT_USER_ROLE: user
+      ENABLE_OLLAMA_API: "false"
+      ENABLE_OPENAI_API: "true"
+      # One connection, the fake model. Saved connection config in the DB
+      # beats these after first boot, so changing them needs a fresh volume.
+      OPENAI_API_BASE_URLS: http://fake-llm:9000/v1
+      OPENAI_API_KEYS: local
+      # Same access rules as production, so agent visibility behaves the same
+      # (see the long notes on both in docker-compose.unified.yml).
+      BYPASS_ADMIN_ACCESS_CONTROL: "false"
+      BYPASS_MODEL_ACCESS_CONTROL: "false"
+      ENABLE_FORWARD_USER_INFO_HEADERS: "true"
+      # The Fusion tool runs inside Open WebUI and calls tasks.
+      TASKS_URL: http://tasks:8210
+    volumes:
+      - owui:/app/backend/data
+      # The same four mounts as production. index.html loads /static/loader.js,
+      # which loads integrations-ui.js; without them the page 404s both.
+      - ./mcp-servers/gdrive/integrations-ui.js:/app/backend/open_webui/static/integrations-ui.js:ro
+      - ./mcp-servers/gdrive/integrations-ui.js:/app/build/static/integrations-ui.js:ro
+      - ./mcp-servers/gdrive/loader.js:/app/backend/open_webui/static/loader.js:ro
+      - ./mcp-servers/gdrive/loader.js:/app/build/static/loader.js:ro
+      - ./openwebui-overrides/index.html:/app/build/index.html:ro
+
+  tasks:
+    build: ./mcp-servers/tasks
+    depends_on:
+      postgres:
+        condition: service_healthy
+      open-webui:
+        condition: service_started
+    environment:
+      DATABASE_URL: "postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui"
+      WEBUI_SECRET_KEY: "${WEBUI_SECRET_KEY}"
+      # tasks crashes at import without it (crypto_utils.py).
+      AIUI_FERNET_KEY: "${AIUI_FERNET_KEY}"
+      OPENWEBUI_URL: http://open-webui:8080
+      AGENT_DEFAULT_MODEL: fake-agent
+      AGENT_FREE_MODELS: fake-agent
+      AGENT_REFLECT_MODEL: fake-agent
+      GATEWAY_MODEL: fake-agent
+      # No paid escalation locally.
+      AGENT_PAID_DAILY_CAP: "0"
+      VIDEO_ENABLED: "false"
+      CLAUDE_WORKSPACE: /workspace/ai_ui
+      # Production hardcodes its public domain here; links minted locally must
+      # point at the local stack, not at production.
+      AIUI_PUBLIC_BASE_URL: http://localhost:8090
+      GATEWAY_PUBLIC_URL: http://localhost:8090
+      VIDEO_PUBLIC_BASE: http://localhost:8090
+    volumes:
+      - ./:/workspace/ai_ui
+
+  api-gateway:
+    build: ./api-gateway
+    depends_on:
+      postgres:
+        condition: service_healthy
+      tasks:
+        condition: service_started
+      open-webui:
+        condition: service_started
+    environment:
+      WEBUI_SECRET_KEY: "${WEBUI_SECRET_KEY}"
+      DATABASE_URL: "postgresql://openwebui:${POSTGRES_PASSWORD}@postgres:5432/openwebui"
+      OPEN_WEBUI_URL: http://open-webui:8080
+      TASKS_URL: http://tasks:8210
+      # Production's limits; the code defaults (100 and 1000) are lower.
+      RATE_LIMIT_ENABLED: "true"
+      RATE_LIMIT_PER_MINUTE: "500"
+      RATE_LIMIT_PER_IP: "5000"
+
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      - api-gateway
+    # Loopback only. The repo Caddyfile serves the site on :80.
+    ports:
+      - "127.0.0.1:8090:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+
+volumes:
+  pg: {}
+  owui: {}
