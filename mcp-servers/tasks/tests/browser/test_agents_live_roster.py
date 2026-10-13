@@ -232,6 +232,56 @@ def test_a_meeting_is_a_line_in_the_room(browser, server):
         pg.close()
 
 
+#: The markup agent_chat_render.turn_open writes for one message: the
+#: answers stream into .aturn-body later, by id. Seen on the local stack
+#: 2026-10-13: a line appended to the thread itself landed BELOW the answers
+#: of the round it opened, because those went into this body.
+_TURNS = """
+document.getElementById('agent-thread').insertAdjacentHTML('beforeend',
+  '<div class="aturn" id="aturn-old"><div class="am user"><div class="ab">hi</div></div>' +
+  '<div class="aturn-status"></div><div class="aturn-body">' +
+  '<div class="am agent"><div class="ab">old answer</div></div></div></div>' +
+  '<div class="aturn" id="aturn-new"><div class="am user"><div class="ab">team</div></div>' +
+  '<div class="aturn-status"></div><div class="aturn-body"></div></div>');
+"""
+
+
+def test_a_meeting_line_opens_the_round_it_belongs_to(browser, server):
+    pg, live = _open(browser, server)
+    try:
+        pg.evaluate(_TURNS)
+        live.send({"event": "meeting_started", "agent_id": ADA["id"],
+                   "at": 1, "participants": [ADA["id"], IRIS["id"]]})
+        pg.wait_for_selector("#agent-thread .am.sys", state="attached")
+        body = pg.locator("#aturn-new .aturn-body")
+        assert body.locator(".am.sys").all_inner_texts() == ["Meeting: Ada, Iris"]
+        # An answer streamed in afterwards goes below it, as the server does.
+        pg.evaluate("""document.querySelector('#aturn-new .aturn-body')
+          .insertAdjacentHTML('beforeend', '<div class="am agent">Ada here</div>')""")
+        kids = pg.evaluate("""[...document.querySelector('#aturn-new .aturn-body')
+          .children].map(e => e.className)""")
+        assert kids == ["am sys", "am agent"], kids
+        assert pg.locator("#aturn-old .am.sys").count() == 0
+    finally:
+        pg.close()
+
+
+def test_a_handoff_line_goes_to_the_round_being_answered(browser, server):
+    pg, live = _open(browser, server)
+    try:
+        pg.evaluate(_TURNS)
+        # Ada is answering the newer message: its status line says so.
+        pg.evaluate("""document.querySelector('#aturn-new .aturn-status')
+          .textContent = 'Ada is working...'""")
+        live.send({"event": "handoff", "agent_id": ADA["id"],
+                   "target_agent_id": IRIS["id"], "at": 1})
+        pg.wait_for_selector("#agent-thread .am.sys", state="attached")
+        assert pg.locator("#aturn-new .aturn-body .am.sys").all_inner_texts() == [
+            "Ada asked Iris"]
+    finally:
+        pg.close()
+
+
 def test_a_handoff_is_a_line_in_the_room(browser, server):
     pg, live = _open(browser, server)
     try:

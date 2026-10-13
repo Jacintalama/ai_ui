@@ -3799,13 +3799,34 @@
       return !open || ids.indexOf(open) !== -1;
     }
 
+    // Where a line goes: into the round it is about, not the end of the
+    // thread. A round's answers stream into its own .aturn-body by id
+    // (agent_chat_render.turn_open), so a line appended to the thread landed
+    // BELOW the answers of the meeting it opened (local stack, 2026-10-13).
+    // The round being answered is the one whose status line is showing; at
+    // the very start, before any status, the oldest one with no answer yet.
+    function roundBody() {
+      var turns = thread.querySelectorAll(".aturn");
+      for (var i = turns.length - 1; i >= 0; i--) {
+        var status = turns[i].querySelector(".aturn-status");
+        if (status && status.textContent.trim()) {
+          return turns[i].querySelector(".aturn-body");
+        }
+      }
+      for (var j = 0; j < turns.length; j++) {
+        var body = turns[j].querySelector(".aturn-body");
+        if (body && !body.children.length) return body;
+      }
+      return null;
+    }
+
     function say(words) {
       if (!thread) return;
       var atEnd = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 40;
       var el = document.createElement("div");
       el.className = "am sys";
       el.textContent = words;
-      thread.appendChild(el);
+      (roundBody() || thread).appendChild(el);
       if (atEnd) thread.scrollTop = thread.scrollHeight;
     }
 
