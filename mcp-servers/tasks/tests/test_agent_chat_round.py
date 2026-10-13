@@ -544,3 +544,153 @@ def test_an_agent_that_is_not_yours_cannot_be_talked_to(monkeypatch):
            headers=_hdr())
     c.get("/tasks/agents/chat/stream?agent=agent-somebody-elses", headers=_hdr())
     assert seen == []
+
+
+# --- the office hears when a bubble goes out and when a meeting opens ------
+# The round is not streamed token by token, so the office cannot see a bubble
+# arrive unless the round says so. These record turns and events into ONE
+# list, so the assertions are about order, not only presence.
+
+def _record(monkeypatch, mod, reply=None):
+    log = []
+
+    async def turn(email, agent, messages, names=(), **kw):
+        log.append(("turn", agent["id"]))
+        if reply is not None:
+            return reply(agent)
+        return {"answer": f'{agent["name"]} here', "notes": [],
+                "agent": {"id": agent["id"], "name": agent["name"]}}
+
+    def publish(event, **kw):
+        log.append((event, kw.get("agent_id"), kw.get("participants"),
+                    kw.get("chars")))
+
+    monkeypatch.setattr(mod, "_turn_for", turn)
+    monkeypatch.setattr(mod.agent_events, "publish", publish)
+    return log
+
+
+def _say(app, message):
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/send", data={"message": message}, headers=_hdr())
+    return c.get("/tasks/agents/chat/stream", headers=_hdr()).text
+
+
+def _speaking(log):
+    return [e[1] for e in log if e[0] == "speaking_started"]
+
+
+def test_a_meeting_opens_each_bubble_is_announced_then_it_closes(monkeypatch):
+    # "hi team" reaches both agents (agent_routing: ROUTE_COLLECTIVE), which
+    # is a meeting however it was routed: more than one speaker.
+    app, mod, _ = _app(monkeypatch)
+    log = _record(monkeypatch, mod)
+    _say(app, "hi team")
+    assert log == [
+        ("meeting_started", "agent-a", ["agent-a", "agent-m"], None),
+        ("turn", "agent-a"),
+        ("speaking_started", "agent-a", None, len("Ada here")),
+        ("turn", "agent-m"),
+        ("speaking_started", "agent-m", None, len("Mia here")),
+        ("meeting_ended", "agent-m", None, None),
+    ]
+
+
+def test_one_named_agent_is_not_a_meeting(monkeypatch):
+    app, mod, _ = _app(monkeypatch)
+    log = _record(monkeypatch, mod)
+    _say(app, "Ada, hi")
+    assert log == [("turn", "agent-a"),
+                   ("speaking_started", "agent-a", None, len("Ada here"))]
+
+
+def test_a_failed_turn_is_not_announced_as_speech(monkeypatch):
+    app, mod, _ = _app(monkeypatch)
+
+    def reply(agent):
+        answer = (mod._turn_failed_sentence(agent["name"])
+                  if agent["id"] == "agent-a" else "Mia here")
+        return {"answer": answer, "notes": [],
+                "agent": {"id": agent["id"], "name": agent["name"]}}
+
+    # The real failure sentence, so this is a turn the round recognises as
+    # failed rather than an ordinary answer that happens to sound like one.
+    assert mod._failure_reason("Ada", mod._turn_failed_sentence("Ada"))
+    log = _record(monkeypatch, mod, reply)
+    _say(app, "hi team")
+    assert ("turn", "agent-a") in log
+    assert _speaking(log) == ["agent-m"]
+
+
+def test_a_turn_that_raises_still_closes_the_meeting(monkeypatch):
+    app, mod, _ = _app(monkeypatch)
+
+    def reply(agent):
+        if agent["id"] == "agent-m":
+            raise RuntimeError("boom")
+        return {"answer": "Ada here", "notes": [],
+                "agent": {"id": agent["id"], "name": agent["name"]}}
+
+    log = _record(monkeypatch, mod, reply)
+    # Today the error escapes the stream (the test client re-raises it inside
+    # an ExceptionGroup). This test is not about that; it is about the office
+    # not being left with a meeting that never ends.
+    try:
+        _say(app, "hi team")
+    except Exception:                                       # noqa: BLE001
+        pass
+    assert log[0][0] == "meeting_started"
+    assert log[-1] == ("meeting_ended", "agent-m", None, None)
+
+
+def test_a_pass_is_not_announced_as_speech(monkeypatch):
+    app, mod, _ = _app(monkeypatch)
+
+    def reply(agent):
+        answer = "PASS" if agent["id"] == "agent-a" else "Mia here"
+        return {"answer": answer, "notes": [],
+                "agent": {"id": agent["id"], "name": agent["name"]}}
+
+    log = _record(monkeypatch, mod, reply)
+    _say(app, "hi team")
+    assert _speaking(log) == ["agent-m"]
+
+
+def test_the_fallback_bubble_is_announced_inside_the_meeting(monkeypatch):
+    app, mod, _ = _app(monkeypatch)
+    calls = []
+
+    def reply(agent):
+        # Both pass when offered the choice; the fallback re-asks Ada.
+        calls.append(agent["id"])
+        answer = "PASS" if len(calls) <= 2 else "Ada here"
+        return {"answer": answer, "notes": [],
+                "agent": {"id": agent["id"], "name": agent["name"]}}
+
+    log = _record(monkeypatch, mod, reply)
+    _say(app, "hi team")
+    assert [e[0] for e in log] == ["meeting_started", "turn", "turn", "turn",
+                                   "speaking_started", "meeting_ended"]
+    assert _speaking(log) == ["agent-a"]
+
+
+def test_an_agent_asking_a_question_is_speaking(monkeypatch):
+    app, mod, _ = _app(monkeypatch)
+    calls = [{"id": "call-1", "function": {"name": "send_email",
+                                           "arguments": "{}"}}]
+
+    def reply(agent):
+        out = {"answer": f'{agent["name"]} here', "notes": [],
+               "agent": {"id": agent["id"], "name": agent["name"]}}
+        if agent["id"] == "agent-a":
+            out["answer"] = "May I send this?"
+            out["pending"] = {"agent_id": "agent-a", "user_email": EMAIL,
+                              "calls": calls, "conversation": []}
+        return out
+
+    log = _record(monkeypatch, mod, reply)
+    body = _say(app, "hi team")
+    assert "May I send this?" in body
+    assert ("speaking_started", "agent-a", None,
+            len("May I send this?")) in log
+    assert _speaking(log) == ["agent-a", "agent-m"]

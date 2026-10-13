@@ -25,6 +25,7 @@ from auth import CurrentUser, current_user
 import agent_access
 import agent_activity
 import agent_escalation
+import agent_events
 import agent_graph
 import agent_routing
 from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS, FREE_POOL_EXHAUSTED,
@@ -455,6 +456,13 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
         may_pass = False
         why = agent_routing.ROUTE_NAMED
 
+    # Who is in this round's meeting, in turn order, or nobody. The office
+    # walks everybody in at once from this, rather than one at a time as each
+    # turn starts. Ids only: the feed never carries prose.
+    met = ([str(a.get("id") or "") for a in speakers]
+           if _is_a_meeting(speakers) and why != agent_routing.ROUTE_APPROVAL
+           else [])
+
     if why == agent_routing.ROUTE_APPROVAL:
         # Typing "yes" is pressing Yes. The agent that asked is waiting on
         # this one word, so it goes there and the round ends: putting it to
@@ -522,142 +530,170 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
     # round can tell "nobody had anything" from "nobody was asked".
     passed = 0
 
-    for agent in list(speakers):
-        if request is not None and await request.is_disconnected():
-            break
-        agent_id = str(agent.get("id") or "")
-        name = str(agent.get("name") or agent_id)
-        yield {"event": "working",
-              "data": render.turn_status(tid, render.working(name))}
-        turn_history = history
-        if may_pass:
-            turn_history = history + [{"role": "user",
-                                       "content": PASS_INSTRUCTION}]
-        # The person's own words, not PASS_INSTRUCTION, which is the last
-        # user message this agent reads. Carried rather than passed because
-        # _turn_for and _run_turn sit in between.
-        # A meeting is a fact about the ROUND, and it has to reach the row
-        # the run writes: agent_routing knows one was called, start_run is
-        # several frames below, and _turn_for and _run_turn sit in between.
-        # Without this, five agents convened together were indistinguishable
-        # from five asked separately, and the office could not draw a
-        # meeting it could not see.
-        #
-        # And a meeting is MORE THAN ONE AGENT ANSWERING THE SAME MESSAGE,
-        # not only the phrasing that explicitly calls one. Reported live
-        # 2026-10-08: chatting with the whole team put nobody in the meeting
-        # room, because a plain "hey" is ROUTE_ROOM and only the
-        # "everyone answer:" wording was ROUTE_MEETING. Every other rung that
-        # reaches the whole room (COLLECTIVE, ROOM) convenes the team just as
-        # much; what separates them is whether an agent may pass, which is a
-        # different question from who was asked. One speaker is never a
-        # meeting, however it was routed, which is what keeps NAMED,
-        # CONTINUATION, OWNER and APPROVAL out of the room.
-        meeting = (agent_activity.meeting_round() if _is_a_meeting(speakers)
-                   else contextlib.nullcontext())
-        with meeting, agent_escalation.asking(agent_escalation.Intent(
-                person_text=asked, may_pass=may_pass)):
-            out = await _turn_for(email, agent, turn_history, names,
-                                  roster=agents, graph=graph, now=now)
-        answer = out.get("answer") or ""
-
-        fr = _failure_reason(name, answer)
-        if fr is not None:
-            reason, fix = fr
-            yield {"event": "message",
-                   "data": _failure_fragment(messages, tid, name, answer,
-                                             reason, fix)}
-            continue
-
-        if _is_pass(answer) and not out.get("pending"):
+    if met:
+        agent_events.publish("meeting_started", agent_id=met[0],
+                             user_email=email, participants=met)
+    # Closed in a finally, so a turn that raises or a browser that leaves
+    # (which closes this generator) still ends the meeting on the office.
+    try:
+        for agent in list(speakers):
+            if request is not None and await request.is_disconnected():
+                break
+            agent_id = str(agent.get("id") or "")
+            name = str(agent.get("name") or agent_id)
+            yield {"event": "working",
+                  "data": render.turn_status(tid, render.working(name))}
+            turn_history = history
             if may_pass:
-                # It listened and had nothing to say. No bubble, nothing
-                # stored: a pass should leave no trace except the cost of
-                # asking.
-                passed += 1
-                continue
-            # It was NOT offered the choice, and said it anyway. This used to
-            # fall straight past here and store the word as the agent's
-            # answer: seen in the owner's own thread on 2026-09-24 as a
-            # bubble reading "Ada / PASS", saved in agent_chats.messages so
-            # it redrew on every load.
+                turn_history = history + [{"role": "user",
+                                           "content": PASS_INSTRUCTION}]
+            # The person's own words, not PASS_INSTRUCTION, which is the last
+            # user message this agent reads. Carried rather than passed because
+            # _turn_for and _run_turn sit in between.
+            # A meeting is a fact about the ROUND, and it has to reach the row
+            # the run writes: agent_routing knows one was called, start_run is
+            # several frames below, and _turn_for and _run_turn sit in
+            # between. Without this, five agents convened together were
+            # indistinguishable from five asked separately, and the office
+            # could not draw a meeting it could not see.
             #
-            # PASS is a word in a protocol between this code and the model
-            # and is never something a person should read. Saying nothing at
-            # all is worse though, because a question asked directly of one
-            # agent and answered with silence reads as a broken panel, which
-            # is the same reason the everybody-passed fallback speaks. So the
-            # person is told, in that fallback's words, and nothing is stored.
-            yield {"event": "message",
-                   "data": render.into_turn(tid, render.note(
-                       NOTHING_TO_ADD % name))}
-            continue
+            # And a meeting is MORE THAN ONE AGENT ANSWERING THE SAME MESSAGE,
+            # not only the phrasing that explicitly calls one. Reported live
+            # 2026-10-08: chatting with the whole team put nobody in the
+            # meeting room, because a plain "hey" is ROUTE_ROOM and only the
+            # "everyone answer:" wording was ROUTE_MEETING. Every other rung
+            # that reaches the whole room (COLLECTIVE, ROOM) convenes the team
+            # just as much; what separates them is whether an agent may pass,
+            # which is a different question from who was asked. One speaker is
+            # never a meeting, however it was routed, which is what keeps
+            # NAMED, CONTINUATION, OWNER and APPROVAL out of the room.
+            meeting = (agent_activity.meeting_round()
+                       if _is_a_meeting(speakers)
+                       else contextlib.nullcontext())
+            with meeting, agent_escalation.asking(agent_escalation.Intent(
+                    person_text=asked, may_pass=may_pass)):
+                out = await _turn_for(email, agent, turn_history, names,
+                                      roster=agents, graph=graph, now=now)
+            answer = out.get("answer") or ""
 
-        question = _question_events(messages, pending, tid, agent_id, name,
-                                    answer, answering, out.get("pending"))
-        if question is not None:
-            for event in question:
-                yield event
-            # And on to the next agent. Pausing the one that asked is the
-            # point; silently losing everybody else is not.
-            continue
+            fr = _failure_reason(name, answer)
+            if fr is not None:
+                reason, fix = fr
+                yield {"event": "message",
+                       "data": _failure_fragment(messages, tid, name, answer,
+                                                 reason, fix)}
+                continue
 
-        messages.append({"role": "assistant", "agent_id": agent_id,
-                         "agent_name": name, "content": answer,
-                         "replying_to": answering})
-        yield {"event": "message",
-               "data": render.into_turn(tid, render.agent_bubble(
-                   name, answer, answering))}
+            if _is_pass(answer) and not out.get("pending"):
+                if may_pass:
+                    # It listened and had nothing to say. No bubble, nothing
+                    # stored: a pass should leave no trace except the cost of
+                    # asking.
+                    passed += 1
+                    continue
+                # It was NOT offered the choice, and said it anyway. This used
+                # to fall straight past here and store the word as the agent's
+                # answer: seen in the owner's own thread on 2026-09-24 as a
+                # bubble reading "Ada / PASS", saved in agent_chats.messages so
+                # it redrew on every load.
+                #
+                # PASS is a word in a protocol between this code and the model
+                # and is never something a person should read. Saying nothing
+                # at all is worse though, because a question asked directly of
+                # one agent and answered with silence reads as a broken panel,
+                # which is the same reason the everybody-passed fallback
+                # speaks. So the person is told, in that fallback's words, and
+                # nothing is stored.
+                yield {"event": "message",
+                       "data": render.into_turn(tid, render.note(
+                           NOTHING_TO_ADD % name))}
+                continue
 
-    if speakers and passed == len(speakers):
-        # Everybody passed, which leaves the person talking to an empty room.
-        # Ask the one who spoke last, or the first, and this time without the
-        # option of passing. One extra call, and only in this case.
-        fallback = _last_speaker(s.messages, speakers) or speakers[0]
-        name = str(fallback.get("name") or fallback.get("id") or "")
-        yield {"event": "working",
-              "data": render.turn_status(tid, render.working(name))}
-        with agent_escalation.asking(agent_escalation.Intent(
-                person_text=asked, may_pass=False)):
-            out = await _turn_for(email, fallback, history, names, roster=agents,
-                              graph=graph, now=now)
-        answer = out.get("answer") or ""
-        fr = _failure_reason(name, answer)
-        # Asked for before the pass check, as in the loop above: a turn that
-        # stops to ask has no answer to check, and an empty answer is exactly
-        # what used to send a real question into the note below.
-        question = (None if fr is not None else _question_events(
-            messages, pending, tid, str(fallback.get("id") or ""), name,
-            answer, answering, out.get("pending")))
-        if fr is not None:
-            # This extra call can fail exactly like any other: a transient
-            # error, or the router running dry between the first round of
-            # calls and this one. It must not fall into the "nobody had
-            # anything to add" note below, which would say nothing happened
-            # when something did, and it failed.
-            reason, fix = fr
-            yield {"event": "message",
-                   "data": _failure_fragment(messages, tid, name, answer,
-                                             reason, fix)}
-        elif question is not None:
-            for event in question:
-                yield event
-        elif answer and not _is_pass(answer):
-            messages.append({"role": "assistant",
-                             "agent_id": str(fallback.get("id") or ""),
+            question = _question_events(messages, pending, tid, agent_id, name,
+                                        answer, answering, out.get("pending"))
+            if question is not None:
+                # A question is the agent speaking too. Failures, passes and
+                # notes are not, and are never announced.
+                agent_events.publish("speaking_started", agent_id=agent_id,
+                                     user_email=email, chars=len(answer))
+                for event in question:
+                    yield event
+                # And on to the next agent. Pausing the one that asked is the
+                # point; silently losing everybody else is not.
+                continue
+
+            messages.append({"role": "assistant", "agent_id": agent_id,
                              "agent_name": name, "content": answer,
                              "replying_to": answering})
+            # The round is not streamed, so this is the only moment the
+            # office can see a bubble arrive. Its length, never its words.
+            agent_events.publish("speaking_started", agent_id=agent_id,
+                                 user_email=email, chars=len(answer))
             yield {"event": "message",
                    "data": render.into_turn(tid, render.agent_bubble(
                        name, answer, answering))}
-        else:
-            # It passed again even without being offered the option. Say so
-            # rather than leave the room silent: a person who typed something
-            # and got nothing back cannot tell that from a broken panel.
-            line = "Nobody had anything to add to that."
-            messages.append({"role": "note", "content": line})
-            yield {"event": "message",
-                   "data": render.into_turn(tid, render.note(line))}
+
+        if speakers and passed == len(speakers):
+            # Everybody passed, which leaves the person talking to an empty
+            # room. Ask the one who spoke last, or the first, and this time
+            # without the option of passing. One extra call, and only in this
+            # case.
+            fallback = _last_speaker(s.messages, speakers) or speakers[0]
+            name = str(fallback.get("name") or fallback.get("id") or "")
+            yield {"event": "working",
+                  "data": render.turn_status(tid, render.working(name))}
+            with agent_escalation.asking(agent_escalation.Intent(
+                    person_text=asked, may_pass=False)):
+                out = await _turn_for(email, fallback, history, names,
+                                      roster=agents, graph=graph, now=now)
+            answer = out.get("answer") or ""
+            fr = _failure_reason(name, answer)
+            # Asked for before the pass check, as in the loop above: a turn
+            # that stops to ask has no answer to check, and an empty answer is
+            # exactly what used to send a real question into the note below.
+            question = (None if fr is not None else _question_events(
+                messages, pending, tid, str(fallback.get("id") or ""), name,
+                answer, answering, out.get("pending")))
+            if fr is not None:
+                # This extra call can fail exactly like any other: a transient
+                # error, or the router running dry between the first round of
+                # calls and this one. It must not fall into the "nobody had
+                # anything to add" note below, which would say nothing happened
+                # when something did, and it failed.
+                reason, fix = fr
+                yield {"event": "message",
+                       "data": _failure_fragment(messages, tid, name, answer,
+                                                 reason, fix)}
+            elif question is not None:
+                agent_events.publish(
+                    "speaking_started", agent_id=str(fallback.get("id") or ""),
+                    user_email=email, chars=len(answer))
+                for event in question:
+                    yield event
+            elif answer and not _is_pass(answer):
+                messages.append({"role": "assistant",
+                                 "agent_id": str(fallback.get("id") or ""),
+                                 "agent_name": name, "content": answer,
+                                 "replying_to": answering})
+                agent_events.publish(
+                    "speaking_started", agent_id=str(fallback.get("id") or ""),
+                    user_email=email, chars=len(answer))
+                yield {"event": "message",
+                       "data": render.into_turn(tid, render.agent_bubble(
+                           name, answer, answering))}
+            else:
+                # It passed again even without being offered the option. Say so
+                # rather than leave the room silent: a person who typed
+                # something and got nothing back cannot tell that from a broken
+                # panel.
+                line = "Nobody had anything to add to that."
+                messages.append({"role": "note", "content": line})
+                yield {"event": "message",
+                       "data": render.into_turn(tid, render.note(line))}
+    finally:
+        if met:
+            agent_events.publish("meeting_ended", agent_id=met[-1],
+                                 user_email=email)
 
     if not agents:
         line = ("You have no agents yet. Make one and it will hear the next "
