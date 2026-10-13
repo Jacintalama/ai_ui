@@ -192,7 +192,7 @@ async def start_run(agent_id: str, user_email: str, source: str,
         # After the commit, so the office is never told about a run the
         # database does not have.
         agent_events.publish("run_started", agent_id=agent_id,
-                             user_email=user_email)
+                             user_email=user_email, source=source)
         return run_id
     except Exception:                                       # noqa: BLE001
         logger.warning("could not record the start of an agent run",

@@ -57,7 +57,19 @@ async def test_start_run_announces_the_run_it_wrote(monkeypatch, sent):
                                             agent_activity.SOURCE_CHANNEL)
     assert run_id
     assert sent == [("run_started", {"agent_id": "agent-a",
-                                     "user_email": "me@example.com"})]
+                                     "user_email": "me@example.com",
+                                     "source": agent_activity.SOURCE_CHANNEL})]
+
+
+async def test_a_started_run_says_where_it_came_from(monkeypatch, sent):
+    """The office walks a meeting's people in together; it can only tell a
+    meeting's run from a lone chat if the event says so."""
+    monkeypatch.setattr(agent_activity, "session", lambda: _Session())
+    await agent_activity.start_run("agent-a", "me@example.com",
+                                   agent_activity.SOURCE_MEETING)
+    assert sent == [("run_started", {"agent_id": "agent-a",
+                                     "user_email": "me@example.com",
+                                     "source": "meeting"})]
 
 
 async def test_a_run_that_was_not_written_is_not_announced(monkeypatch, sent):
