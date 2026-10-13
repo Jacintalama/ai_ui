@@ -64,7 +64,11 @@ def wired(monkeypatch):
     owui_user_id_for = AsyncMock(return_value="owui-owner-1")
     monkeypatch.setattr(agent_runner, "_owui_user_id_for", owui_user_id_for)
     monkeypatch.setattr(agent_runner, "mint_owui_token",
-                        lambda user_id, ttl_seconds=60: "minted-token")
+                        lambda user_id, ttl_seconds=60, session_stamp=None:
+                        "minted-token")
+    # No database here: a NULL stamp, which mints exactly what 0.11.x took.
+    monkeypatch.setattr(agent_runner, "session_stamp_for",
+                        AsyncMock(return_value=None), raising=False)
     # Decoy listed FIRST: a lookup that used position instead of matching
     # sched.agent_id would return the decoy, not the named agent.
     monkeypatch.setattr(agent_runner, "_list_agents",
@@ -177,7 +181,7 @@ async def test_it_runs_as_the_owner_not_anyone_else(wired, monkeypatch):
     else's mailbox and look completely correct."""
     user_ids = []
 
-    def spy_mint(user_id, ttl_seconds=60):
+    def spy_mint(user_id, ttl_seconds=60, session_stamp=None):
         user_ids.append(user_id)
         return f"token-{len(user_ids)}"
 
@@ -193,7 +197,7 @@ async def test_the_token_outlives_a_slow_tool_call(wired, monkeypatch):
     before the call to guarantee it covers the full timeout window."""
     ttls = []
 
-    def spy_mint(user_id, ttl_seconds=60):
+    def spy_mint(user_id, ttl_seconds=60, session_stamp=None):
         ttls.append(ttl_seconds)
         return f"token-{ttl_seconds}"
 
@@ -207,6 +211,27 @@ async def test_the_token_outlives_a_slow_tool_call(wired, monkeypatch):
     assert len(ttls) == 2
     assert ttls[0] >= agent_runner.HTTP_TIMEOUT_SECONDS, "listing token covers its own worst case"
     assert ttls[1] >= agent_runner.HTTP_TIMEOUT_SECONDS, "chat token covers the timeout"
+
+
+async def test_both_tokens_carry_the_owners_session_stamp(wired, monkeypatch):
+    """Open WebUI 0.12.0 rejects a token whose session_stamp differs from the
+    user's public.auth row, so a schedule owned by anyone created after the
+    upgrade would 401 on its very first call without this."""
+    stamp_for = AsyncMock(return_value="stamp-x")
+    monkeypatch.setattr(agent_runner, "session_stamp_for", stamp_for,
+                        raising=False)
+    stamps = []
+
+    def spy_mint(user_id, ttl_seconds=60, session_stamp=None):
+        stamps.append(session_stamp)
+        return "tok"
+
+    monkeypatch.setattr(agent_runner, "mint_owui_token", spy_mint)
+
+    await agent_runner.run_agent(_sched())
+
+    assert stamps == ["stamp-x", "stamp-x"]
+    stamp_for.assert_awaited_with("owui-owner-1")
 
 
 async def test_the_previous_result_is_carried_forward(wired):

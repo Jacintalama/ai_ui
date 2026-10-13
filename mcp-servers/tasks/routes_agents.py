@@ -37,7 +37,7 @@ from agent_runner import _owui_user_id_for
 from agent_templates import TEMPLATES
 from auth import AdminUser, CurrentUser, current_admin, current_user
 from db import session
-from owui_token import mint_owui_token
+from owui_token import mint_owui_token, session_stamp_for
 from routes_agent_turn import _agents_for, _pin_key, _turn_for, _write_pin
 
 logger = logging.getLogger(__name__)
@@ -214,7 +214,8 @@ async def seed_for_email(email: str) -> dict:
             # should still get seeded rather than being marked done here.
             return {"seeded": False, "created": 0}
 
-        token = mint_owui_token(user_id, SEED_TOKEN_TTL_SECONDS)
+        token = mint_owui_token(user_id, SEED_TOKEN_TTL_SECONDS,
+                                session_stamp=await session_stamp_for(user_id))
 
         created = 0
         for template in TEMPLATES:

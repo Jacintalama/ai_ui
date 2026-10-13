@@ -39,7 +39,7 @@ from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS,
 from agent_tools import execute_tool_call
 from db import session
 from models import BotState
-from owui_token import mint_owui_token
+from owui_token import mint_owui_token, session_stamp_for
 from routes_gateway import _require_internal
 
 logger = logging.getLogger(__name__)
@@ -166,7 +166,8 @@ async def _resolve_agent_row(user_email: str, agent_id: str
     if not owner:
         raise HTTPException(status_code=404,
                             detail="no account for that user")
-    token = mint_owui_token(owner, ttl_seconds=CHAT_TOKEN_TTL_SECONDS)
+    token = mint_owui_token(owner, ttl_seconds=CHAT_TOKEN_TTL_SECONDS,
+                            session_stamp=await session_stamp_for(owner))
     agents, truncated = await _list_agents(token)
     agent = next((a for a in agents
                   if isinstance(a, dict) and a.get("id") == agent_id), None)
@@ -660,7 +661,8 @@ async def _agents_for(user_email: str) -> list[dict]:
         owner = await _owui_user_id_for(user_email)
         if not owner:
             return []
-        token = mint_owui_token(owner, ttl_seconds=CHAT_TOKEN_TTL_SECONDS)
+        token = mint_owui_token(owner, ttl_seconds=CHAT_TOKEN_TTL_SECONDS,
+                                session_stamp=await session_stamp_for(owner))
         agents, truncated = await _list_agents(token)
         if truncated:
             return []
@@ -757,7 +759,8 @@ async def _answer_as_io(user_email: str, messages: list[dict]) -> str:
     owner = await _owui_user_id_for(user_email)
     if not owner:
         return IO_DOWN
-    token = mint_owui_token(owner, ttl_seconds=CHAT_TOKEN_TTL_SECONDS)
+    token = mint_owui_token(owner, ttl_seconds=CHAT_TOKEN_TTL_SECONDS,
+                            session_stamp=await session_stamp_for(owner))
     data = await _post_chat(
         {"model": IO_BASE_MODEL, "messages": messages, "stream": False},
         token, CHANNEL_HTTP_TIMEOUT_SECONDS)

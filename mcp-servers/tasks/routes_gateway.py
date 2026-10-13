@@ -36,7 +36,7 @@ import slack_api
 import telegram_api
 from db import session
 from models import GatewayBot, GatewayLink, GatewayPairingCode, GatewaySession
-from owui_token import mint_owui_token
+from owui_token import mint_owui_token, session_stamp_for
 
 log = logging.getLogger(__name__)
 
@@ -109,12 +109,17 @@ async def resolve(body: ResolveIn,
         )).scalar_one_or_none()
 
         if link:
+            # Its own session, not `s`: on Open WebUI 0.11.x the read fails
+            # (no such column), and failing inside this transaction would
+            # poison it for any write that came after.
+            stamp = await session_stamp_for(link.owui_user_id)
             return {
                 "linked": True,
                 "email": link.email,
                 "owui_user_id": link.owui_user_id,
                 "owui_token": mint_owui_token(
-                    link.owui_user_id, ttl_seconds=GATEWAY_TOKEN_TTL_SECONDS),
+                    link.owui_user_id, ttl_seconds=GATEWAY_TOKEN_TTL_SECONDS,
+                    session_stamp=stamp),
             }
 
         now = _now()

@@ -32,7 +32,7 @@ import agent_memory
 import agent_routing
 from agent_tools import (ToolOutcome, arguments_of, execute_tool_call,
                          is_write_call, is_write_tool)
-from owui_token import mint_owui_token
+from owui_token import mint_owui_token, session_stamp_for
 
 logger = logging.getLogger(__name__)
 
@@ -1037,12 +1037,17 @@ async def run_agent(sched) -> tuple[str, str, dict]:
                         "This schedule could not run: its owner has no account on "
                         "this platform any more.", {})
 
+            # Read once for both mints below: Open WebUI 0.12.0 rejects a
+            # token whose stamp differs from this user's public.auth row.
+            stamp = await session_stamp_for(owner)
+
             # Mint a token for the listing phase. Same lifetime as the chat mint
             # below, not the 60s this used to carry: the listing loop itself can
             # make up to 5 sequential 30s-timeout requests, a worst case longer
             # than 60s, and a token expiring mid-loop would surface as a wrong
             # "agent no longer exists" rather than the auth failure it actually is.
-            list_token = mint_owui_token(owner, ttl_seconds=CHAT_TOKEN_TTL_SECONDS)
+            list_token = mint_owui_token(owner, ttl_seconds=CHAT_TOKEN_TTL_SECONDS,
+                                         session_stamp=stamp)
             agents, truncated = await _list_agents(list_token)
             agent = next((a for a in agents
                           if isinstance(a, dict) and a.get("id") == sched.agent_id), None)
@@ -1080,7 +1085,8 @@ async def run_agent(sched) -> tuple[str, str, dict]:
             # HTTP_TIMEOUT_SECONDS each, plus tool time in between, or it expires
             # mid run, surfacing as the agent refusing rather than as an auth
             # error.
-            chat_token = mint_owui_token(owner, ttl_seconds=CHAT_TOKEN_TTL_SECONDS)
+            chat_token = mint_owui_token(owner, ttl_seconds=CHAT_TOKEN_TTL_SECONDS,
+                                         session_stamp=stamp)
 
             # The agent's own level is a ceiling over the schedule's tool_mode.
             # A schedule may narrow what its agent may do and may never widen it;
