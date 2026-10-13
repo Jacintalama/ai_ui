@@ -192,6 +192,11 @@ def page(browser, tmp_path):
         # load calls both of these.
         elif "/agents/activity" in url:
             body = {"activity": {}}
+        # The live feed the conversation list reads opens on every load as
+        # well. 204 tells an EventSource to stop for good, so it asks once.
+        elif "/agents/stream" in url:
+            r.fulfill(status=204, body="")
+            return
         # The memory counts poll is infrastructure for the same reason: it
         # runs on every render, so recording it would leave a GET in `sent`
         # before any test has clicked anything. Matched on the exact path and

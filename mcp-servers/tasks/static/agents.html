@@ -701,6 +701,36 @@
   .saved b { font-weight: 600; }
   .saved-what { color: var(--muted, #8b8b95); font-size: 12px; margin-top: 3px; }
 
+  /* The live feed on the conversation list: the office in miniature. A slow
+     pulse while an agent works, a 2px ring in its own colour while its answer
+     has just gone out, with a gap of page background between avatar and
+     ring. Only opacity and box-shadow move. */
+  #roster-list .roster-av { transition: opacity .3s ease, box-shadow .3s ease; }
+  #roster-list .roster-av[data-live="working"] {
+    animation: av-working 2s ease-in-out infinite;
+  }
+  #roster-list .roster-av[data-live="speaking"] {
+    box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--av-bg, var(--accent));
+  }
+  @keyframes av-working {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: .45; }
+  }
+  /* A line from the live feed: a meeting opened, one agent asked another.
+     Not from anybody, so centred and quiet like the room's own notes. */
+  .am.sys {
+    justify-content: center; text-align: center;
+    font-size: 12px; color: var(--muted);
+    padding: 2px 0; animation: note-in .35s ease-out both;
+  }
+  /* No pulse and no fade. The ring stays, because it is a state, not a
+     movement; working keeps a still, dimmer avatar. */
+  @media (prefers-reduced-motion: reduce) {
+    #roster-list .roster-av { transition: none; }
+    #roster-list .roster-av[data-live="working"] { animation: none; opacity: .7; }
+    .am.sys { animation: none; }
+  }
+
   /* One focus ring for everything a keyboard can reach (DESIGN.md: 2px
      periwinkle, 2px offset). Last in the sheet so it wins ties, and nothing
      above sets outline: none any more. The browser ring it replaces was
@@ -3078,7 +3108,8 @@
     window.__aiuiAgents = { load: load, render: render, state: state,
                             isAgent: isAgent, buildAgentBody: buildAgentBody,
                             openForm: openForm, duplicate: duplicate,
-                            avatarHue: avatarHue, ready: false };
+                            avatarHue: avatarHue, onScreen: onScreen,
+                            ready: false };
     // Seeding must finish before the list loads, so a first-time visitor's
     // brand new copies are in the very first render rather than needing a
     // reload to appear. Tool tiles are independent of both and load
@@ -3594,6 +3625,9 @@
         var av = text("span", "roster-av", (name || "?").charAt(0).toUpperCase());
         av.setAttribute("aria-hidden", "true");
         av.style.background = "hsl(" + hue + " 45% 32%)";
+        // The speaking ring is drawn in the avatar's own colour, which CSS
+        // cannot read off the background, so it is handed over as well.
+        av.style.setProperty("--av-bg", "hsl(" + hue + " 45% 32%)");
         b.appendChild(av);
       }
       var words = document.createElement("span");
@@ -3687,6 +3721,210 @@
                                   window.location.origin);
       });
     }
+  })();
+
+  // The live feed on the conversation list: the office in miniature.
+  //
+  // The same /api/tasks/agents/stream the office moves on. An avatar pulses
+  // while its agent works and rings while its answer has just gone out, and
+  // the open conversation gets a plain line when a meeting opens or one
+  // agent asks another. The lines are never saved: a reload shows only the
+  // stored conversation. One connection, and only while the page is on
+  // screen. Any failure here is silent; the page works without it.
+  (function () {
+    var list = document.getElementById("roster-list");
+    var thread = document.getElementById("agent-thread");
+    if (!list || typeof window.EventSource !== "function") return;
+
+    var EVENTS = ["run_started", "tool_started", "tool_finished",
+                  "run_finished", "speaking_started", "handoff",
+                  "meeting_started"];
+    //: id -> { working, since, speakUntil, timer }. Kept here, not on the
+    //: rows, because drawRoster() rebuilds the rows and would drop it.
+    var live = {};
+    var es = null;
+    var ready = false;
+
+    // The office's rule: about how long the answer takes to read, at
+    // least a second and a half and at most five.
+    function speakFor(chars) {
+      return Math.max(1500, Math.min(5000, (chars || 0) * 40));
+    }
+
+    // Only this person's own agents, the room, whatever a search narrowed
+    // the list to. Empty for anybody else, which is how an agent that is
+    // not on the list changes nothing.
+    function nameOf(id) {
+      var page = window.__aiuiAgents;
+      var st = page && page.state;
+      if (!id || !st || !st.agents) return "";
+      for (var i = 0; i < st.agents.length; i++) {
+        var m = st.agents[i];
+        if (m.id === id && (!st.me || m.user_id === st.me)) return m.name || m.id;
+      }
+      return "";
+    }
+
+    function stateOf(id) {
+      var s = live[id];
+      if (!s) return "";
+      if (s.speakUntil > Date.now()) return "speaking";
+      return s.working ? "working" : "";
+    }
+
+    function paint() {
+      var rows = list.querySelectorAll(".roster-row[data-agent-id]");
+      for (var i = 0; i < rows.length; i++) {
+        var av = rows[i].querySelector(".roster-av");
+        if (!av) continue;
+        var st = stateOf(rows[i].getAttribute("data-agent-id"));
+        if (st) {
+          if (av.getAttribute("data-live") !== st) av.setAttribute("data-live", st);
+        } else {
+          av.removeAttribute("data-live");
+        }
+      }
+    }
+
+    function entry(id) {
+      return live[id] || (live[id] = { working: false, since: 0,
+                                       speakUntil: 0, timer: null });
+    }
+
+    // The conversation open now: an agent's id, or "" for the room. The
+    // room hears every line; a private one only lines about its agent.
+    function concerns(ids) {
+      var field = document.getElementById("ap-agent");
+      var open = field ? field.value : "";
+      return !open || ids.indexOf(open) !== -1;
+    }
+
+    function say(words) {
+      if (!thread) return;
+      var atEnd = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 40;
+      var el = document.createElement("div");
+      el.className = "am sys";
+      el.textContent = words;
+      thread.appendChild(el);
+      if (atEnd) thread.scrollTop = thread.scrollHeight;
+    }
+
+    function apply(name, e) {
+      var id = e.agent_id;
+      if (name === "meeting_started") {
+        var ids = Array.isArray(e.participants) ? e.participants : [];
+        var names = [], known = [];
+        ids.forEach(function (p) {
+          var n = nameOf(p);
+          if (n) { names.push(n); known.push(p); }
+        });
+        if (names.length >= 2 && concerns(known)) say("Meeting: " + names.join(", "));
+        return;
+      }
+      if (name === "handoff") {
+        var to = e.target_agent_id;
+        var from = nameOf(id), target = nameOf(to);
+        if (from && target && id !== to && concerns([id, to])) {
+          say(from + " asked " + target);
+        }
+        return;
+      }
+      if (!nameOf(id)) return;
+      var s = entry(id);
+      if (name === "run_finished") {
+        s.working = false;
+      } else if (name === "speaking_started") {
+        var ms = speakFor(typeof e.chars === "number" ? e.chars : 0);
+        s.speakUntil = Date.now() + ms;
+        clearTimeout(s.timer);
+        s.timer = setTimeout(paint, ms + 30);
+      } else {
+        // A tool step says the run is going too, which covers a feed that
+        // connected after its run_started.
+        s.working = true;
+        s.since = Date.now();
+      }
+      paint();
+    }
+
+    function open() {
+      if (es) return;
+      try {
+        es = new EventSource("/api/tasks/agents/stream", { withCredentials: true });
+        EVENTS.forEach(function (name) {
+          es.addEventListener(name, function (ev) {
+            try {
+              var e = JSON.parse(ev.data);
+              if (e && typeof e.agent_id === "string") apply(name, e);
+            } catch (x) { /* one bad event is not worth the page */ }
+          });
+        });
+      } catch (x) { es = null; }
+    }
+
+    function close() {
+      if (!es) return;
+      try { es.close(); } catch (x) { /* already gone */ }
+      es = null;
+    }
+
+    // The page's own idea of on screen: the tab showing and no frame up to
+    // the top display:none. Asked again on every activity tick, so a hidden
+    // pane closes its feed even if no message says so.
+    function sync() {
+      if (!ready) return;
+      var page = window.__aiuiAgents;
+      var shown = page && typeof page.onScreen === "function" ? page.onScreen()
+                                                             : !document.hidden;
+      if (shown) open(); else close();
+    }
+
+    // The 5 second poll reads the same runs the feed reports, so it settles
+    // what the feed missed while it was closed: a run that finished while
+    // the pane was hidden stops pulsing, and one that started shows. A mark
+    // younger than a tick is left alone, because a poll answer already on
+    // its way can predate the run.
+    function settle() {
+      var slots = document.querySelectorAll("#my-agents [data-activity-for]");
+      for (var i = 0; i < slots.length; i++) {
+        var id = slots[i].getAttribute("data-activity-for");
+        var busy = slots[i].classList.contains("working");
+        var s = live[id];
+        if (busy && !(s && s.working)) {
+          s = entry(id);
+          s.working = true;
+          s.since = Date.now();
+        } else if (!busy && s && s.working && Date.now() - s.since > 10000) {
+          s.working = false;
+        }
+      }
+      paint();
+      sync();
+    }
+
+    // The names come from the loaded list, so the feed starts once the list
+    // has been drawn, and the rows it rebuilds get their state back.
+    document.body.addEventListener("aiui:cards-drawn", function () {
+      ready = true;
+      try { paint(); sync(); } catch (x) { /* decoration only */ }
+    });
+    document.body.addEventListener("aiui:activity-drawn", function () {
+      try { settle(); } catch (x) { /* decoration only */ }
+    });
+    document.addEventListener("visibilitychange", function () {
+      try { sync(); } catch (x) { /* decoration only */ }
+    });
+    window.addEventListener("message", function (ev) {
+      if (ev.origin !== window.location.origin) return;
+      if (ev.source !== window.parent) return;
+      if (!ev.data || typeof ev.data.aiuiFrameVisible !== "boolean") return;
+      try {
+        if (ev.data.aiuiFrameVisible) sync(); else close();
+      } catch (x) { /* decoration only */ }
+    });
+    setInterval(function () {
+      try { sync(); } catch (x) { /* decoration only */ }
+    }, 5000);
   })();
 
   // The office, on demand in the chat column.
