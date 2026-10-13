@@ -17,9 +17,16 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-#: Five moments, each one a thing that really happened. Nothing else is sent.
+#: Eight moments, each one a thing that really happened. Nothing else is sent.
+#: The first five come from a run (agent_activity); the last three from a
+#: chat round (routes_agent_chat): a bubble going out, and a meeting of more
+#: than one speaker opening and closing.
 EVENTS = frozenset({"run_started", "tool_started", "tool_finished",
-                    "handoff", "run_finished"})
+                    "handoff", "run_finished",
+                    "speaking_started", "meeting_started", "meeting_ended"})
+
+#: A meeting names at most this many people, so no caller can grow an event.
+MAX_PARTICIPANTS = 20
 
 #: Per open page. One that falls this far behind is dropped, not buffered:
 #: the box has 3.8GB, and the browser reconnects and re-reads anyway.
@@ -55,12 +62,16 @@ def unsubscribe(sub: Subscriber) -> None:
 
 def publish(event: str, *, agent_id: str | None, user_email: str | None,
             tool: str | None = None, target_agent_id: str | None = None,
-            status: str | None = None) -> None:
+            status: str | None = None, source: str | None = None,
+            participants: list | None = None,
+            chars: int | None = None) -> None:
     """Send one event to every open office of `user_email`. Never raises.
 
     No prose, by construction: there is no parameter for a question, an
-    answer or a tool's arguments, the same rule agent_step follows. The
-    owner routes the event and is never put in it.
+    answer or a tool's arguments, the same rule agent_step follows. A bubble
+    is described by its length (`chars`), never its words; a meeting by its
+    people's ids in turn order. The owner routes the event and is never put
+    in it.
     """
     try:
         if event not in EVENTS or not agent_id or not user_email:
@@ -73,6 +84,16 @@ def publish(event: str, *, agent_id: str | None, user_email: str | None,
             payload["target_agent_id"] = target_agent_id
         if status:
             payload["status"] = status
+        if source:
+            payload["source"] = str(source)
+        if participants:
+            payload["participants"] = [str(p) for p in participants
+                                       if p][:MAX_PARTICIPANTS]
+        if chars is not None:
+            try:
+                payload["chars"] = max(0, int(chars))
+            except (TypeError, ValueError):
+                pass
         for sub in list(_SUBS.get(user_email, ())):
             try:
                 sub.queue.put_nowait(payload)

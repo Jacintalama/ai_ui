@@ -6,7 +6,8 @@ import pytest
 
 import agent_events
 
-ALLOWED = {"event", "agent_id", "tool", "target_agent_id", "status", "at"}
+ALLOWED = {"event", "agent_id", "tool", "target_agent_id", "status", "at",
+           "source", "participants", "chars"}
 
 
 @pytest.fixture(autouse=True)
@@ -93,3 +94,40 @@ async def test_the_stream_says_hello_then_delivers_then_ends_when_dropped():
     with pytest.raises(StopAsyncIteration):
         await asyncio.wait_for(gen.__anext__(), 1)
     assert "me@example.com" not in agent_events._SUBS
+
+
+def test_the_chat_moments_are_events():
+    for name in ("speaking_started", "meeting_started", "meeting_ended"):
+        assert name in agent_events.EVENTS
+
+
+def test_speaking_carries_a_length_and_never_the_words():
+    sub = agent_events.subscribe("me@example.com")
+    agent_events.publish("speaking_started", agent_id="agent-a",
+                         user_email="me@example.com", chars=42)
+    payload = sub.queue.get_nowait()
+    assert payload["chars"] == 42
+    assert set(payload) <= ALLOWED
+
+
+def test_a_meeting_names_its_people_in_turn_order():
+    sub = agent_events.subscribe("me@example.com")
+    agent_events.publish("meeting_started", agent_id="agent-a",
+                         user_email="me@example.com",
+                         participants=["agent-a", "agent-m", "agent-d"])
+    assert sub.queue.get_nowait()["participants"] == ["agent-a", "agent-m",
+                                                      "agent-d"]
+
+
+def test_a_run_says_where_it_came_from():
+    sub = agent_events.subscribe("me@example.com")
+    agent_events.publish("run_started", agent_id="agent-a",
+                         user_email="me@example.com", source="meeting")
+    assert sub.queue.get_nowait()["source"] == "meeting"
+
+
+def test_a_bad_length_does_not_raise():
+    sub = agent_events.subscribe("me@example.com")
+    agent_events.publish("speaking_started", agent_id="agent-a",
+                         user_email="me@example.com", chars="many")
+    assert "chars" not in sub.queue.get_nowait()
