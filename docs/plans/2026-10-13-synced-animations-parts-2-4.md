@@ -620,4 +620,87 @@ other `tests/browser/test_agents*.py`.
 
 ## Baseline (Task 1, filled in when measured)
 
+Measured 2026-10-13 on the local stack, `python scripts/dev_sync_timing.py`,
+headless Chromium, fake model (1.5 s per answer). Two runs, numbers in ms.
+
+Code under test: the `aiui-dev-tasks-1` container (started 08:39:04 UTC,
+not restarted across the runs). Its `agent_events.py`, `agent_activity.py`,
+`routes_agent_chat.py`, `routes_agent_turn.py`, `agent_chat_render.py`,
+`static/office/js/office.js`, `static/office.html` and `static/agents.html`
+hash-match `e603d348d` (CRLF-normalised md5), and the served
+`/tasks/static/office/js/office.js` matches too. So this is the code before
+`9500be6ab` and `aac2258e5`, which landed in the repo while this was measured
+but were not in the running image.
+
+Where it was measured:
+- The office's own chat (`#deskchat` in `office.html`) cannot be used:
+  `office.html` loads `htmx.min.js` (2.0.4) without `vendor/sse.js`, so a
+  send there draws the question and the `.astream` block but never opens
+  `/tasks/agents/chat/stream`. Measured: 0 chat EventSources after a send, no
+  answer in 8 s, and the room session was left `streaming` until the stream
+  was opened by hand. That is a bug in its own right.
+- So: the conversation on the AI Agents page (`/ai-agents` -> frame
+  `/tasks/agents`), and the office it docks (`#office-body iframe`,
+  name `aiui-office`, `/tasks/office?embed=1`), a same-origin child of that
+  frame. One MutationObserver callback installed in the agents frame watches
+  both documents, and every timestamp is the agents frame's
+  `performance.now()`: one clock, no cross-frame offset.
+
+Selectors (verified against `agent_chat_render.agent_bubble`, office.js
+`slotInner`/`patchSlot`/`syncRooms`, and the live DOM):
+- bubble: an added `.am.agent` inside `#agent-thread`, name from `.awho`.
+  htmx lands one out-of-band answer in two mutation records, so each element
+  is counted once.
+- mouth: `.who[data-speaking]` in the office document (`data-id` = agent id,
+  name from the slot's `.card-name`), by a scan after every mutation batch,
+  which also catches a rebuilt node; the attribute changes were also logged
+  and matched (one on, one off per run).
+- meeting room: `.zone[data-room="meeting"]`; a robot is "in" it when the
+  centre of its `.who` box is inside the zone's box (robots are in
+  `#agents-layer`, not inside the zone). Also logged: `#rooms[data-meeting]`.
+- run events: a second EventSource on `/api/tasks/agents/stream` from the
+  probe, same clock.
+
+Scene a, "Ada, hello" (in the room):
+
+| | run 1 | run 2 |
+|---|---|---|
+| send to bubble | 1765 | 1821 |
+| send to mouth_on | 234 | 276 |
+| mouth_on - bubble | -1530 | -1545 |
+| mouth_off - bubble | +6 | +7 |
+| in the meeting room at the bubble | Ada, Mia, Dev (`data-meeting=3`) | Ada, Mia, Dev (`data-meeting=3`) |
+
+Scene b, "everyone answer: hello":
+
+| | run 1 | run 2 |
+|---|---|---|
+| first bubble (Ada) after send | 1885 | 1910 |
+| robots in the meeting room at the first bubble | 0 (`data-meeting=""`) | 0 (`data-meeting=""`) |
+| most in the meeting room at any bubble | 2 (Mia, Dev) | 2 (Mia, Dev) |
+| mouth_on order | Ada 328, Mia 1957, Dev 3576 | Ada 363, Mia 2018, Dev 3682 |
+| bubble order | Ada 1885, Mia 3499, Dev 5118 | Ada 1910, Mia 3579, Dev 5293 |
+| mouth_on order == bubble order | yes | yes |
+| mouth_on - bubble (Ada, Mia, Dev) | -1556, -1542, -1542 | -1547, -1561, -1611 |
+| mouth_off - bubble (Ada, Mia, Dev) | +5, +5, +5 | +5, +8, +7 |
+
+A third run, after a cosmetic change to the probe's log, gave the same
+shape: a -1550/+6; b -1563/-1545/-1540 and +5/+7/+7, 0 then 2 in the room.
+
+What this shows:
+1. The mouth opens about 1.55 s before the bubble (the whole model call)
+   and closes within 10 ms after it, as expected.
+2. The meeting room is driven by a STALE source, not by the meeting.
+   Baseline `run_started` carries no `source` (the probe's feed read
+   `source=None` on every event), and office.js `applyEvent` keeps
+   `a.source` from the last `/agents/activity` read. So:
+   - a one-to-one "Ada, hello" put all three robots in the meeting room
+     ("3 AGENTS IN A MEETING", screenshot `dev/out/sync-one-first-bubble.png`),
+     because their last recorded runs were meetings;
+   - in the real meeting, Ada (last read as `channel`) never went to the room,
+     and Mia and Dev walked in when Mia started, as soon as any `meeting` row
+     was working. Not "one robot at a time": zero, then two.
+3. Answers in a meeting are strictly sequential (about 1.6 s each), and each
+   mouth starts only when that agent's run starts, so the order matches.
+
 ## After (Task 8, filled in when measured)
