@@ -61,7 +61,7 @@ services:
   open-webui:
     # Must match production exactly: openwebui-overrides/index.html hardcodes
     # this version's asset hashes.
-    image: ghcr.io/open-webui/open-webui:v0.11.4
+    image: ghcr.io/open-webui/open-webui:v0.12.0
     depends_on:
       postgres:
         condition: service_healthy
