@@ -410,3 +410,146 @@ def test_a_robot_walks_first_and_speaks_on_arrival(iris_answers_in_a_meeting, pa
     assert slot.locator(".who").get_attribute("data-speaking") == "1"
     page.wait_for_timeout(1000)
     assert slot.locator(".who").get_attribute("data-speaking") is None
+
+
+# --- a meeting, from the round itself -----------------------------------------
+# Measured on the local stack 2026-10-13: in a real meeting 0 robots were in
+# the meeting room when the first answer landed, because the room was drawn
+# from each run's source and the next speaker's run had not started yet.
+# The round now says when it opens, who is in it, and when it closes.
+
+def _in_meeting_room(page, agent_id):
+    return page.evaluate(
+        "id => { const r = document.querySelector('.zone[data-room=\"meeting\"]')"
+        "  .getBoundingClientRect();"
+        " const e = document.querySelector('.who-slot[data-id=\"' + id + '\"]');"
+        " if (!e) return false; const x = e.getBoundingClientRect();"
+        " return x.left >= r.left - 2 && x.right <= r.right + 2"
+        "   && x.top >= r.top - 2 && x.bottom <= r.bottom + 2; }", agent_id)
+
+
+def _meeting_count(page):
+    return page.locator("#rooms").get_attribute("data-meeting")
+
+
+def _settled(page, timeout=6000):
+    """`walking` comes off a slot when its walk really ends, so no slot
+    walking is the floor's own word that everybody has arrived."""
+    page.wait_for_function(
+        "() => !document.querySelector('.who-slot.walking')", timeout=timeout)
+    page.wait_for_timeout(50)
+
+
+@pytest.fixture
+def a_meeting_opens():
+    STREAM["body"] = _sse({"event": "meeting_started", "agent_id": ADA,
+                           "participants": [ADA, IRIS], "at": _now()})
+    yield
+    STREAM["body"] = _sse()
+
+
+def test_a_meeting_gathers_everybody_at_once(a_meeting_opens, page):
+    """Nobody's run has started, and both are in the room: the round says
+    who is in it, so nobody waits for their turn to walk in."""
+    page.wait_for_function(
+        "() => document.getElementById('rooms').getAttribute('data-meeting') === '2'",
+        timeout=3000)
+    _settled(page)
+    assert _in_meeting_room(page, ADA)
+    assert _in_meeting_room(page, IRIS)
+
+
+@pytest.fixture
+def a_meeting_opens_and_closes():
+    STREAM["body"] = _sse(
+        {"event": "meeting_started", "agent_id": ADA,
+         "participants": [ADA, IRIS], "at": _now()},
+        {"event": "meeting_ended", "agent_id": IRIS, "at": _now()})
+    yield
+    STREAM["body"] = _sse()
+
+
+def test_a_meeting_lingers_then_breaks_up_together(a_meeting_opens_and_closes, page):
+    """They stay a moment after the round (the last answer is still being
+    said), then all walk back at once."""
+    page.wait_for_function(
+        "() => document.getElementById('rooms').getAttribute('data-meeting') === '2'",
+        timeout=3000)
+    page.wait_for_timeout(2000)
+    assert _meeting_count(page) == "2"
+    _settled(page)
+    assert _in_meeting_room(page, ADA) and _in_meeting_room(page, IRIS)
+    page.wait_for_function(
+        "() => document.getElementById('rooms').getAttribute('data-meeting') === ''",
+        timeout=4000)
+    _settled(page)
+    assert not _in_meeting_room(page, ADA)
+    assert not _in_meeting_room(page, IRIS)
+
+
+#: Whether Iris was ever standing in the meeting room, checked on every
+#: change to the floor from the first paint, so a visit cannot be missed by
+#: looking too late.
+WATCH_IRIS_IN_MEETING = """
+window.__irisMet = false;
+document.addEventListener('DOMContentLoaded', function () {
+  new MutationObserver(function () {
+    var z = document.querySelector('.zone[data-room="meeting"]');
+    var e = document.querySelector('.who-slot[data-id="%s"]');
+    if (!z || !e || e.classList.contains('walking')) return;
+    var r = z.getBoundingClientRect(), x = e.getBoundingClientRect();
+    if (x.left >= r.left - 2 && x.right <= r.right + 2 &&
+        x.top >= r.top - 2 && x.bottom <= r.bottom + 2) window.__irisMet = true;
+  }).observe(document.body, {subtree: true, attributes: true, childList: true});
+});
+""" % IRIS
+
+
+@pytest.fixture
+def a_meeting_without_iris():
+    """Iris's run says `meeting`, but the round that is on did not name her.
+    The round is the truth about who is in it."""
+    STREAM["body"] = _sse(
+        {"event": "meeting_started", "agent_id": ADA,
+         "participants": [ADA], "at": _now()},
+        {"event": "run_started", "agent_id": IRIS, "source": "meeting",
+         "at": _now()})
+    yield
+    STREAM["body"] = _sse()
+
+
+@pytest.mark.parametrize("page", [{"init": WATCH_IRIS_IN_MEETING}], indirect=True)
+def test_an_agent_not_in_the_round_never_enters_the_room(a_meeting_without_iris, page):
+    page.wait_for_function(
+        "() => document.getElementById('rooms').getAttribute('data-meeting') === '1'",
+        timeout=3000)
+    _settled(page)
+    assert _in_meeting_room(page, ADA)
+    assert not _in_meeting_room(page, IRIS)
+    assert page.evaluate("() => window.__irisMet") is False
+
+
+@pytest.fixture
+def the_round_closes():
+    STREAM["body"] = _sse({"event": "meeting_ended", "agent_id": IRIS,
+                           "at": _now()})
+    yield
+    STREAM["body"] = _sse()
+
+
+@pytest.mark.parametrize("page", [{"activity": {
+    ADA: {"state": "ready", "last_status": "completed",
+          "last_run_at": _now(), "source": "meeting"},
+    IRIS: {"state": "working", "running_for_seconds": 2,
+           "last_run_at": _now(), "source": "meeting"}}}], indirect=True)
+def test_a_page_opened_mid_meeting_still_breaks_up_on_the_round(
+        the_round_closes, page):
+    """It never heard meeting_started, so the sources put them in the room.
+    meeting_ended still closes it, rather than the 90 second guess."""
+    assert _meeting_count(page) == "2"
+    page.wait_for_function(
+        "() => document.getElementById('rooms').getAttribute('data-meeting') === ''",
+        timeout=6000)
+    _settled(page)
+    assert not _in_meeting_room(page, ADA)
+    assert not _in_meeting_room(page, IRIS)

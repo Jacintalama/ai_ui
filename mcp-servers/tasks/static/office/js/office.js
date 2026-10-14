@@ -668,7 +668,22 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     return !!newest && (Date.now() - newest) / 1000 <= MEETING_SECONDS;
   }
 
+  //: How long the room stays together after the round closes, so the last
+  //: answer is finished where it was said before everybody walks back.
+  var MEETING_LINGER_MS = 4000;
+
+  //: The round itself says who is in it: meeting_started names everybody
+  //: at once, in speaking order, and meeting_ended closes it. From the first
+  //: of those this page hears, that wins. The source rule below, with its
+  //: MEETING_SECONDS guess, is only for a page that opened mid-meeting and
+  //: has heard neither (measured 2026-10-13: driven by sources, 0 robots
+  //: were in the room at the first answer, and a private chat drew 3).
   function inMeeting(id) {
+    var m = S.MEETING;
+    if (m) {
+      if (m.ended && Date.now() - m.ended > MEETING_LINGER_MS) return false;
+      return m.ids.indexOf(id) !== -1;
+    }
     var a = S.ACTIVITY[id];
     if (!a || a.source !== "meeting") return false;
     // Still recorded, still in the room: the source is the run's own, so
@@ -1516,6 +1531,19 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       // Only a length (`chars`), never the words. The clock starts in
       // startSpeaking, once the robot is standing still.
       S.SPEAKING[e.agent_id] = { ms: speakFor(e.chars), heard: Date.now(), until: 0 };
+    } else if (e.event === "meeting_started") {
+      S.MEETING = { ids: (e.participants || []).slice(), ended: null };
+    } else if (e.event === "meeting_ended") {
+      // A page that opened mid-round never heard who was in it: whoever the
+      // source rule has in the room is, and they leave together too.
+      if (!S.MEETING) {
+        S.MEETING = { ids: S.AGENTS.map(function (m) { return m.id; })
+          .filter(inMeeting), ended: null };
+      }
+      if (!S.MEETING.ended) {
+        S.MEETING.ended = Date.now();
+        setTimeout(draw, MEETING_LINGER_MS + 30);
+      }
     }
   }
 
@@ -1544,7 +1572,8 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   //: the token cookie, which the gateway accepts; a 401 closes it for good
   //: and the poll carries on alone.
   var LIVE_EVENTS = ["run_started", "tool_started", "tool_finished",
-                     "handoff", "run_finished", "speaking_started"];
+                     "handoff", "run_finished", "speaking_started",
+                     "meeting_started", "meeting_ended"];
   function connectLive() {
     if (typeof window.EventSource !== "function") return;
     var es;

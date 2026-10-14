@@ -30,6 +30,10 @@ export const S = {
   //: { ms, heard, until }. `until` stays 0 while the robot is still on its
   //: way somewhere, and the mouth's time starts when it arrives.
   SPEAKING: {},
+  //: The round the stream last told us about: { ids, ended }. null until
+  //: meeting_started or meeting_ended arrives; from then on it, not each
+  //: run's source, says who is in the meeting room.
+  MEETING: null,
   //: What the team still has to do, from tasks.items.
   TODO: { open: [], done: [] },
 };
