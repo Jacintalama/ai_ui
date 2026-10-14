@@ -5,6 +5,7 @@ page's own EventSource parses it: this exercises the wiring the browser
 really uses, not a hook that bypasses it. Spec:
 docs/superpowers/specs/2026-09-29-live-agent-office-design.md
 """
+import datetime
 import http.server
 import json
 import pathlib
@@ -29,6 +30,7 @@ AGENTS = [
      "params": {}, "user_id": "me", "created_at": 2, "updated_at": 2},
 ]
 IRIS = "agent-iris-a103"
+ADA = "agent-research-assistant-0001"
 
 
 def _sse(*events, retry=60000):
@@ -71,6 +73,16 @@ def _serve(html: bytes):
                     return
                 body = asset.read_bytes()
                 kind = "text/css" if rel.endswith(".css") else "text/javascript"
+            elif path.startswith("/tasks/agents/chat/"):
+                # The side column's conversation. Answered with the page
+                # itself, htmx put a whole office inside the office on every
+                # load: 40 copies of #rooms by the end of one test, measured
+                # 2026-10-14. test_office_page.py answers it the same way.
+                body, kind = b'<div class="aempty">nothing yet</div>', "text/html"
+                if path.endswith("/stream"):
+                    self.send_response(204)
+                    self.end_headers()
+                    return
             elif path.endswith("/agent-chat.css") or path.endswith("/htmx.min.js"):
                 rel = path.rsplit("/", 1)[1]
                 asset = (STATIC / rel if (STATIC / rel).is_file()
@@ -96,9 +108,9 @@ def _serve(html: bytes):
 
 @pytest.fixture
 def page(browser, request):
-    SERVED["activity"] = {}
-    HITS["activity"] = 0
     opts = getattr(request, "param", {})
+    SERVED["activity"] = opts.get("activity", {})
+    HITS["activity"] = 0
     srv = _serve((STATIC / "office.html").read_bytes())
     pg = browser.new_page(viewport={"width": 1500, "height": 1000})
     pg.set_default_timeout(6000)
@@ -106,6 +118,8 @@ def page(browser, request):
         pg.add_init_script("delete window.EventSource;")
     if opts.get("clock"):
         pg.clock.install()
+    if opts.get("init"):
+        pg.add_init_script(opts["init"])
 
     def route(r):
         url = r.request.url
@@ -265,3 +279,134 @@ def test_the_poll_writes_to_the_log_too(page):
     page.wait_for_timeout(300)
     again = page.locator("#live li").all_inner_texts()
     assert sum("is working from channel" in ln for ln in again) == 1, again
+
+
+# --- the mouth and the dots --------------------------------------------------
+# Measured on the local stack 2026-10-13: the mouth opened about 1.55 s
+# BEFORE the answer appeared in the chat and closed within 10 ms of it,
+# because it was drawn from the run working and agent turns are not
+# streamed. The dots are the thinking; the mouth is the answer landing,
+# which the server now says with speaking_started.
+
+def _now():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+@pytest.fixture
+def iris_answers():
+    STREAM["body"] = _sse(
+        {"event": "run_started", "agent_id": IRIS, "source": "channel",
+         "at": "2026-09-30T10:00:00+00:00"},
+        {"event": "run_finished", "agent_id": IRIS, "status": "ok",
+         "at": "2026-09-30T10:00:01+00:00"},
+        {"event": "speaking_started", "agent_id": IRIS, "chars": 40,
+         "at": "2026-09-30T10:00:01+00:00"})
+    yield
+    STREAM["body"] = _sse()
+
+
+def test_the_mouth_moves_with_the_answer_and_then_stops(iris_answers, page):
+    who = page.locator('.who[data-id="%s"]' % IRIS)
+    page.locator('.who[data-id="%s"][data-speaking="1"]' % IRIS).wait_for(timeout=3000)
+    assert who.locator(".bot-mouth").evaluate(
+        "el => getComputedStyle(el).animationName") == "talk"
+    # The run is over, so nothing is being thought about.
+    assert who.get_attribute("data-typing") is None
+    assert who.locator(".talk-dots").count() == 0
+    # 40 chars = 1600 ms; gone by 2500 ms.
+    page.wait_for_timeout(2500)
+    assert who.get_attribute("data-speaking") is None
+
+
+@pytest.fixture
+def iris_thinks():
+    STREAM["body"] = _sse({"event": "run_started", "agent_id": IRIS,
+                           "source": "channel", "at": "2026-09-30T10:00:00+00:00"})
+    yield
+    STREAM["body"] = _sse()
+
+
+def test_thinking_shows_dots_but_no_mouth(iris_thinks, page):
+    page.locator('.who[data-id="%s"][data-typing="1"]' % IRIS).wait_for(timeout=3000)
+    assert page.locator('.who[data-id="%s"] .talk-dots' % IRIS).count() == 1
+    assert page.locator('.who[data-id="%s"]' % IRIS).get_attribute("data-speaking") is None
+
+
+def test_the_source_on_run_started_needs_no_poll(iris_thinks, page):
+    """The poll answers {} here, so the only place "channel" can come from
+    is the event itself. Before, run_started carried no source and the
+    robot kept whatever the last poll said, which is how a private chat drew
+    three agents in a meeting."""
+    typing = page.locator('.who[data-id="%s"][data-typing="1"]' % IRIS)
+    typing.wait_for(timeout=3000)
+    # Long after hello's re-read has answered "no activity".
+    page.wait_for_timeout(1000)
+    assert HITS["activity"] >= 2, HITS
+    assert typing.count() == 1
+
+
+@pytest.fixture
+def iris_was_in_a_meeting_now_chats():
+    STREAM["body"] = _sse({"event": "run_started", "agent_id": IRIS,
+                           "source": "channel", "at": _now()})
+    yield
+    STREAM["body"] = _sse()
+
+
+@pytest.mark.parametrize("page", [{"activity": {IRIS: {
+    "state": "ready", "last_status": "completed",
+    "last_run_at": _now(), "source": "meeting"}}}], indirect=True)
+def test_a_new_run_replaces_the_source_the_poll_last_saw(
+        iris_was_in_a_meeting_now_chats, page):
+    page.locator('.who[data-id="%s"][data-typing="1"]' % IRIS).wait_for(timeout=3000)
+    page.wait_for_function(
+        "() => !document.querySelector('.who-slot.walking')", timeout=6000)
+    assert page.locator("#rooms").get_attribute("data-meeting") == ""
+
+
+#: Watches every change on the floor from the first paint, so the test
+#: cannot miss the walk by starting to look after it began. Records whether
+#: Iris ever walked, and whether any robot's mouth was on while its slot was
+#: still walking.
+WATCH_WALK = """
+window.__walked = false; window.__spokeWalking = false;
+document.addEventListener('DOMContentLoaded', function () {
+  new MutationObserver(function () {
+    if (document.querySelector('.who-slot.walking[data-id="%s"]')) window.__walked = true;
+    if (document.querySelector('.who-slot.walking .who[data-speaking="1"]'))
+      window.__spokeWalking = true;
+  }).observe(document.body, {subtree: true, attributes: true, childList: true,
+                             attributeFilter: ['class', 'data-speaking']});
+});
+""" % IRIS
+
+
+@pytest.fixture
+def iris_answers_in_a_meeting():
+    """The order the server really sends: the run, its end, and then the
+    bubble. A meeting run moves Iris to the meeting room, so the answer lands
+    while she is still on her way there."""
+    STREAM["body"] = _sse(
+        {"event": "run_started", "agent_id": IRIS, "source": "meeting",
+         "at": _now()},
+        {"event": "run_finished", "agent_id": IRIS, "status": "ok",
+         "at": _now()},
+        {"event": "speaking_started", "agent_id": IRIS, "chars": 40,
+         "at": _now()})
+    yield
+    STREAM["body"] = _sse()
+
+
+@pytest.mark.parametrize("page", [{"init": WATCH_WALK}], indirect=True)
+def test_a_robot_walks_first_and_speaks_on_arrival(iris_answers_in_a_meeting, page):
+    slot = page.locator('.who-slot[data-id="%s"]' % IRIS)
+    page.locator('.who[data-id="%s"][data-speaking="1"]' % IRIS).wait_for(timeout=5000)
+    assert "walking" not in (slot.get_attribute("class") or "")
+    got = page.evaluate("() => ({ walked: window.__walked,"
+                        " spokeWalking: window.__spokeWalking })")
+    assert got == {"walked": True, "spokeWalking": False}, got
+    # The full time, counted from the arrival rather than the event.
+    page.wait_for_timeout(1200)
+    assert slot.locator(".who").get_attribute("data-speaking") == "1"
+    page.wait_for_timeout(1000)
+    assert slot.locator(".who").get_attribute("data-speaking") is None

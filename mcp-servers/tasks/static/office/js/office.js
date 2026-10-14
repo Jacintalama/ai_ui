@@ -434,6 +434,10 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     el.classList.add("arrived");
     clearTimeout(el._settle);
     el._settle = setTimeout(function () { el.classList.remove("arrived"); }, SETTLE_MS);
+    // An answer that landed while this robot was walking has been waiting
+    // for exactly this moment (startSpeaking).
+    var s = S.SPEAKING[el.getAttribute("data-id")];
+    if (s && !s.until) draw();
   }
 
   function watchArrival(el) {
@@ -488,13 +492,41 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   //: Answering somebody, as opposed to running a schedule in silence. A run
   //: started from a conversation records where it came from
   //: (agent_activity SOURCE_MEETING, SOURCE_CHANNEL, SOURCE_COLLEAGUE), and
-  //: that row is the only thing the moving mouth and the dots are drawn
-  //: from. The thread beside the floor says "is working..." from the same
-  //: row, so the two start and stop together.
+  //: that row is the only thing the dots are drawn from. The thread beside
+  //: the floor says "is working..." from the same row, so the two start and
+  //: stop together. This is the THINKING.
   var SPEAKING_SOURCES = { meeting: 1, channel: 1, colleague: 1 };
-  function speaking(id) {
+  function typing(id) {
     var a = S.ACTIVITY[id];
     return !!(a && a.state === "working" && SPEAKING_SOURCES[a.source]);
+  }
+
+  //: Speaking is the BUBBLE, not the thinking. Agent turns are not
+  //: streamed: the whole answer lands in the chat at once, after the run
+  //: has finished, and the server says so with speaking_started. The mouth
+  //: runs for a time that grows with the answer. Drawing it from the run
+  //: working (as before) opened it 1.55 s before the bubble and shut it as
+  //: the bubble appeared, measured 2026-10-13.
+  var SPEAK_MIN_MS = 1500, SPEAK_MAX_MS = 5000, SPEAK_MS_PER_CHAR = 40;
+  function speakFor(chars) {
+    return Math.max(SPEAK_MIN_MS, Math.min(SPEAK_MAX_MS, (chars || 0) * SPEAK_MS_PER_CHAR));
+  }
+  function speaking(id) {
+    var s = S.SPEAKING[id];
+    return !!(s && s.until && s.until > Date.now());
+  }
+
+  //: Walk first, then talk. The mouth's time starts when the robot is
+  //: standing still: now, or at the end of the walk it is on, which
+  //: arrive() hands back here through a draw. No second clock: the walk's
+  //: own end is the start. An answer that waited longer than any walk can
+  //: take (the floor was on the other tab) is not played late.
+  function startSpeaking(id) {
+    var s = S.SPEAKING[id];
+    if (!s || s.until) return;
+    if (Date.now() - s.heard > 2 * WALK_MAX) { delete S.SPEAKING[id]; return; }
+    s.until = Date.now() + s.ms;
+    setTimeout(draw, s.ms + 30);
   }
 
   //: Each robot a little out of step with the next. Decoration, so it may
@@ -526,6 +558,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     var st = stateOf(m.id), c = colourOf(m.id);
     return '<div class="desk"></div>' +
       '<button class="who" data-id="' + esc(m.id) + '" data-state="' + st.key + '"' +
+      (typing(m.id) ? ' data-typing="1"' : "") +
       (speaking(m.id) ? ' data-speaking="1"' : "") +
       (S.SELECTED === m.id ? ' aria-current="true"' : "") +
       // No background: the robot IS the avatar now. The colour stays as the
@@ -534,7 +567,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       ' title="' + esc(st.label) + '">' +
       robot(m.id, st.key) +
       '<i class="dot ' + st.key + '"></i>' +
-      (speaking(m.id) ? DOTS : "") +
+      (typing(m.id) ? DOTS : "") +
       (st.key === "working" && S.TOOL_NOW[m.id]
         ? '<span class="tool-now">' + esc(S.TOOL_NOW[m.id]) + '</span>' : "") +
       '<span class="who-label"><span class="card-name">' + esc(m.name || m.id) +
@@ -573,13 +606,20 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       var dot = who.querySelector(".dot");
       if (dot) dot.className = "dot " + st.key;
     }
-    var talking = speaking(m.id), dots = who.querySelector(".talk-dots");
-    if (talking && !dots) {
-      who.setAttribute("data-speaking", "1");
+    // The dots and the mouth are two things now, each on its own: the dots
+    // while the answer is being thought about, the mouth once it has landed.
+    var thinking = typing(m.id), dots = who.querySelector(".talk-dots");
+    if (thinking && !dots) {
+      who.setAttribute("data-typing", "1");
       who.querySelector(".dot").insertAdjacentHTML("afterend", DOTS);
-    } else if (!talking && dots) {
-      who.removeAttribute("data-speaking");
+    } else if (!thinking && dots) {
+      who.removeAttribute("data-typing");
       dots.remove();
+    }
+    var talking = speaking(m.id);
+    if (talking !== (who.getAttribute("data-speaking") === "1")) {
+      if (talking) who.setAttribute("data-speaking", "1");
+      else who.removeAttribute("data-speaking");
     }
     if ((S.SELECTED === m.id) !== (who.getAttribute("aria-current") === "true")) {
       if (S.SELECTED === m.id) who.setAttribute("aria-current", "true");
@@ -658,6 +698,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
         // Placed before it is in the document, so it does not animate in
         // from the corner the first time it is drawn.
         placeSlot(el, slot);
+        startSpeaking(id);
         el.innerHTML = slotInner(m);
         el.setAttribute("data-sig", slotStructure(m));
         watchArrival(el);
@@ -665,6 +706,8 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
         return;
       }
       placeSlot(el, slot);
+      // On its way somewhere: arrive() starts the mouth when it gets there.
+      if (!el.classList.contains("walking")) startSpeaking(id);
       var sig = slotStructure(m);
       if (el.getAttribute("data-sig") !== sig) {
         el.innerHTML = slotInner(m);
@@ -1445,8 +1488,11 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     var a = S.ACTIVITY[e.agent_id] || {};
     if (e.event === "run_started") {
       var since = a.state === "working" && a._since != null ? a._since : Date.now();
+      // The run's own source when the event carries it. Keeping the one
+      // the last poll saw drew a private chat as "3 agents in a meeting".
       S.ACTIVITY[e.agent_id] = Object.assign({}, a, { state: "working",
-        running_for_seconds: 0, _since: since, last_run_at: e.at });
+        running_for_seconds: 0, _since: since, last_run_at: e.at },
+        e.source ? { source: e.source } : {});
     } else if (e.event === "tool_started") {
       S.TOOL_NOW[e.agent_id] = e.tool;
     } else if (e.event === "tool_finished") {
@@ -1466,6 +1512,10 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       delete next.running_for_seconds;
       delete next._since;
       S.ACTIVITY[e.agent_id] = next;
+    } else if (e.event === "speaking_started") {
+      // Only a length (`chars`), never the words. The clock starts in
+      // startSpeaking, once the robot is standing still.
+      S.SPEAKING[e.agent_id] = { ms: speakFor(e.chars), heard: Date.now(), until: 0 };
     }
   }
 
@@ -1494,7 +1544,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   //: the token cookie, which the gateway accepts; a 401 closes it for good
   //: and the poll carries on alone.
   var LIVE_EVENTS = ["run_started", "tool_started", "tool_finished",
-                     "handoff", "run_finished"];
+                     "handoff", "run_finished", "speaking_started"];
   function connectLive() {
     if (typeof window.EventSource !== "function") return;
     var es;

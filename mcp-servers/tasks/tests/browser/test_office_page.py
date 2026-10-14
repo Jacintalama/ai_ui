@@ -2004,15 +2004,23 @@ def test_a_change_of_state_changes_the_face_not_the_figure(page):
     assert got == {"state": "ready", "same": True, "smile": True, "dot": "dot ready"}, got
 
 
-def test_a_robot_answering_a_conversation_is_speaking(page):
-    """Ada is working from a channel in the default fixture: her mouth moves
-    and the dots are over her shoulder. Iris, idle, says nothing."""
+def test_a_robot_answering_a_conversation_is_typing(page):
+    """Ada is working from a channel in the default fixture: the dots are
+    over her shoulder. Iris, idle, says nothing.
+
+    This used to pin her MOUTH moving while she worked. Agent turns are not
+    streamed, so that drew the mouth for the whole model call and stopped it
+    the moment the answer appeared (measured 2026-10-13: on 1.55 s before the
+    bubble, off 6 ms after it). Working is the thinking, which is the dots;
+    the mouth now waits for speaking_started (test_office_live.py)."""
     ada = page.locator('.who[data-id="agent-research-assistant-0001"]')
-    assert ada.get_attribute("data-speaking") == "1"
+    assert ada.get_attribute("data-typing") == "1"
     assert ada.locator(".talk-dots").count() == 1
+    assert ada.get_attribute("data-speaking") is None
     assert ada.locator(".bot-mouth").evaluate(
-        "el => getComputedStyle(el).animationName") == "talk"
+        "el => getComputedStyle(el).animationName") == "none"
     iris = page.locator('.who[data-id="agent-iris-a103"]')
+    assert iris.get_attribute("data-typing") is None
     assert iris.get_attribute("data-speaking") is None
     assert iris.locator(".talk-dots").count() == 0
 

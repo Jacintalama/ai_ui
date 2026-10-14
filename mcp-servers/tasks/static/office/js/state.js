@@ -26,6 +26,10 @@ export const S = {
   AT: {},
   //: The tool each agent started and has not finished, for its badge.
   TOOL_NOW: {},
+  //: Whose answer has just landed in the chat, from speaking_started:
+  //: { ms, heard, until }. `until` stays 0 while the robot is still on its
+  //: way somewhere, and the mouth's time starts when it arrives.
+  SPEAKING: {},
   //: What the team still has to do, from tasks.items.
   TODO: { open: [], done: [] },
 };

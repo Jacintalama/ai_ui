@@ -23,11 +23,12 @@
 }
 
 /* --- answering somebody ----------------------------------------------------
-   `data-speaking` is put on a robot by office.js while its run is working
-   AND that run was started by a conversation (source meeting, channel or
-   colleague, from tasks.agent_run). A schedule runs in silence. So the
-   mouth moving here and "Ada is working..." in the thread beside the floor
-   are two views of the same recorded row, and they start and stop together. */
+   `data-speaking` is put on a robot by office.js when the server says its
+   answer has landed in the chat (speaking_started), for a time that grows
+   with the answer, starting once the robot has stopped walking. Agent turns
+   are not streamed, so the answer appears all at once AFTER the run; a mouth
+   drawn from the run working moved through the thinking and stopped as the
+   words appeared. The thinking is the dots below. */
 .who[data-speaking="1"] .bot-mouth {
   transform-box: fill-box; transform-origin: center;
   animation: talk .32s ease-in-out infinite alternate;
@@ -35,7 +36,11 @@
 @keyframes talk { from { transform: scaleY(1); } to { transform: scaleY(2.4); } }
 
 /* Three dots over the shoulder, the universal sign for "typing". Pops in
-   like the bubble and shares its tail. */
+   like the bubble and shares its tail. Present while the robot carries
+   `data-typing`: its run is working AND was started by a conversation
+   (source meeting, channel or colleague, from tasks.agent_run), so the dots
+   and "Ada is working..." in the thread are two views of the same recorded
+   row. A schedule runs in silence. */
 .who .talk-dots {
   position: absolute; z-index: 3; top: -6px;
   right: calc(50% + var(--bot-w) / 2 - 10px);
