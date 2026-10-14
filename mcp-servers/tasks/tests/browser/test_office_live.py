@@ -83,7 +83,8 @@ def _serve(html: bytes):
                     self.send_response(204)
                     self.end_headers()
                     return
-            elif path.endswith("/agent-chat.css") or path.endswith("/htmx.min.js"):
+            elif (path.endswith("/agent-chat.css") or path.endswith("/htmx.min.js")
+                  or path.endswith("/sse.js")):
                 rel = path.rsplit("/", 1)[1]
                 asset = (STATIC / rel if (STATIC / rel).is_file()
                          else STATIC / "vendor" / rel)

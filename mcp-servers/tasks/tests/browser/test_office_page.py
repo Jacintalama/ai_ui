@@ -119,9 +119,11 @@ def _serve(html: bytes):
                     self.send_response(204)
                     self.end_headers()
                     return
-            elif path.endswith("/agent-chat.css") or path.endswith("/htmx.min.js"):
+            elif (path.endswith("/agent-chat.css") or path.endswith("/htmx.min.js")
+                  or path.endswith("/sse.js")):
                 # The conversation in the side column is styled by the agents
-                # page's own stylesheet and driven by htmx. Answering those
+                # page's own stylesheet and driven by htmx and its SSE
+                # extension, which is what opens the answer. Answering those
                 # with the page itself served HTML where a stylesheet was
                 # asked for, which is the exact trap the comment above
                 # describes, one directory over.
@@ -1716,6 +1718,30 @@ def test_the_office_page_has_a_conversation(page):
         " return { input: i.getBoundingClientRect().width,"
         "          btn: b.getBoundingClientRect().width }; }")
     assert got["input"] > got["btn"] * 2, got
+
+
+def test_sending_from_the_office_opens_the_answer_stream(page):
+    """Measured 2026-10-13: a send from the office drew the question and
+    never an answer. The fragment send returns opens the round with htmx's
+    SSE extension (sse-connect), which the agents page loads and this page
+    did not, so no stream was ever opened and the room session stayed
+    `streaming`. The fragment here is the real renderer's."""
+    opened = []
+    page.route("**/tasks/agents/chat/send", lambda r: r.fulfill(
+        status=200, content_type="text/html",
+        body=render.turn_open("hello", render.new_turn_id())
+        + render.turn_close() + render.stream_block("")))
+
+    def stream(r):
+        opened.append(r.request.url)
+        r.fulfill(status=200, content_type="text/event-stream",
+                  body="retry: 60000\n\nevent: close\ndata: done\n\n")
+    page.route("**/tasks/agents/chat/stream**", stream)
+    page.locator("#deskchat .ap-composer input[name=message]").fill("hello")
+    page.locator("#deskchat .ap-composer button[type=submit]").click()
+    page.locator("#deskchat .astream").wait_for(state="attached", timeout=3000)
+    page.wait_for_timeout(1500)
+    assert opened, "the composer's round never opened /tasks/agents/chat/stream"
 
 
 def test_the_conversation_shuts_and_opens_like_a_messenger_window(page):

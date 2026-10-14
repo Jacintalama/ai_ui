@@ -185,6 +185,9 @@
 </div>
 
 <script src="/tasks/static/vendor/htmx.min.js"></script>
+<!-- The answer arrives over htmx's SSE extension: the fragment a send returns
+     opens the round with sse-connect, which does nothing without this. -->
+<script src="/tasks/static/vendor/sse.js"></script>
 <script type="module" src="/tasks/static/office/js/office.js"></script>
 </body>
 </html>
