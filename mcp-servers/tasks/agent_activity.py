@@ -113,6 +113,10 @@ SOURCE_COLLEAGUE = "colleague"
 #: being asked five separate questions: `source` was only ever schedule,
 #: channel or colleague. The office cannot draw a meeting it cannot see.
 SOURCE_MEETING = "meeting"
+#: A step of a team job, run by the job worker (agent_job_worker) after the
+#: person pressed Start. Nobody is sitting in a chat waiting for it, but the
+#: office and the run log must still tell a step from a chat turn.
+SOURCE_JOB = "job"
 
 #: The four values tasks.agent_step.status may hold, named so the code that
 #: produces an outcome can say which one it means.
@@ -161,6 +165,27 @@ def meeting_round():
 
 def in_meeting() -> bool:
     return bool(_MEETING.get())
+
+
+#: Whether the turn in flight is a step of a team job. A ContextVar for the
+#: same reason as _MEETING: the worker decides, start_run writes, and
+#: _run_turn sits in between.
+_JOB_STEP: contextvars.ContextVar = contextvars.ContextVar(
+    "agent_activity_job_step", default=False)
+
+
+@contextlib.contextmanager
+def job_step():
+    """Mark every run started inside this block as a step of a team job."""
+    token = _JOB_STEP.set(True)
+    try:
+        yield
+    finally:
+        _JOB_STEP.reset(token)
+
+
+def in_job_step() -> bool:
+    return bool(_JOB_STEP.get())
 
 
 async def start_run(agent_id: str, user_email: str, source: str,

@@ -102,3 +102,64 @@ async def test_the_outermost_turn_opens_the_handoff_budget(monkeypatch):
     await rt._run_turn("me@example.com", "agent-iris",
                        [{"role": "user", "content": "hi"}])
     assert opened == ["run-1"]
+
+
+# --- a step of a team job ---------------------------------------------------
+# The job worker runs each step as a normal turn. Its run must say it is part
+# of a job, or the office and the run log cannot tell a step from a chat.
+
+def test_a_job_has_a_source_of_its_own():
+    assert agent_activity.SOURCE_JOB == "job"
+    assert agent_activity.SOURCE_JOB not in (
+        agent_activity.SOURCE_CHANNEL, agent_activity.SOURCE_SCHEDULE,
+        agent_activity.SOURCE_COLLEAGUE, agent_activity.SOURCE_MEETING)
+
+
+def test_a_turn_is_not_a_job_step_unless_marked():
+    assert agent_activity.in_job_step() is False
+    with agent_activity.job_step():
+        assert agent_activity.in_job_step() is True
+    assert agent_activity.in_job_step() is False
+
+
+def test_the_mark_is_undone_when_the_step_raises():
+    try:
+        with agent_activity.job_step():
+            raise RuntimeError("the step fell over")
+    except RuntimeError:
+        pass
+    assert agent_activity.in_job_step() is False
+
+
+async def test_a_turn_inside_a_job_step_says_job(monkeypatch):
+    seen = {}
+    _stub(monkeypatch, seen)
+    with agent_activity.job_step():
+        await rt._run_turn("me@example.com", "agent-iris",
+                           [{"role": "user", "content": "do step 2"}],
+                           brief=True)
+    assert seen["source"] == agent_activity.SOURCE_JOB
+
+
+async def test_a_job_step_outranks_a_meeting(monkeypatch):
+    """A worker never runs inside a meeting round, but if the marks ever
+    nest, the step is the more specific fact about why this run exists."""
+    seen = {}
+    _stub(monkeypatch, seen)
+    with agent_activity.meeting_round(), agent_activity.job_step():
+        await rt._run_turn("me@example.com", "agent-iris",
+                           [{"role": "user", "content": "do step 2"}])
+    assert seen["source"] == agent_activity.SOURCE_JOB
+
+
+async def test_a_colleague_asked_during_a_job_step_is_still_a_colleague(
+        monkeypatch):
+    """Who asked this agent is more specific than why the asker is running."""
+    seen = {}
+    _stub(monkeypatch, seen)
+    with agent_activity.job_step():
+        await rt._run_turn("me@example.com", "agent-iris",
+                           [{"role": "user", "content": "hi"}],
+                           surface=agent_access.SURFACE_COLLEAGUE,
+                           parent_run_id="run-0")
+    assert seen["source"] == agent_activity.SOURCE_COLLEAGUE
