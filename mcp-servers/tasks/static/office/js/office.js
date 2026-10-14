@@ -527,6 +527,9 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     if (Date.now() - s.heard > 2 * WALK_MAX) { delete S.SPEAKING[id]; return; }
     s.until = Date.now() + s.ms;
     setTimeout(draw, s.ms + 30);
+    // A closed meeting waits for this answer (inMeeting), so the room has
+    // to be looked at again once it is said.
+    if (S.MEETING && S.MEETING.ended) setTimeout(draw, s.ms + SPEECH_GRACE_MS + 30);
   }
 
   //: Each robot a little out of step with the next. Decoration, so it may
@@ -671,6 +674,24 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   //: How long the room stays together after the round closes, so the last
   //: answer is finished where it was said before everybody walks back.
   var MEETING_LINGER_MS = 4000;
+  //: And never before the last word in it is finished: the last answer and
+  //: meeting_ended arrive milliseconds apart, and an answer of 100
+  //: characters talks for 4 s, so a fixed linger had the last speaker walk
+  //: back mid-sentence (review, 2026-10-14).
+  var SPEECH_GRACE_MS = 300;
+
+  //: Is anybody in this meeting still talking, or still walking in to say
+  //: something they have been given? Then the room stays.
+  function stillTalking(m) {
+    var now = Date.now();
+    for (var i = 0; i < m.ids.length; i++) {
+      var s = S.SPEAKING[m.ids[i]];
+      if (!s) continue;
+      if (!s.until) return true;
+      if (s.until + SPEECH_GRACE_MS > now) return true;
+    }
+    return false;
+  }
 
   //: The round itself says who is in it: meeting_started names everybody
   //: at once, in speaking order, and meeting_ended closes it. From the first
@@ -681,7 +702,8 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   function inMeeting(id) {
     var m = S.MEETING;
     if (m) {
-      if (m.ended && Date.now() - m.ended > MEETING_LINGER_MS) return false;
+      if (m.ended && Date.now() - m.ended > MEETING_LINGER_MS &&
+          !stillTalking(m)) return false;
       return m.ids.indexOf(id) !== -1;
     }
     var a = S.ACTIVITY[id];
@@ -1532,14 +1554,22 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       // startSpeaking, once the robot is standing still.
       S.SPEAKING[e.agent_id] = { ms: speakFor(e.chars), heard: Date.now(), until: 0 };
     } else if (e.event === "meeting_started") {
-      S.MEETING = { ids: (e.participants || []).slice(), ended: null };
+      S.MEETING = { ids: (e.participants || []).slice(), ended: null,
+                    heard: true };
     } else if (e.event === "meeting_ended") {
       // A page that opened mid-round never heard who was in it: whoever the
       // source rule has in the room is, and they leave together too.
       if (!S.MEETING) {
         S.MEETING = { ids: S.AGENTS.map(function (m) { return m.id; })
-          .filter(inMeeting), ended: null };
+          .filter(inMeeting), ended: null, heard: false };
       }
+      // Events carry no meeting id. The round names its first speaker on
+      // meeting_started and its last on meeting_ended, so an end whose
+      // speaker is not this meeting's last is another round's (two rounds
+      // at once: the office chat and the agents page) and must not close
+      // the one still answering (review, 2026-10-14).
+      var last = S.MEETING.ids[S.MEETING.ids.length - 1];
+      if (S.MEETING.heard && last && e.agent_id !== last) return;
       if (!S.MEETING.ended) {
         S.MEETING.ended = Date.now();
         setTimeout(draw, MEETING_LINGER_MS + 30);
@@ -1580,7 +1610,16 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     try {
       es = new EventSource("/api/tasks/agents/stream", { withCredentials: true });
     } catch (x) { console.warn("[office] live feed unavailable", x); return; }
-    es.addEventListener("hello", function () { resync(); });
+    es.addEventListener("hello", function () {
+      // A reconnect may have swallowed this meeting's meeting_ended: the
+      // stream keeps no log, and a deploy restarts the round's process
+      // before its finally runs. An open meeting is forgotten here and the
+      // source rule, re-read by resync, decides again; left alone, everyone
+      // stood in the room until a reload (review, 2026-10-14). A closed one
+      // is kept: it still stops stale sources drawing a meeting.
+      if (S.MEETING && !S.MEETING.ended) S.MEETING = null;
+      resync();
+    });
     LIVE_EVENTS.forEach(function (name) {
       es.addEventListener(name, function (ev) {
         var e;

@@ -488,6 +488,83 @@ def test_a_meeting_lingers_then_breaks_up_together(a_meeting_opens_and_closes, p
     assert not _in_meeting_room(page, IRIS)
 
 
+@pytest.fixture
+def a_meeting_whose_end_is_missed():
+    """The round's meeting_ended never reaches this page: the stream is a
+    fan-out with no log, and a deploy or a network blip in between means it
+    is simply gone. The reconnect's hello is the only sign. Review finding,
+    2026-10-14."""
+    STREAM["body"] = _sse({"event": "meeting_started", "agent_id": ADA,
+                           "participants": [ADA, IRIS], "at": _now()},
+                          retry=300)
+    yield
+    STREAM["body"] = _sse()
+
+
+def test_a_reconnect_does_not_leave_a_meeting_standing(
+        a_meeting_whose_end_is_missed, page):
+    page.wait_for_function(
+        "() => document.getElementById('rooms').getAttribute('data-meeting') === '2'",
+        timeout=3000)
+    # Every later connection says hello and nothing about a meeting.
+    STREAM["body"] = _sse(retry=60000)
+    page.wait_for_function(
+        "() => document.getElementById('rooms').getAttribute('data-meeting') === ''",
+        timeout=6000)
+
+
+@pytest.fixture
+def the_last_word_is_long():
+    """Iris answers last with 125 characters (5 s of talking), and the round
+    closes a moment later: the room has to wait for her to finish."""
+    STREAM["body"] = _sse(
+        {"event": "meeting_started", "agent_id": ADA,
+         "participants": [ADA, IRIS], "at": _now()},
+        {"event": "speaking_started", "agent_id": IRIS, "chars": 125,
+         "at": _now()},
+        {"event": "meeting_ended", "agent_id": IRIS, "at": _now()})
+    yield
+    STREAM["body"] = _sse()
+
+
+def test_nobody_walks_away_still_talking(the_last_word_is_long, page):
+    iris = page.locator('.who[data-id="%s"]' % IRIS)
+    iris.and_(page.locator('[data-speaking="1"]')).wait_for(timeout=6000)
+    # Whenever her mouth is moving, she is still in the room.
+    for _ in range(12):
+        if iris.get_attribute("data-speaking") != "1":
+            break
+        assert _meeting_count(page) == "2"
+        page.wait_for_timeout(400)
+    page.wait_for_function(
+        "() => document.getElementById('rooms').getAttribute('data-meeting') === ''",
+        timeout=8000)
+
+
+@pytest.fixture
+def two_rounds_overlap():
+    """The office chat and the agents page each ran a round. The first one
+    closing must not close the second, which is still answering."""
+    STREAM["body"] = _sse(
+        {"event": "meeting_started", "agent_id": IRIS,
+         "participants": [IRIS, ADA], "at": _now()},
+        {"event": "meeting_started", "agent_id": IRIS,
+         "participants": [IRIS], "at": _now()},
+        {"event": "meeting_ended", "agent_id": ADA, "at": _now()})
+    yield
+    STREAM["body"] = _sse()
+
+
+def test_one_round_ending_does_not_close_another(two_rounds_overlap, page):
+    page.wait_for_function(
+        "() => document.getElementById('rooms').getAttribute('data-meeting') === '1'",
+        timeout=3000)
+    page.wait_for_timeout(6000)
+    assert _meeting_count(page) == "1"
+    _settled(page)
+    assert _in_meeting_room(page, IRIS)
+
+
 #: Whether Iris was ever standing in the meeting room, checked on every
 #: change to the floor from the first paint, so a visit cannot be missed by
 #: looking too late.
