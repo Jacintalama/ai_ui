@@ -7,7 +7,7 @@ import pytest
 import agent_events
 
 ALLOWED = {"event", "agent_id", "tool", "target_agent_id", "status", "at",
-           "source", "participants", "chars"}
+           "source", "participants", "chars", "job_id", "step", "of"}
 
 
 @pytest.fixture(autouse=True)
@@ -131,3 +131,49 @@ def test_a_bad_length_does_not_raise():
     agent_events.publish("speaking_started", agent_id="agent-a",
                          user_email="me@example.com", chars="many")
     assert "chars" not in sub.queue.get_nowait()
+
+
+JOB_EVENTS = ("job_started", "step_started", "step_finished", "job_finished")
+
+
+@pytest.mark.parametrize("event", JOB_EVENTS)
+def test_each_job_moment_reaches_its_owner_and_nobody_else(event):
+    mine = agent_events.subscribe("me@example.com")
+    theirs = agent_events.subscribe("them@example.com")
+    agent_events.publish(event, agent_id="agent-a", user_email="me@example.com",
+                         job_id="job-1", step=2, of=3, status="ok")
+    payload = mine.queue.get_nowait()
+    assert payload["event"] == event
+    assert payload["job_id"] == "job-1"
+    assert payload["step"] == 2
+    assert payload["of"] == 3
+    assert set(payload) <= ALLOWED
+    assert theirs.queue.qsize() == 0
+
+
+def test_a_started_job_names_its_people_in_order_and_its_length():
+    sub = agent_events.subscribe("me@example.com")
+    agent_events.publish("job_started", agent_id="agent-lead",
+                         user_email="me@example.com", job_id="job-1",
+                         participants=["agent-m", "agent-a", "agent-d"], of=3)
+    payload = sub.queue.get_nowait()
+    assert payload["participants"] == ["agent-m", "agent-a", "agent-d"]
+    assert payload["of"] == 3
+
+
+def test_bad_step_numbers_are_dropped_not_raised():
+    sub = agent_events.subscribe("me@example.com")
+    agent_events.publish("step_started", agent_id="agent-a",
+                         user_email="me@example.com", job_id="job-1",
+                         step="second", of=object())
+    payload = sub.queue.get_nowait()
+    assert "step" not in payload
+    assert "of" not in payload
+    assert payload["job_id"] == "job-1"
+
+
+def test_a_job_event_has_no_place_for_words():
+    import inspect
+    params = set(inspect.signature(agent_events.publish).parameters)
+    for prose in ("request", "task", "result", "text", "content", "answer"):
+        assert prose not in params
