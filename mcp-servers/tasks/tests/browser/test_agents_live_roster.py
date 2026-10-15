@@ -409,3 +409,59 @@ def test_a_private_conversation_is_not_redrawn_for_a_job(browser, server):
         assert seen == [], seen
     finally:
         pg.close()
+
+
+#: A round streaming into the thread: the turn agent_chat_render.turn_open
+#: draws and the element stream_block() opens the round's EventSource on,
+#: both from the real renderer. Redrawing #agent-thread replaces that
+#: element, and the SSE extension closes a connection whose element left
+#: the page, which cut the answer off mid round.
+def _streaming_round():
+    import agent_chat_render as render
+    tid = "t-live"
+    return (render.turn_open("prepare the summary", tid) + render.turn_close()
+            + render.stream_block(""))
+
+
+def test_a_job_event_does_not_redraw_over_a_streaming_round(browser, server):
+    pg, live = _open(browser, server)
+    try:
+        pg.evaluate("html => document.getElementById('agent-thread')"
+                    ".insertAdjacentHTML('beforeend', html)",
+                    _streaming_round())
+        assert pg.locator("#agent-thread .astream[sse-connect]").count() == 1
+        seen = _thread_fetches(pg)
+        live.send({"event": "step_finished", "agent_id": ADA["id"],
+                   "job_id": "job-1", "step": 1, "of": 3, "status": "ok",
+                   "at": 1})
+        pg.wait_for_timeout(700)
+        assert seen == [], "the thread was redrawn under a streaming round"
+        assert pg.locator("#agent-thread .astream").count() == 1
+        # The round closes (the server's close event; agent-chat.js takes
+        # sse-connect off), and the redraw it held back happens then.
+        pg.evaluate("document.querySelector('#agent-thread .astream')"
+                    ".dispatchEvent(new CustomEvent('htmx:sseClose', "
+                    "{bubbles: true, detail: {type: 'message'}}))")
+        pg.wait_for_timeout(700)
+        assert len(seen) == 1, seen
+        assert not live.errors, live.errors
+    finally:
+        pg.close()
+
+
+def test_with_no_round_streaming_a_job_event_redraws_at_once(browser,
+                                                             server):
+    """A round that already closed leaves its .astream in the thread, with
+    sse-connect taken off: that is not a round streaming."""
+    pg, live = _open(browser, server)
+    try:
+        pg.evaluate("html => document.getElementById('agent-thread')"
+                    ".insertAdjacentHTML('beforeend', html)",
+                    _streaming_round().replace(' sse-connect="', ' data-was="'))
+        seen = _thread_fetches(pg)
+        live.send({"event": "job_finished", "agent_id": ADA["id"],
+                   "job_id": "job-1", "status": "done", "at": 1})
+        pg.wait_for_timeout(700)
+        assert len(seen) == 1, seen
+    finally:
+        pg.close()

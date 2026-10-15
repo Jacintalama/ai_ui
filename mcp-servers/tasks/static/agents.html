@@ -3748,6 +3748,17 @@
                        job_finished: 1 };
     var REDRAW_AFTER_MS = 300;
     var redrawTimer = null;
+    //: A redraw held back while a round streams into the thread.
+    var redrawOwed = false;
+    // A round is streaming while its .astream still has sse-connect:
+    // agent-chat.js takes the attribute off when the round closes. Redrawing
+    // the thread then would replace that element, and the SSE extension
+    // closes a connection whose element left the page, cutting the answer
+    // off. The job's posts are saved either way; they show once it closes.
+    function roundStreaming() {
+      var t = document.getElementById("agent-thread");
+      return !!(t && t.querySelector(".astream[sse-connect]"));
+    }
     function redrawTeamChat() {
       var field = document.getElementById("ap-agent");
       if (field && field.value) return;       // a private conversation
@@ -3755,11 +3766,18 @@
       redrawTimer = setTimeout(function () {
         var again = document.getElementById("ap-agent");
         if (again && again.value) return;
+        if (roundStreaming()) { redrawOwed = true; return; }
+        redrawOwed = false;
         if (window.htmx && document.getElementById("agent-thread")) {
           htmx.ajax("GET", "/tasks/agents/chat/thread", "#agent-thread");
         }
       }, REDRAW_AFTER_MS);
     }
+    // The round closed: the redraw it held back happens now. After the
+    // delay, by which time agent-chat.js has taken sse-connect off.
+    document.body.addEventListener("htmx:sseClose", function () {
+      if (redrawOwed) redrawTeamChat();
+    });
     //: id -> { working, since, speakUntil, timer }. Kept here, not on the
     //: rows, because drawRoster() rebuilds the rows and would drop it.
     var live = {};
