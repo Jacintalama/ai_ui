@@ -47,3 +47,33 @@ async def test_pass_scene(client):
 async def test_streaming_ends_with_done(client):
     r = await client.post("/v1/chat/completions", json=_body("hello", stream=True))
     assert r.text.rstrip().endswith("data: [DONE]")
+
+
+# --- scene:job: the team lead's triage (agent jobs, 2026-10-15) ---------------
+
+def _triage(person_said):
+    """What agent_job_triage sends: the room history, then its instruction."""
+    return {"model": "fake-agent", "messages": [
+        {"role": "system", "content": "You are Ada, the project manager."},
+        {"role": "user", "content": person_said},
+        {"role": "user", "content": "TEAM_TRIAGE. You lead this team: Ada, Mia, Dev. Reply with the JSON only."}]}
+
+async def test_triage_of_a_job_scene_answers_a_three_step_plan(client):
+    r = await client.post("/v1/chat/completions", json=_triage("scene:job prepare the weekly summary"))
+    plan = json.loads(r.json()["choices"][0]["message"]["content"])
+    assert plan["kind"] == "job"
+    assert [s["agent"] for s in plan["steps"]] == ["Mia", "Ada", "Dev"]
+    assert all(s["do"] for s in plan["steps"])
+
+async def test_triage_of_anything_else_is_just_answer_and_instant(client, monkeypatch):
+    import app as fake
+    monkeypatch.setattr(fake, "_default_delay_ms", lambda: 60_000)
+    r = await client.post("/v1/chat/completions", json=_triage("hello team"))
+    assert json.loads(r.json()["choices"][0]["message"]["content"]) == {"kind": "answer"}
+
+async def test_a_step_brief_gets_the_normal_answer(client):
+    brief = ("The person asked the team: scene:job prepare the weekly summary\n\n"
+             "The plan:\n1. Mia: Find the reports. <- this is your step")
+    r = await client.post("/v1/chat/completions",
+                          json=_body(brief, system="You are Mia, the receptionist."))
+    assert r.json()["choices"][0]["message"]["content"].startswith("Mia here.")

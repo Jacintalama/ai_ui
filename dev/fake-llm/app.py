@@ -9,6 +9,9 @@ user message picks a scene:
     scene:tool  calls the first offered tool, then answers "<Name> used a tool."
     scene:fail  HTTP 500 with an OpenAI error body
     scene:pass  answers "PASS" (the room protocol)
+    scene:job   the team lead's triage (TEAM_TRIAGE) answers a fixed 3-step plan
+                (Mia, Ada, Dev); any other triage answers {"kind": "answer"}
+                at once, so plain local chats stay fast
 """
 import asyncio
 import json
@@ -22,6 +25,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 MODEL_ID = "fake-agent"
 SLOW_DELAY_MS = 5000
+#: agent_job_triage.TRIAGE_MARKER, repeated here: the fake model is its own
+#: image and does not import the tasks service.
+TRIAGE_MARKER = "TEAM_TRIAGE"
+JOB_PLAN = {"kind": "job", "steps": [
+    {"agent": "Mia", "do": "Find the three latest reports."},
+    {"agent": "Ada", "do": "Compare them."},
+    {"agent": "Dev", "do": "Draft a one page summary."}]}
 
 app = FastAPI(title="fake-llm")
 
@@ -128,6 +138,20 @@ async def chat_completions(request: Request):
     name = _agent_name(messages)
     said = _last_user_text(messages)
     lowered = said.lower()
+
+    # The team lead's triage (mcp-servers/tasks/agent_job_triage.py) ends with
+    # its own instruction, so the person's words are earlier in the history.
+    # Answered before the delay: it is housekeeping, and every team message
+    # in the local stack goes through it.
+    if TRIAGE_MARKER in said:
+        asked_for_job = any(
+            "scene:job" in _text(m.get("content")).lower()
+            for m in messages if m.get("role") == "user")
+        plan = JOB_PLAN if asked_for_job else {"kind": "answer"}
+        message = {"role": "assistant", "content": json.dumps(plan)}
+        if body.get("stream"):
+            return _sse(message, "stop")
+        return JSONResponse(_completion(message, "stop"))
 
     delay_ms = SLOW_DELAY_MS if "scene:slow" in lowered else _default_delay_ms()
     if delay_ms:
