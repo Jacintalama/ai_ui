@@ -147,12 +147,31 @@ ensure_env() {
     python scripts/dev_env.py --path "$ENV_FILE"
 }
 
+# Open WebUI caches the fake model's address. When `up --build` recreates
+# fake-llm it can come back on a new address while Open WebUI keeps dialling
+# the old one, and every agent turn fails with "Server Connection Error"
+# (seen 2026-10-15: "Connect call failed ('172.27.0.2', 9000)"). So when
+# fake-llm started after Open WebUI, Open WebUI is restarted too.
+refresh_model_route() {
+    local owui llm
+    owui="$(compose ps -q open-webui)"
+    llm="$(compose ps -q fake-llm)"
+    [ -n "$owui" ] && [ -n "$llm" ] || return 0
+    owui="$(docker inspect -f '{{.State.StartedAt}}' "$owui")"
+    llm="$(docker inspect -f '{{.State.StartedAt}}' "$llm")"
+    if [[ "$llm" > "$owui" ]]; then
+        echo "fake-llm was recreated after Open WebUI: restarting Open WebUI"
+        compose restart open-webui
+    fi
+}
+
 cmd_up() {
     ensure_docker
     ensure_env
     check_model_switch
     ensure_workspace
     compose up -d --build
+    refresh_model_route
     mkdir -p "$(dirname "$MODE_STAMP")"
     local_model > "$MODE_STAMP"
     # Open WebUI's first boot runs its migrations and can take minutes.
