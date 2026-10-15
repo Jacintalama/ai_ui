@@ -12,6 +12,7 @@ import os
 
 import agent_activity
 import agent_chat_store as store
+import agent_escalation
 import agent_events
 import agent_job_brief
 import agent_job_store as job_store
@@ -377,16 +378,26 @@ def _held(out) -> bool:
 
 
 async def _turn(email: str, agent_id: str, name: str,
-                messages: list[dict]) -> tuple[dict | None, str | None]:
+                messages: list[dict],
+                request: str = "") -> tuple[dict | None, str | None]:
     """Run one turn as a job step: (out, None), or (None, why it failed).
 
     A held turn (it stopped to ask) comes back as its out, pending and all.
     A failure sentence (routes_agent_chat._failure_reason), an empty answer
     or a PASS is a failure, not a result: posting "the free models are all
     busy" as step 2's result would brief step 3 with it.
+
+    `request` is what the person asked the team, and it is what decides
+    whether the turn starts on the paid model (agent_escalation). Without
+    it _run_turn reads the last user message, which here is the brief:
+    over the long-message limit by itself, and carrying every earlier
+    step's result, code fences and error text included. A job step is an
+    answer to the person's request, not to its own brief.
     """
     try:
-        with agent_activity.job_step():
+        with agent_activity.job_step(), agent_escalation.asking(
+                agent_escalation.Intent(person_text=request or "",
+                                        may_pass=False)):
             out = await asyncio.wait_for(
                 _run_turn(email, agent_id, messages, brief=True),
                 STEP_HARD_CAP_SECONDS)
@@ -432,7 +443,8 @@ async def run_step(step: dict) -> None:
                          job_id=job_id, step=position, of=total)
     messages = agent_job_brief.step_messages(job.get("request") or "", steps,
                                              position, names)
-    out, reason = await _turn(email, agent_id, name, messages)
+    out, reason = await _turn(email, agent_id, name, messages,
+                              request=job.get("request") or "")
     if _held(out):
         await _hold(job, step, out, name, total)
         return
@@ -578,7 +590,8 @@ async def _close(job: dict, steps: list[dict], names: dict[str, str]) -> None:
     lead_name = names.get(lead_id) or lead_id
     messages = agent_job_brief.final_messages(job.get("request") or "", steps,
                                               names)
-    out, _reason = await _turn(email, lead_id, lead_name, messages)
+    out, _reason = await _turn(email, lead_id, lead_name, messages,
+                               request=job.get("request") or "")
     # A closing turn that stops to ask is not a summary. The results are all
     # posted; holding the whole job on the lead's afterthought is worse.
     summary = out.get("answer") if out is not None and not _held(out) else None

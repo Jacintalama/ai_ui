@@ -593,6 +593,39 @@ async def test_a_sweep_that_raises_does_not_stop_the_loop(h, monkeypatch):
     assert h.store.jobs["job-1"]["status"] == "done"
 
 
+async def test_a_long_brief_with_code_does_not_escalate_a_short_request(
+        h, monkeypatch):
+    """_run_turn reads the paid-model rules off the last user message unless
+    its caller says who is asking. For a step that message is the brief:
+    over 2,000 characters on its own, and holding whatever earlier steps
+    returned, code fences included. The person asked for something short."""
+    import agent_escalation
+    seen = []
+    real = worker._run_turn
+
+    async def run_turn(user_email, agent_id, messages, brief=False, **kw):
+        seen.append((agent_id, agent_escalation.current_intent(),
+                     messages[-1]["content"]))
+        return await real(user_email, agent_id, messages, brief, **kw)
+
+    monkeypatch.setattr(worker, "_run_turn", run_turn)
+    h.store.add("job-1", "p@x.com", ["mia", "ada"])
+    h.answers["mia"] = ["```python\nprint('hi')\n```\n" + "x" * 2500]
+    await _run_until(_done(h.store, "job-1"))
+    assert [a for a, _, _ in seen] == ["mia", "ada", "lead"]
+    request = h.store.jobs["job-1"]["request"]
+    # The brief alone would have gone to the paid model.
+    ada_brief = seen[1][2]
+    assert "```" in ada_brief and len(ada_brief) > 2000
+    assert agent_escalation.rule_reason(ada_brief) is not None
+    for agent_id, intent, _ in seen:
+        assert intent == agent_escalation.Intent(person_text=request,
+                                                 may_pass=False), agent_id
+        assert agent_escalation.decide(intent, False) is None
+    # Reset on the way out: nothing leaks to the next turn on this loop.
+    assert agent_escalation.current_intent() is None
+
+
 def test_the_worker_and_the_store_agree_on_the_attempts():
     import agent_job_store
     assert worker.MAX_ATTEMPTS == agent_job_store.MAX_ATTEMPTS
