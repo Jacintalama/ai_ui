@@ -63,6 +63,11 @@ _RUNNING: dict[str, asyncio.Task] = {}
 #: collected while it waits.
 _LOOP_TASK: asyncio.Task | None = None
 
+#: The running loop's step slots, so work started outside the loop (the
+#: lead's closing turn after a held last step was answered) waits its turn
+#: like any step instead of making a third model call at once.
+_SLOTS: asyncio.Semaphore | None = None
+
 #: Set by wake(). Made per event loop, not at import: an asyncio.Event binds
 #: to the loop that first waits on it, and the tests run a loop per test.
 _WAKE: asyncio.Event | None = None
@@ -162,7 +167,8 @@ async def job_loop() -> None:
     Never dies on an error. Each pass is caught and logged, and a failing
     pass sleeps before the next, so a broken database does not spin.
     """
-    slots = asyncio.Semaphore(MAX_PARALLEL_STEPS)
+    global _SLOTS
+    slots = _SLOTS = asyncio.Semaphore(MAX_PARALLEL_STEPS)
     while True:
         try:
             await slots.acquire()
@@ -283,6 +289,12 @@ async def _turn(email: str, agent_id: str, name: str,
         logger.warning("job worker: %s's turn raised", agent_id,
                        exc_info=True)
         return None, _BROKE
+    return _judge(name, out)
+
+
+def _judge(name: str, out) -> tuple[dict | None, str | None]:
+    """A turn's outcome as a step sees it: (out, None) for an answer or a
+    held question, (None, why) for anything that is not a result."""
     if not isinstance(out, dict):
         return None, _BROKE
     answer = (out.get("answer") or "").strip()
@@ -371,6 +383,9 @@ async def _hold(job: dict, step: dict, out: dict, name: str,
     raw = dict(out["pending"])
     raw["job_step_id"] = str(step["id"])
     raw["job_id"] = job_id
+    # So the answer, drawn by the chat, carries the same "Step n of m".
+    raw["job_step"] = int(step["position"])
+    raw["job_of"] = total
     page = _pending_for_page(raw)
     ask_id = _room()._ask_id()
     awaiting = dict(page)
@@ -445,6 +460,95 @@ async def _close(job: dict, steps: list[dict], names: dict[str, str]) -> None:
                            title=job.get("request") or "")
     agent_events.publish("job_finished", agent_id=lead_id, user_email=email,
                          job_id=job_id, status="done")
+
+
+async def resume_after_answer(step_id: str, out: dict | None,
+                              job_id: str | None = None) -> None:
+    """A step held on the person's Yes or No (see _hold) has its answer.
+
+    Called by the chat (routes_agent_chat._apply_pending_answer) after the
+    resumed turn returns, with what it returned, or None when the resume
+    itself failed. The chat has already drawn and stored the agent's words,
+    so they are not posted again here.
+
+    - An answer, after Yes or after No (a refusal is still the agent's
+      account of the step): the step is done with it, and the job runs on,
+      or closes if that was the last step.
+    - Another question: the job keeps waiting on the person; the chat has
+      stored the new question with this step's place in the job.
+    - A failure: the job stops, without a retry. On Yes the tool may already
+      have run, and running the step again would ask for it again.
+
+    `job_id` comes from the held payload: the step id alone does not find
+    its job. Never raises into the chat.
+    """
+    try:
+        await _resume(step_id, out, job_id)
+    except Exception:                                       # noqa: BLE001
+        logger.exception("job worker: could not carry job %s on after an "
+                         "answer", job_id)
+
+
+async def _resume(step_id: str, out: dict | None, job_id: str | None) -> None:
+    if not job_id:
+        logger.warning("job worker: an answer for step %s names no job",
+                       step_id)
+        return
+    job = await job_store.get(job_id)
+    if job is None or job.get("status") != "needs_you":
+        # Gone, or stopped while the question waited: nothing to carry on.
+        return
+    steps = _ordered(job.get("steps"))
+    step = next((st for st in steps if str(st.get("id")) == step_id), None)
+    if step is None or step.get("status") != "running":
+        return
+    email = str(job["user_email"])
+    names = await _names(email)
+    agent_id = str(step["agent_id"])
+    name = names.get(agent_id) or agent_id
+    if _held(out):
+        return
+    judged, reason = _judge(name, out) if out is not None else (None, _BROKE)
+    if judged is None:
+        await _failed(job, dict(step, attempts=MAX_ATTEMPTS), name,
+                      len(steps), reason or _BROKE, names)
+        return
+    answer = judged["answer"]
+    position = int(step["position"])
+    if not await job_store.finish_step(step["id"], "done", answer):
+        return
+    agent_events.publish("step_finished", agent_id=agent_id, user_email=email,
+                         job_id=job_id, step=position, of=len(steps),
+                         status="ok")
+    if position >= max(int(st["position"]) for st in steps):
+        done = [dict(st, status="done", result=answer)
+                if st["id"] == step["id"] else st for st in steps]
+        # The closing turn is a model call of up to STEP_HARD_CAP_SECONDS;
+        # the person's Yes is an HTTP request that should not wait on it.
+        # In its own task, registered like a step so Stop can cancel it.
+        _RUNNING[job_id] = asyncio.ensure_future(
+            _close_in_a_slot(job_id, job, done, names))
+        return
+    if await job_store.set_status(job_id, "running"):
+        wake()
+
+
+async def _close_in_a_slot(job_id: str, job: dict, steps: list[dict],
+                           names: dict[str, str]) -> None:
+    slots = _SLOTS
+    try:
+        if slots is None:
+            await _close(job, steps, names)
+        else:
+            async with slots:
+                await _close(job, steps, names)
+    except asyncio.CancelledError:
+        logger.info("job worker: closing of job %s stopped", job_id)
+    except Exception:                                       # noqa: BLE001
+        logger.exception("job worker: could not close job %s", job_id)
+    finally:
+        if _RUNNING.get(job_id) is asyncio.current_task():
+            _RUNNING.pop(job_id, None)
 
 
 def _place(messages: list[dict], message: dict) -> None:

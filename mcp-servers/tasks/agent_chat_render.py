@@ -474,7 +474,7 @@ def _shown(content: str) -> str:
     return _without_route_footer(content)
 
 
-def _step_label(m: dict) -> str:
+def step_label(m: dict) -> str:
     """ "Step n of m" for a team job step's result, else "". Stored by the
     job worker (agent_job_worker); anything not a pair of numbers is no
     label rather than a broken one."""
@@ -556,7 +556,7 @@ def thread(messages: list[dict], private: bool = False,
                 # screen a moment ago.
                 out.append(agent_bubble(name, shown,
                                         m.get("replying_to"),
-                                        label=_step_label(m)))
+                                        label=step_label(m)))
             awaiting = m.get("awaiting")
             if isinstance(awaiting, dict) and awaiting.get("calls"):
                 out.append(approval_bubble(name,

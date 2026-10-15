@@ -12,8 +12,11 @@ import agent_job_worker as worker
 
 
 @pytest.fixture(autouse=True)
-def _fresh_worker():
+def _fresh_worker(monkeypatch):
     worker._RUNNING.clear()
+    # A loop from an earlier test leaves its slots behind; each test's loop
+    # is its own event loop.
+    monkeypatch.setattr(worker, "_SLOTS", None)
     yield
     worker._RUNNING.clear()
 
@@ -115,6 +118,10 @@ class FakeStore:
             out["job"] = copy.deepcopy(job)
             return out
         return None
+
+    async def get(self, job_id):
+        job = self.jobs.get(job_id)
+        return copy.deepcopy(job) if job else None
 
     async def finish_step(self, step_id, status, result=None, run_id=None):
         _, st = self._step(step_id)
@@ -354,6 +361,8 @@ async def test_a_step_that_asks_first_waits_for_the_person(h):
     ask_id = post["message"]["awaiting"]["ask_id"]
     stored = post["pending"][ask_id]
     assert stored["job_step_id"] == "job-1-s1"
+    assert (stored["job_id"], stored["job_step"], stored["job_of"]) == (
+        "job-1", 1, 2)
     assert stored["conversation"] == held["conversation"]
     assert not h.named("step_finished")
 
@@ -438,6 +447,130 @@ async def test_a_closing_turn_that_fails_still_finishes_the_job(h):
     assert h.posted[-1]["message"]["content"] == (
         "All steps are done; the summary could not be written.")
     assert h.named("job_finished")[-1]["status"] == "done"
+
+
+# --- a held step carries on after Yes or No ---------------------------------
+
+def _held_job(h, agent_ids=("mia", "ada"), held_at=1):
+    """A job as _hold leaves it: waiting on the person, the asking step
+    still running, the ones before it done."""
+    job = h.store.add("job-1", "p@x.com", list(agent_ids), status="needs_you")
+    for st in job["steps"]:
+        if st["position"] < held_at:
+            st["status"], st["result"], st["attempts"] = "done", "earlier", 1
+        elif st["position"] == held_at:
+            st["status"], st["attempts"] = "running", 1
+    return job
+
+
+@pytest.fixture
+def woken(monkeypatch):
+    count = []
+    monkeypatch.setattr(worker, "wake", lambda: count.append(1))
+    return count
+
+
+async def _settle():
+    task = worker._RUNNING.get("job-1")
+    if task is not None:
+        await asyncio.wait_for(task, 2)
+
+
+async def test_yes_finishes_the_held_step_and_the_job_runs_on(h, woken):
+    _held_job(h)
+    await worker.resume_after_answer("job-1-s1", {"answer": "Sent it.",
+                                                  "notes": []},
+                                     job_id="job-1")
+    job = h.store.jobs["job-1"]
+    assert job["steps"][0]["status"] == "done"
+    assert job["steps"][0]["result"] == "Sent it."
+    assert job["status"] == "running"
+    assert woken
+    # The chat drew the answer already; the worker does not post it twice.
+    assert h.posted == []
+    assert [(kw["agent_id"], kw["step"], kw["status"])
+            for kw in h.named("step_finished")] == [("mia", 1, "ok")]
+
+
+async def test_no_finishes_the_step_with_the_agents_own_words(h, woken):
+    _held_job(h)
+    await worker.resume_after_answer(
+        "job-1-s1", {"answer": "I did not run that.", "notes": []},
+        job_id="job-1")
+    job = h.store.jobs["job-1"]
+    assert job["steps"][0]["result"] == "I did not run that."
+    assert job["status"] == "running"
+
+
+async def test_a_step_that_asks_again_keeps_the_job_waiting(h, woken):
+    _held_job(h)
+    await worker.resume_after_answer(
+        "job-1-s1", {"answer": "", "notes": [],
+                     "pending": {"agent_id": "mia", "calls": CALLS}},
+        job_id="job-1")
+    job = h.store.jobs["job-1"]
+    assert job["status"] == "needs_you"
+    assert job["steps"][0]["status"] == "running"
+    assert not woken and h.posted == []
+
+
+async def test_an_answer_to_the_last_step_closes_the_job(h, woken):
+    _held_job(h, held_at=2)
+    await worker.resume_after_answer("job-1-s2", {"answer": "Sent it.",
+                                                  "notes": []},
+                                     job_id="job-1")
+    await _settle()
+    job = h.store.jobs["job-1"]
+    assert job["status"] == "done"
+    assert job["result"] == "All done for p@x.com"
+    assert h.posted[-1]["message"]["agent_id"] == "lead"
+    # The lead read both results, the held step's answer included.
+    final = h.turns[-1]["text"]
+    assert "Step 1, Mia: earlier" in final
+    assert "Step 2, Ada: Sent it." in final
+    assert h.named("job_finished")[-1]["status"] == "done"
+
+
+async def test_an_answer_after_stop_changes_nothing(h, woken):
+    _held_job(h)
+    await h.store.cancel("job-1", "p@x.com")
+    await worker.resume_after_answer("job-1-s1", {"answer": "Sent it.",
+                                                  "notes": []},
+                                     job_id="job-1")
+    job = h.store.jobs["job-1"]
+    assert job["status"] == "cancelled"
+    assert [st["status"] for st in job["steps"]] == ["skipped", "skipped"]
+    assert h.posted == [] and not woken
+
+
+async def test_a_resume_that_failed_stops_the_job(h, woken):
+    """No retry: on Yes the tool may already have run, and running the step
+    again would ask for it again."""
+    _held_job(h)
+    await worker.resume_after_answer("job-1-s1", None, job_id="job-1")
+    job = h.store.jobs["job-1"]
+    assert job["status"] == "failed"
+    assert [st["status"] for st in job["steps"]] == ["failed", "skipped"]
+    assert h.posted[-1]["message"]["content"].startswith(
+        "Mia could not finish step 1: ")
+    assert h.named("job_finished")[-1]["status"] == "failed"
+
+
+async def test_a_busy_model_after_the_answer_stops_the_job(h, woken):
+    from agent_runner import ROUTER_EXHAUSTED
+    _held_job(h)
+    await worker.resume_after_answer(
+        "job-1-s1", {"answer": ROUTER_EXHAUSTED, "notes": []},
+        job_id="job-1")
+    assert h.store.jobs["job-1"]["status"] == "failed"
+    assert "free models are all busy" in h.posted[-1]["message"]["content"]
+
+
+async def test_a_resume_for_no_job_does_nothing(h, woken):
+    await worker.resume_after_answer("step-x", {"answer": "x"}, job_id=None)
+    await worker.resume_after_answer("step-x", {"answer": "x"},
+                                     job_id="job-gone")
+    assert h.posted == [] and not woken
 
 
 # --- posting into the team chat ------------------------------------------

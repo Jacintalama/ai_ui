@@ -453,3 +453,144 @@ def test_the_fallback_shows_what_was_said_before_the_question(monkeypatch):
     _, body = _ask(app, message="sort out the invoices")
     assert "May I send this?" in body
     assert body.index("May I send this?") < body.index(">Yes<")
+
+
+# A team job's step that stopped to ask (agent_job_worker._hold). Its held
+# payload names the step and the job, and the answer must reach the worker
+# so the job carries on; an ordinary question must not.
+
+JOB_KEYS = {"job_step_id": "step-1", "job_id": "job-1", "job_step": 1,
+            "job_of": 2}
+
+
+def _job_question(mod, ask_id="ask-job"):
+    """The room as the worker leaves it: a step's question waiting."""
+    s = mod.store.get_session(EMAIL)
+    s.chat_id = "chat-1"
+    s.pending[ask_id] = dict({"agent_id": "agent-a", "user_email": EMAIL,
+                              "calls": CALLS, "conversation": HELD},
+                             **JOB_KEYS)
+    s.messages = [{"role": "user", "content": "prepare the summary"},
+                  {"role": "assistant", "agent_id": "agent-a",
+                   "agent_name": "Ada", "content": "May I send it?",
+                   "job_id": "job-1", "step": 1, "of": 2,
+                   "awaiting": {"calls": CALLS, "ask_id": ask_id}}]
+    return s
+
+
+def _record_resumes(monkeypatch, mod):
+    got = []
+
+    async def resume_after_answer(step_id, out, job_id=None):
+        got.append({"step_id": step_id, "out": out, "job_id": job_id})
+
+    monkeypatch.setattr(mod.agent_job_worker, "resume_after_answer",
+                        resume_after_answer)
+    return got
+
+
+def test_yes_on_a_job_steps_question_carries_the_job_on(monkeypatch):
+    app, mod, resumed = _app(monkeypatch, _asking_turn())
+    got = _record_resumes(monkeypatch, mod)
+    s = _job_question(mod)
+    r = TestClient(app).post("/tasks/agents/chat/approve",
+                             data={"ask_id": "ask-job", "approved": "yes"},
+                             headers=_hdr())
+    assert r.status_code == 200
+    assert [x["approved"] for x in resumed] == [True]
+    assert got == [{"step_id": "step-1", "job_id": "job-1",
+                    "out": {"answer": "Sent it.", "notes": []}}]
+    # The step's answer is drawn and stored as the step's result.
+    assert "Step 1 of 2" in r.text and "Sent it." in r.text
+    stored = s.messages[-1]
+    assert stored["content"] == "Sent it."
+    assert (stored["job_id"], stored["step"], stored["of"]) == ("job-1", 1, 2)
+    assert "Step 1 of 2" in mod.render.thread(s.messages).split(
+        "May I send it?")[1]
+
+
+def test_no_on_a_job_steps_question_carries_the_job_on_too(monkeypatch):
+    app, mod, resumed = _app(monkeypatch, _asking_turn())
+    got = _record_resumes(monkeypatch, mod)
+    _job_question(mod)
+    TestClient(app).post("/tasks/agents/chat/approve",
+                         data={"ask_id": "ask-job", "approved": "no"},
+                         headers=_hdr())
+    assert [x["approved"] for x in resumed] == [False]
+    assert got[0]["out"]["answer"] == "I did not run that."
+
+
+def test_a_typed_yes_on_a_job_steps_question_carries_the_job_on(monkeypatch):
+    app, mod, resumed = _app(monkeypatch, _asking_turn())
+    got = _record_resumes(monkeypatch, mod)
+    _job_question(mod)
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/send", data={"message": "yes"},
+           headers=_hdr())
+    c.get("/tasks/agents/chat/stream", headers=_hdr())
+    assert [x["step_id"] for x in got] == ["step-1"]
+
+
+def test_a_job_step_that_asks_again_keeps_its_place_in_the_job(monkeypatch):
+    app, mod, _ = _app(monkeypatch, _asking_turn())
+    got = _record_resumes(monkeypatch, mod)
+
+    async def asks_again(user_email, agent_id, conversation, calls, approved):
+        return {"answer": "", "notes": [],
+                "pending": {"agent_id": agent_id, "user_email": EMAIL,
+                            "calls": CALLS, "conversation": HELD}}
+
+    monkeypatch.setattr(mod, "_resume_turn", asks_again)
+    s = _job_question(mod)
+    TestClient(app).post("/tasks/agents/chat/approve",
+                         data={"ask_id": "ask-job", "approved": "yes"},
+                         headers=_hdr())
+    (new_id,) = list(s.pending)
+    assert new_id != "ask-job"
+    for key, value in JOB_KEYS.items():
+        assert s.pending[new_id][key] == value
+    assert got and got[0]["out"]["pending"]
+
+
+def test_a_job_steps_resume_that_fails_tells_the_job(monkeypatch):
+    app, mod, _ = _app(monkeypatch, _asking_turn())
+    got = _record_resumes(monkeypatch, mod)
+
+    async def broken(**kw):
+        raise RuntimeError("model down")
+
+    monkeypatch.setattr(mod, "_resume_turn", broken)
+    _job_question(mod)
+    r = TestClient(app).post("/tasks/agents/chat/approve",
+                             data={"ask_id": "ask-job", "approved": "yes"},
+                             headers=_hdr())
+    assert "could not be completed" in r.text
+    assert got == [{"step_id": "step-1", "out": None, "job_id": "job-1"}]
+
+
+def test_a_worker_that_raises_does_not_cost_the_answer(monkeypatch):
+    app, mod, _ = _app(monkeypatch, _asking_turn())
+
+    async def raises(step_id, out, job_id=None):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(mod.agent_job_worker, "resume_after_answer", raises)
+    _job_question(mod)
+    r = TestClient(app).post("/tasks/agents/chat/approve",
+                             data={"ask_id": "ask-job", "approved": "yes"},
+                             headers=_hdr())
+    assert r.status_code == 200 and "Sent it." in r.text
+
+
+def test_an_ordinary_question_never_reaches_the_job_worker(monkeypatch):
+    app, mod, resumed = _app(monkeypatch, _asking_turn())
+    got = _record_resumes(monkeypatch, mod)
+    c, _ = _ask(app)
+    r = c.post("/tasks/agents/chat/approve",
+               data={"ask_id": _questions(mod)[0], "approved": "yes"},
+               headers=_hdr())
+    assert "Sent it." in r.text and "Step" not in r.text
+    assert got == []
+    stored = mod.store.get_session(EMAIL).messages[-1]
+    assert stored == {"role": "assistant", "agent_id": "agent-a",
+                      "agent_name": "Ada", "content": "Sent it."}

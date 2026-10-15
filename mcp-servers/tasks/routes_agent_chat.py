@@ -30,6 +30,10 @@ import agent_events
 import agent_graph
 import agent_job_plan
 import agent_job_store as job_store
+# The worker imports this module back, lazily inside its functions
+# (agent_job_worker._room), so this top-level import is the only one of the
+# pair and the two never form an import cycle.
+import agent_job_worker
 import agent_job_triage
 import agent_routing
 from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS, FREE_POOL_EXHAUSTED,
@@ -1199,6 +1203,15 @@ async def _apply_pending_answer(email: str, s: store.RoomSession, ask_id: str,
         return render.note("That question is no longer waiting for an answer.")
     agent_id = str(pending.get("agent_id") or "")
     name = _name_for(agent_id, agents) or "Agent"
+    # A team job's step that stopped to ask (agent_job_worker._hold). Its
+    # place in the job rides on every question it asks, and its answers are
+    # labelled with it. All empty for an ordinary question, which then takes
+    # exactly the path it always took.
+    job_step_id = str(pending.get("job_step_id") or "")
+    job_carry = ({k: pending[k] for k in _JOB_PENDING_KEYS if k in pending}
+                 if job_step_id else {})
+    job_fields = _job_fields(pending) if job_step_id else {}
+    label = render.step_label(job_fields) if job_fields else ""
     # Cleared here, before the resume runs, so a reload shows no stale Yes
     # and No whatever _resume_turn does next.
     _clear_awaiting(s.messages, ask_id)
@@ -1215,6 +1228,9 @@ async def _apply_pending_answer(email: str, s: store.RoomSession, ask_id: str,
         except Exception:                                   # noqa: BLE001
             log.exception("agent chat: could not save after a failed "
                           "approval")
+        if job_step_id:
+            # The question is gone, so the job would wait on it forever.
+            await _carry_job_on(job_step_id, None, pending)
         # The pending stays popped. On a timeout the tool may already have
         # run, so putting the question back and offering Yes again could run
         # it a second time. Failing closed here is deliberate, not a bug.
@@ -1230,25 +1246,55 @@ async def _apply_pending_answer(email: str, s: store.RoomSession, ask_id: str,
         # It asked again. Same rules, and a new question, so a new id: the
         # one just answered is spent.
         next_ask = _ask_id()
-        s.pending[next_ask] = raw_pending
+        s.pending[next_ask] = (dict(raw_pending, **job_carry) if job_carry
+                               else raw_pending)
         awaiting = dict(page_pending)
         awaiting["ask_id"] = next_ask
         s.messages.append({"role": "assistant", "agent_id": agent_id,
                            "agent_name": name, "content": answer,
-                           "awaiting": awaiting})
-        html = ((render.agent_bubble(name, answer) if answer else "")
+                           "awaiting": awaiting, **job_fields})
+        html = ((render.agent_bubble(name, answer, label=label)
+                 if answer else "")
                 + render.approval_bubble(name, next_ask,
                                          page_pending["calls"]))
     else:
         s.messages.append({"role": "assistant", "agent_id": agent_id,
-                           "agent_name": name, "content": answer})
-        html = render.agent_bubble(name, answer)
+                           "agent_name": name, "content": answer,
+                           **job_fields})
+        html = render.agent_bubble(name, answer, label=label)
 
     try:
         await store.save_chat(email, s)
     except Exception:                                       # noqa: BLE001
         log.exception("agent chat: could not save after an approval")
+    if job_step_id:
+        # After the save, so the answer is in the row before the job moves
+        # on and the worker posts into this same conversation.
+        await _carry_job_on(job_step_id, out, pending)
     return html
+
+
+#: What a held job step's payload carries besides the held turn itself
+#: (agent_job_worker._hold), copied onto a question it asks again.
+_JOB_PENDING_KEYS = ("job_step_id", "job_id", "job_step", "job_of")
+
+
+def _job_fields(pending: dict) -> dict:
+    """The stored message's job keys, the ones thread() labels it from."""
+    return {"job_id": pending.get("job_id"), "step": pending.get("job_step"),
+            "of": pending.get("job_of")}
+
+
+async def _carry_job_on(step_id: str, out: dict | None,
+                        pending: dict) -> None:
+    """Hand the answer to the job worker. Its trouble is never the
+    person's: the answer is already drawn and saved either way."""
+    try:
+        await agent_job_worker.resume_after_answer(
+            step_id, out, job_id=str(pending.get("job_id") or "") or None)
+    except Exception:                                       # noqa: BLE001
+        log.exception("agent chat: could not hand an answer to job step %s",
+                      step_id)
 
 
 @router.get("/tasks/agents/chat/thread", include_in_schema=False)
