@@ -74,6 +74,10 @@ class FakeWorker:
     def __init__(self):
         self.woken = 0
         self.cancelled = []
+        self.enabled = True
+
+    def jobs_enabled(self):
+        return self.enabled
 
     def wake(self):
         self.woken += 1
@@ -140,6 +144,34 @@ def test_a_refused_start_says_so_and_runs_nothing(harness):
     assert not [e for e, _ in events if e == "job_started"]
     # Still a whole card, so the swap replaces it rather than nesting it.
     assert r.text.count('id="job-job-1"') == 1
+
+
+def test_start_is_refused_while_jobs_are_switched_off(harness):
+    """Off, no worker runs (agent_job_worker.start_background): a Start
+    would mark the job running with nothing to run it, holding the person's
+    one running slot until somebody pressed Stop."""
+    client, store, worker, events = harness
+    worker.enabled = False
+    r = client.post("/tasks/agents/jobs/job-1/start", headers=_hdr())
+    assert r.status_code == 200
+    assert "Team jobs are switched off" in r.text
+    assert not [c for c in store.calls if c[0] == "start"]
+    assert worker.woken == 0
+    assert store.job["status"] == "proposed"
+    assert not [e for e, _ in events if e == "job_started"]
+    assert r.text.count('id="job-job-1"') == 1
+
+
+def test_stop_still_works_while_jobs_are_switched_off(harness):
+    """A job running when the switch went off is stranded, not lost: it
+    waits for the switch to come back on, or for its owner's Stop."""
+    client, store, worker, events = harness
+    worker.enabled = False
+    store.job["status"] = "running"
+    r = client.post("/tasks/agents/jobs/job-1/cancel", headers=_hdr())
+    assert r.status_code == 200
+    assert ("cancel", "job-1", OWNER) in store.calls
+    assert "Cancelled" in r.text
 
 
 def test_cancel_stops_the_job_and_its_running_step(harness):

@@ -122,3 +122,7 @@ and progress (7).
    - Part C: the `ask_colleague` brief also says who is asking (item 6 for
      plain chats).
 5. Off switch: `AGENT_JOBS_ENABLED=false` keeps every message on today's path.
+   Start refuses while it is off, and no worker runs. A job already running
+   or waiting on its owner when it goes off is stranded: it holds their one
+   running slot until the switch is back on or they press Stop, which
+   works either way.

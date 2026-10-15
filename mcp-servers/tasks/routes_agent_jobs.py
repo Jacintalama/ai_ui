@@ -31,6 +31,11 @@ router = APIRouter()
 
 REFUSED_START = "This plan can no longer be started."
 
+#: Start, with AGENT_JOBS_ENABLED=false. No worker runs then
+#: (agent_job_worker.start_background), so a started job would be marked
+#: running with nothing to run it, holding its owner's one running slot.
+JOBS_OFF = "Team jobs are switched off right now, so this plan cannot start."
+
 
 async def _names(email: str) -> dict[str, str]:
     """Agent id -> name for the card. The card falls back to ids when the
@@ -94,6 +99,8 @@ async def job_start(job_id: str,
                     user: CurrentUser = Depends(current_user)) -> HTMLResponse:
     job = await _owned(job_id, user.email)
     names = await _names(user.email)
+    if not agent_job_worker.jobs_enabled():
+        return HTMLResponse(_card(job, names, JOBS_OFF))
     try:
         started = await job_store.start(job_id, user.email)
     except Exception:                                       # noqa: BLE001
@@ -120,7 +127,11 @@ async def job_start(job_id: str,
 @router.post("/tasks/agents/jobs/{job_id}/cancel", include_in_schema=False)
 async def job_cancel(job_id: str,
                      user: CurrentUser = Depends(current_user)) -> HTMLResponse:
-    """Cancel on a proposed plan, Stop on a running one: the same thing."""
+    """Cancel on a proposed plan, Stop on a running one: the same thing.
+
+    Works with jobs switched off as well: it is how a job left running when
+    the switch went off is ended (see agent_job_worker.jobs_enabled).
+    """
     job = await _owned(job_id, user.email)
     names = await _names(user.email)
     try:

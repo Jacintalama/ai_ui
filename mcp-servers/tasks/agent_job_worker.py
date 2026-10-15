@@ -164,8 +164,20 @@ def cancel(job_id: str) -> bool:
 
 
 def jobs_enabled() -> bool:
-    """The off switch, read when the service starts. Off, no loop runs and
-    the chat round proposes nothing (routes_agent_chat.JOBS_ENABLED)."""
+    """The off switch (AGENT_JOBS_ENABLED=false).
+
+    Off: no loop runs (read when the service starts), the chat round
+    proposes nothing (routes_agent_chat.JOBS_ENABLED, read at import), and
+    Start refuses (routes_agent_jobs.job_start, read on every press).
+
+    A job already running or waiting on its owner when the switch goes off
+    is stranded, not lost: nothing runs its steps, nothing sweeps it, and
+    it holds its owner's one running slot until the switch is back on (the
+    restart that turns it on runs the restart tidy-up and the loop) or the
+    owner presses Stop, which works either way. A Yes on its question
+    still finishes the held step: a last step then closes the job, any
+    other waits for the loop.
+    """
     return os.environ.get("AGENT_JOBS_ENABLED", "true").lower() != "false"
 
 
