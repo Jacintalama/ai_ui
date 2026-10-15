@@ -36,6 +36,12 @@ PROPOSAL_TTL_HOURS = 24
 #: it, as large as the answer was.
 RESULT_MAX_CHARS = 20000
 
+#: What a job's request may hold. The request is the person's message, which
+#: has no limit of its own, and it rides into every step's brief, the lead's
+#: closing brief, the card and the room's title. A pasted document becomes a
+#: plan's request in full otherwise, and every one of those as large as it.
+REQUEST_MAX_CHARS = 4000
+
 _JOB_COLUMNS = ("id, user_email, chat_id, lead_agent_id, request, status, "
                 "result, seen, created_at, started_at, finished_at")
 _STEP_COLUMNS = "id, job_id, position, agent_id, task, status, attempts, " \
@@ -64,7 +70,8 @@ async def create_proposed(user_email: str, chat_id: str | None,
                 "(id, user_email, chat_id, lead_agent_id, request) "
                 "VALUES (:id, :email, :chat_id, :lead, :request)"),
             {"id": job_id, "email": user_email, "chat_id": chat_id,
-             "lead": lead_agent_id, "request": request})
+             "lead": lead_agent_id,
+             "request": (request or "")[:REQUEST_MAX_CHARS]})
         for position, step in enumerate(steps, start=1):
             await s.execute(
                 sql_text(

@@ -291,3 +291,13 @@ async def test_jobs_for_chat_summarises_each_card(clean):
                              "current_agent_id": "agent-ada"}
     assert set(await js.jobs_for_chat(email, "chat-2")) == {other_chat}
     assert await js.jobs_for_chat(_who(), "chat-1") == {}
+
+
+async def test_a_long_request_is_cut_to_the_cap(clean):
+    # The request rides in every step's brief and on the card; one pasted
+    # novel must not make every one of those as large as it was.
+    email = _who()
+    job_id = await js.create_proposed(email, "chat-1", "agent-lead",
+                                      "x" * (js.REQUEST_MAX_CHARS + 500),
+                                      STEPS)
+    assert len((await js.get(job_id))["request"]) == js.REQUEST_MAX_CHARS
