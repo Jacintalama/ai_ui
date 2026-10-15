@@ -71,12 +71,13 @@ async def test_triage_of_anything_else_is_just_answer_and_instant(client, monkey
     r = await client.post("/v1/chat/completions", json=_triage("hello team"))
     assert json.loads(r.json()["choices"][0]["message"]["content"]) == {"kind": "answer"}
 
-async def test_a_step_brief_gets_the_normal_answer(client):
+async def test_a_step_brief_is_not_taken_for_triage(client):
+    """scene:job is in the step brief too; only TEAM_TRIAGE asks for a plan."""
     brief = ("The person asked the team: scene:job prepare the weekly summary\n\n"
              "The plan:\n1. Mia: Find the reports. <- this is your step")
     r = await client.post("/v1/chat/completions",
                           json=_body(brief, system="You are Mia, the receptionist."))
-    assert r.json()["choices"][0]["message"]["content"].startswith("Mia here.")
+    assert r.json()["choices"][0]["message"]["content"] == "Mia did: Find the reports."
 
 async def test_a_step_brief_answers_its_own_step_in_one_line(client):
     brief = ("The person asked the team: scene:job prepare the weekly summary\n\n"
