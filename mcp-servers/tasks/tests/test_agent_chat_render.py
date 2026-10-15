@@ -438,3 +438,141 @@ def test_a_live_answer_that_is_only_a_footer_draws_nothing():
     # Only a footer that was really there: an answer that was empty to
     # begin with is drawn as it always was.
     assert 'class="am agent"' in render.agent_bubble("Mia", "")
+
+
+# --- the plan card of a team job --------------------------------------------
+
+JOB_STEPS = [{"name": "Mia", "task": "Find the three latest reports."},
+             {"name": "Ada", "task": "Compare them."},
+             {"name": "Dev", "task": "Draft a one page summary."}]
+
+
+def _buttons(html):
+    import re
+    return re.findall(r'<button[^>]*>([^<]*)</button>', html)
+
+
+def test_a_job_card_is_one_line():
+    for status in (None, {"status": "proposed"},
+                   {"status": "running", "done": 1, "total": 3,
+                    "current_name": "Ada"}):
+        card = render.job_card("job-1", "Lead", JOB_STEPS, status)
+        assert "\n" not in card and "\r" not in card
+
+
+def test_a_job_card_lists_the_plan_in_order_under_the_lead():
+    card = render.job_card("job-1", "Lena", JOB_STEPS, {"status": "proposed"})
+    assert 'id="job-job-1"' in card
+    assert 'class="am agent ajob"' in card
+    assert '<div class="awho">Lena</div>' in card
+    assert "Plan:" in card
+    assert card.index("Mia: Find the three") < card.index("Ada: Compare them.")
+    assert card.index("Ada: Compare them.") < card.index("Dev: Draft a one")
+
+
+def test_a_job_card_escapes_names_and_tasks():
+    card = render.job_card("job-<1>", "<b>Lead</b>",
+                           [{"name": "<i>Mia</i>", "task": "<script>x</script>"},
+                            {"name": "Ada", "task": "a & b"}],
+                           {"status": "proposed"})
+    assert "<script>" not in card
+    assert "<b>Lead</b>" not in card
+    assert "<i>Mia</i>" not in card
+    assert "&lt;script&gt;" in card
+    assert "a &amp; b" in card
+    assert 'id="job-job-&lt;1&gt;"' in card
+
+
+def test_a_proposed_plan_offers_start_and_cancel_and_says_nothing_else():
+    card = render.job_card("job-1", "Lena", JOB_STEPS, {"status": "proposed"})
+    assert _buttons(card) == ["Start", "Cancel"]
+    assert 'hx-post="/tasks/agents/jobs/job-1/start"' in card
+    assert 'hx-post="/tasks/agents/jobs/job-1/cancel"' in card
+    assert card.count('hx-target="#job-job-1"') == 2
+    assert card.count('hx-swap="outerHTML"') == 2
+    assert "ajob-status" not in card
+
+
+def test_a_running_job_says_which_step_and_who_and_offers_stop():
+    card = render.job_card("job-1", "Lena", JOB_STEPS,
+                           {"status": "running", "done": 2, "total": 3,
+                            "current_name": "Dev"})
+    assert "Running: step 3 of 3, Dev is working" in card
+    assert _buttons(card) == ["Stop"]
+    assert 'hx-post="/tasks/agents/jobs/job-1/cancel"' in card
+    assert "/start" not in card
+
+
+def test_a_running_job_between_steps_names_nobody():
+    card = render.job_card("job-1", "Lena", JOB_STEPS,
+                           {"status": "running", "done": 1, "total": 3,
+                            "current_name": None})
+    assert "Running: step 2 of 3" in card
+    assert "is working" not in card
+
+
+def test_a_job_waiting_on_the_person_says_so_and_can_be_stopped():
+    card = render.job_card("job-1", "Lena", JOB_STEPS,
+                           {"status": "needs_you", "done": 1, "total": 3})
+    assert "Waiting for your answer above" in card
+    assert _buttons(card) == ["Stop"]
+
+
+def test_a_finished_job_has_its_word_and_no_buttons():
+    for status, words in (("done", "Done"),
+                          ("failed", "Stopped: a step failed"),
+                          ("cancelled", "Cancelled")):
+        card = render.job_card("job-1", "Lena", JOB_STEPS,
+                               {"status": status, "done": 1, "total": 3})
+        assert words in card, status
+        assert _buttons(card) == [], status
+        assert "hx-post" not in card, status
+
+
+def test_an_unknown_job_draws_its_plan_with_nothing_to_press():
+    """No status means the job could not be read (it is gone, or the
+    database did not answer). Drawing a Start that does nothing, or one
+    that starts something unseen, is worse than drawing none."""
+    card = render.job_card("job-1", "Lena", JOB_STEPS, None)
+    assert "Mia: Find the three latest reports." in card
+    assert _buttons(card) == []
+
+
+def _with_job(**extra):
+    msg = {"role": "job", "job_id": "job-1", "agent_name": "Lena",
+           "steps": JOB_STEPS}
+    msg.update(extra)
+    return [{"role": "user", "content": "prepare the weekly summary",
+             "turn_id": "abc123def456"}, msg]
+
+
+def test_the_thread_draws_a_stored_plan_with_its_live_status():
+    html = render.thread(_with_job(), jobs={
+        "job-1": {"status": "running", "done": 0, "total": 3,
+                  "current_name": "Mia"}})
+    assert 'id="job-job-1"' in html
+    assert "Running: step 1 of 3, Mia is working" in html
+    assert _buttons(html) == ["Stop"]
+
+
+def test_the_thread_draws_a_plan_it_has_no_status_for_without_buttons():
+    for jobs in (None, {}, {"job-other": {"status": "proposed"}}):
+        html = render.thread(_with_job(), jobs=jobs)
+        assert "Mia: Find the three latest reports." in html
+        assert _buttons(html) == []
+
+
+def test_existing_callers_of_thread_still_work():
+    html = render.thread([{"role": "user", "content": "hi"},
+                          {"role": "assistant", "agent_name": "Ada",
+                           "content": "hello"}], private=False)
+    assert "hello" in html
+    assert render.thread([], True) == render.empty_thread(True)
+
+
+def test_a_stored_plan_with_a_bad_shape_does_not_break_the_thread():
+    html = render.thread(_with_job(steps="not a list", agent_name=None),
+                         jobs={"job-1": {"status": "proposed"}})
+    assert 'id="job-job-1"' in html
+    html = render.thread(_with_job(job_id=None))
+    assert "turn" in html          # the rest of the thread still drew

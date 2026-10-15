@@ -297,6 +297,77 @@ def approval_bubble(name: str, ask_id: str, calls: list[dict]) -> str:
             '</div></div></div>')
 
 
+def _job_status_line(status: dict | None) -> str:
+    """The card's one line of progress, from a jobs_for_chat summary."""
+    if not isinstance(status, dict):
+        return ""
+    state = status.get("status")
+    if state == "running":
+        try:
+            total = int(status.get("total") or 0)
+            step = min(int(status.get("done") or 0) + 1, total) if total else 0
+        except (TypeError, ValueError):
+            step = total = 0
+        line = f"Running: step {step} of {total}" if total else "Running"
+        who = status.get("current_name")
+        if who:
+            line += f", {who} is working"
+        return line
+    return {"needs_you": "Waiting for your answer above",
+            "done": "Done",
+            "failed": "Stopped: a step failed",
+            "cancelled": "Cancelled"}.get(state, "")
+
+
+def _job_button(job_id: str, action: str, label: str, primary: bool) -> str:
+    jid = esc(job_id)
+    cls = "btn primary" if primary else "btn"
+    return (f'<button class="{cls}" type="button" '
+            f'hx-post="/tasks/agents/jobs/{jid}/{action}" '
+            f'hx-target="#job-{jid}" hx-swap="outerHTML">{label}</button>')
+
+
+def job_card(job_id: str, lead_name: str, steps: list[dict],
+             status: dict | None = None) -> str:
+    """The lead's plan for a team job, with what can be done about it now.
+
+    `status` is the job's summary from agent_job_store.jobs_for_chat plus the
+    running agent's name (`current_name`). The buttons follow it: Start and
+    Cancel while proposed, Stop while running or waiting on the person, none
+    once it has ended. No status at all means the job could not be read, and
+    a card with nothing to press is the safe drawing of that: a Start that
+    acts on a job nobody can see is worse than none.
+
+    Every name and task came from a model or the person, so all of it is
+    escaped.
+    """
+    items = []
+    for st in steps if isinstance(steps, list) else []:
+        if not isinstance(st, dict):
+            continue
+        items.append(f'<li>{esc(str(st.get("name") or ""))}: '
+                     f'{esc(str(st.get("task") or ""))}</li>')
+    line = _job_status_line(status)
+    state = status.get("status") if isinstance(status, dict) else None
+    if state == "proposed":
+        buttons = (_job_button(job_id, "start", "Start", True)
+                   + _job_button(job_id, "cancel", "Cancel", False))
+    elif state in ("running", "needs_you"):
+        buttons = _job_button(job_id, "cancel", "Stop", False)
+    else:
+        buttons = ""
+    lead = str(lead_name or "Agent")
+    return (f'<div class="am agent ajob" id="job-{esc(job_id)}">'
+            f'{_avatar(lead)}'
+            '<div class="abody">'
+            f'<div class="awho">{esc(lead)}</div>'
+            '<div class="atext">Plan:</div>'
+            f'<ol class="ajob-steps">{"".join(items)}</ol>'
+            + (f'<div class="ajob-status">{esc(line)}</div>' if line else "")
+            + (f'<div class="aactions">{buttons}</div>' if buttons else "")
+            + '</div></div>')
+
+
 def working(name: str) -> str:
     """Which agent is running right now.
 
@@ -392,10 +463,11 @@ def _shown(content: str) -> str:
     return _without_route_footer(content)
 
 
-def thread(messages: list[dict], private: bool = False) -> str:
+def thread(messages: list[dict], private: bool = False,
+           jobs: dict | None = None) -> str:
     """A saved conversation replayed, grouped into turns.
 
-    Roles other than user, assistant, note and failure are the round
+    Roles other than user, assistant, note, failure and job are the round
     bookkeeping (see routes_agent_chat) and render as nothing. Notes and
     failures ARE drawn, because a round stores them on purpose: a skipped
     agent, or one that could not answer, said out loud while the round ran
@@ -414,7 +486,13 @@ def thread(messages: list[dict], private: bool = False) -> str:
     what a brand new conversation and a freshly cleared one show live today,
     and this function is what /tasks/agents/chat/thread renders on every
     page load, so returning "" here would blank that out instead.
+
+    A stored `job` message is a team job's plan card. Its status is not in
+    the message, it changes while the job runs, so it comes from `jobs`
+    (job id -> summary, see job_card). A job missing from `jobs`, or no
+    `jobs` at all, draws the plan with nothing to press.
     """
+    jobs = jobs if isinstance(jobs, dict) else {}
     out = []
     open_turn = False
     for m in messages or []:
@@ -430,6 +508,12 @@ def thread(messages: list[dict], private: bool = False) -> str:
         if role == "note":
             if content:
                 out.append(note(content))
+        elif role == "job":
+            job_id = str(m.get("job_id") or "")
+            if job_id:
+                out.append(job_card(job_id,
+                                    str(m.get("agent_name") or "Agent"),
+                                    m.get("steps"), jobs.get(job_id)))
         elif role == "failure":
             # reason/fix are the ones stored when the round hit this, kept so
             # a reload shows the same words that were on screen live. Falls
