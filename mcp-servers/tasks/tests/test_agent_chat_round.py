@@ -544,6 +544,60 @@ def test_clearing_a_private_chat_leaves_the_room_alone(monkeypatch):
     assert "in the room" in said
 
 
+def _live_job(monkeypatch, mod, error=None):
+    """The person's running job, as agent_job_store.cancel_live finds it,
+    and what the worker and the feed are told when it is stopped."""
+    got = {"cancel_live": [], "worker": [], "events": []}
+
+    async def cancel_live(email):
+        got["cancel_live"].append(email)
+        if error is not None:
+            raise error
+        return [{"job_id": "job-1", "lead_agent_id": "agent-a"}]
+
+    monkeypatch.setattr(mod.job_store, "cancel_live", cancel_live)
+    monkeypatch.setattr(mod.agent_job_worker, "cancel",
+                        lambda job_id: got["worker"].append(job_id))
+    monkeypatch.setattr(mod.agent_events, "publish",
+                        lambda event, **kw: got["events"].append((event, kw)))
+    return got
+
+
+def test_new_chat_in_the_room_stops_the_running_job(monkeypatch):
+    """New chat takes the card, and its Stop button, away. A job left
+    running would post into the fresh conversation and hold the person's
+    one running slot with no way to stop it."""
+    app, mod, _ = _app(monkeypatch)
+    got = _live_job(monkeypatch, mod)
+    r = TestClient(app).post("/tasks/agents/chat/clear", headers=_hdr())
+    assert r.status_code == 200
+    assert got["cancel_live"] == [EMAIL]
+    assert got["worker"] == ["job-1"]
+    assert got["events"] == [("job_finished", {
+        "agent_id": "agent-a", "user_email": EMAIL, "job_id": "job-1",
+        "status": "cancelled"})]
+
+
+def test_clearing_a_private_chat_leaves_a_running_job_alone(monkeypatch):
+    app, mod, _ = _app(monkeypatch)
+    got = _live_job(monkeypatch, mod)
+    TestClient(app).post("/tasks/agents/chat/clear",
+                         data={"agent": "agent-a"}, headers=_hdr())
+    assert got["cancel_live"] == [] and got["worker"] == []
+
+
+def test_new_chat_still_clears_when_the_job_cannot_be_stopped(monkeypatch):
+    app, mod, _ = _app(monkeypatch)
+    got = _live_job(monkeypatch, mod, error=RuntimeError("db down"))
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/send", data={"message": "in the room"},
+           headers=_hdr())
+    r = c.post("/tasks/agents/chat/clear", headers=_hdr())
+    assert r.status_code == 200
+    assert mod.store.get_session(EMAIL).messages == []
+    assert got["worker"] == []
+
+
 def test_an_agent_that_is_not_yours_cannot_be_talked_to(monkeypatch):
     """The id comes off a link in a browser. Only agents this person owns are
     in the roster, so anything else has nobody to answer."""

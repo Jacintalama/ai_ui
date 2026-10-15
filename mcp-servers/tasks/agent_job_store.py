@@ -12,8 +12,9 @@ when the write had failed would run a step twice or lose one, so every
 function raises and the caller decides what failing open means for it.
 
 Every read and write that answers a person is scoped to that person. The
-two that are not, claim_next_step and recover_after_restart, are the
-worker's, and look across everyone because the worker serves everyone.
+ones that are not, claim_next_step, recover_after_restart and sweep_stuck,
+are the worker's, and look across everyone because the worker serves
+everyone.
 """
 import logging
 import uuid
@@ -55,6 +56,20 @@ MAX_ATTEMPTS = 2
 WHY_INTERRUPTED = "interrupted"
 #: The step was cut off after its turn had already run a tool.
 WHY_ACTED = "acted"
+#: Every step was done, but the job never closed (sweep_stuck): its results
+#: are all posted, only the lead's summary is missing.
+WHY_NO_SUMMARY = "no_summary"
+#: A live job with nothing left that could move it (sweep_stuck).
+WHY_STRANDED = "stranded"
+#: A step's question waited longer than NEEDS_YOU_MAX_HOURS (sweep_stuck).
+WHY_UNANSWERED = "unanswered"
+
+#: How long a step may wait on the person's Yes or No. A job waiting on its
+#: owner holds their one running slot (the unique index), so a question
+#: nobody will ever answer, because its card was lost or the person moved
+#: on, must not hold it for good. Counted from when the step began, which is
+#: within a turn's length of when it asked.
+NEEDS_YOU_MAX_HOURS = 24
 
 _JOB_COLUMNS = ("id, user_email, chat_id, lead_agent_id, request, status, "
                 "result, seen, created_at, started_at, finished_at")
@@ -388,7 +403,8 @@ async def recover_after_restart() -> dict:
     A step whose job is waiting on the person (needs_you) was not lost: it
     is held for their Yes or No, which is saved with the chat and finishes
     it, so it is left alone. A plan nobody started in a day is cancelled, so
-    the badge and the card stop offering it.
+    the badge and the card stop offering it. Last, sweep_stuck ends every
+    live job that nothing will move again.
     """
     ended = []
     async with session() as s:
@@ -441,7 +457,165 @@ async def recover_after_restart() -> dict:
     if requeue or ended:
         logger.info("after a restart: requeued %d agent job steps, ended %d "
                     "jobs", len(requeue), len(ended))
+    # Nothing is in flight in a process that has just started, so nothing is
+    # excluded: a job whose lead was closing it when the process stopped is
+    # all done, and closes here.
+    ended += await sweep_stuck()
     return {"requeued": len(requeue), "ended": ended}
+
+
+async def sweep_stuck(exclude_job_ids=()) -> list[dict]:
+    """End every live job that nothing will ever move again.
+
+    Returns one entry per job ended, shaped as recover_after_restart's
+    "ended" (agent_id and position are the held step's for an unanswered
+    question, and None otherwise).
+
+    - running, with no step waiting or running: every step done means only
+      the lead's closing answer is missing (a restart during it, or its
+      final write failed), so the job is done; anything else failed.
+    - needs_you with no step held (running): the answer's writes failed
+      half way, or the question was never shown. Nobody can answer it.
+    - needs_you whose held step began more than NEEDS_YOU_MAX_HOURS ago:
+      failed, and its step with it.
+
+    `exclude_job_ids` are jobs this process is working on right now
+    (agent_job_worker._RUNNING), such as one whose lead is writing the
+    closing answer: all done and running no step, and it must not be closed
+    under the lead. After a restart nothing is in flight to exclude.
+
+    FOR UPDATE ... SKIP LOCKED on the job row, the lock a claim takes, so a
+    job being claimed from is passed over and looked at the next time.
+    """
+    exclude = [str(j) for j in exclude_job_ids or ()]
+    ended = []
+    async with session() as s:
+        rows = (await s.execute(
+            sql_text(
+                "SELECT j.id, j.status, j.user_email, j.lead_agent_id, "
+                "  j.request, "
+                "  (SELECT count(*) FROM tasks.agent_job_step o "
+                "   WHERE o.job_id = j.id "
+                "     AND o.status IN ('waiting', 'running')) AS open_steps, "
+                "  (SELECT count(*) FROM tasks.agent_job_step n "
+                "   WHERE n.job_id = j.id AND n.status <> 'done') "
+                "    AS not_done, "
+                "  h.id AS held_id, h.agent_id AS held_agent_id, "
+                "  h.position AS held_position, "
+                "  (h.id IS NOT NULL AND COALESCE(h.started_at, j.started_at) "
+                "     <= now() - make_interval(hours => :max_wait)) "
+                "    AS held_too_long "
+                "FROM tasks.agent_job j "
+                "LEFT JOIN LATERAL (SELECT r.id, r.agent_id, r.position, "
+                "                          r.started_at "
+                "                   FROM tasks.agent_job_step r "
+                "                   WHERE r.job_id = j.id "
+                "                     AND r.status = 'running' "
+                "                   ORDER BY r.position LIMIT 1) h ON TRUE "
+                "WHERE j.status IN ('running', 'needs_you') "
+                "  AND NOT (j.id = ANY(:exclude)) "
+                "FOR UPDATE OF j SKIP LOCKED"),
+            {"max_wait": NEEDS_YOU_MAX_HOURS,
+             "exclude": exclude})).mappings().all()
+        for row in rows:
+            status = why = agent_id = position = None
+            if row["status"] == "running" and row["open_steps"] == 0:
+                status, why = (("done", WHY_NO_SUMMARY)
+                               if row["not_done"] == 0
+                               else ("failed", WHY_STRANDED))
+            elif row["status"] == "needs_you" and row["held_id"] is None:
+                status, why = "failed", WHY_STRANDED
+            elif row["status"] == "needs_you" and row["held_too_long"]:
+                status, why = "failed", WHY_UNANSWERED
+                agent_id = row["held_agent_id"]
+                position = row["held_position"]
+                await s.execute(
+                    sql_text("UPDATE tasks.agent_job_step "
+                             "SET status = 'failed', result = :why "
+                             "WHERE id = :id AND status = 'running'"),
+                    {"id": row["held_id"], "why": why})
+            if status is None:
+                continue
+            await s.execute(
+                sql_text("UPDATE tasks.agent_job "
+                         "SET status = :status, finished_at = now() "
+                         "WHERE id = :id"),
+                {"id": row["id"], "status": status})
+            if status == "failed":
+                await _skip_unfinished(s, row["id"])
+            ended.append({"job_id": row["id"],
+                          "user_email": row["user_email"],
+                          "lead_agent_id": row["lead_agent_id"],
+                          "request": row["request"], "status": status,
+                          "why": why, "agent_id": agent_id,
+                          "position": position})
+        await s.commit()
+    if ended:
+        logger.info("swept %d agent jobs that could no longer move",
+                    len(ended))
+    return ended
+
+
+async def finish_held_step(step_id: str, job_id: str, answer: str,
+                           reopen: bool) -> bool:
+    """A held step's answer: the step done and, with `reopen`, its job back
+    from needs_you to running, in one transaction.
+
+    One write rather than finish_step then set_status, because between the
+    two the job waits on the person with nothing held, which sweep_stuck
+    rightly reads as stuck, and a failure between them would leave it so.
+    False, with nothing changed, unless the step is still held (running)
+    and its job still waiting on the person: a Stop in between wins.
+    """
+    async with session() as s:
+        job = (await s.execute(
+            sql_text("SELECT id FROM tasks.agent_job "
+                     "WHERE id = :id AND status = 'needs_you' FOR UPDATE"),
+            {"id": job_id})).first()
+        if job is None:
+            await s.rollback()
+            return False
+        res = await s.execute(
+            sql_text("UPDATE tasks.agent_job_step "
+                     "SET status = 'done', result = :result "
+                     "WHERE id = :id AND job_id = :job_id "
+                     "  AND status = 'running' RETURNING id"),
+            {"id": step_id, "job_id": job_id, "result": _cap(answer)})
+        if res.first() is None:
+            await s.rollback()
+            return False
+        if reopen:
+            await s.execute(
+                sql_text("UPDATE tasks.agent_job SET status = 'running' "
+                         "WHERE id = :id"),
+                {"id": job_id})
+        await s.commit()
+    return True
+
+
+async def cancel_live(user_email: str) -> list[dict]:
+    """Stop this person's running or paused job, if they have one, as Stop
+    would: cancelled, every unfinished step skipped.
+
+    For New chat, which takes away the card the Stop button was on. Returns
+    [{job_id, lead_agent_id}] per job stopped (at most one, by the unique
+    index). A proposed plan is left alone: it holds no slot, and expires by
+    itself.
+    """
+    async with session() as s:
+        rows = (await s.execute(
+            sql_text(
+                "UPDATE tasks.agent_job "
+                "SET status = 'cancelled', finished_at = now() "
+                "WHERE user_email = :email "
+                "  AND status IN ('running', 'needs_you') "
+                "RETURNING id, lead_agent_id"),
+            {"email": user_email})).mappings().all()
+        for row in rows:
+            await _skip_unfinished(s, row["id"])
+        await s.commit()
+    return [{"job_id": r["id"], "lead_agent_id": r["lead_agent_id"]}
+            for r in rows]
 
 
 async def unseen_count(user_email: str) -> int:

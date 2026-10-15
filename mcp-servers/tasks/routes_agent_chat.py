@@ -1315,6 +1315,33 @@ async def agent_chat_thread(agent: str = "",
                                                                   s)))
 
 
+async def _stop_live_jobs(email: str) -> None:
+    """Stop this person's running or paused team job, for New chat.
+
+    The job's card, and its Stop button, were in the conversation just
+    emptied. Left running, the job would post its results into the fresh
+    one, and hold the person's one running slot with nothing on screen to
+    stop it by. Only the room: a job posts there and nowhere else
+    (agent_job_worker.post_to_room). Never raises: clearing must work
+    whatever the job store does.
+    """
+    try:
+        stopped = await job_store.cancel_live(email)
+    except Exception:                                       # noqa: BLE001
+        log.warning("agent chat: could not stop the running job on New chat",
+                    exc_info=True)
+        return
+    for job in stopped or []:
+        job_id = str(job.get("job_id") or "")
+        # The row first, then the work, as the Stop button does
+        # (routes_agent_jobs.job_cancel).
+        agent_job_worker.cancel(job_id)
+        agent_events.publish("job_finished",
+                             agent_id=str(job.get("lead_agent_id") or ""),
+                             user_email=email, job_id=job_id,
+                             status="cancelled")
+
+
 @router.post("/tasks/agents/chat/clear", include_in_schema=False)
 async def agent_chat_clear(agent: str = Form(""),
                            user: CurrentUser = Depends(current_user)
@@ -1346,6 +1373,8 @@ async def agent_chat_clear(agent: str = Form(""),
     s.streaming = False
     # Invalidate any round still running against what was just emptied.
     s.generation += 1
+    if who is None:
+        await _stop_live_jobs(user.email)
     if s.chat_id:
         try:
             await store.save_chat(user.email, s)

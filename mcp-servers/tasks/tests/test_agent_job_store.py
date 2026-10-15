@@ -420,3 +420,173 @@ async def test_a_retry_is_judged_on_its_own_attempt(clean):
     again = await js.claim_next_step()
     assert again["id"] == step["id"]
     assert await js.step_acted(step["id"]) is False
+
+
+# --- the sweep: a live job with nothing left that can move it ----------------
+
+async def _set_step(step_id: str, status: str) -> None:
+    async with session() as s:
+        await s.execute(sql_text(
+            "UPDATE tasks.agent_job_step SET status = :st WHERE id = :id"),
+            {"st": status, "id": step_id})
+        await s.commit()
+
+
+async def _all_done(email: str) -> str:
+    job_id = await _running(email)
+    for _ in range(3):
+        step = await js.claim_next_step()
+        await js.finish_step(step["id"], "done", "ok")
+    return job_id
+
+
+def _mine(ended: list[dict], job_id: str) -> list[dict]:
+    return [e for e in ended if e["job_id"] == job_id]
+
+
+async def test_sweep_finishes_a_running_job_whose_steps_are_all_done(clean):
+    # A restart during the lead's closing turn: every result is posted and
+    # nothing is left to claim, so nothing would ever move it.
+    email = _who()
+    job_id = await _all_done(email)
+    ended = await js.sweep_stuck()
+    job = await js.get(job_id)
+    assert job["status"] == "done" and job["finished_at"] is not None
+    (item,) = _mine(ended, job_id)
+    assert (item["status"], item["why"], item["user_email"]) == (
+        "done", js.WHY_NO_SUMMARY, email)
+    # It no longer holds the person's one running slot.
+    assert await js.start(await _proposed(email), email) is True
+
+
+async def test_sweep_fails_a_running_job_with_nothing_left_to_run(clean):
+    email = _who()
+    job_id = await _running(email)
+    step = await js.claim_next_step()
+    await js.finish_step(step["id"], "done", "ok")
+    job = await js.get(job_id)
+    await _set_step(job["steps"][1]["id"], "failed")
+    await _set_step(job["steps"][2]["id"], "skipped")
+    ended = await js.sweep_stuck()
+    assert (await js.get(job_id))["status"] == "failed"
+    assert _mine(ended, job_id)[0]["why"] == js.WHY_STRANDED
+
+
+async def test_sweep_leaves_a_job_in_flight_alone(clean):
+    email = _who()
+    job_id = await _running(email)
+    await js.claim_next_step()                      # a step is running
+    other = _who()
+    closing = await _all_done(other)                # the lead is closing it
+    ended = await js.sweep_stuck(exclude_job_ids=[closing])
+    assert (await js.get(job_id))["status"] == "running"
+    assert (await js.get(closing))["status"] == "running"
+    assert not _mine(ended, job_id) and not _mine(ended, closing)
+
+
+async def test_sweep_fails_a_paused_job_with_no_question_left(clean):
+    # needs_you with nothing held: the answer's own write failed half way,
+    # or the question was never shown. Nobody can answer it any more.
+    email = _who()
+    job_id = await _running(email)
+    step = await js.claim_next_step()
+    await js.set_status(job_id, "needs_you")
+    await js.finish_step(step["id"], "done", "answered")
+    ended = await js.sweep_stuck()
+    job = await js.get(job_id)
+    assert job["status"] == "failed"
+    assert [s["status"] for s in job["steps"]] == ["done", "skipped",
+                                                   "skipped"]
+    assert _mine(ended, job_id)[0]["why"] == js.WHY_STRANDED
+
+
+async def test_sweep_fails_a_question_nobody_answered_in_time(clean):
+    email = _who()
+    job_id = await _running(email)
+    step = await js.claim_next_step()
+    await js.set_status(job_id, "needs_you")
+    fresh_owner = _who()
+    fresh = await _running(fresh_owner)
+    await js.claim_next_step()
+    await js.set_status(fresh, "needs_you")
+    async with session() as s:
+        await s.execute(sql_text(
+            "UPDATE tasks.agent_job_step SET started_at = now() - "
+            "make_interval(hours => :h) WHERE id = :id"),
+            {"h": js.NEEDS_YOU_MAX_HOURS + 1, "id": step["id"]})
+        await s.commit()
+    ended = await js.sweep_stuck()
+    job = await js.get(job_id)
+    assert job["status"] == "failed"
+    assert [s["status"] for s in job["steps"]] == ["failed", "skipped",
+                                                   "skipped"]
+    (item,) = _mine(ended, job_id)
+    assert (item["why"], item["agent_id"], item["position"]) == (
+        js.WHY_UNANSWERED, "agent-mia", 1)
+    assert (await js.get(fresh))["status"] == "needs_you"
+    assert not _mine(ended, fresh)
+
+
+async def test_recover_sweeps_too(clean):
+    email = _who()
+    job_id = await _all_done(email)
+    recovered = await js.recover_after_restart()
+    assert (await js.get(job_id))["status"] == "done"
+    assert _mine(recovered["ended"], job_id)[0]["why"] == js.WHY_NO_SUMMARY
+
+
+async def test_finish_held_step_reopens_the_job_in_one_write(clean):
+    email = _who()
+    job_id = await _running(email)
+    step = await js.claim_next_step()
+    await js.set_status(job_id, "needs_you")
+    assert await js.finish_held_step(step["id"], job_id, "sent it",
+                                     reopen=True) is True
+    job = await js.get(job_id)
+    assert job["status"] == "running"
+    assert (job["steps"][0]["status"], job["steps"][0]["result"]) == (
+        "done", "sent it")
+    # Not held any more: a second answer changes nothing.
+    assert await js.finish_held_step(step["id"], job_id, "again",
+                                     reopen=True) is False
+
+
+async def test_finish_held_step_on_the_last_step_leaves_the_job_paused(clean):
+    email = _who()
+    job_id = await _running(email)
+    step = await js.claim_next_step()
+    await js.set_status(job_id, "needs_you")
+    assert await js.finish_held_step(step["id"], job_id, "sent it",
+                                     reopen=False) is True
+    assert (await js.get(job_id))["status"] == "needs_you"
+
+
+async def test_finish_held_step_after_stop_changes_nothing(clean):
+    email = _who()
+    job_id = await _running(email)
+    step = await js.claim_next_step()
+    await js.set_status(job_id, "needs_you")
+    await js.cancel(job_id, email)
+    assert await js.finish_held_step(step["id"], job_id, "late",
+                                     reopen=True) is False
+    job = await js.get(job_id)
+    assert job["status"] == "cancelled"
+    assert job["steps"][0]["status"] == "skipped"
+
+
+async def test_cancel_live_stops_only_this_persons_live_job(clean):
+    email = _who()
+    live = await _running(email)
+    await js.claim_next_step()
+    proposed = await _proposed(email)
+    other = _who()
+    others = await _running(other)
+    stopped = await js.cancel_live(email)
+    assert [j["job_id"] for j in stopped] == [live]
+    assert stopped[0]["lead_agent_id"] == "agent-lead"
+    job = await js.get(live)
+    assert job["status"] == "cancelled"
+    assert [s["status"] for s in job["steps"]] == ["skipped"] * 3
+    assert (await js.get(proposed))["status"] == "proposed"
+    assert (await js.get(others))["status"] == "running"
+    assert await js.cancel_live(email) == []

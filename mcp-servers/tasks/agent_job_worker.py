@@ -40,6 +40,14 @@ MAX_ATTEMPTS = job_store.MAX_ATTEMPTS
 #: step requeued after a restart.
 IDLE_POLL_SECONDS = 5
 
+#: How often the idle loop looks for live jobs nothing will move again
+#: (agent_job_store.sweep_stuck): a question that could not be shown, an
+#: answer whose writes failed half way, a final write that did not land, a
+#: question unanswered for a day. Each holds its owner's one running slot
+#: until something ends it. A minute is soon enough for any of them, and
+#: keeps the query off the database's back.
+SWEEP_EVERY_SECONDS = 60
+
 #: The pause after the loop itself hit an error, so a database that is down
 #: costs a log line every few seconds rather than a CPU spinning on it.
 ERROR_SLEEP_SECONDS = 5
@@ -61,7 +69,19 @@ _RESTART_NOTES = {
     job_store.WHY_INTERRUPTED: ("%(name)s could not finish step "
                                 "%(position)d: it was cut off by a restart on "
                                 "its last try. The job stopped."),
+    job_store.WHY_STRANDED: "This job could not carry on, so it stopped.",
+    job_store.WHY_UNANSWERED: ("Nobody answered %(name)s's question on step "
+                               "%(position)d within a day, so the job "
+                               "stopped."),
 }
+
+#: Bound at import, like _RESTART_NOTES: the tests replace job_store.
+_WHY_NO_SUMMARY = job_store.WHY_NO_SUMMARY
+
+#: Said by the lead when a step's question could not be put in the chat.
+_UNSHOWN = ("%s had a question on step %d, but it could not be shown. The "
+            "job stopped.")
+_UNSHOWN_REASON = "its question could not be shown"
 
 _TIMED_OUT = "it ran out of time"
 _BROKE = "something went wrong on our side"
@@ -186,7 +206,14 @@ async def _announce_ended(ended: list[dict]) -> None:
             names = await _names(email)
             agent_id = str(item.get("agent_id") or "")
             text = _RESTART_NOTES.get(item.get("why"))
-            if text:
+            if item.get("why") == _WHY_NO_SUMMARY:
+                # Done: every result is in the chat already. Said the way
+                # _close says a summary that could not be written.
+                await post_to_room(email, {"role": "note",
+                                           "content": NO_SUMMARY,
+                                           "job_id": job_id},
+                                   title=item.get("request") or "")
+            elif text:
                 await post_to_room(email, {
                     "role": "assistant", "agent_id": lead_id,
                     "agent_name": names.get(lead_id) or lead_id,
@@ -214,6 +241,8 @@ async def job_loop() -> None:
     """
     global _SLOTS
     slots = _SLOTS = asyncio.Semaphore(MAX_PARALLEL_STEPS)
+    loop = asyncio.get_running_loop()
+    swept_at = None
     while True:
         try:
             await slots.acquire()
@@ -224,6 +253,10 @@ async def job_loop() -> None:
                 raise
             if step is None:
                 slots.release()
+                if (swept_at is None
+                        or loop.time() - swept_at >= SWEEP_EVERY_SECONDS):
+                    swept_at = loop.time()
+                    await _sweep()
                 await _wait_for_work(IDLE_POLL_SECONDS)
                 continue
             _launch(step, slots)
@@ -232,6 +265,20 @@ async def job_loop() -> None:
         except Exception:                                   # noqa: BLE001
             logger.exception("job worker: the loop hit an error; carrying on")
             await asyncio.sleep(ERROR_SLEEP_SECONDS)
+
+
+async def _sweep() -> None:
+    """End the live jobs nothing will move again, leaving alone every job
+    this process is working on (a step in flight, a lead closing one), and
+    tell their owners. Never raises: a sweep that fails is tried again on a
+    later idle pass, and claiming work must not wait on it."""
+    try:
+        ended = await job_store.sweep_stuck(exclude_job_ids=list(_RUNNING))
+    except Exception:                                       # noqa: BLE001
+        logger.warning("job worker: the sweep for stuck jobs failed",
+                       exc_info=True)
+        return
+    await _announce_ended(ended or [])
 
 
 def _launch(step: dict, slots: asyncio.Semaphore) -> None:
@@ -435,9 +482,14 @@ async def _hold(job: dict, step: dict, out: dict, name: str,
     names this step and its job, which is how a Yes or No finds its way back
     here (resume_after_answer). The job waits on the person; the step stays
     running, held, until they answer.
+
+    A question that could not be put in the chat fails the step and the
+    job: nobody can answer what nobody was shown, and a job waiting on its
+    owner holds their one running slot.
     """
     job_id = str(job["id"])
     email = str(job["user_email"])
+    position = int(step["position"])
     if not await job_store.set_status(job_id, "needs_you"):
         return
     raw = dict(out["pending"])
@@ -451,12 +503,32 @@ async def _hold(job: dict, step: dict, out: dict, name: str,
     awaiting = dict(page)
     awaiting["ask_id"] = ask_id
     answer = out.get("answer") or ""
-    await post_to_room(email, {"role": "assistant",
-                               "agent_id": str(step["agent_id"]),
-                               "agent_name": name, "content": answer,
-                               "awaiting": awaiting, "job_id": job_id,
-                               "step": int(step["position"]), "of": total},
-                       pending={ask_id: raw}, title=job.get("request") or "")
+    posted = await post_to_room(
+        email, {"role": "assistant", "agent_id": str(step["agent_id"]),
+                "agent_name": name, "content": answer, "awaiting": awaiting,
+                "job_id": job_id, "step": position, "of": total},
+        pending={ask_id: raw}, title=job.get("request") or "")
+    if not posted:
+        if not await job_store.finish_step(step["id"], "failed",
+                                           _UNSHOWN_REASON):
+            return
+        if not await job_store.set_status(job_id, "failed"):
+            return
+        lead_id = str(job.get("lead_agent_id") or "")
+        names = await _names(email)
+        # Likely to fail as the question did; tried once all the same, as
+        # the only way the person hears why their job stopped.
+        await post_to_room(email, {
+            "role": "assistant", "agent_id": lead_id,
+            "agent_name": names.get(lead_id) or lead_id,
+            "content": _UNSHOWN % (name, position), "job_id": job_id},
+            title=job.get("request") or "")
+        agent_events.publish("step_finished", agent_id=str(step["agent_id"]),
+                             user_email=email, job_id=job_id, step=position,
+                             of=total, status="failed")
+        agent_events.publish("job_finished", agent_id=lead_id,
+                             user_email=email, job_id=job_id, status="failed")
+        return
     agent_events.publish("speaking_started", agent_id=str(step["agent_id"]),
                          user_email=email, chars=len(answer))
 
@@ -580,28 +652,51 @@ async def _resume(step_id: str, out: dict | None, job_id: str | None) -> None:
         return
     answer = judged["answer"]
     position = int(step["position"])
-    if not await job_store.finish_step(step["id"], "done", answer):
-        return
-    agent_events.publish("step_finished", agent_id=agent_id, user_email=email,
-                         job_id=job_id, step=position, of=len(steps),
-                         status="ok")
     if position >= max(int(st["position"]) for st in steps):
         done = [dict(st, status="done", result=answer)
                 if st["id"] == step["id"] else st for st in steps]
         # The closing turn is a model call of up to STEP_HARD_CAP_SECONDS;
         # the person's Yes is an HTTP request that should not wait on it.
-        # In its own task, registered like a step so Stop can cancel it.
+        # In its own task, registered like a step so Stop can cancel it, and
+        # registered BEFORE the step is finished: from that write on, the
+        # job is all done with no step running, which the sweep would close
+        # under the lead if it were not in _RUNNING.
         _RUNNING[job_id] = asyncio.ensure_future(
-            _close_in_a_slot(job_id, job, done, names))
+            _close_in_a_slot(job_id, job, done, names, finish=(
+                step, answer, len(steps))))
         return
-    if await job_store.set_status(job_id, "running"):
-        wake()
+    # The step done and the job running again, in one write: apart, a
+    # failure between them left the job waiting on the person with nothing
+    # held (agent_job_store.finish_held_step).
+    if not await job_store.finish_held_step(step["id"], job_id, answer,
+                                            reopen=True):
+        return
+    agent_events.publish("step_finished", agent_id=agent_id, user_email=email,
+                         job_id=job_id, step=position, of=len(steps),
+                         status="ok")
+    wake()
 
 
 async def _close_in_a_slot(job_id: str, job: dict, steps: list[dict],
-                           names: dict[str, str]) -> None:
+                           names: dict[str, str],
+                           finish: tuple | None = None) -> None:
+    """The lead's closing turn, in a step slot. With `finish`, (the held
+    last step, its answer, the step count), that step is finished first:
+    done, and its job running again for the closing turn (so a restart
+    during it leaves a running job with every step done, which the sweep
+    closes as done rather than as stuck)."""
     slots = _SLOTS
     try:
+        if finish is not None:
+            step, answer, total = finish
+            if not await job_store.finish_held_step(step["id"], job_id,
+                                                    answer, reopen=True):
+                return
+            agent_events.publish("step_finished",
+                                 agent_id=str(step["agent_id"]),
+                                 user_email=str(job["user_email"]),
+                                 job_id=job_id, step=int(step["position"]),
+                                 of=total, status="ok")
         if slots is None:
             await _close(job, steps, names)
         else:

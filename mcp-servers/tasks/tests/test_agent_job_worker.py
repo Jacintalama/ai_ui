@@ -79,6 +79,10 @@ class FakeStore:
         #: Step ids whose current attempt ran a tool (step_acted).
         self.acted = set()
         self.acted_error = None
+        #: What each sweep_stuck call was told to leave alone, and what the
+        #: next one returns.
+        self.sweeps = []
+        self.sweep_result = []
 
     def add(self, job_id, email, agent_ids, status="running"):
         self.jobs[job_id] = {
@@ -131,6 +135,20 @@ class FakeStore:
         if st["status"] != "running":
             return False
         st["status"], st["result"] = status, result
+        return True
+
+    async def sweep_stuck(self, exclude_job_ids=()):
+        self.sweeps.append(list(exclude_job_ids))
+        out, self.sweep_result = self.sweep_result, []
+        return out
+
+    async def finish_held_step(self, step_id, job_id, answer, reopen):
+        job, st = self._step(step_id)
+        if job["status"] != "needs_you" or st["status"] != "running":
+            return False
+        st["status"], st["result"] = "done", answer
+        if reopen:
+            job["status"] = "running"
         return True
 
     async def step_acted(self, step_id):
@@ -508,6 +526,73 @@ async def test_a_broken_step_whose_tool_ran_is_not_put_back(h, monkeypatch):
     assert [t["agent"] for t in h.turns] == ["mia"]
 
 
+async def test_a_question_that_cannot_be_shown_fails_the_job(h, monkeypatch):
+    """Nobody can answer a question nobody was shown: the job would wait on
+    the person, holding their one running slot, for good."""
+    h.store.add("job-1", "p@x.com", ["mia", "ada"])
+    held = {"agent_id": "mia", "user_email": "p@x.com", "calls": CALLS,
+            "conversation": [{"role": "user", "content": "x"}]}
+    h.answers["mia"] = [{"answer": "May I send it?", "notes": [],
+                         "pending": held}]
+    tried = []
+
+    async def post(email, message, pending=None, title=""):
+        tried.append({"message": dict(message), "pending": pending})
+        return not pending          # the question fails; a plain note lands
+
+    monkeypatch.setattr(worker, "post_to_room", post)
+    await _run_until(_done(h.store, "job-1"))
+    job = h.store.jobs["job-1"]
+    assert job["status"] == "failed"
+    assert [st["status"] for st in job["steps"]] == ["failed", "skipped"]
+    note = tried[-1]["message"]
+    assert note["agent_id"] == "lead" and not tried[-1]["pending"]
+    assert note["content"] == ("Mia had a question on step 1, but it could "
+                               "not be shown. The job stopped.")
+    assert h.named("job_finished")[-1]["status"] == "failed"
+
+
+async def test_the_idle_loop_sweeps_and_leaves_work_in_flight_alone(
+        h, monkeypatch):
+    import agent_job_store
+    monkeypatch.setattr(worker, "SWEEP_EVERY_SECONDS", 0)
+
+    async def forever():
+        await asyncio.sleep(3600)
+
+    closing = asyncio.ensure_future(forever())
+    worker._RUNNING["job-closing"] = closing
+    h.store.sweep_result = [{"job_id": "job-9", "user_email": "p@x.com",
+                             "lead_agent_id": "lead", "request": "weekly",
+                             "status": "done",
+                             "why": agent_job_store.WHY_NO_SUMMARY,
+                             "agent_id": None, "position": None}]
+    try:
+        await _run_until(lambda: len(h.store.sweeps) >= 2)
+    finally:
+        closing.cancel()
+    assert all("job-closing" in ex for ex in h.store.sweeps)
+    note = h.posted[0]
+    assert note["email"] == "p@x.com"
+    assert note["message"] == {"role": "note", "content": worker.NO_SUMMARY,
+                               "job_id": "job-9"}
+    assert h.named("job_finished") == [{"agent_id": "lead",
+                                        "user_email": "p@x.com",
+                                        "job_id": "job-9", "status": "done"}]
+
+
+async def test_a_sweep_that_raises_does_not_stop_the_loop(h, monkeypatch):
+    monkeypatch.setattr(worker, "SWEEP_EVERY_SECONDS", 0)
+
+    async def broken(exclude_job_ids=()):
+        raise RuntimeError("db down")
+
+    h.store.sweep_stuck = broken
+    h.store.add("job-1", "p@x.com", ["mia", "ada"])
+    await _run_until(_done(h.store, "job-1"))
+    assert h.store.jobs["job-1"]["status"] == "done"
+
+
 def test_the_worker_and_the_store_agree_on_the_attempts():
     import agent_job_store
     assert worker.MAX_ATTEMPTS == agent_job_store.MAX_ATTEMPTS
@@ -628,6 +713,49 @@ async def test_a_busy_model_after_the_answer_stops_the_job(h, woken):
         job_id="job-1")
     assert h.store.jobs["job-1"]["status"] == "failed"
     assert "free models are all busy" in h.posted[-1]["message"]["content"]
+
+
+async def test_an_answer_reopens_the_job_in_one_write(h, woken, monkeypatch):
+    """Finishing the step and reopening the job are one write: separately,
+    a failure between them left the job waiting on the person with nothing
+    held, which nothing would ever move."""
+    _held_job(h)
+    real = h.store.set_status
+
+    async def no_reopen(job_id, status, result=None):
+        if status == "running":
+            raise RuntimeError("write did not land")
+        return await real(job_id, status, result)
+
+    monkeypatch.setattr(h.store, "set_status", no_reopen)
+    await worker.resume_after_answer("job-1-s1", {"answer": "Sent it.",
+                                                  "notes": []},
+                                     job_id="job-1")
+    job = h.store.jobs["job-1"]
+    assert job["status"] == "running"
+    assert job["steps"][0]["status"] == "done"
+    assert woken
+
+
+async def test_the_last_answer_is_closed_by_a_task_stop_can_find(h, woken,
+                                                                 monkeypatch):
+    """From the moment the last step finishes, the closing is in _RUNNING:
+    the sweep leaves it alone, and Stop can cancel it."""
+    _held_job(h, held_at=2)
+    real = h.store.finish_held_step
+    registered = []
+
+    async def finish(step_id, job_id, answer, reopen):
+        registered.append("job-1" in worker._RUNNING)
+        return await real(step_id, job_id, answer, reopen)
+
+    monkeypatch.setattr(h.store, "finish_held_step", finish)
+    await worker.resume_after_answer("job-1-s2", {"answer": "Sent it.",
+                                                  "notes": []},
+                                     job_id="job-1")
+    await _settle()
+    assert registered == [True]
+    assert h.store.jobs["job-1"]["status"] == "done"
 
 
 async def test_a_resume_for_no_job_does_nothing(h, woken):
