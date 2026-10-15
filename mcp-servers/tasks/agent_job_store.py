@@ -618,6 +618,19 @@ async def cancel_live(user_email: str) -> list[dict]:
             for r in rows]
 
 
+async def has_live_job(user_email: str) -> bool:
+    """Whether this person has a job running or waiting on them. While they
+    do, a new plan could not be started anyway (the unique index), so the
+    round does not spend a triage call proposing one."""
+    async with session() as s:
+        row = (await s.execute(
+            sql_text("SELECT 1 FROM tasks.agent_job "
+                     "WHERE user_email = :email "
+                     "  AND status IN ('running', 'needs_you') LIMIT 1"),
+            {"email": user_email})).first()
+    return row is not None
+
+
 async def unseen_count(user_email: str) -> int:
     """How many of this person's jobs ended since they last looked: the
     number on the Done badge. A job they cancelled themselves is not news."""

@@ -770,12 +770,25 @@ PLAN = [{"agent_id": "agent-m", "task": "Find the three latest reports."},
         {"agent_id": "agent-a", "task": "Compare them."}]
 
 
-def _jobs(monkeypatch, steps=PLAN, triage_error=None, store_error=None):
+#: Four words or more: a message the round puts to the lead at all (see
+#: routes_agent_chat.MIN_TRIAGE_WORDS). "hi team" is not one.
+CHATTY = "hi team, how is everyone doing"
+
+
+def _jobs(monkeypatch, steps=PLAN, triage_error=None, store_error=None,
+          live=False):
     """Triage and the job store, faked on the modules the round uses.
-    Returns what each was called with."""
+    Returns what each was called with. `live` is whether the person has a
+    job running already: True, False or an exception to raise."""
     import agent_job_store
     import agent_job_triage
-    calls = {"triage": [], "create": []}
+    calls = {"triage": [], "create": [], "live": []}
+
+    async def has_live_job(email):
+        calls["live"].append(email)
+        if isinstance(live, BaseException):
+            raise live
+        return live
 
     async def triage(email, lead, roster, history):
         calls["triage"].append({"lead": lead["id"],
@@ -796,6 +809,7 @@ def _jobs(monkeypatch, steps=PLAN, triage_error=None, store_error=None):
 
     monkeypatch.setattr(agent_job_triage, "triage", triage)
     monkeypatch.setattr(agent_job_store, "create_proposed", create_proposed)
+    monkeypatch.setattr(agent_job_store, "has_live_job", has_live_job)
     return calls
 
 
@@ -855,7 +869,7 @@ def test_a_triage_that_finds_no_job_leaves_the_round_as_it_was(monkeypatch):
     app, mod, _ = _app(monkeypatch)
     calls = _jobs(monkeypatch, steps=None)
     log = _record(monkeypatch, mod)
-    body = _say(app, "hi team")
+    body = _say(app, CHATTY)
     assert len(calls["triage"]) == 1
     assert calls["create"] == []
     assert body.count('class="am agent"') == 2
@@ -873,7 +887,7 @@ def test_a_triage_that_raises_leaves_the_round_as_it_was(monkeypatch):
     """triage() promises never to raise. The round must not depend on it."""
     app, mod, _ = _app(monkeypatch)
     calls = _jobs(monkeypatch, triage_error=RuntimeError("model down"))
-    body = _say(app, "hi team")
+    body = _say(app, CHATTY)
     assert len(calls["triage"]) == 1
     assert "Ada here" in body and "Mia here" in body
     assert "ajob" not in body
@@ -883,7 +897,7 @@ def test_a_plan_that_cannot_be_stored_leaves_the_round_as_it_was(monkeypatch):
     """A card without its row would offer a Start that finds nothing."""
     app, mod, _ = _app(monkeypatch)
     calls = _jobs(monkeypatch, store_error=RuntimeError("db down"))
-    body = _say(app, "hi team")
+    body = _say(app, CHATTY)
     assert len(calls["create"]) == 1
     assert "Ada here" in body and "Mia here" in body
     assert "ajob" not in body
@@ -925,6 +939,36 @@ def test_a_yes_to_a_waiting_question_is_never_triaged(monkeypatch):
     _say(app, "yes")
     assert calls["triage"] == []
     assert answered == [("ask-1", True)]
+
+
+def test_a_short_message_is_never_triaged(monkeypatch):
+    """A greeting or a thank you to the team is never a job, and the triage
+    is a model call the person waits on before anybody answers."""
+    app, mod, seen = _app(monkeypatch)
+    calls = _jobs(monkeypatch)
+    body = _say(app, "thanks everyone")
+    assert calls["triage"] == []
+    assert "Ada here" in body and "Mia here" in body
+    assert len("prepare the weekly summary".split()) == mod.MIN_TRIAGE_WORDS
+
+
+def test_a_person_with_a_job_running_is_not_triaged(monkeypatch):
+    """A plan could not be started while one runs (one job at a time), so
+    proposing it would cost a call and offer a Start that is refused."""
+    app, mod, seen = _app(monkeypatch)
+    calls = _jobs(monkeypatch, live=True)
+    body = _say(app, "prepare the weekly summary")
+    assert calls["live"] == [EMAIL]
+    assert calls["triage"] == []
+    assert "Ada here" in body and "Mia here" in body
+
+
+def test_a_running_job_that_cannot_be_checked_skips_the_triage(monkeypatch):
+    app, mod, seen = _app(monkeypatch)
+    calls = _jobs(monkeypatch, live=RuntimeError("db down"))
+    body = _say(app, "prepare the weekly summary")
+    assert calls["triage"] == []
+    assert "Ada here" in body and "Mia here" in body
 
 
 def test_jobs_switched_off_never_triage(monkeypatch):

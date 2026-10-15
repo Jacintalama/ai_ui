@@ -102,6 +102,14 @@ JOBS_ENABLED = os.environ.get("AGENT_JOBS_ENABLED", "true").lower() != "false"
 TEAM_ROUTES = {agent_routing.ROUTE_ROOM, agent_routing.ROUTE_COLLECTIVE,
                agent_routing.ROUTE_MEETING}
 
+#: The fewest words a team message needs before the lead is asked whether
+#: it is a job. Every triage is a model call the person waits on before
+#: anybody answers, and a greeting or a thank you ("hi team", "thanks
+#: everyone", "good morning all") is never several pieces of work. Four,
+#: not more, because a real job can be that short: "prepare the weekly
+#: summary", "plan the team offsite".
+MIN_TRIAGE_WORDS = 4
+
 
 def _ask_id() -> str:
     """A name for one question an agent asked.
@@ -424,6 +432,20 @@ async def _keep_within_budget(email: str, s: store.RoomSession,
         s.summarised_upto = len(turns) - len(_keep)
 
 
+async def _has_live_job(email: str) -> bool:
+    """Whether this person has a job running or waiting on them, which
+    rules out proposing another: it could not be started (one job at a
+    time). A read that fails counts as yes, so the round skips the triage
+    and answers as it did before jobs existed: a plan saved while the
+    database is failing would be refused at Start anyway."""
+    try:
+        return await job_store.has_live_job(email)
+    except Exception:                                       # noqa: BLE001
+        log.warning("agent chat: could not check for a running job; no "
+                    "triage this round", exc_info=True)
+        return True
+
+
 async def _propose_job(email: str, chat_id: str | None, lead: dict,
                        request: str, steps: list[dict]) -> str | None:
     """Save the lead's plan as a proposed job. Its id, or None.
@@ -588,7 +610,9 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
     # the message to one agent, and before `met` is announced, so a message
     # that becomes a plan never calls a meeting it does not hold.
     if (JOBS_ENABLED and not private and why in TEAM_ROUTES
-            and len(agents) >= 2):
+            and len(agents) >= 2
+            and len((asked or "").split()) >= MIN_TRIAGE_WORDS
+            and not await _has_live_job(email)):
         lead = agent_job_plan.choose_lead(agents)
         # Bound before the wait, for the reason `messages` is bound below: a
         # New chat while the lead thinks must not land this card in the

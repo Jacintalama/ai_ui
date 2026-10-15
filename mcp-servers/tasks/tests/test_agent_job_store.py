@@ -590,3 +590,17 @@ async def test_cancel_live_stops_only_this_persons_live_job(clean):
     assert (await js.get(proposed))["status"] == "proposed"
     assert (await js.get(others))["status"] == "running"
     assert await js.cancel_live(email) == []
+
+
+async def test_has_live_job_is_true_while_running_or_paused(clean):
+    email = _who()
+    assert await js.has_live_job(email) is False
+    job_id = await _proposed(email)
+    assert await js.has_live_job(email) is False, "a plan is not running"
+    await js.start(job_id, email)
+    assert await js.has_live_job(email) is True
+    await js.set_status(job_id, "needs_you")
+    assert await js.has_live_job(email) is True
+    assert await js.has_live_job(_who()) is False
+    await js.set_status(job_id, "done")
+    assert await js.has_live_job(email) is False
