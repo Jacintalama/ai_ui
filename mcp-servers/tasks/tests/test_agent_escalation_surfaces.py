@@ -2,11 +2,27 @@
 turn cost. The loop itself is tested in test_agent_escalation_loop.py; this
 file only checks what each caller hands it and what it writes back."""
 import importlib
+
+import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+
+@pytest.fixture(autouse=True)
+def _no_job_triage(monkeypatch):
+    """A message to the whole team is put to the lead first
+    (agent_job_triage), which is a real model call. These tests measure the
+    round as it runs when triage finds no job; the job path is tested in
+    test_agent_chat_round."""
+    import agent_job_triage
+
+    async def no_job(email, lead, roster, history):
+        return None
+
+    monkeypatch.setattr(agent_job_triage, "triage", no_job)
 
 import agent_escalation
 import agent_memory

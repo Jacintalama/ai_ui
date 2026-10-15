@@ -6,8 +6,24 @@ it. Name nobody and every agent hears it and decides for itself.
 """
 import importlib
 
+import pytest
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+
+@pytest.fixture(autouse=True)
+def _no_job_triage(monkeypatch):
+    """A message to the whole team is put to the lead first
+    (agent_job_triage), which is a real model call. These tests measure the
+    round as it runs when triage finds no job; the job path is tested in
+    test_agent_chat_round."""
+    import agent_job_triage
+
+    async def no_job(email, lead, roster, history):
+        return None
+
+    monkeypatch.setattr(agent_job_triage, "triage", no_job)
 
 EMAIL = "room-owner@example.com"
 ADA = {"id": "agent-research-assistant-0001", "name": "Ada"}

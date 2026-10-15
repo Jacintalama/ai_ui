@@ -5,10 +5,26 @@ server: the browser is handed tool names and arguments, and hands back an id
 and an answer.
 """
 import importlib
+
+import pytest
 import re
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+
+@pytest.fixture(autouse=True)
+def _no_job_triage(monkeypatch):
+    """A message to the whole team is put to the lead first
+    (agent_job_triage), which is a real model call. These tests measure the
+    round as it runs when triage finds no job; the job path is tested in
+    test_agent_chat_round."""
+    import agent_job_triage
+
+    async def no_job(email, lead, roster, history):
+        return None
+
+    monkeypatch.setattr(agent_job_triage, "triage", no_job)
 
 EMAIL = "panel-owner@example.com"
 ADA = {"id": "agent-a", "name": "Ada"}

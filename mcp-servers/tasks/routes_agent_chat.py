@@ -13,6 +13,7 @@ end to end, so nothing outside this service changes.
 import asyncio
 import contextlib
 import logging
+import os
 import uuid
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -27,6 +28,9 @@ import agent_activity
 import agent_escalation
 import agent_events
 import agent_graph
+import agent_job_plan
+import agent_job_store as job_store
+import agent_job_triage
 import agent_routing
 from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS, FREE_POOL_EXHAUSTED,
                           ROUTER_EXHAUSTED, _chat)
@@ -83,6 +87,16 @@ SUMMARY_INSTRUCTION = (
     "was decided, what the person asked for, any names, numbers and "
     "commitments, and anything still open. Drop pleasantries. Write it as "
     "notes, not as a reply to anybody.")
+
+#: The off switch for team jobs. Off, every message takes the path it took
+#: before jobs existed: no triage call, no plan card. Read once at import.
+JOBS_ENABLED = os.environ.get("AGENT_JOBS_ENABLED", "true").lower() != "false"
+
+#: The routes that put a message to the whole team, and so the only ones the
+#: lead triages. A named agent, a follow on, the owner rung and an approval
+#: were each put to one agent on purpose, and a plan would overrule that.
+TEAM_ROUTES = {agent_routing.ROUTE_ROOM, agent_routing.ROUTE_COLLECTIVE,
+               agent_routing.ROUTE_MEETING}
 
 
 def _ask_id() -> str:
@@ -406,6 +420,72 @@ async def _keep_within_budget(email: str, s: store.RoomSession,
         s.summarised_upto = len(turns) - len(_keep)
 
 
+async def _propose_job(email: str, chat_id: str | None, lead: dict,
+                       request: str, steps: list[dict]) -> str | None:
+    """Save the lead's plan as a proposed job. Its id, or None.
+
+    None on any failure, and the round then runs as if there had been no
+    plan. A card drawn without its row would offer a Start that finds
+    nothing, so no row means no card.
+    """
+    try:
+        return await job_store.create_proposed(
+            email, chat_id, str(lead.get("id") or ""), request, steps)
+    except Exception:                                       # noqa: BLE001
+        log.warning("agent chat: could not save the lead's plan; the round "
+                    "runs as normal", exc_info=True)
+        return None
+
+
+def _job_message(job_id: str, lead: dict, steps: list[dict],
+                 agents: list[dict]) -> dict:
+    """The plan card as stored in the conversation (see render.thread).
+
+    Names are stored, not looked up on every draw: the thread is drawn on
+    every page load and has no roster to hand. Each step keeps its agent id
+    as well, which is how the thread names whoever holds the running step
+    (jobs_for_chat reports an id).
+    """
+    return {"role": "job", "job_id": job_id,
+            "agent_id": str(lead.get("id") or ""),
+            "agent_name": str(lead.get("name") or lead.get("id") or "Agent"),
+            "steps": [{"agent_id": st["agent_id"],
+                       "name": _name_for(st["agent_id"], agents),
+                       "task": st["task"]} for st in steps]}
+
+
+async def _jobs_for_thread(email: str, s: store.RoomSession) -> dict | None:
+    """{job id: summary plus current_name} for the cards in this thread, or
+    None when there are none or they could not be read.
+
+    None draws every card with nothing to press, which is the safe drawing of
+    a job nobody can see. A thread with no card in it does not ask at all:
+    this runs on every page load.
+    """
+    cards = [m for m in s.messages or [] if m.get("role") == "job"]
+    if not cards:
+        return None
+    try:
+        jobs = await job_store.jobs_for_chat(email, s.chat_id)
+    except Exception:                                       # noqa: BLE001
+        log.warning("agent chat: could not read the jobs for this thread",
+                    exc_info=True)
+        return None
+    names = {}
+    for m in cards:
+        for st in m.get("steps") if isinstance(m.get("steps"), list) else []:
+            if isinstance(st, dict) and st.get("agent_id"):
+                names[str(st["agent_id"])] = str(st.get("name") or "")
+    out = {}
+    for job_id, summary in (jobs or {}).items():
+        summary = dict(summary)
+        current = summary.get("current_agent_id")
+        summary["current_name"] = (names.get(str(current)) or None
+                                   if current else None)
+        out[job_id] = summary
+    return out
+
+
 async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
                      request: Request | None = None, quote: bool = False,
                      private: str | None = None):
@@ -492,6 +572,56 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
     # agent. See the module docstring of routes_agent_turn for what happens
     # when agents read each other's labelled replies.
     history = _history_for_round(s.messages, s.summary)
+
+    # A message to the whole team goes to the lead first, who decides whether
+    # it is one answer or a job for several of them. A job becomes a plan
+    # card and the round ends there: nothing runs until the person presses
+    # Start (routes_agent_jobs). Everything short of a saved plan (no plan,
+    # a triage that raised, a row that could not be written) falls through to
+    # the round exactly as it ran before jobs existed.
+    #
+    # After the private and approval branches, which have each already put
+    # the message to one agent, and before `met` is announced, so a message
+    # that becomes a plan never calls a meeting it does not hold.
+    if (JOBS_ENABLED and not private and why in TEAM_ROUTES
+            and len(agents) >= 2):
+        lead = agent_job_plan.choose_lead(agents)
+        # Bound before the wait, for the reason `messages` is bound below: a
+        # New chat while the lead thinks must not land this card in the
+        # conversation that replaced this one.
+        job_messages = s.messages
+        chat_id = s.chat_id
+        lead_name = str(lead.get("name") or lead.get("id") or "")
+        # The lead deciding is a wait like any turn, and an unexplained wait
+        # before anybody answers reads as a broken panel.
+        yield {"event": "working",
+               "data": render.turn_status(tid, render.working(lead_name))}
+        try:
+            steps = await agent_job_triage.triage(email, lead, agents, history)
+        except Exception:                                   # noqa: BLE001
+            # triage() promises never to raise. The round does not lean on
+            # that promise: a broken triage costs a plan, never the answer.
+            log.warning("agent chat: triage raised; the round runs as normal",
+                        exc_info=True)
+            steps = None
+        job_id = (await _propose_job(email, chat_id, lead, asked, steps)
+                  if steps else None)
+        if job_id:
+            stored = _job_message(job_id, lead, steps, agents)
+            job_messages.append(stored)
+            card = render.job_card(job_id, stored["agent_name"],
+                                   stored["steps"], {"status": "proposed"})
+            # The card is the lead speaking. Its length, never its words:
+            # the visible text is "Plan:" and one "Name: task" per step.
+            shown = "Plan:" + "".join(f'{st["name"]}: {st["task"]}'
+                                      for st in stored["steps"])
+            agent_events.publish("speaking_started",
+                                 agent_id=stored["agent_id"],
+                                 user_email=email, chars=len(shown))
+            yield {"event": "message", "data": render.into_turn(tid, card)}
+            yield {"event": "working", "data": render.turn_status(tid, "")}
+            return
+
     # What this person actually has, read once and handed to everybody, the
     # same as history. Per agent it would read the whole account seven times
     # for one question. Empty when the graph is empty or the read failed,
@@ -1134,7 +1264,9 @@ async def agent_chat_thread(agent: str = "",
     who = _which_chat(agent)
     s = store.get_session(user.email, who)
     await _hydrate(user.email, s, who)
-    return HTMLResponse(render.thread(s.messages, private=bool(who)))
+    return HTMLResponse(render.thread(s.messages, private=bool(who),
+                                      jobs=await _jobs_for_thread(user.email,
+                                                                  s)))
 
 
 @router.post("/tasks/agents/chat/clear", include_in_schema=False)

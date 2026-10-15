@@ -55,6 +55,16 @@ def _app(monkeypatch, turn=None, agents=(ADA, MIA)):
     # the database before the first agent speaks, and these tests measure the
     # round rather than what happens when that read is unavailable.
     monkeypatch.setattr(routes_agent_chat.agent_graph, "graph_block", no_graph)
+    # A message to the whole team is put to the lead first (agent_job_triage),
+    # which is one more model call. These tests measure the round as it was
+    # before jobs, which is exactly what a triage that finds no job leaves.
+    # The job tests below replace this with one that does.
+    import agent_job_triage
+
+    async def no_job(email, lead, roster, history):
+        return None
+
+    monkeypatch.setattr(agent_job_triage, "triage", no_job)
 
     app = FastAPI()
     app.include_router(routes_agent_chat.router)
@@ -694,3 +704,270 @@ def test_an_agent_asking_a_question_is_speaking(monkeypatch):
     assert ("speaking_started", "agent-a", None,
             len("May I send this?")) in log
     assert _speaking(log) == ["agent-a", "agent-m"]
+
+
+# --- a team request becomes a plan card --------------------------------------
+# The lead triages every message to the whole team (agent_job_triage). A plan
+# comes back as a card with Start and Cancel, and nobody answers yet: the work
+# runs only once the person presses Start. Anything short of a stored plan,
+# however it fails, is today's round.
+
+PLAN = [{"agent_id": "agent-m", "task": "Find the three latest reports."},
+        {"agent_id": "agent-a", "task": "Compare them."}]
+
+
+def _jobs(monkeypatch, steps=PLAN, triage_error=None, store_error=None):
+    """Triage and the job store, faked on the modules the round uses.
+    Returns what each was called with."""
+    import agent_job_store
+    import agent_job_triage
+    calls = {"triage": [], "create": []}
+
+    async def triage(email, lead, roster, history):
+        calls["triage"].append({"lead": lead["id"],
+                                "roster": [a["id"] for a in roster],
+                                "history": history})
+        if triage_error is not None:
+            raise triage_error
+        return steps
+
+    async def create_proposed(user_email, chat_id, lead_agent_id, request,
+                              steps):
+        calls["create"].append({"email": user_email, "chat_id": chat_id,
+                                "lead": lead_agent_id, "request": request,
+                                "steps": steps})
+        if store_error is not None:
+            raise store_error
+        return "job-1"
+
+    monkeypatch.setattr(agent_job_triage, "triage", triage)
+    monkeypatch.setattr(agent_job_store, "create_proposed", create_proposed)
+    return calls
+
+
+def test_a_team_request_with_a_plan_becomes_a_card_and_nobody_answers(
+        monkeypatch):
+    app, mod, seen = _app(monkeypatch)
+    calls = _jobs(monkeypatch)
+    log = _record(monkeypatch, mod)
+    body = _say(app, "prepare the weekly summary")
+
+    assert ("turn", "agent-a") not in log and ("turn", "agent-m") not in log, (
+        "a speaker ran")
+    assert body.count('class="am agent ajob"') == 1
+    assert 'id="job-job-1"' in body
+    assert "Mia: Find the three latest reports." in body
+    assert "Ada: Compare them." in body
+    assert 'hx-post="/tasks/agents/jobs/job-1/start"' in body
+    assert "Ada here" not in body and "Mia here" not in body
+    # The wait for the lead is visible.
+    assert "Ada is working" in body
+
+    # The lead here is the first agent (no team lead, no manager role).
+    assert calls["triage"][0]["lead"] == "agent-a"
+    assert calls["triage"][0]["roster"] == ["agent-a", "agent-m"]
+    assert calls["triage"][0]["history"][-1] == {
+        "role": "user", "content": "prepare the weekly summary"}
+    assert calls["create"] == [{"email": EMAIL, "chat_id": "chat-1",
+                                "lead": "agent-a",
+                                "request": "prepare the weekly summary",
+                                "steps": PLAN}]
+
+    s = mod.store.get_session(EMAIL)
+    stored = [m for m in s.messages if m.get("role") == "job"]
+    assert len(stored) == 1
+    assert stored[0]["job_id"] == "job-1"
+    assert stored[0]["agent_name"] == "Ada"
+    assert [(st["name"], st["task"]) for st in stored[0]["steps"]] == [
+        ("Mia", "Find the three latest reports."), ("Ada", "Compare them.")]
+    assert not [m for m in s.messages if m.get("role") == "assistant"]
+    # The reload draws the same card the stream did.
+    assert "Mia: Find the three latest reports." in mod.render.thread(
+        s.messages)
+
+
+def test_the_card_is_the_lead_speaking_and_no_meeting_is_called(monkeypatch):
+    app, mod, _ = _app(monkeypatch)
+    _jobs(monkeypatch)
+    log = _record(monkeypatch, mod)
+    _say(app, "prepare the weekly summary")
+    assert len(log) == 1, log
+    assert log[0][0] == "speaking_started"
+    assert log[0][1] == "agent-a"
+    assert log[0][3] and log[0][3] > 0
+
+
+def test_a_triage_that_finds_no_job_leaves_the_round_as_it_was(monkeypatch):
+    app, mod, _ = _app(monkeypatch)
+    calls = _jobs(monkeypatch, steps=None)
+    log = _record(monkeypatch, mod)
+    body = _say(app, "hi team")
+    assert len(calls["triage"]) == 1
+    assert calls["create"] == []
+    assert body.count('class="am agent"') == 2
+    assert log == [
+        ("meeting_started", "agent-a", ["agent-a", "agent-m"], None),
+        ("turn", "agent-a"),
+        ("speaking_started", "agent-a", None, len("Ada here")),
+        ("turn", "agent-m"),
+        ("speaking_started", "agent-m", None, len("Mia here")),
+        ("meeting_ended", "agent-m", None, None),
+    ]
+
+
+def test_a_triage_that_raises_leaves_the_round_as_it_was(monkeypatch):
+    """triage() promises never to raise. The round must not depend on it."""
+    app, mod, _ = _app(monkeypatch)
+    calls = _jobs(monkeypatch, triage_error=RuntimeError("model down"))
+    body = _say(app, "hi team")
+    assert len(calls["triage"]) == 1
+    assert "Ada here" in body and "Mia here" in body
+    assert "ajob" not in body
+
+
+def test_a_plan_that_cannot_be_stored_leaves_the_round_as_it_was(monkeypatch):
+    """A card without its row would offer a Start that finds nothing."""
+    app, mod, _ = _app(monkeypatch)
+    calls = _jobs(monkeypatch, store_error=RuntimeError("db down"))
+    body = _say(app, "hi team")
+    assert len(calls["create"]) == 1
+    assert "Ada here" in body and "Mia here" in body
+    assert "ajob" not in body
+    s = mod.store.get_session(EMAIL)
+    assert not [m for m in s.messages if m.get("role") == "job"]
+
+
+def test_a_named_agent_is_never_triaged(monkeypatch):
+    app, mod, seen = _app(monkeypatch)
+    calls = _jobs(monkeypatch)
+    _say(app, "Ada, hi")
+    assert calls["triage"] == []
+    assert [t["agent"] for t in seen] == ["agent-a"]
+
+
+def test_a_private_conversation_is_never_triaged(monkeypatch):
+    app, mod, seen = _app(monkeypatch)
+    calls = _jobs(monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/send",
+           data={"message": "prepare the weekly summary", "agent": "agent-a"},
+           headers=_hdr())
+    c.get("/tasks/agents/chat/stream?agent=agent-a", headers=_hdr())
+    assert calls["triage"] == []
+    assert [t["agent"] for t in seen] == ["agent-a"]
+
+
+def test_a_yes_to_a_waiting_question_is_never_triaged(monkeypatch):
+    app, mod, seen = _app(monkeypatch)
+    calls = _jobs(monkeypatch)
+    answered = []
+
+    async def apply(email, s, ask_id, yes, agents):
+        answered.append((ask_id, yes))
+        return "applied"
+
+    monkeypatch.setattr(mod, "_apply_pending_answer", apply)
+    mod.store.get_session(EMAIL).pending = {"ask-1": {"agent_id": "agent-a"}}
+    _say(app, "yes")
+    assert calls["triage"] == []
+    assert answered == [("ask-1", True)]
+
+
+def test_jobs_switched_off_never_triage(monkeypatch):
+    monkeypatch.setenv("AGENT_JOBS_ENABLED", "false")
+    app, mod, seen = _app(monkeypatch)
+    calls = _jobs(monkeypatch)
+    body = _say(app, "prepare the weekly summary")
+    assert mod.JOBS_ENABLED is False
+    assert calls["triage"] == []
+    assert "Ada here" in body and "Mia here" in body
+
+
+def test_jobs_are_on_unless_switched_off(monkeypatch):
+    monkeypatch.delenv("AGENT_JOBS_ENABLED", raising=False)
+    _unused, mod, _ = _app(monkeypatch)
+    assert mod.JOBS_ENABLED is True
+
+
+def test_one_agent_is_never_triaged(monkeypatch):
+    app, mod, seen = _app(monkeypatch, agents=(ADA,))
+    calls = _jobs(monkeypatch)
+    body = _say(app, "prepare the weekly summary")
+    assert calls["triage"] == []
+    assert "Ada here" in body
+
+
+# --- the thread draws the card with the job's live status -------------------
+
+def _stored_card(mod):
+    s = mod.store.get_session(EMAIL)
+    s.chat_id = "chat-1"
+    s.messages = [
+        {"role": "user", "content": "prepare the weekly summary",
+         "turn_id": "abc123def456"},
+        {"role": "job", "job_id": "job-1", "agent_id": "agent-a",
+         "agent_name": "Ada",
+         "steps": [{"agent_id": "agent-m", "name": "Mia",
+                    "task": "Find the three latest reports."},
+                   {"agent_id": "agent-a", "name": "Ada",
+                    "task": "Compare them."}]}]
+    return s
+
+
+def test_the_thread_shows_a_running_job_with_who_is_working(monkeypatch):
+    app, mod, _ = _app(monkeypatch)
+    import agent_job_store
+    asked = []
+
+    async def jobs_for_chat(user_email, chat_id):
+        asked.append((user_email, chat_id))
+        return {"job-1": {"status": "running", "done": 1, "total": 2,
+                          "current_agent_id": "agent-a"}}
+
+    monkeypatch.setattr(agent_job_store, "jobs_for_chat", jobs_for_chat)
+    _stored_card(mod)
+    html = TestClient(app).get("/tasks/agents/chat/thread",
+                               headers=_hdr()).text
+    assert asked == [(EMAIL, "chat-1")]
+    assert "Running: step 2 of 2, Ada is working" in html
+    assert ">Stop</button>" in html
+
+
+def test_the_thread_still_draws_when_the_jobs_cannot_be_read(monkeypatch):
+    app, mod, _ = _app(monkeypatch)
+    import agent_job_store
+    asked = []
+
+    async def jobs_for_chat(user_email, chat_id):
+        asked.append(chat_id)
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(agent_job_store, "jobs_for_chat", jobs_for_chat)
+    _stored_card(mod)
+    r = TestClient(app).get("/tasks/agents/chat/thread", headers=_hdr())
+    assert r.status_code == 200
+    assert asked == ["chat-1"]
+    assert "Mia: Find the three latest reports." in r.text
+    assert "<button" not in r.text
+
+
+def test_a_thread_without_a_card_does_not_read_the_jobs(monkeypatch):
+    """Every page load draws the thread. A conversation with no plan in it
+    has nothing to ask the jobs table about."""
+    app, mod, _ = _app(monkeypatch)
+    import agent_job_store
+    asked = []
+
+    async def jobs_for_chat(user_email, chat_id):
+        asked.append(chat_id)
+        return {}
+
+    monkeypatch.setattr(agent_job_store, "jobs_for_chat", jobs_for_chat)
+    s = mod.store.get_session(EMAIL)
+    s.chat_id = "chat-1"
+    s.messages = [{"role": "user", "content": "hi"},
+                  {"role": "assistant", "agent_name": "Ada", "content": "hello"}]
+    html = TestClient(app).get("/tasks/agents/chat/thread",
+                               headers=_hdr()).text
+    assert "hello" in html
+    assert asked == []
