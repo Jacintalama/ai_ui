@@ -328,7 +328,7 @@ def _job_button(job_id: str, action: str, label: str, primary: bool) -> str:
 
 
 def job_card(job_id: str, lead_name: str, steps: list[dict],
-             status: dict | None = None) -> str:
+             status: dict | None = None, note_text: str = "") -> str:
     """The lead's plan for a team job, with what can be done about it now.
 
     `status` is the job's summary from agent_job_store.jobs_for_chat plus the
@@ -340,6 +340,10 @@ def job_card(job_id: str, lead_name: str, steps: list[dict],
 
     Every name and task came from a model or the person, so all of it is
     escaped.
+
+    `note_text` is one line about the press that drew this card ("This plan
+    can no longer be started."). Inside the card, not after it: the buttons
+    swap the whole card, so a note outside it would pile up on every press.
     """
     items = []
     for st in steps if isinstance(steps, list) else []:
@@ -364,6 +368,8 @@ def job_card(job_id: str, lead_name: str, steps: list[dict],
             '<div class="atext">Plan:</div>'
             f'<ol class="ajob-steps">{"".join(items)}</ol>'
             + (f'<div class="ajob-status">{esc(line)}</div>' if line else "")
+            + (f'<div class="ajob-note">{esc(note_text)}</div>'
+               if note_text else "")
             + (f'<div class="aactions">{buttons}</div>' if buttons else "")
             + '</div></div>')
 
