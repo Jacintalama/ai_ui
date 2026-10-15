@@ -77,3 +77,20 @@ async def test_a_step_brief_gets_the_normal_answer(client):
     r = await client.post("/v1/chat/completions",
                           json=_body(brief, system="You are Mia, the receptionist."))
     assert r.json()["choices"][0]["message"]["content"].startswith("Mia here.")
+
+async def test_a_step_brief_answers_its_own_step_in_one_line(client):
+    brief = ("The person asked the team: scene:job prepare the weekly summary\n\n"
+             "The plan:\n1. Mia: Find the three latest reports. <- this is your step\n"
+             "2. Ada: Compare them.\n\nDo your step now and answer with its result only.")
+    r = await client.post("/v1/chat/completions",
+                          json=_body(brief, system="You are Mia, the receptionist."))
+    assert r.json()["choices"][0]["message"]["content"] == (
+        "Mia did: Find the three latest reports.")
+
+async def test_the_leads_closing_brief_gets_one_line(client):
+    brief = ("The person asked the team: scene:job prepare the weekly summary\n\n"
+             "Step 1, Mia: Mia did: Find the reports.\n\n"
+             "Write the person a short final answer from these results.")
+    r = await client.post("/v1/chat/completions", json=_body(brief))
+    assert r.json()["choices"][0]["message"]["content"] == (
+        "Ada: all steps are done. Summary of the team's results.")

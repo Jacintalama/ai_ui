@@ -28,6 +28,9 @@ SLOW_DELAY_MS = 5000
 #: agent_job_triage.TRIAGE_MARKER, repeated here: the fake model is its own
 #: image and does not import the tasks service.
 TRIAGE_MARKER = "TEAM_TRIAGE"
+#: agent_job_brief's markers for a step and for the lead's closing turn.
+STEP_MARK = "<- this is your step"
+CLOSING_MARK = "Write the person a short final answer"
 JOB_PLAN = {"kind": "job", "steps": [
     {"agent": "Mia", "do": "Find the three latest reports."},
     {"agent": "Ada", "do": "Compare them."},
@@ -185,6 +188,15 @@ async def chat_completions(request: Request):
             finish = "tool_calls"
         else:
             message = {"role": "assistant", "content": f"{name} here. No tool was offered."}
+    elif STEP_MARK in said:
+        # A team job step (agent_job_brief.step_messages): answer the step,
+        # not the whole brief, so a local job reads as three short results.
+        mine = next((ln for ln in said.splitlines() if STEP_MARK in ln), "")
+        task = mine.replace(STEP_MARK, "").split(":", 1)[-1].strip()
+        message = {"role": "assistant", "content": f"{name} did: {task}"}
+    elif CLOSING_MARK in said:
+        message = {"role": "assistant",
+                   "content": f"{name}: all steps are done. Summary of the team's results."}
     else:
         message = {"role": "assistant", "content": f"{name} here. You said: {said}"}
 
