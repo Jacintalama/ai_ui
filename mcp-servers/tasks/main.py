@@ -93,6 +93,17 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("schedule_tick_loop NOT started: %s", exc)
 
+    # Team jobs: the worker that runs a started job's steps. start_background
+    # starts nothing when AGENT_JOBS_ENABLED=false; otherwise it first puts
+    # back any step the last process died running (a failure there is logged
+    # and the loop starts anyway), then starts the loop.
+    try:
+        from agent_job_worker import start_background as start_job_worker
+        if await start_job_worker():
+            logger.info("agent job_loop scheduled")
+    except Exception as exc:
+        logger.warning("agent job_loop NOT started: %s", exc)
+
     try:
         from routes_knowledge_graph import start_nightly_prebuild
         if start_nightly_prebuild():

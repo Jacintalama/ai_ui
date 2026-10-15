@@ -224,7 +224,8 @@ def _without_route_footer(content: str) -> str:
     return body.strip() if found else content
 
 
-def agent_bubble(name: str, content: str, replying_to=None) -> str:
+def agent_bubble(name: str, content: str, replying_to=None,
+                 label: str = "") -> str:
     """One agent's finished answer: its own row, its own name, its own avatar.
 
     This is the entire feature. Nothing is stacked into another agent's bubble,
@@ -241,6 +242,9 @@ def agent_bubble(name: str, content: str, replying_to=None) -> str:
     picked, not the agent, so it is not drawn. Every live answer comes
     through here, and thread() draws history through here too, so the live
     bubble and the reloaded one say the same thing.
+
+    `label` is a short line above the answer saying what it is part of
+    ("Step 2 of 3" for a team job's step). Escaped like everything else.
     """
     raw = content or ""
     content = _without_route_footer(raw)
@@ -253,7 +257,8 @@ def agent_bubble(name: str, content: str, replying_to=None) -> str:
             '<div class="abody">'
             f'{_quote(replying_to)}'
             f'<div class="awho">{esc(name)}</div>'
-            f'<div class="atext md">{esc(content)}</div>'
+            + (f'<div class="astep">{esc(label)}</div>' if label else "")
+            + f'<div class="atext md">{esc(content)}</div>'
             f'{app_cards_for(content)}'
             '</div></div>')
 
@@ -469,6 +474,19 @@ def _shown(content: str) -> str:
     return _without_route_footer(content)
 
 
+def _step_label(m: dict) -> str:
+    """ "Step n of m" for a team job step's result, else "". Stored by the
+    job worker (agent_job_worker); anything not a pair of numbers is no
+    label rather than a broken one."""
+    if m.get("step") is None or m.get("of") is None:
+        return ""
+    try:
+        step, of = int(m["step"]), int(m["of"])
+    except (TypeError, ValueError):
+        return ""
+    return f"Step {step} of {of}" if 0 < step <= of else ""
+
+
 def thread(messages: list[dict], private: bool = False,
            jobs: dict | None = None) -> str:
     """A saved conversation replayed, grouped into turns.
@@ -537,7 +555,8 @@ def thread(messages: list[dict], private: bool = False,
                 # so recomputing would silently drop a quote that was on
                 # screen a moment ago.
                 out.append(agent_bubble(name, shown,
-                                        m.get("replying_to")))
+                                        m.get("replying_to"),
+                                        label=_step_label(m)))
             awaiting = m.get("awaiting")
             if isinstance(awaiting, dict) and awaiting.get("calls"):
                 out.append(approval_bubble(name,

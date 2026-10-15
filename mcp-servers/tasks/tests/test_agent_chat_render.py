@@ -576,3 +576,22 @@ def test_a_stored_plan_with_a_bad_shape_does_not_break_the_thread():
     assert 'id="job-job-1"' in html
     html = render.thread(_with_job(job_id=None))
     assert "turn" in html          # the rest of the thread still drew
+
+
+def test_a_job_steps_result_says_which_step_it_is():
+    html = render.thread([
+        {"role": "user", "content": "prepare the weekly summary"},
+        {"role": "assistant", "agent_id": "agent-a", "agent_name": "Ada",
+         "content": "Compared them.", "job_id": "job-1", "step": 2, "of": 3},
+        {"role": "assistant", "agent_name": "Mia", "content": "plain answer"}])
+    assert html.count("Step 2 of 3") == 1
+    assert html.index("Step 2 of 3") < html.index("Compared them.")
+    # An ordinary answer carries no label.
+    assert "Step" not in html.split("plain answer")[0].split("Compared them.")[1]
+
+
+def test_a_bad_step_number_draws_no_label():
+    html = render.thread([
+        {"role": "assistant", "agent_name": "Ada", "content": "x",
+         "step": "two", "of": None}])
+    assert "Step" not in html and ">x<" in html
