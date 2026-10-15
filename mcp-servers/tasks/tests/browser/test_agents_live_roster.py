@@ -353,3 +353,59 @@ def test_without_event_source_the_page_still_works(browser, server):
         assert not live.errors, live.errors
     finally:
         pg.close()
+
+
+# --- a running job (agent jobs, Part A Task 12) ------------------------------
+# A job's steps are posted into the team chat by the background worker, not
+# by the round this page streams, so the page has to fetch the thread again
+# when the feed says a step or the job moved.
+
+def _thread_fetches(pg):
+    seen = []
+    pg.on("request", lambda r: seen.append(r.url)
+          if "/agents/chat/thread" in r.url else None)
+    return seen
+
+
+def test_a_finished_step_redraws_the_open_team_chat(browser, server):
+    pg, live = _open(browser, server)
+    try:
+        seen = _thread_fetches(pg)
+        live.send({"event": "step_finished", "agent_id": ADA["id"],
+                   "job_id": "job-1", "step": 1, "of": 3, "status": "ok",
+                   "at": 1})
+        pg.wait_for_timeout(700)
+        assert len(seen) == 1, seen
+        assert not live.errors, live.errors
+    finally:
+        pg.close()
+
+
+def test_a_burst_of_job_events_redraws_once(browser, server):
+    pg, live = _open(browser, server)
+    try:
+        seen = _thread_fetches(pg)
+        live.send({"event": "step_finished", "agent_id": ADA["id"],
+                   "job_id": "job-1", "step": 1, "of": 2, "at": 1},
+                  {"event": "step_started", "agent_id": IRIS["id"],
+                   "job_id": "job-1", "step": 2, "of": 2, "at": 1},
+                  {"event": "job_finished", "agent_id": ADA["id"],
+                   "job_id": "job-1", "status": "done", "at": 1})
+        pg.wait_for_timeout(700)
+        assert len(seen) == 1, seen
+    finally:
+        pg.close()
+
+
+def test_a_private_conversation_is_not_redrawn_for_a_job(browser, server):
+    pg, live = _open(browser, server)
+    try:
+        pg.evaluate("id => { document.getElementById('ap-agent').value = id; }",
+                    IRIS["id"])
+        seen = _thread_fetches(pg)
+        live.send({"event": "job_finished", "agent_id": ADA["id"],
+                   "job_id": "job-1", "status": "done", "at": 1})
+        pg.wait_for_timeout(700)
+        assert seen == [], seen
+    finally:
+        pg.close()

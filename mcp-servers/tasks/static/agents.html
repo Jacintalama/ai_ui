@@ -3738,7 +3738,28 @@
 
     var EVENTS = ["run_started", "tool_started", "tool_finished",
                   "run_finished", "speaking_started", "handoff",
-                  "meeting_started"];
+                  "meeting_started", "job_started", "step_started",
+                  "step_finished", "job_finished"];
+    //: A job's results are posted into the team chat by the background
+    //: worker, not by a round this page streams, so the open team chat is
+    //: fetched again when a job moves. Once per burst: a step finishing and
+    //: the next one starting arrive together.
+    var JOB_EVENTS = { job_started: 1, step_started: 1, step_finished: 1,
+                       job_finished: 1 };
+    var REDRAW_AFTER_MS = 300;
+    var redrawTimer = null;
+    function redrawTeamChat() {
+      var field = document.getElementById("ap-agent");
+      if (field && field.value) return;       // a private conversation
+      clearTimeout(redrawTimer);
+      redrawTimer = setTimeout(function () {
+        var again = document.getElementById("ap-agent");
+        if (again && again.value) return;
+        if (window.htmx && document.getElementById("agent-thread")) {
+          htmx.ajax("GET", "/tasks/agents/chat/thread", "#agent-thread");
+        }
+      }, REDRAW_AFTER_MS);
+    }
     //: id -> { working, since, speakUntil, timer }. Kept here, not on the
     //: rows, because drawRoster() rebuilds the rows and would drop it.
     var live = {};
@@ -3832,6 +3853,11 @@
 
     function apply(name, e) {
       var id = e.agent_id;
+      if (JOB_EVENTS[name]) {
+        redrawTeamChat();
+        // step_started also means that agent is now working.
+        if (name !== "step_started") return;
+      }
       if (name === "meeting_started") {
         var ids = Array.isArray(e.participants) ? e.participants : [];
         var names = [], known = [];
