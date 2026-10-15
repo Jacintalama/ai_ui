@@ -156,7 +156,32 @@ def test_cancel_stops_the_job_and_its_running_step(harness):
                          "job_id": "job-1", "status": "cancelled"}]
 
 
-def test_cancel_of_a_job_already_over_changes_nothing(harness):
+@pytest.fixture
+def dropped(harness, monkeypatch):
+    """What the chat was asked to take off the page: the stopped job's
+    waiting questions (routes_agent_chat.drop_job_questions)."""
+    import routes_agent_jobs
+    calls = []
+
+    class Chat:
+        @staticmethod
+        async def drop_job_questions(email, job_id):
+            calls.append((email, job_id))
+            return 1
+
+    monkeypatch.setattr(routes_agent_jobs, "agent_chat", Chat)
+    return calls
+
+
+def test_stop_takes_the_jobs_waiting_question_away(harness, dropped):
+    """A Yes left on the page for a stopped job must not be offered."""
+    client, store, worker, events = harness
+    store.job["status"] = "needs_you"
+    client.post("/tasks/agents/jobs/job-1/cancel", headers=_hdr())
+    assert dropped == [(OWNER, "job-1")]
+
+
+def test_cancel_of_a_job_already_over_changes_nothing(harness, dropped):
     client, store, worker, events = harness
     store.job["status"] = "done"
     store.cancel_ok = False
@@ -164,6 +189,7 @@ def test_cancel_of_a_job_already_over_changes_nothing(harness):
     assert r.status_code == 200
     assert "Done" in r.text
     assert not [e for e, _ in events if e == "job_finished"]
+    assert dropped == []
 
 
 @pytest.mark.parametrize("action", ["start", "cancel"])

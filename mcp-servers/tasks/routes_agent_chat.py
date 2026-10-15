@@ -1197,12 +1197,37 @@ async def _apply_pending_answer(email: str, s: store.RoomSession, ask_id: str,
     shared before, and typing "yes" went to the whole room: seven agents
     heard it, all seven passed, and the change the person had just approved
     was never applied while the panel said nobody had anything to add.
+
+    A team job's step that asked is checked first: if the job was stopped
+    (or ended by the sweep) while the question waited, nothing runs.
     """
-    pending = s.pending.pop(ask_id, None)
+    pending = s.pending.get(ask_id)
     if not isinstance(pending, dict) or not pending.get("calls"):
+        s.pending.pop(ask_id, None)
         return render.note("That question is no longer waiting for an answer.")
     agent_id = str(pending.get("agent_id") or "")
     name = _name_for(agent_id, agents) or "Agent"
+    if pending.get("job_step_id"):
+        held = await _job_step_still_held(email, pending)
+        if held is None:
+            # Could not tell. Not a licence to run the tool, and no reason
+            # to throw the question away: it stays, buttons and all.
+            page_pending = _pending_for_page(pending) or {}
+            return (render.note("That job could not be checked just now. "
+                                "Try again in a moment.")
+                    + render.approval_bubble(name, ask_id,
+                                             page_pending.get("calls") or []))
+        if not held:
+            s.pending.pop(ask_id, None)
+            _clear_awaiting(s.messages, ask_id)
+            s.messages.append({"role": "note", "content": JOB_STOPPED})
+            try:
+                await store.save_chat(email, s)
+            except Exception:                               # noqa: BLE001
+                log.exception("agent chat: could not save after dropping a "
+                              "stopped job's question")
+            return render.note(JOB_STOPPED)
+    s.pending.pop(ask_id, None)
     # A team job's step that stopped to ask (agent_job_worker._hold). Its
     # place in the job rides on every question it asks, and its answers are
     # labelled with it. All empty for an ordinary question, which then takes
@@ -1277,6 +1302,55 @@ async def _apply_pending_answer(email: str, s: store.RoomSession, ask_id: str,
 #: What a held job step's payload carries besides the held turn itself
 #: (agent_job_worker._hold), copied onto a question it asks again.
 _JOB_PENDING_KEYS = ("job_step_id", "job_id", "job_step", "job_of")
+
+#: Said instead of running a job step's tool when the job ended while its
+#: question waited.
+JOB_STOPPED = "That job was stopped, so this was not run."
+
+
+async def _job_step_still_held(email: str, pending: dict) -> bool | None:
+    """Whether a job step's question may still be answered: its job is this
+    person's, still waiting on them, and this step still the one held.
+    None when the job could not be read."""
+    job_id = str(pending.get("job_id") or "")
+    step_id = str(pending.get("job_step_id") or "")
+    try:
+        job = await job_store.for_owner(job_id, email) if job_id else None
+    except Exception:                                       # noqa: BLE001
+        log.warning("agent chat: could not read job %s before an answer",
+                    job_id, exc_info=True)
+        return None
+    if not job or job.get("status") != "needs_you":
+        return False
+    return any(str(st.get("id")) == step_id and st.get("status") == "running"
+               for st in job.get("steps") or [])
+
+
+async def drop_job_questions(email: str, job_id: str) -> int:
+    """Take a stopped job's waiting questions out of the room, so no Yes is
+    offered for a job that no longer runs. Returns how many went.
+
+    The room's session, loaded if it is not (the questions are saved with
+    the conversation). The answer path checks the job anyway
+    (_job_step_still_held); this is so a reload does not offer the buttons.
+    Never raises.
+    """
+    try:
+        s = store.get_session(email, None)
+        await _hydrate(email, s, None)
+        mine = [ask for ask, p in list(s.pending.items())
+                if isinstance(p, dict) and p.get("job_step_id")
+                and str(p.get("job_id") or "") == job_id]
+        for ask in mine:
+            s.pending.pop(ask, None)
+            _clear_awaiting(s.messages, ask)
+        if mine and s.chat_id:
+            await _save_despite_cancel(email, s)
+        return len(mine)
+    except Exception:                                       # noqa: BLE001
+        log.warning("agent chat: could not drop job %s's questions", job_id,
+                    exc_info=True)
+        return 0
 
 
 def _job_fields(pending: dict) -> dict:

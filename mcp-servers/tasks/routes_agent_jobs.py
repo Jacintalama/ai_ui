@@ -19,6 +19,9 @@ import agent_chat_render as render
 import agent_events
 import agent_job_store as job_store
 import agent_job_worker
+# The chat holds a held step's question (agent_job_worker._hold); Stop takes
+# it away. routes_agent_chat imports nothing of this module, so no cycle.
+import routes_agent_chat as agent_chat
 from auth import CurrentUser, current_user
 from routes_agent_turn import _agents_for
 
@@ -131,6 +134,9 @@ async def job_cancel(job_id: str,
         # turn that finishes in the gap cannot be recorded (finish_step only
         # closes a running step), so the order never loses a Stop.
         agent_job_worker.cancel(job_id)
+        # A question its step asked would otherwise still offer Yes. The
+        # answer path checks the job too; this is so the page does not.
+        await agent_chat.drop_job_questions(user.email, job_id)
         agent_events.publish("job_finished",
                              agent_id=str(job.get("lead_agent_id") or ""),
                              user_email=user.email, job_id=job_id,

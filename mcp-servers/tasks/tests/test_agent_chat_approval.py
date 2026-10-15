@@ -463,6 +463,32 @@ JOB_KEYS = {"job_step_id": "step-1", "job_id": "job-1", "job_step": 1,
             "job_of": 2}
 
 
+def _job_row(status="needs_you", step_status="running"):
+    return {"id": "job-1", "user_email": EMAIL, "status": status,
+            "steps": [{"id": "step-1", "position": 1, "status": step_status},
+                      {"id": "step-2", "position": 2, "status": "waiting"}]}
+
+
+@pytest.fixture
+def job_row(monkeypatch):
+    """The job a step's question belongs to, as agent_job_store.for_owner
+    reads it: still waiting on the person, its step still held, unless a
+    test says otherwise. A list, so a test can swap the row or an error in.
+    """
+    import agent_job_store
+    row = [_job_row()]
+    reads = []
+
+    async def for_owner(job_id, user_email):
+        reads.append((job_id, user_email))
+        if isinstance(row[0], BaseException):
+            raise row[0]
+        return row[0] if user_email == EMAIL and job_id == "job-1" else None
+
+    monkeypatch.setattr(agent_job_store, "for_owner", for_owner)
+    return row, reads
+
+
 def _job_question(mod, ask_id="ask-job"):
     """The room as the worker leaves it: a step's question waiting."""
     s = mod.store.get_session(EMAIL)
@@ -489,7 +515,7 @@ def _record_resumes(monkeypatch, mod):
     return got
 
 
-def test_yes_on_a_job_steps_question_carries_the_job_on(monkeypatch):
+def test_yes_on_a_job_steps_question_carries_the_job_on(monkeypatch, job_row):
     app, mod, resumed = _app(monkeypatch, _asking_turn())
     got = _record_resumes(monkeypatch, mod)
     s = _job_question(mod)
@@ -509,7 +535,7 @@ def test_yes_on_a_job_steps_question_carries_the_job_on(monkeypatch):
         "May I send it?")[1]
 
 
-def test_no_on_a_job_steps_question_carries_the_job_on_too(monkeypatch):
+def test_no_on_a_job_steps_question_carries_the_job_on_too(monkeypatch, job_row):
     app, mod, resumed = _app(monkeypatch, _asking_turn())
     got = _record_resumes(monkeypatch, mod)
     _job_question(mod)
@@ -520,7 +546,7 @@ def test_no_on_a_job_steps_question_carries_the_job_on_too(monkeypatch):
     assert got[0]["out"]["answer"] == "I did not run that."
 
 
-def test_a_typed_yes_on_a_job_steps_question_carries_the_job_on(monkeypatch):
+def test_a_typed_yes_on_a_job_steps_question_carries_the_job_on(monkeypatch, job_row):
     app, mod, resumed = _app(monkeypatch, _asking_turn())
     got = _record_resumes(monkeypatch, mod)
     _job_question(mod)
@@ -531,7 +557,7 @@ def test_a_typed_yes_on_a_job_steps_question_carries_the_job_on(monkeypatch):
     assert [x["step_id"] for x in got] == ["step-1"]
 
 
-def test_a_job_step_that_asks_again_keeps_its_place_in_the_job(monkeypatch):
+def test_a_job_step_that_asks_again_keeps_its_place_in_the_job(monkeypatch, job_row):
     app, mod, _ = _app(monkeypatch, _asking_turn())
     got = _record_resumes(monkeypatch, mod)
 
@@ -552,7 +578,7 @@ def test_a_job_step_that_asks_again_keeps_its_place_in_the_job(monkeypatch):
     assert got and got[0]["out"]["pending"]
 
 
-def test_a_job_steps_resume_that_fails_tells_the_job(monkeypatch):
+def test_a_job_steps_resume_that_fails_tells_the_job(monkeypatch, job_row):
     app, mod, _ = _app(monkeypatch, _asking_turn())
     got = _record_resumes(monkeypatch, mod)
 
@@ -568,7 +594,7 @@ def test_a_job_steps_resume_that_fails_tells_the_job(monkeypatch):
     assert got == [{"step_id": "step-1", "out": None, "job_id": "job-1"}]
 
 
-def test_a_worker_that_raises_does_not_cost_the_answer(monkeypatch):
+def test_a_worker_that_raises_does_not_cost_the_answer(monkeypatch, job_row):
     app, mod, _ = _app(monkeypatch, _asking_turn())
 
     async def raises(step_id, out, job_id=None):
@@ -594,3 +620,101 @@ def test_an_ordinary_question_never_reaches_the_job_worker(monkeypatch):
     stored = mod.store.get_session(EMAIL).messages[-1]
     assert stored == {"role": "assistant", "agent_id": "agent-a",
                       "agent_name": "Ada", "content": "Sent it."}
+
+
+# A Stop (or the sweep) can end a job while its step's question waits. The
+# question is still on the page, and in the session, until something takes
+# it away: a Yes then must not run the tool for a job that no longer exists.
+
+STOPPED = "That job was stopped, so this was not run."
+
+
+@pytest.mark.parametrize("status,step_status", [
+    ("cancelled", "skipped"), ("failed", "failed"),
+    # Still paused, but this step is not the one held any more.
+    ("needs_you", "done")])
+def test_yes_after_the_job_stopped_does_not_run_the_tool(
+        monkeypatch, job_row, status, step_status):
+    app, mod, resumed = _app(monkeypatch, _asking_turn())
+    got = _record_resumes(monkeypatch, mod)
+    row, reads = job_row
+    row[0] = _job_row(status, step_status)
+    s = _job_question(mod)
+    r = TestClient(app).post("/tasks/agents/chat/approve",
+                             data={"ask_id": "ask-job", "approved": "yes"},
+                             headers=_hdr())
+    assert r.status_code == 200
+    assert resumed == [], "the tool ran for a stopped job"
+    assert got == []
+    assert STOPPED in r.text
+    assert reads == [("job-1", EMAIL)]
+    # The question is spent: gone from the session and from the thread.
+    assert "ask-job" not in s.pending
+    assert not [m for m in s.messages if m.get("awaiting")]
+
+
+def test_a_typed_yes_after_the_job_stopped_does_not_run_it(monkeypatch,
+                                                           job_row):
+    app, mod, resumed = _app(monkeypatch, _asking_turn())
+    row, _ = job_row
+    row[0] = _job_row("cancelled", "skipped")
+    _job_question(mod)
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/send", data={"message": "yes"},
+           headers=_hdr())
+    body = c.get("/tasks/agents/chat/stream", headers=_hdr()).text
+    assert resumed == []
+    assert STOPPED in body
+
+
+def test_a_job_that_cannot_be_read_keeps_its_question(monkeypatch, job_row):
+    """Not knowing whether the job was stopped is no licence to run the
+    tool, and no reason to throw the question away either."""
+    app, mod, resumed = _app(monkeypatch, _asking_turn())
+    row, _ = job_row
+    row[0] = RuntimeError("db down")
+    s = _job_question(mod)
+    r = TestClient(app).post("/tasks/agents/chat/approve",
+                             data={"ask_id": "ask-job", "approved": "yes"},
+                             headers=_hdr())
+    assert resumed == []
+    assert "ask-job" in s.pending
+    assert ">Yes<" in r.text
+
+
+def test_dropping_a_jobs_questions_leaves_the_others(monkeypatch):
+    app, mod, _ = _app(monkeypatch, _asking_turn())
+    saved = []
+
+    async def save(email, s):
+        saved.append(dict(s.pending))
+
+    monkeypatch.setattr(mod.store, "save_chat", save)
+    s = _job_question(mod)
+    s.pending["ask-other"] = {"agent_id": "agent-m", "user_email": EMAIL,
+                              "calls": CALLS, "conversation": HELD}
+    s.messages.append({"role": "assistant", "agent_id": "agent-m",
+                       "content": "May I?",
+                       "awaiting": {"calls": CALLS, "ask_id": "ask-other"}})
+    import asyncio
+    dropped = asyncio.run(mod.drop_job_questions(EMAIL, "job-1"))
+    assert dropped == 1
+    assert list(s.pending) == ["ask-other"]
+    assert [m["awaiting"]["ask_id"] for m in s.messages
+            if m.get("awaiting")] == ["ask-other"]
+    assert saved == [{"ask-other": s.pending["ask-other"]}]
+    # Nothing of that job's left: nothing to do, nothing saved.
+    assert asyncio.run(mod.drop_job_questions(EMAIL, "job-1")) == 0
+    assert len(saved) == 1
+
+
+def test_dropping_questions_never_raises(monkeypatch):
+    app, mod, _ = _app(monkeypatch, _asking_turn())
+
+    async def broken(email, s):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(mod.store, "save_chat", broken)
+    _job_question(mod)
+    import asyncio
+    assert asyncio.run(mod.drop_job_questions(EMAIL, "job-1")) == 1
