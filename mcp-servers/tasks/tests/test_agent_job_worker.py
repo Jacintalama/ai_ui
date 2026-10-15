@@ -76,6 +76,9 @@ class FakeStore:
         self.order = []
         self.claim_errors = 0
         self.claims = 0
+        #: Step ids whose current attempt ran a tool (step_acted).
+        self.acted = set()
+        self.acted_error = None
 
     def add(self, job_id, email, agent_ids, status="running"):
         self.jobs[job_id] = {
@@ -129,6 +132,11 @@ class FakeStore:
             return False
         st["status"], st["result"] = status, result
         return True
+
+    async def step_acted(self, step_id):
+        if self.acted_error is not None:
+            raise self.acted_error
+        return step_id in self.acted
 
     async def requeue_step(self, step_id):
         _, st = self._step(step_id)
@@ -449,6 +457,62 @@ async def test_a_closing_turn_that_fails_still_finishes_the_job(h):
     assert h.named("job_finished")[-1]["status"] == "done"
 
 
+async def test_a_step_whose_tool_already_ran_is_not_retried(h):
+    """A retry would run the tool again: the email goes out twice."""
+    h.store.add("job-1", "p@x.com", ["mia", "ada", "dev"])
+    h.store.acted.add("job-1-s2")
+    h.answers["ada"] = [RuntimeError("boom"), "ada second try"]
+    await _run_until(_done(h.store, "job-1"))
+    job = h.store.jobs["job-1"]
+    assert job["status"] == "failed"
+    assert [st["status"] for st in job["steps"]] == ["done", "failed",
+                                                     "skipped"]
+    assert [t["agent"] for t in h.turns] == ["mia", "ada"]
+    note = h.posted[-1]["message"]
+    assert note["agent_id"] == "lead"
+    assert note["content"].startswith("Ada could not finish step 2: ")
+    assert ("It was not retried because it had already acted."
+            in note["content"])
+    assert note["content"].endswith("The job stopped.")
+
+
+async def test_a_step_that_cannot_be_checked_is_not_retried(h):
+    """Not knowing whether the tool ran is not knowing it did not."""
+    h.store.add("job-1", "p@x.com", ["mia", "ada"])
+    h.store.acted_error = RuntimeError("db down")
+    h.answers["mia"] = [RuntimeError("boom"), "mia second try"]
+    await _run_until(_done(h.store, "job-1"))
+    assert h.store.jobs["job-1"]["status"] == "failed"
+    assert [t["agent"] for t in h.turns] == ["mia"]
+
+
+async def test_a_broken_step_whose_tool_ran_is_not_put_back(h, monkeypatch):
+    """The bookkeeping around a step broke (its result did not land) after
+    its turn had acted: failed, not requeued."""
+    h.store.add("job-1", "p@x.com", ["mia", "ada"])
+    h.store.acted.add("job-1-s1")
+    real = h.store.finish_step
+    broke = []
+
+    async def finish_once_broken(step_id, status, result=None, run_id=None):
+        if not broke:
+            broke.append(step_id)
+            raise RuntimeError("write did not land")
+        return await real(step_id, status, result, run_id)
+
+    monkeypatch.setattr(h.store, "finish_step", finish_once_broken)
+    await _run_until(_done(h.store, "job-1"))
+    job = h.store.jobs["job-1"]
+    assert job["status"] == "failed"
+    assert [st["status"] for st in job["steps"]] == ["failed", "skipped"]
+    assert [t["agent"] for t in h.turns] == ["mia"]
+
+
+def test_the_worker_and_the_store_agree_on_the_attempts():
+    import agent_job_store
+    assert worker.MAX_ATTEMPTS == agent_job_store.MAX_ATTEMPTS
+
+
 # --- a held step carries on after Yes or No ---------------------------------
 
 def _held_job(h, agent_ids=("mia", "ada"), held_at=1):
@@ -713,6 +777,42 @@ async def test_a_failed_recovery_still_starts_the_loop(monkeypatch):
     await asyncio.sleep(0)
     assert started == [True]
     worker._LOOP_TASK.cancel()
+
+
+async def test_jobs_ended_by_the_restart_are_announced(h, monkeypatch):
+    import agent_job_store
+    ended = [{"job_id": "job-1", "user_email": "p@x.com",
+              "lead_agent_id": "lead", "request": "weekly", "status": "failed",
+              "why": agent_job_store.WHY_ACTED, "agent_id": "ada",
+              "position": 2},
+             {"job_id": "job-2", "user_email": "q@x.com",
+              "lead_agent_id": "lead", "request": "monthly",
+              "status": "failed", "why": agent_job_store.WHY_INTERRUPTED,
+              "agent_id": "mia", "position": 1}]
+
+    async def recover():
+        return {"requeued": 0, "ended": ended}
+
+    async def fake_loop():
+        await asyncio.sleep(3600)
+
+    h.store.recover_after_restart = recover
+    monkeypatch.setattr(worker, "job_loop", fake_loop)
+    monkeypatch.setattr(worker, "_LOOP_TASK", None)
+    monkeypatch.delenv("AGENT_JOBS_ENABLED", raising=False)
+    assert await worker.start_background() is True
+    worker._LOOP_TASK.cancel()
+    by_job = {p["message"]["job_id"]: p for p in h.posted}
+    acted = by_job["job-1"]
+    assert acted["email"] == "p@x.com"
+    assert acted["message"]["agent_id"] == "lead"
+    assert acted["message"]["content"] == (
+        "Ada's step 2 was cut off by a restart after it had already acted, "
+        "so it was not run again. The job stopped.")
+    assert by_job["job-2"]["message"]["content"] == (
+        "Mia could not finish step 1: it was cut off by a restart on its "
+        "last try. The job stopped.")
+    assert [(kw["job_id"], kw["status"]) for kw in h.named("job_finished")]         == [("job-1", "failed"), ("job-2", "failed")]
 
 
 async def test_jobs_switched_off_start_nothing(monkeypatch):

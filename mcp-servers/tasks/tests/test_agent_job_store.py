@@ -33,9 +33,10 @@ def _who() -> str:
 
 async def _purge_test_people() -> None:
     async with session() as s:
-        await s.execute(sql_text(
-            "DELETE FROM tasks.agent_job WHERE user_email LIKE :p"),
-            {"p": PREFIX + "%@example.com"})
+        for table in ("agent_job", "agent_step", "agent_run"):
+            await s.execute(sql_text(
+                "DELETE FROM tasks.%s WHERE user_email LIKE :p" % table),
+                {"p": PREFIX + "%@example.com"})
         await s.commit()
 
 
@@ -243,7 +244,7 @@ async def test_recover_requeues_running_steps_and_expires_old_plans(clean):
             "WHERE id = :id"), {"id": old})
         await s.commit()
 
-    assert await js.recover_after_restart() >= 1
+    assert (await js.recover_after_restart())["requeued"] >= 1
     job = await js.get(running)
     assert job["status"] == "running"
     assert job["steps"][0]["status"] == "waiting"
@@ -301,3 +302,121 @@ async def test_a_long_request_is_cut_to_the_cap(clean):
                                       "x" * (js.REQUEST_MAX_CHARS + 500),
                                       STEPS)
     assert len((await js.get(job_id))["request"]) == js.REQUEST_MAX_CHARS
+
+
+# --- a restart never runs a step a third time, or again after it acted -------
+
+async def _tool_ran(email: str, agent_id: str, status: str = "ok",
+                    source: str = "job", ago_seconds: int = 0) -> None:
+    """A run of `agent_id` for `email` that called one tool, as
+    agent_activity.start_run and record_step write them."""
+    run_id = str(uuid.uuid4())
+    async with session() as s:
+        await s.execute(sql_text(
+            "INSERT INTO tasks.agent_run (id, agent_id, user_email, source, "
+            "status, started_at) VALUES (:id, :agent, :email, :source, "
+            "'completed', now() - make_interval(secs => :ago))"),
+            {"id": run_id, "agent": agent_id, "email": email,
+             "source": source, "ago": ago_seconds})
+        await s.execute(sql_text(
+            "INSERT INTO tasks.agent_step (id, run_id, agent_id, user_email, "
+            "tool, status, finished_at) VALUES (:id, :run, :agent, :email, "
+            "'send_email', :status, now())"),
+            {"id": str(uuid.uuid4()), "run": run_id, "agent": agent_id,
+             "email": email, "status": status})
+        await s.commit()
+
+
+async def _ended(recovered: dict, job_id: str) -> dict:
+    (item,) = [e for e in recovered["ended"] if e["job_id"] == job_id]
+    return item
+
+
+async def test_recover_fails_a_step_that_has_used_its_attempts(clean):
+    email = _who()
+    job_id = await _running(email)
+    step = await js.claim_next_step()
+    await js.requeue_step(step["id"])
+    again = await js.claim_next_step()
+    assert again["attempts"] == js.MAX_ATTEMPTS
+    recovered = await js.recover_after_restart()
+    job = await js.get(job_id)
+    assert job["status"] == "failed" and job["finished_at"] is not None
+    assert [s["status"] for s in job["steps"]] == ["failed", "skipped",
+                                                   "skipped"]
+    assert job["steps"][0]["attempts"] == js.MAX_ATTEMPTS
+    item = await _ended(recovered, job_id)
+    assert (item["status"], item["why"], item["agent_id"], item["position"],
+            item["user_email"]) == ("failed", js.WHY_INTERRUPTED,
+                                    "agent-mia", 1, email)
+    assert await js.claim_next_step() is None
+
+
+async def test_a_restart_never_gives_a_step_a_third_attempt(clean):
+    email = _who()
+    job_id = await _running(email)
+    await js.claim_next_step()
+    assert (await js.recover_after_restart())["requeued"] == 1
+    second = await js.claim_next_step()
+    assert second["attempts"] == 2
+    # The process dies again during the second attempt.
+    assert (await js.recover_after_restart())["requeued"] == 0
+    assert await js.claim_next_step() is None
+    steps = (await js.get(job_id))["steps"]
+    assert steps[0]["status"] == "failed" and steps[0]["attempts"] == 2
+
+
+async def test_recover_fails_a_step_whose_tools_already_ran(clean):
+    email = _who()
+    job_id = await _running(email)
+    step = await js.claim_next_step()
+    assert await js.step_acted(step["id"]) is False
+    await _tool_ran(email, "agent-mia")
+    assert await js.step_acted(step["id"]) is True
+    recovered = await js.recover_after_restart()
+    assert recovered["requeued"] == 0
+    job = await js.get(job_id)
+    assert job["status"] == "failed"
+    assert [s["status"] for s in job["steps"]] == ["failed", "skipped",
+                                                   "skipped"]
+    assert job["steps"][0]["attempts"] == 1
+    assert (await _ended(recovered, job_id))["why"] == js.WHY_ACTED
+
+
+async def test_only_a_tool_this_step_ran_counts_as_acting(clean):
+    email = _who()
+    await _running(email)
+    step = await js.claim_next_step()
+    # Asked about, refused, or held for a yes: none of these ran.
+    await _tool_ran(email, "agent-mia", status="held")
+    await _tool_ran(email, "agent-mia", status="refused")
+    # The person chatting with the same agent meanwhile is not the step.
+    await _tool_ran(email, "agent-mia", source="channel")
+    # Another agent of theirs, and the same agent before the step began.
+    await _tool_ran(email, "agent-ada")
+    await _tool_ran(email, "agent-mia", ago_seconds=3600)
+    # Somebody else's agent with the same id.
+    await _tool_ran(_who(), "agent-mia")
+    assert await js.step_acted(step["id"]) is False
+    # A tool that ran and failed may still have done something.
+    await _tool_ran(email, "agent-mia", status="failed")
+    assert await js.step_acted(step["id"]) is True
+
+
+async def test_a_retry_is_judged_on_its_own_attempt(clean):
+    # The claim stamps when the attempt began, so a tool from a previous
+    # attempt (which was then allowed to retry because it had none) does not
+    # leak forward, and a reclaim stamps afresh.
+    email = _who()
+    await _running(email)
+    step = await js.claim_next_step()
+    await js.requeue_step(step["id"])
+    async with session() as s:
+        await s.execute(sql_text(
+            "UPDATE tasks.agent_job_step SET started_at = now() - "
+            "interval '1 hour' WHERE id = :id"), {"id": step["id"]})
+        await s.commit()
+    await _tool_ran(email, "agent-mia", ago_seconds=1800)
+    again = await js.claim_next_step()
+    assert again["id"] == step["id"]
+    assert await js.step_acted(step["id"]) is False

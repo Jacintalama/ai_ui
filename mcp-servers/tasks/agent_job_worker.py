@@ -31,10 +31,9 @@ MAX_PARALLEL_STEPS = 2
 #: slot (and the person's one running job) forever.
 STEP_HARD_CAP_SECONDS = 300
 
-#: A first try and one retry. Most failures are a busy free model or a
-#: transient error, which a second try gets past; one that fails twice is
-#: not going to work on a third, and the person should hear why.
-MAX_ATTEMPTS = 2
+#: A first try and one retry (agent_job_store.MAX_ATTEMPTS, which the
+#: restart tidy-up reads too, so the two can never disagree).
+MAX_ATTEMPTS = job_store.MAX_ATTEMPTS
 
 #: How long the loop sleeps when there is nothing to claim. Start wakes it at
 #: once (wake()), so this only matters for work nobody announced, such as a
@@ -48,6 +47,21 @@ ERROR_SLEEP_SECONDS = 5
 #: Said in the chat when every step is done but the lead could not write the
 #: closing answer. The job is still done: the results are all in the chat.
 NO_SUMMARY = "All steps are done; the summary could not be written."
+
+#: Added to a failure's reason when a retry was ruled out because the turn
+#: had already run a tool (agent_job_store.step_acted).
+NOT_RETRIED = "It was not retried because it had already acted"
+
+#: The lead's note for a job a restart ended (agent_job_store
+#: .recover_after_restart), by why.
+_RESTART_NOTES = {
+    job_store.WHY_ACTED: ("%(name)s's step %(position)d was cut off by a "
+                          "restart after it had already acted, so it was not "
+                          "run again. The job stopped."),
+    job_store.WHY_INTERRUPTED: ("%(name)s could not finish step "
+                                "%(position)d: it was cut off by a restart on "
+                                "its last try. The job stopped."),
+}
 
 _TIMED_OUT = "it ran out of time"
 _BROKE = "something went wrong on our side"
@@ -149,12 +163,43 @@ async def start_background() -> bool:
     if _LOOP_TASK is not None and not _LOOP_TASK.done():
         return False
     try:
-        await job_store.recover_after_restart()
+        recovered = await job_store.recover_after_restart()
     except Exception:                                       # noqa: BLE001
         logger.warning("job worker: could not tidy up after the restart; "
                        "starting anyway", exc_info=True)
+        recovered = None
+    await _announce_ended((recovered or {}).get("ended") or []
+                          if isinstance(recovered, dict) else [])
     _LOOP_TASK = asyncio.ensure_future(job_loop())
     return True
+
+
+async def _announce_ended(ended: list[dict]) -> None:
+    """Tell each owner why the tidy-up ended their job: the lead's note in
+    the team chat, and job_finished so an open page redraws the card.
+    Never raises: the loop starts whatever happens here."""
+    for item in ended:
+        try:
+            email = str(item["user_email"])
+            job_id = str(item["job_id"])
+            lead_id = str(item.get("lead_agent_id") or "")
+            names = await _names(email)
+            agent_id = str(item.get("agent_id") or "")
+            text = _RESTART_NOTES.get(item.get("why"))
+            if text:
+                await post_to_room(email, {
+                    "role": "assistant", "agent_id": lead_id,
+                    "agent_name": names.get(lead_id) or lead_id,
+                    "content": text % {
+                        "name": names.get(agent_id) or agent_id,
+                        "position": int(item.get("position") or 0)},
+                    "job_id": job_id}, title=item.get("request") or "")
+            agent_events.publish("job_finished", agent_id=lead_id,
+                                 user_email=email, job_id=job_id,
+                                 status=str(item.get("status") or "failed"))
+        except Exception:                                   # noqa: BLE001
+            logger.warning("job worker: could not announce an ended job",
+                           exc_info=True)
 
 
 async def job_loop() -> None:
@@ -220,12 +265,27 @@ async def _run_and_release(job_id: str, step: dict,
         wake()
 
 
+async def _may_retry(step: dict) -> bool:
+    """Whether a failed attempt may go round again: attempts left, and its
+    turn ran no tool. A check that cannot be made says no, because not
+    knowing whether the email went is not knowing it did not."""
+    if int(step.get("attempts") or 0) >= MAX_ATTEMPTS:
+        return False
+    try:
+        return not await job_store.step_acted(step["id"])
+    except Exception:                                       # noqa: BLE001
+        logger.warning("job worker: could not tell whether step %s acted; "
+                       "not retrying it", step.get("id"), exc_info=True)
+        return False
+
+
 async def _recover_broken(step: dict) -> None:
     """Put a step whose bookkeeping broke back, or end it after its last
-    attempt, so it cannot retry forever. Best effort: the database that
-    broke the step may break this too."""
+    attempt or once it has acted, so it can neither retry forever nor run a
+    tool twice. Best effort: the database that broke the step may break
+    this too."""
     try:
-        if int(step.get("attempts") or 0) < MAX_ATTEMPTS:
+        if await _may_retry(step):
             await job_store.requeue_step(step["id"])
         else:
             await job_store.finish_step(step["id"], "failed", _BROKE)
@@ -403,10 +463,15 @@ async def _hold(job: dict, step: dict, out: dict, name: str,
 
 async def _failed(job: dict, step: dict, name: str, total: int, reason: str,
                   names: dict[str, str]) -> None:
-    """Retry once; a second failure stops the job and the lead says why."""
-    if int(step.get("attempts") or 0) < MAX_ATTEMPTS:
+    """Retry once; a second failure stops the job and the lead says why.
+
+    No retry for a turn that already ran a tool: it would run it again.
+    """
+    if await _may_retry(step):
         await job_store.requeue_step(step["id"])
         return
+    if int(step.get("attempts") or 0) < MAX_ATTEMPTS:
+        reason = "%s. %s" % (reason, NOT_RETRIED)
     job_id = str(job["id"])
     email = str(job["user_email"])
     position = int(step["position"])

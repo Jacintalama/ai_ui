@@ -21,6 +21,7 @@ import uuid
 from sqlalchemy import text as sql_text
 from sqlalchemy.exc import IntegrityError
 
+from agent_activity import SOURCE_JOB, STEP_FAILED, STEP_OK
 from db import session
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,19 @@ RESULT_MAX_CHARS = 20000
 #: closing brief, the card and the room's title. A pasted document becomes a
 #: plan's request in full otherwise, and every one of those as large as it.
 REQUEST_MAX_CHARS = 4000
+
+#: A first try and one retry. Most failures are a busy free model or a
+#: transient error, which a second try gets past; one that fails twice is not
+#: going to work on a third, and the person should hear why. A restart that
+#: cuts a step off counts as the attempt it was, so a step that kills the
+#: process cannot run forever across restarts (recover_after_restart).
+MAX_ATTEMPTS = 2
+
+#: Why recover_after_restart ended a job, for the note the worker posts.
+#: The step was cut off on its last attempt.
+WHY_INTERRUPTED = "interrupted"
+#: The step was cut off after its turn had already run a tool.
+WHY_ACTED = "acted"
 
 _JOB_COLUMNS = ("id, user_email, chat_id, lead_agent_id, request, status, "
                 "result, seen, created_at, started_at, finished_at")
@@ -258,7 +272,8 @@ async def claim_next_step() -> dict | None:
         step = (await s.execute(
             sql_text(
                 "UPDATE tasks.agent_job_step "
-                "SET status = 'running', attempts = attempts + 1 "
+                "SET status = 'running', attempts = attempts + 1, "
+                "    started_at = now() "
                 "WHERE id = (SELECT id FROM tasks.agent_job_step "
                 "            WHERE job_id = :id AND status = 'waiting' "
                 "            ORDER BY position LIMIT 1) "
@@ -305,25 +320,116 @@ async def requeue_step(step_id: str) -> None:
         await s.commit()
 
 
-async def recover_after_restart() -> int:
-    """Tidy up after the service stopped mid-job. Returns the steps requeued.
+def _acted_sql(st: str, j: str) -> str:
+    """SQL true when the step `st` of job `j` has, in its current attempt,
+    run a tool: a tool step that ran (ok) or ran and failed (and so may have
+    done part of something) in a run of that agent, for that person, from a
+    job, started since the step was claimed.
 
-    A step left running by a job that is still running was lost with the
-    process, so it goes back to waiting and runs again; its lost attempt
-    still counts. A step whose job is waiting on the person (needs_you) was
-    not lost: it is held for their Yes or No, which is saved with the chat
-    and finishes it, so it is left alone. A plan nobody started in a day is
-    cancelled, so the badge and the card stop offering it.
+    Matched by owner, agent, source and time rather than by run id, because
+    the run id is not known until the turn returns, and a restart is exactly
+    the case where it never returns. One job per person runs at a time and
+    its steps one after another, so a job run of this agent for this person
+    since the claim is this step's. A tool held for a yes or refused did not
+    run. A colleague asked from the step runs under its own run (source
+    colleague) and is not counted; asking it is, under the step's run.
+    """
+    return ("EXISTS (SELECT 1 FROM tasks.agent_step a "
+            "        JOIN tasks.agent_run r ON r.id = a.run_id "
+            "        WHERE r.user_email = %(j)s.user_email "
+            "          AND r.agent_id = %(st)s.agent_id "
+            "          AND r.source = :job_source "
+            "          AND r.started_at >= COALESCE(%(st)s.started_at, "
+            "                                       %(j)s.started_at) "
+            "          AND a.status IN (:step_ok, :step_failed))"
+            % {"st": st, "j": j})
+
+
+_ACTED_PARAMS = {"job_source": SOURCE_JOB, "step_ok": STEP_OK,
+                 "step_failed": STEP_FAILED}
+
+
+async def step_acted(step_id: str) -> bool:
+    """Whether this step's current attempt already ran a tool.
+
+    A step that did must not run again, on a retry or after a restart: its
+    tool may have sent the email, and a second run sends it again. A tool
+    killed mid-call before its row was written cannot be seen here, and
+    neither can one whose run row could not be written (agent_activity
+    swallows its own errors); both are rarer than the retry this guards.
     """
     async with session() as s:
-        res = await s.execute(
+        row = (await s.execute(
+            sql_text("SELECT " + _acted_sql("st", "j") + " "
+                     "FROM tasks.agent_job_step st "
+                     "JOIN tasks.agent_job j ON j.id = st.job_id "
+                     "WHERE st.id = :id"),
+            dict(_ACTED_PARAMS, id=step_id))).first()
+    return bool(row and row[0])
+
+
+async def recover_after_restart() -> dict:
+    """Tidy up after the service stopped mid-job.
+
+    Returns {"requeued": n, "ended": [...]}: how many steps go round again,
+    and one entry per job this ended, for the worker to tell its owner
+    (job_id, user_email, lead_agent_id, request, status, why, and the
+    agent_id and position of the step that ended it).
+
+    A step left running by a job that is still running was lost with the
+    process. It goes back to waiting and runs again, its lost attempt still
+    counted, unless running it again is wrong:
+    - it has used its attempts (MAX_ATTEMPTS): a step that takes the process
+      down with it would otherwise do so on every start, forever;
+    - its turn already ran a tool (step_acted): running it again would do
+      that again.
+    Either way the step fails and its job with it, the rest skipped.
+
+    A step whose job is waiting on the person (needs_you) was not lost: it
+    is held for their Yes or No, which is saved with the chat and finishes
+    it, so it is left alone. A plan nobody started in a day is cancelled, so
+    the badge and the card stop offering it.
+    """
+    ended = []
+    async with session() as s:
+        lost = (await s.execute(
             sql_text(
-                "UPDATE tasks.agent_job_step st SET status = 'waiting' "
-                "FROM tasks.agent_job j "
-                "WHERE st.job_id = j.id AND st.status = 'running' "
-                "  AND j.status = 'running' "
-                "RETURNING st.id"))
-        requeued = len(res.all())
+                "SELECT st.id, st.job_id, st.agent_id, st.position, "
+                "       st.attempts, j.user_email, j.lead_agent_id, "
+                "       j.request, " + _acted_sql("st", "j") + " AS acted "
+                "FROM tasks.agent_job_step st "
+                "JOIN tasks.agent_job j ON j.id = st.job_id "
+                "WHERE st.status = 'running' AND j.status = 'running' "
+                "FOR UPDATE OF st, j"),
+            _ACTED_PARAMS)).mappings().all()
+        requeue = []
+        for row in lost:
+            if row["attempts"] < MAX_ATTEMPTS and not row["acted"]:
+                requeue.append(row["id"])
+                continue
+            why = WHY_ACTED if row["acted"] else WHY_INTERRUPTED
+            await s.execute(
+                sql_text("UPDATE tasks.agent_job_step "
+                         "SET status = 'failed', result = :why "
+                         "WHERE id = :id"),
+                {"id": row["id"], "why": why})
+            await s.execute(
+                sql_text("UPDATE tasks.agent_job "
+                         "SET status = 'failed', finished_at = now() "
+                         "WHERE id = :id"),
+                {"id": row["job_id"]})
+            await _skip_unfinished(s, row["job_id"])
+            ended.append({"job_id": row["job_id"],
+                          "user_email": row["user_email"],
+                          "lead_agent_id": row["lead_agent_id"],
+                          "request": row["request"], "status": "failed",
+                          "why": why, "agent_id": row["agent_id"],
+                          "position": row["position"]})
+        if requeue:
+            await s.execute(
+                sql_text("UPDATE tasks.agent_job_step SET status = 'waiting' "
+                         "WHERE id = ANY(:ids)"),
+                {"ids": requeue})
         await s.execute(
             sql_text(
                 "UPDATE tasks.agent_job "
@@ -332,9 +438,10 @@ async def recover_after_restart() -> int:
                 "  AND created_at <= now() - make_interval(hours => :ttl)"),
             {"ttl": PROPOSAL_TTL_HOURS})
         await s.commit()
-    if requeued:
-        logger.info("requeued %d agent job steps after a restart", requeued)
-    return requeued
+    if requeue or ended:
+        logger.info("after a restart: requeued %d agent job steps, ended %d "
+                    "jobs", len(requeue), len(ended))
+    return {"requeued": len(requeue), "ended": ended}
 
 
 async def unseen_count(user_email: str) -> int:
