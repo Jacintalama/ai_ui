@@ -581,6 +581,32 @@ async def test_the_idle_loop_sweeps_and_leaves_work_in_flight_alone(
                                         "job_id": "job-9", "status": "done"}]
 
 
+async def test_a_swept_job_takes_its_waiting_question_off_the_page(
+        h, monkeypatch):
+    import agent_job_store
+    import routes_agent_chat
+    dropped = []
+
+    async def drop(email, job_id):
+        dropped.append((email, job_id))
+        return 1
+
+    monkeypatch.setattr(routes_agent_chat, "drop_job_questions", drop)
+    await worker._announce_ended([
+        {"job_id": "job-1", "user_email": "p@x.com", "lead_agent_id": "lead",
+         "request": "weekly", "status": "failed",
+         "why": agent_job_store.WHY_UNANSWERED, "agent_id": "mia",
+         "position": 1},
+        {"job_id": "job-2", "user_email": "p@x.com", "lead_agent_id": "lead",
+         "request": "weekly", "status": "done",
+         "why": agent_job_store.WHY_NO_SUMMARY, "agent_id": None,
+         "position": None}])
+    assert dropped == [("p@x.com", "job-1")]
+    assert h.posted[0]["message"]["content"] == (
+        "Nobody answered Mia's question on step 1 within a day, so the job "
+        "stopped.")
+
+
 async def test_a_sweep_that_raises_does_not_stop_the_loop(h, monkeypatch):
     monkeypatch.setattr(worker, "SWEEP_EVERY_SECONDS", 0)
 

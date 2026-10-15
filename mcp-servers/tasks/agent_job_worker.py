@@ -234,6 +234,10 @@ async def _announce_ended(ended: list[dict]) -> None:
                         "name": names.get(agent_id) or agent_id,
                         "position": int(item.get("position") or 0)},
                     "job_id": job_id}, title=item.get("request") or "")
+            if item.get("status") == "failed":
+                # A paused job's question would still offer Yes on a reload.
+                # The answer path refuses it anyway; this takes it away.
+                await _room().drop_job_questions(email, job_id)
             agent_events.publish("job_finished", agent_id=lead_id,
                                  user_email=email, job_id=job_id,
                                  status=str(item.get("status") or "failed"))
