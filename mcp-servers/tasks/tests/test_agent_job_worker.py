@@ -626,6 +626,30 @@ async def test_a_long_brief_with_code_does_not_escalate_a_short_request(
     assert agent_escalation.current_intent() is None
 
 
+async def test_a_stop_between_the_claim_and_the_launch_runs_nothing(
+        h, monkeypatch):
+    """Stop lands after the claim committed and before the step's task was
+    registered: worker.cancel finds no task to cancel, so the launch itself
+    has to notice, before the turn (and its tools) run."""
+    h.store.add("job-1", "p@x.com", ["mia", "ada"])
+    real = h.store.claim_next_step
+    missed = []
+
+    async def claim_then_stop():
+        step = await real()
+        if step is not None and not missed:
+            await h.store.cancel("job-1", "p@x.com")
+            missed.append(worker.cancel("job-1"))
+        return step
+
+    monkeypatch.setattr(h.store, "claim_next_step", claim_then_stop)
+    await _run_until(lambda: bool(missed) and "job-1" not in worker._RUNNING)
+    assert missed == [False], "the Stop found a task after all"
+    assert h.turns == []
+    assert h.posted == []
+    assert h.store.jobs["job-1"]["status"] == "cancelled"
+
+
 def test_the_worker_and_the_store_agree_on_the_attempts():
     import agent_job_store
     assert worker.MAX_ATTEMPTS == agent_job_store.MAX_ATTEMPTS

@@ -292,6 +292,8 @@ async def _run_and_release(job_id: str, step: dict,
                            slots: asyncio.Semaphore) -> None:
     """One step in its own task, so Stop can cancel exactly this one."""
     try:
+        if not await _still_claimed(job_id, step):
+            return
         await run_step(step)
     except asyncio.CancelledError:
         # Stop. The store already skipped the step; there is nothing to
@@ -325,6 +327,33 @@ async def _may_retry(step: dict) -> bool:
         logger.warning("job worker: could not tell whether step %s acted; "
                        "not retrying it", step.get("id"), exc_info=True)
         return False
+
+
+async def _still_claimed(job_id: str, step: dict) -> bool:
+    """Whether the job is still running and this step still its claimed
+    one, read after the step's task is in _RUNNING.
+
+    A Stop between the claim's commit and _launch registering the task
+    finds no task to cancel (cancel), so this launch is the last place it
+    can be seen. Read after registering, so a Stop that lands from here on
+    finds the task and cancels it: between the two, none is missed. A read
+    that fails runs the step, as before this check existed: a Stop that
+    could not be read is a Stop the database did not take either.
+    """
+    try:
+        job = await job_store.get(job_id)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("job worker: could not re-read job %s before its "
+                       "step; running it", job_id, exc_info=True)
+        return True
+    held = next((st for st in (job or {}).get("steps") or []
+                 if str(st.get("id")) == str(step.get("id"))), None)
+    if (job is None or job.get("status") != "running" or held is None
+            or held.get("status") != "running"):
+        logger.info("job worker: job %s was stopped before step %s began",
+                    job_id, step.get("id"))
+        return False
+    return True
 
 
 async def _recover_broken(step: dict) -> None:
