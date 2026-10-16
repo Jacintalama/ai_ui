@@ -142,11 +142,76 @@
     });
   }
 
+  //: An answer arrives whole (the round is not streamed), so it used to
+  //: pop into the thread in one piece while the robot on the floor beside
+  //: it moved its mouth for seconds. Now a LIVE answer is typed in: its
+  //: text is revealed word by word over the same time the floor gives the
+  //: mouth, max(1500, min(5000, chars * 40)) ms (office.js speaking), so
+  //: the bubble and the robot speak together and one agent's answer is
+  //: visibly finishing before the next agent's dots appear. A replayed
+  //: conversation shows at once, and so does a reader who asked for less
+  //: motion. Markdown is rendered first and the reveal walks its text
+  //: nodes, so emphasis, lists and links come up in place.
+  function speakMs(chars) { return Math.max(1500, Math.min(5000, chars * 40)); }
+  function typeIn(el) {
+    // Every word in its own span, faded in in order. The words are all in
+    // the document from the first frame (opacity, never removal), so what
+    // the eye sees arriving is already there for a screen reader, a
+    // search, or anything reading the thread.
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    var texts = [], n;
+    while ((n = walker.nextNode())) texts.push(n);
+    var words = [], chars = 0;
+    texts.forEach(function (node) {
+      var parts = node.nodeValue.split(/(\s+)/), frag = document.createDocumentFragment();
+      parts.forEach(function (part) {
+        if (!part) return;
+        if (/^\s+$/.test(part)) { frag.appendChild(document.createTextNode(part)); return; }
+        var w = document.createElement("span");
+        w.className = "aw"; w.textContent = part; w.style.opacity = "0";
+        frag.appendChild(w); words.push(w); chars += part.length;
+      });
+      node.parentNode.replaceChild(frag, node);
+    });
+    if (!words.length) { el.classList.remove("typing"); return; }
+    var ms = speakMs(chars), start = performance.now(), shown = 0;
+    function frame(now) {
+      var gone = now - start;
+      var want = gone >= ms ? words.length : Math.floor(words.length * gone / ms);
+      while (shown < want) { words[shown].style.opacity = ""; shown++; }
+      toBottom();
+      if (shown < words.length) requestAnimationFrame(frame);
+      else el.classList.remove("typing");
+    }
+    el.classList.add("typing");
+    requestAnimationFrame(frame);
+  }
+  function typeNewAnswers() {
+    var el = thread();
+    if (!el || !SETTLED) return;
+    var reduce = false;
+    try { reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches; }
+    catch (e) { /* no media queries */ }
+    el.querySelectorAll(".am.agent:not([data-typed]) .atext").forEach(function (text) {
+      var row = text.closest(".am");
+      row.setAttribute("data-typed", "1");
+      if (reduce || row.classList.contains("awaiting") || row.classList.contains("ajob")) return;
+      typeIn(text);
+    });
+  }
+
   function settle() {
     dropInvitation();
     renderAll();
     groupBubbles();
     stampTimes();
+    // Everything on screen at the first draw is history, not arriving.
+    if (!SETTLED) {
+      thread() && thread().querySelectorAll(".am.agent").forEach(function (r) {
+        r.setAttribute("data-typed", "1");
+      });
+    }
+    typeNewAnswers();
     toBottom();
   }
 

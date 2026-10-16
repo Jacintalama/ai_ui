@@ -319,7 +319,9 @@ def test_the_floor_names_the_rooms_that_are_in_use(page):
     Automation; Iris holds gdrive and sits at the Knowledge base. An empty
     room is scenery, with the one exception below."""
     zones = [z.lower() for z in page.locator(".zone-head > span:first-child").all_inner_texts()]
-    assert sorted(zones) == ["development", "knowledge base", "meeting room"], zones
+    # Your desk is a fixture too (2026-10-16): it is where an agent with a
+    # question for you goes to stand.
+    assert sorted(zones) == ["development", "knowledge base", "meeting room", "your desk"], zones
 
 
 
@@ -462,9 +464,9 @@ SEVEN = [
 def test_each_room_with_somebody_in_it_gets_a_card(page):
     labels = [t.lower() for t in page.locator(".zone-head > span:first-child").all_inner_texts()]
     assert any("knowledge base" in t for t in labels), labels
-    # Ada in Development, Iris at Knowledge base, and the meeting room, which
-    # is on the floor whether or not anybody is in it.
-    assert len(labels) == 3, labels
+    # Ada in Development, Iris at Knowledge base, the meeting room and your
+    # desk, which are on the floor whether or not anybody is in them.
+    assert len(labels) == 4, labels
 
 
 def test_an_empty_room_gets_no_card(page):
@@ -576,8 +578,8 @@ def test_a_room_nobody_works_in_is_not_drawn(browser):
         labels = [t.lower() for t in pg.locator(".zone-head > span:first-child").all_inner_texts()]
         # Mia's room, and the meeting room, which is always there. Research,
         # Development, Knowledge base and Automation are all still scenery.
-        assert labels == ["communication", "meeting room"], labels
-        assert pg.locator(".zone").count() == 2
+        assert labels == ["communication", "meeting room", "your desk"], labels
+        assert pg.locator(".zone").count() == 3
     finally:
         pg.close()
         srv.shutdown()
@@ -2463,3 +2465,138 @@ def test_without_a_history_route_the_tab_still_shows_each_agents_last_run(page):
     page.wait_for_timeout(400)
     assert page.locator("#hist-filters").is_hidden()
     assert page.locator("#activity-feed li").count() == 2
+
+
+# --- your desk (2026-10-16) --------------------------------------------------
+# "if agent have blockers or need to approved by the user please add a desk
+# of the user so he or she can approved.. it will remove unless he enabled
+# auto". A fixture room, where a robot whose run stopped to wait on you
+# goes to stand; the tray answers the question or sets the agent to Auto.
+
+def test_your_desk_is_on_the_floor(page):
+    room = page.locator('.zone[data-room="you"]')
+    assert room.count() == 1
+    assert "your desk" in room.locator(".zone-head").inner_text().lower()
+    assert room.locator(".you-desk").count() == 1
+    assert room.get_attribute("data-live") == "0"
+
+
+def test_an_agent_waiting_on_you_walks_to_your_desk(page):
+    _activity(page, {"agent-iris-a103": {"state": "waiting", "last_status": "waiting",
+                                          "last_run_at": "2026-10-16T08:00:00+00:00",
+                                          "source": "channel"}})
+    _settled(page)
+    assert page.evaluate(
+        "() => { const r = document.querySelector('.zone[data-room=\"you\"]').getBoundingClientRect();"
+        " const x = document.querySelector('.who-slot[data-id=\"agent-iris-a103\"]').getBoundingClientRect();"
+        " return x.left >= r.left - 2 && x.right <= r.right + 2 && x.top >= r.top - 2 && x.bottom <= r.bottom + 2; }")
+    assert page.locator('.zone[data-room="you"]').get_attribute("data-live") == "1"
+    # And back to its own desk once answered.
+    _activity(page, {"agent-iris-a103": {"state": "ready", "last_status": "completed",
+                                          "last_run_at": "2026-10-16T08:00:00+00:00",
+                                          "source": "channel"}})
+    _settled(page)
+    assert page.evaluate(
+        "() => { const r = document.querySelector('.zone[data-room=\"knowledge\"]').getBoundingClientRect();"
+        " const x = document.querySelector('.who-slot[data-id=\"agent-iris-a103\"]').getBoundingClientRect();"
+        " return x.left >= r.left - 2 && x.right <= r.right + 2; }")
+
+
+APPROVAL = render.turn_open("send it", "t9") + render.approval_bubble(
+    "Iris", "ask-77", [{"function": {"name": "send_email", "arguments": "{}"}}]) + render.turn_close()
+
+
+def _iris_asks(page):
+    """Iris's run is waiting, and the thread beside the floor holds her
+    question, exactly as the round draws it."""
+    page.evaluate("h => { document.getElementById('agent-thread').innerHTML = h;"
+                  " if (window.htmx) htmx.process(document.getElementById('agent-thread')); }", APPROVAL)
+    _activity(page, {"agent-iris-a103": {"state": "waiting", "last_status": "waiting",
+                                          "last_run_at": "2026-10-16T08:00:00+00:00",
+                                          "source": "channel"}})
+    page.wait_for_timeout(300)
+
+
+def test_the_tray_shows_the_question_with_its_own_yes_and_no(page):
+    _iris_asks(page)
+    tray = page.locator("#needs")
+    assert "send_email" in tray.inner_text()
+    assert tray.locator(".needs-yes").count() == 1 and tray.locator(".needs-no").count() == 1
+    assert tray.locator("a.needs-answer").count() == 0
+
+
+def test_yes_from_the_desk_is_the_threads_own_yes(page):
+    """The tray presses the approval bubble's button, so the answer goes
+    through /tasks/agents/chat/approve exactly as a click in the thread."""
+    _iris_asks(page)
+    posted = []
+    page.route("**/tasks/agents/chat/approve", lambda r: (
+        posted.append(r.request.post_data or ""),
+        r.fulfill(status=200, content_type="text/html",
+                  body=render.note("Iris sent it."))))
+    page.locator("#needs .needs-yes").click()
+    page.wait_for_timeout(500)
+    assert posted and "ask_id=ask-77" in posted[0] and "approved=yes" in posted[0], posted
+
+
+def test_auto_writes_the_agents_access_and_approves_the_standing_question(page):
+    _iris_asks(page)
+    written = []
+    approved = []
+    page.route(re.compile(r"/api/v1/models/model\?id=agent-iris-a103$"), lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"id": "agent-iris-a103", "name": "Iris", "base_model_id": "gpt",
+                         "meta": {"role": "Drive librarian", "toolIds": ["gdrive"], "access": "ask"},
+                         "params": {"system": "You are Iris."}})))
+    page.route(re.compile(r"/api/v1/models/model/update\?id=agent-iris-a103$"), lambda r: (
+        written.append(json.loads(r.request.post_data or "{}")),
+        r.fulfill(status=200, content_type="application/json", body="{}")))
+    page.route("**/tasks/agents/chat/approve", lambda r: (
+        approved.append(r.request.post_data or ""),
+        r.fulfill(status=200, content_type="text/html", body=render.note("Iris sent it."))))
+    page.locator("#needs .needs-auto-box").check()
+    page.wait_for_timeout(600)
+    assert written and written[0]["meta"]["access"] == "all", written
+    # Only the level changed: tools and instructions ride along untouched.
+    assert written[0]["meta"]["toolIds"] == ["gdrive"] and written[0]["params"]["system"] == "You are Iris."
+    assert approved and "approved=yes" in approved[0], approved
+
+
+# --- the office in the shell has no header (2026-10-16) ----------------------
+
+def test_framed_by_the_shell_the_office_has_no_header_and_keeps_its_search(browser):
+    """"remove the header of it i want the user can see the whole
+    animation." The shell has the navigation; the pane is the floor."""
+    srv = _serve((STATIC / "office.html").read_bytes())
+    ctx = browser.new_context(viewport={"width": 1500, "height": 900})
+    pg = ctx.new_page()
+    pg.set_default_timeout(8000)
+
+    def route(r):
+        url = r.request.url
+        body = ({"items": AGENTS, "total": len(AGENTS)} if "/models/list" in url
+                else {"activity": {}, "handoffs": []} if "/agents/activity" in url
+                else {"stats": {}} if "/agents/stats" in url
+                else {"skills": []} if "/agents/skills" in url else {})
+        r.fulfill(status=200, content_type="application/json", body=json.dumps(body))
+
+    pg.route("**/api/**", route)
+    try:
+        pg.goto("http://127.0.0.1:%d/tall-frame" % srv.server_address[1])
+        frame = pg.frame_locator("iframe")
+        frame.locator(".who").first.wait_for(state="visible")
+        assert frame.locator(".top").count() == 1
+        assert not frame.locator(".top").is_visible()
+        # The search box moved down beside The Brain and still narrows.
+        assert frame.locator(".brain #q").count() == 1
+        frame.locator("#q").fill("librarian")
+        pg.wait_for_timeout(300)
+        assert frame.locator(".card-name").all_inner_texts() == ["Iris"]
+    finally:
+        ctx.close()
+        srv.shutdown()
+
+
+def test_on_its_own_page_the_office_keeps_its_header(page):
+    assert page.locator(".top").is_visible()
+    assert page.locator(".top #q").count() == 1

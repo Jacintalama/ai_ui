@@ -52,10 +52,18 @@
 }
 .needs-item .dot { background: #fbbf24; }
 .needs-what { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.needs-item { flex-direction: column; align-items: stretch; gap: 6px; }
+.needs-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.needs-actions { display: flex; align-items: center; gap: 6px; padding-left: 15px; }
 .needs-item .btn {
-  flex: 0 0 auto; width: auto; margin: 0; padding: 4px 10px; font-size: 11.5px;
+  flex: 0 0 auto; width: auto; margin: 0; padding: 4px 11px; font-size: 11.5px;
   border-radius: 999px;
 }
+.needs-auto {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11.5px; color: var(--muted); cursor: pointer; user-select: none;
+}
+.needs-auto input { accent-color: #fbbf24; margin: 0; }
 
 /* --- what the team has to do --------------------------------------------- */
 /* Compact: a few open lines in view and the rest scrolling, finished work

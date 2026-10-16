@@ -116,6 +116,25 @@
 .meeting-table.leaving { animation: table-out .35s ease-in both; }
 @keyframes table-in  { from { opacity: 0; transform: scaleX(.6); } }
 @keyframes table-out { to   { opacity: 0; transform: scaleX(.8); } }
+/* Your desk: a fixture on the plan. A desk, a screen and you behind it,
+   drawn in the room's amber; lit, like the meeting room, while an agent is
+   standing at it with a question. */
+.you-desk {
+  position: absolute; left: 12px; right: 12px; bottom: 26px; height: 34px;
+  display: flex; align-items: flex-end; justify-content: center; gap: 8px;
+  pointer-events: none; z-index: 1; opacity: .55; transition: opacity .5s ease;
+}
+.you-desk svg { width: 70px; height: 41px; fill: color-mix(in srgb, #fbbf24 45%, transparent); }
+.you-desk .you-screen { fill: color-mix(in srgb, #fbbf24 22%, transparent); stroke: color-mix(in srgb, #fbbf24 60%, transparent); }
+.you-desk .you-head, .you-desk .you-body { fill: color-mix(in srgb, #fbbf24 80%, white); }
+.you-label {
+  font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
+  color: color-mix(in srgb, #fbbf24 85%, white); padding-bottom: 2px;
+}
+.zone[data-room="you"][data-live="1"] .you-desk { opacity: 1; }
+.zone[data-room="you"][data-live="1"] { border-color: color-mix(in srgb, #fbbf24 55%, transparent); }
+.zone[data-room="you"][data-live="1"]::after { opacity: 1; animation: meeting-glow 3.2s ease-in-out infinite; }
+
 /* The meeting room while a meeting is on: lit in the table's amber rather
    than its own green, so the room with the meeting in it is the one that
    reads as the meeting. */
