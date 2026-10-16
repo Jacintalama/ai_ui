@@ -113,6 +113,17 @@
 
 .who-chat:hover { border-color: var(--cyan); color: var(--cyan); }
 
+/* Every agent still has its own Chat, as asked; it shows when the pointer
+   or the keyboard reaches that agent, or on whoever is picked, instead of
+   seven pills standing on the floor at once (2026-10-16). Opacity, not
+   display, so the slot keeps the room it was sized for and the pill is
+   still there to click. On a screen with no pointer there is no hover, so
+   the pills simply stay. */
+.who-chat { opacity: 0; transition: opacity .15s ease; }
+.who-slot:hover .who-chat, .who-slot:focus-within .who-chat,
+.who[aria-current="true"] ~ .who-chat { opacity: 1; }
+@media (hover: none) { .who-chat { opacity: 1; } }
+
 /* Idle motion is the one animation here that states nothing, so it is the
      one that needs no evidence behind it. Everything else on this floor has
      to come from a row in the database. */

@@ -41,6 +41,27 @@ a.tag.skill:hover { border-color: var(--cyan); color: var(--cyan); }
 
 .side-bot svg.bot { width: 100%; height: auto; display: block; }
 
+/* --- the history view ------------------------------------------------------ */
+.hist-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 9px; }
+.hist-head .section-title { margin: 0; }
+.hist-filters { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.hist-filters select {
+  background: var(--surface-2); color: var(--text); font: inherit; font-size: 12px;
+  border: 1px solid var(--border-2); border-radius: 8px; padding: 4px 8px;
+}
+.hist-filters select:focus { outline: none; border-color: var(--cyan); }
+.spend {
+  display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap;
+  margin: 0 0 12px; padding: 10px 12px; border-radius: var(--radius);
+  background: var(--surface); border: 1px solid var(--border);
+  font-size: 12.5px; color: var(--muted);
+}
+.spend b { color: var(--text); font-size: 15px; }
+.spend-days { display: flex; gap: 10px; margin-left: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; }
+.spend-day { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.spend-day i { display: block; width: 14px; border-radius: 2px 2px 0 0; background: color-mix(in srgb, var(--cyan) 55%, transparent); }
+.rows li .hist-meta { color: var(--muted); font-size: 12px; }
+.rows li .hist-cost { margin-left: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--muted); white-space: nowrap; }
 .rows { list-style: none; margin: 0; padding: 0; }
 
 .rows li { display: flex; gap: 9px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; }

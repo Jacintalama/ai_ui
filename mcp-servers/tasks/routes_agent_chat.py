@@ -111,6 +111,15 @@ TEAM_ROUTES = {agent_routing.ROUTE_ROOM, agent_routing.ROUTE_COLLECTIVE,
 MIN_TRIAGE_WORDS = 4
 
 
+def _now_iso() -> str:
+    """When a message was said, stored with it (2026-10-16). The thread
+    shows it on hover and puts a day line between messages from different
+    days, the way a messenger does. A message saved before this field
+    existed has none and is drawn without a time."""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
+
+
 def _ask_id() -> str:
     """A name for one question an agent asked.
 
@@ -298,7 +307,7 @@ def _question_events(messages: list[dict], pending: dict, tid: str,
     pending[ask_id] = raw_pending
     awaiting = dict(page_pending)
     awaiting["ask_id"] = ask_id
-    messages.append({"role": "assistant", "agent_id": agent_id,
+    messages.append({"role": "assistant", "at": _now_iso(), "agent_id": agent_id,
                      "agent_name": name, "content": answer,
                      "replying_to": answering,
                      "awaiting": awaiting})
@@ -306,7 +315,7 @@ def _question_events(messages: list[dict], pending: dict, tid: str,
     if answer:
         events.append({"event": "message",
                        "data": render.into_turn(tid, render.agent_bubble(
-                           name, answer, answering))})
+                           name, answer, answering, at=_now_iso()))})
     events.append({"event": "message",
                    "data": render.into_turn(tid, render.approval_bubble(
                        name, ask_id, page_pending["calls"]))})
@@ -780,7 +789,7 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
                 # point; silently losing everybody else is not.
                 continue
 
-            messages.append({"role": "assistant", "agent_id": agent_id,
+            messages.append({"role": "assistant", "at": _now_iso(), "agent_id": agent_id,
                              "agent_name": name, "content": answer,
                              "replying_to": answering})
             # The round is not streamed, so this is the only moment the
@@ -789,7 +798,7 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
                                  user_email=email, chars=len(answer))
             yield {"event": "message",
                    "data": render.into_turn(tid, render.agent_bubble(
-                       name, answer, answering))}
+                       name, answer, answering, at=_now_iso()))}
 
         if speakers and passed == len(speakers):
             # Everybody passed, which leaves the person talking to an empty
@@ -829,7 +838,7 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
                 for event in question:
                     yield event
             elif answer and not _is_pass(answer):
-                messages.append({"role": "assistant",
+                messages.append({"role": "assistant", "at": _now_iso(),
                                  "agent_id": str(fallback.get("id") or ""),
                                  "agent_name": name, "content": answer,
                                  "replying_to": answering})
@@ -838,7 +847,7 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
                     user_email=email, chars=len(answer))
                 yield {"event": "message",
                        "data": render.into_turn(tid, render.agent_bubble(
-                           name, answer, answering))}
+                           name, answer, answering, at=_now_iso()))}
             else:
                 # It passed again even without being offered the option. Say so
                 # rather than leave the room silent: a person who typed
@@ -983,11 +992,11 @@ async def agent_chat_send(message: str = Form(...),
         # the running turn rather than inside it.
         return HTMLResponse(
             f'<div hx-swap-oob="beforeend:#agent-thread">'
-            f'{render.turn_open(body, tid)}{render.turn_close()}</div>')
+            f'{render.turn_open(body, tid, at=_now_iso())}{render.turn_close()}</div>')
 
     tid = render.new_turn_id()
     s.turn_id = tid
-    s.messages.append({"role": "user", "content": body, "turn_id": tid})
+    s.messages.append({"role": "user", "at": _now_iso(), "content": body, "turn_id": tid})
     s.streaming = True
     # First message ever: write the row now rather than at the end of the
     # round, so a browser that closes mid-answer still has the question.
@@ -1001,7 +1010,7 @@ async def agent_chat_send(message: str = Form(...),
             log.exception("agent chat: could not create the conversation row; "
                           "continuing unsaved")
 
-    resp = HTMLResponse(render.turn_open(body, tid) + render.turn_close()
+    resp = HTMLResponse(render.turn_open(body, tid, at=_now_iso()) + render.turn_close()
                         + render.stream_block(who or ""))
     resp.headers["HX-Trigger"] = "agent-chats-changed"
     return resp
@@ -1066,7 +1075,7 @@ async def agent_chat_stream(request: Request,
                 # reconnecting EventSource reads as "nobody has answered this
                 # yet" and would run a second round for.
                 _drop(s.messages, claim)
-                s.messages.append({"role": "user", "content": nxt,
+                s.messages.append({"role": "user", "at": _now_iso(), "content": nxt,
                                    "turn_id": s.turn_id})
                 s.messages.append(claim)
                 quote = True
@@ -1104,7 +1113,7 @@ async def agent_chat_stream(request: Request,
                     nxt = _take_queued(s)
                     if nxt is None:
                         break
-                    left.append({"role": "user", "content": nxt,
+                    left.append({"role": "user", "at": _now_iso(), "content": nxt,
                                  "turn_id": _take_queued_turn_id(s)})
                 if left:
                     # Above the claim, not after it, for the same reason the
@@ -1299,18 +1308,18 @@ async def _apply_pending_answer(email: str, s: store.RoomSession, ask_id: str,
                                else raw_pending)
         awaiting = dict(page_pending)
         awaiting["ask_id"] = next_ask
-        s.messages.append({"role": "assistant", "agent_id": agent_id,
+        s.messages.append({"role": "assistant", "at": _now_iso(), "agent_id": agent_id,
                            "agent_name": name, "content": answer,
                            "awaiting": awaiting, **job_fields})
-        html = ((render.agent_bubble(name, answer, label=label)
+        html = ((render.agent_bubble(name, answer, label=label, at=_now_iso())
                  if answer else "")
                 + render.approval_bubble(name, next_ask,
                                          page_pending["calls"]))
     else:
-        s.messages.append({"role": "assistant", "agent_id": agent_id,
+        s.messages.append({"role": "assistant", "at": _now_iso(), "agent_id": agent_id,
                            "agent_name": name, "content": answer,
                            **job_fields})
-        html = render.agent_bubble(name, answer, label=label)
+        html = render.agent_bubble(name, answer, label=label, at=_now_iso())
 
     try:
         await store.save_chat(email, s)

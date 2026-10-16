@@ -438,8 +438,19 @@ async def activity(user: CurrentUser = Depends(current_user)) -> dict:
     # Handoffs ride along rather than getting a route of their own: the floor
     # polls this every five seconds and needs both to draw one frame, and a
     # second request would let the two answers disagree about the same moment.
+    # Events ride along too (2026-10-16): the last day of recorded runs and
+    # handoffs as log lines, so the office's live card does not start empty
+    # on every reload and can say what happened while nobody was looking.
     return {"activity": await agent_activity.activity_for(user.email),
-            "handoffs": await agent_activity.handoffs_for(user.email)}
+            "handoffs": await agent_activity.handoffs_for(user.email),
+            "events": await agent_activity.events_for(user.email)}
+
+
+@router.get("/history")
+async def history(user: CurrentUser = Depends(current_user)) -> dict:
+    """Every run of the caller's agents in the last week, with cost, for
+    the office's history view. Scoped to the caller like /activity."""
+    return await agent_activity.history_for(user.email)
 
 
 @router.get("/stream")

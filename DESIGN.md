@@ -267,18 +267,26 @@ something glows, it is decoration.
   Body links at the bottom of the list.
 
 ### Thread
-- **Agent message:** avatar, name (Body 600) and time (Label, Muted), with
-  the text below in Message style. No bubble.
-- **Own message:** right-aligned with a raised fill and an 12px radius,
-  capped at 68ch.
+Drawn the way a messenger draws it (2026-10-16, "like a facebook
+messenger").
+- **Agent message:** the agent's avatar at the foot of a raised 18px bubble
+  on the left, the name (Label, Muted) above the first bubble of a run. A
+  run of messages from one agent shares one avatar and one name, with the
+  corners between them tightened to 5px.
+- **Own message:** right-aligned, a filled 18px bubble in the accent
+  deepened for white text (at least 4.5:1), capped at 68ch, with the
+  bottom-right corner tightened.
 - **System line:** centred Small text in Muted, for example "Dev asked Mia",
   drawn only from a recorded handoff.
-- **Working:** "Mia is working" in Label, with a reduced-motion-safe pulse
-  on the word only.
+- **Working:** the agent's avatar beside a raised bubble of three moving
+  dots, with "Mia is working" in Label after it. Reduced motion stills the
+  dots.
+- **Arrival:** a new message rises a few pixels in from its own side over a
+  quarter of a second, and the thread glides to it. Reduced motion jumps.
 
 ### Composer
-- **Style:** a raised field with a 12px radius and a 1px Edge border, pinned
-  to the bottom of the conversation pane, with Send beside it.
+- **Style:** a raised pill (999px radius) with a 1px Edge border, pinned to
+  the bottom of the conversation pane, with Send as a pill beside it.
 - **Placeholder:** "Message Mia" or "Message everyone", in Muted.
 - **Focus:** the border turns periwinkle and gains a 2px periwinkle ring. A
   focused composer must look different from an idle one.

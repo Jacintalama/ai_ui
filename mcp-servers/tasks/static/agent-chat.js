@@ -17,9 +17,50 @@
 
   function thread() { return document.getElementById("agent-thread"); }
 
+  //: Has the thread been drawn once? A replayed conversation jumps to its
+  //: end; everything after that glides, the way a messenger follows a new
+  //: message in, unless the person has asked for less motion.
+  var SETTLED = false;
   function toBottom() {
     var el = thread();
-    if (el) { el.scrollTop = el.scrollHeight; }
+    if (!el) return;
+    var reduce = false;
+    try { reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches; }
+    catch (e) { /* no media queries: jump */ }
+    if (SETTLED && !reduce && typeof el.scrollTo === "function") {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
+    SETTLED = true;
+  }
+
+  //: A run of messages from one agent shares one avatar and one name, the
+  //: way a messenger draws several messages from one person in a row.
+  //: Decided here, from data-agent on each row, because the server emits
+  //: each answer on its own as it lands and cannot know what will follow
+  //: it. A card (an approval, a job plan) ends a run: it has its own box.
+  function groupBubbles() {
+    var el = thread();
+    if (!el) return;
+    function plain(n) {
+      return !!n && n.classList.contains("am") && n.classList.contains("agent") &&
+        !n.classList.contains("awaiting") && !n.classList.contains("ajob");
+    }
+    // Siblings, wherever the row sits: a replayed answer is a child of its
+    // turn, a live one lands in the turn's .aturn-body, and either way the
+    // run is the rows next to each other.
+    el.querySelectorAll(".am.agent").forEach(function (row) {
+      row.classList.remove("g-first", "g-mid", "g-last");
+      if (!plain(row)) return;
+      var who = row.getAttribute("data-agent");
+      var prev = row.previousElementSibling, next = row.nextElementSibling;
+      var up = plain(prev) && prev.getAttribute("data-agent") === who;
+      var down = plain(next) && next.getAttribute("data-agent") === who;
+      if (up && down) row.classList.add("g-mid");
+      else if (down) row.classList.add("g-first");
+      else if (up) row.classList.add("g-last");
+    });
   }
 
   // The page ships with the invitation already in the thread, and messages are
@@ -56,9 +97,56 @@
     for (var i = 0; i < texts.length; i++) { renderMarkdown(texts[i]); }
   }
 
+  //: When a message was said, in the reader's own clock. The server stores
+  //: the instant (data-at, agent_chat_render._when); the browser puts a
+  //: <time> beside the bubble that shows on hover, the way a messenger
+  //: does, and rewrites each day line as Today, Yesterday or the weekday.
+  function sameDay(a, b) {
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() &&
+      a.getDate() === b.getDate();
+  }
+  function clock(d) {
+    try { return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
+    catch (e) { return d.getHours() + ":" + ("0" + d.getMinutes()).slice(-2); }
+  }
+  function dayWords(d) {
+    var now = new Date(), yesterday = new Date(now.getTime() - 86400000);
+    if (sameDay(d, now)) return "Today";
+    if (sameDay(d, yesterday)) return "Yesterday";
+    try {
+      return d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+    } catch (e) { return d.toDateString(); }
+  }
+  function stampTimes() {
+    var el = thread();
+    if (!el) return;
+    el.querySelectorAll(".am[data-at]:not([data-stamped])").forEach(function (row) {
+      var d = new Date(row.getAttribute("data-at"));
+      row.setAttribute("data-stamped", "1");
+      if (isNaN(d.getTime())) return;
+      var t = document.createElement("time");
+      t.className = "awhen";
+      t.setAttribute("datetime", row.getAttribute("data-at"));
+      t.textContent = (sameDay(d, new Date()) ? "" : dayWords(d) + " ") + clock(d);
+      // Beside the bubble, on the side the row has room: before a message
+      // of yours (it sits on the right), after an agent's (on the left).
+      if (row.classList.contains("user")) row.insertBefore(t, row.firstChild);
+      else row.appendChild(t);
+    });
+    el.querySelectorAll(".aday time:not([data-stamped])").forEach(function (t) {
+      t.setAttribute("data-stamped", "1");
+      var parts = (t.getAttribute("datetime") || "").split("-");
+      if (parts.length !== 3) return;
+      var d = new Date(+parts[0], +parts[1] - 1, +parts[2]);
+      if (!isNaN(d.getTime())) t.textContent = dayWords(d);
+    });
+  }
+
   function settle() {
     dropInvitation();
     renderAll();
+    groupBubbles();
+    stampTimes();
     toBottom();
   }
 

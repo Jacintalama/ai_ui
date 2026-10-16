@@ -68,12 +68,18 @@ def _no_agent_step_recording(monkeypatch):
 @pytest_asyncio.fixture
 async def db_session():
     """Initialize the global session maker on the current event loop, then
-    yield a clean session with truncated tables.
-
-    Initializing per-test (rather than once per session) avoids asyncpg's
-    "future attached to different loop" errors when pytest-asyncio creates
-    a fresh event loop per test function.
-    """
+    yield a clean session with truncated tables."""
+    # AIUI_SKIP_DB=1 turns the database tier into skips rather than errors,
+    # so the rest of the suite can run and be judged where there is no
+    # Postgres: a laptop without the container, or the no-database job in
+    # CI (.github/workflows/ci.yml). Without it every db_session test
+    # errors at setup on asyncpg.connect, which is the ~130 errors
+    # CLAUDE.md tells a contributor to expect locally.
+    if os.environ.get("AIUI_SKIP_DB") == "1":
+        pytest.skip("AIUI_SKIP_DB=1: the database tier is not run here")
+    # Initializing per-test (rather than once per session) avoids asyncpg's
+    # "future attached to different loop" errors when pytest-asyncio creates
+    # a fresh event loop per test function.
     # The app's lazy db.session() maker binds its engine to the first event
     # loop that used it. pytest-asyncio gives every test a fresh loop, so a
     # maker left over from a previous test poisons this one with cross-loop
@@ -162,24 +168,4 @@ def fake_meeting_id() -> uuid.UUID:
     return uuid.uuid4()
 
 
-def repo_root_or_skip():
-    """The checkout root, or skip the module when there isn't one.
-
-    Six test files read files that live outside this service: the compose file,
-    the Open WebUI pipes, the terminal client's mirror. They found them with
-    `parents[3]`, which is the repo root in a checkout and does not exist inside
-    the container, where /app IS this service.
-
-    An IndexError at import time is a COLLECTION error, and pytest aborts the
-    whole run on those. So `pytest tests/` has never been runnable in the
-    container, which is the only place the database tier can run at all. These
-    files have nothing to say about a deployed container, so they skip there
-    instead of taking every other test down with them.
-    """
-    import pytest
-    here = pathlib.Path(__file__).resolve()
-    for candidate in here.parents:
-        if (candidate / "docker-compose.unified.yml").exists():
-            return candidate
-    pytest.skip("not a checkout: these files read the repository, not the app",
-                allow_module_level=True)
+from repo_checkout import repo_root_or_skip  # noqa: E402,F401  (re-exported for `from conftest import`)

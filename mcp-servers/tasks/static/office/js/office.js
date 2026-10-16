@@ -145,7 +145,9 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   //: rather than left to overlap: a card sitting on a room hides the agent
   //: it is reporting on, which is the opposite of what it is for. Zero in
   //: the dock, where the card is under the floor and not over it.
-  var TOP_RESERVE = 120;
+  //: 70, down from 120 (2026-10-16): the card rests folded to one line
+  //: now (embed.css), so the band only has to clear that line.
+  var TOP_RESERVE = 70;
   //: The room a meeting happens in. A FIXTURE on the floor from 2026-10-08:
   //: drawn whether or not anybody is in it, because a room people are called
   //: to has to be somewhere they can already see. Every other room still
@@ -1220,6 +1222,19 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       }).join("") + '</div>';
   }
 
+  //: Whether the agent card is folded to its header row. Per browser, and
+  //: guarded like every other localStorage read here.
+  var FOLD_KEY = "aiuiOfficeCardFolded";
+  function sideFolded() {
+    try { return localStorage.getItem(FOLD_KEY) === "1"; } catch (e) { return false; }
+  }
+  function setSideFolded(folded) {
+    try {
+      if (folded) localStorage.setItem(FOLD_KEY, "1");
+      else localStorage.removeItem(FOLD_KEY);
+    } catch (e) { /* obeyed now, forgotten next time */ }
+  }
+
   function drawSide() {
     // The CARD, not the whole column. The to-do above it and the
     // conversation below it are not redrawn, and must not be: rebuilding the
@@ -1252,13 +1267,21 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
         '</ul>'
       : '<p class="empty">No runs recorded yet.</p>';
 
+    side.classList.toggle("folded", sideFolded());
     side.innerHTML =
       '<button class="side-shut" type="button" id="side-shut" ' +
         'aria-label="Close the details">&times;</button>' +
       '<div class="side-head">' +
         '<div class="side-bot">' + robot(m.id, st.key, "p") + '</div>' +
-        '<div><h2>' + esc(m.name || m.id) + '</h2>' +
+        '<div class="side-who"><h2>' + esc(m.name || m.id) + '</h2>' +
         '<div class="st"><i class="dot ' + st.key + '"></i>' + esc(st.label) + '</div></div>' +
+        // The card folds to this row, so the conversation under it gets the
+        // column. Remembered per browser, like the conversation's own bar.
+        '<button class="side-fold" type="button" id="side-fold" ' +
+          'aria-expanded="' + (sideFolded() ? "false" : "true") + '" ' +
+          'aria-controls="side-agent" title="' +
+          (sideFolded() ? "Show the details" : "Fold the details away") + '">' +
+          '<span class="deskchat-caret" aria-hidden="true"></span></button>' +
       '</div>' +
       '<p class="role" style="margin:9px 0 0;color:var(--muted)">' +
         esc(roleOf(m) || "No role set") + '</p>' +
@@ -1347,8 +1370,23 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   //: log at load, and the fallback's only source when there is no stream
   //: (no EventSource, a 401, a gap the heartbeat missed). A row whose state
   //: the log has not seen yet becomes a line; one it has is left alone.
-  function logFromActivity() {
+  //: Each handoff is said once from the asker's side.
+  function logFromEvents() {
     var added = false;
+    (S.EVENTS || []).forEach(function (e) {
+      if (!e || !e.agent_id || !nameOf(e.agent_id)) return;
+      var at = Date.parse(e.at || "") || 0;
+      if (!at || logged(e.agent_id, e.key, at)) return;
+      var text = e.text;
+      if (e.target_agent_id) text += " " + (nameOf(e.target_agent_id) || "a colleague");
+      logLine(e.agent_id, e.key, text, e.at);
+      added = true;
+    });
+    return added;
+  }
+
+  function logFromActivity() {
+    var added = logFromEvents();
     recentRows().forEach(function (r) {
       var key = stateOf(r.id).key;
       var at = Date.parse(r.a.last_run_at || "") || 0;
@@ -1405,8 +1443,97 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     }).join("");
   }
 
+  //: A week of runs, read when the tab is first opened and on every draw
+  //: of it after that. Empty (no route, no rows, an error) falls back to
+  //: the one-line-per-agent view the tab always had.
+  var HIST = { runs: [], spend: [] }, HIST_LOADED = false;
+  async function loadHistory() {
+    try {
+      var got = await getJson("/api/tasks/agents/history");
+      HIST = { runs: Array.isArray(got.runs) ? got.runs : [],
+               spend: Array.isArray(got.spend) ? got.spend : [] };
+    } catch (e) { console.warn("[office] history unavailable", e); }
+    HIST_LOADED = true;
+  }
+
+  function histFilter() {
+    var f = {};
+    ["agent", "status", "source"].forEach(function (k) {
+      var sel = document.getElementById("hist-" + k);
+      f[k] = sel ? sel.value : "";
+    });
+    return f;
+  }
+
+  //: The selects offer what the week actually holds, and keep what was
+  //: picked across redraws.
+  function fillHistFilters(runs) {
+    var agentSel = document.getElementById("hist-agent");
+    var sourceSel = document.getElementById("hist-source");
+    if (!agentSel || !sourceSel) return;
+    var keepA = agentSel.value, keepS = sourceSel.value;
+    var ids = {}, sources = {};
+    runs.forEach(function (r) { ids[r.agent_id] = 1; if (r.source) sources[r.source] = 1; });
+    agentSel.innerHTML = '<option value="">Every agent</option>' +
+      Object.keys(ids).filter(function (id) { return nameOf(id); })
+        .sort(function (a, b) { return nameOf(a).localeCompare(nameOf(b)); })
+        .map(function (id) { return '<option value="' + esc(id) + '">' + esc(nameOf(id)) + '</option>'; }).join("");
+    sourceSel.innerHTML = '<option value="">Started anywhere</option>' +
+      Object.keys(sources).sort().map(function (s) {
+        return '<option value="' + esc(s) + '">' + esc("From " + s) + '</option>'; }).join("");
+    agentSel.value = keepA; sourceSel.value = keepS;
+  }
+
+  function drawSpend(spend, runs) {
+    var el = document.getElementById("spend");
+    if (!el) return;
+    var total = 0;
+    runs.forEach(function (r) { total += r.cost_usd || 0; });
+    var most = spend.reduce(function (a, d) { return Math.max(a, d.cost_usd || 0); }, 0);
+    el.hidden = false;
+    el.innerHTML = '<span>This week <b>$' + total.toFixed(2) + '</b> over ' +
+        runs.length + (runs.length === 1 ? ' run' : ' runs') + '</span>' +
+      '<span class="spend-days">' + spend.map(function (d) {
+        var h = most ? Math.max(2, Math.round(22 * (d.cost_usd || 0) / most)) : 2;
+        return '<span class="spend-day" title="' + esc(d.day) + ': $' + (d.cost_usd || 0).toFixed(2) + '">' +
+          '<i style="height:' + h + 'px"></i>' + esc(d.day.slice(5)) + '</span>';
+      }).join("") + '</span>';
+  }
+
   function drawActivity() {
-    var rows = recentRows(), feed = document.getElementById("activity-feed");
+    var feed = document.getElementById("activity-feed");
+    var title = document.getElementById("hist-title");
+    var filters = document.getElementById("hist-filters");
+    if (HIST.runs.length) {
+      if (title) title.textContent = "Every run in the last week";
+      if (filters) filters.hidden = false;
+      fillHistFilters(HIST.runs);
+      drawSpend(HIST.spend, HIST.runs);
+      var f = histFilter();
+      var shown = HIST.runs.filter(function (r) {
+        return nameOf(r.agent_id) &&
+          (!f.agent || r.agent_id === f.agent) &&
+          (!f.status || r.status === f.status) &&
+          (!f.source || r.source === f.source);
+      });
+      feed.innerHTML = shown.length ? shown.map(function (r) {
+        var key = r.status === "waiting" ? "waiting" : r.status === "failed" ? "failed"
+                : r.status === "running" ? "working" : "ready";
+        return '<li><i class="dot ' + key + '"></i><span>' + esc(nameOf(r.agent_id)) +
+          ' &middot; ' + esc(r.status === "waiting" ? "waiting on you" : r.status) +
+          (r.source ? ' <span class="hist-meta">from ' + esc(r.source) + '</span>' : "") +
+          (r.seconds != null ? ' <span class="hist-meta">' + r.seconds + 's</span>' : "") +
+          '</span>' +
+          (r.cost_usd != null ? '<span class="hist-cost">$' + r.cost_usd.toFixed(3) + '</span>' : "") +
+          '<span class="when">' + esc(ago(r.started_at)) + '</span></li>';
+      }).join("") : '<li><span class="empty">No runs match.</span></li>';
+      return;
+    }
+    if (title) title.textContent = "Most recent run of each agent";
+    if (filters) filters.hidden = true;
+    var spend = document.getElementById("spend");
+    if (spend) spend.hidden = true;
+    var rows = recentRows();
     if (!rows.length) {
       feed.innerHTML = '<li><span class="empty">Nothing has run yet.</span></li>';
       return;
@@ -1481,6 +1608,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     document.getElementById("strip").hidden = TAB !== "office";
     if (TAB === "office") { drawRooms(); drawLive(); } else { drawActivity(); }
     drawSide();
+    drawNeeds();
     drawTodo();
     // The side panel opening or closing changes how wide the floor's column
     // is, and a hidden tab measures as zero, so the fit is recomputed after
@@ -1507,6 +1635,9 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       var got = await getJson("/api/tasks/agents/activity");
       S.ACTIVITY = got.activity || {};
       S.HANDOFFS = got.handoffs || [];
+      // The last day of recorded runs and handoffs, as log lines, so the
+      // live card does not start empty on every reload.
+      S.EVENTS = got.events || [];
       var now = Date.now();
       Object.keys(S.ACTIVITY).forEach(function (id) {
         var a = S.ACTIVITY[id];
@@ -1689,6 +1820,29 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
 
   //: What the team still has to do. Every line is a tasks.items row: the
   //: office invents nothing here, the same rule the floor follows.
+  //: What needs you: every agent whose last run stopped to wait on the
+  //: person. The same recorded state that gives the robot its wide-eyed
+  //: face, so the tray and the floor cannot disagree. Answering goes to
+  //: that agent's own conversation, which is where the question is.
+  function drawNeeds() {
+    var el = document.getElementById("needs");
+    if (!el) return;
+    var waiting = S.AGENTS.filter(function (m) { return stateOf(m.id).key === "waiting"; });
+    el.hidden = !waiting.length;
+    if (!waiting.length) { el.innerHTML = ""; return; }
+    el.innerHTML =
+      '<div class="needs-head">Needs you' +
+        '<span class="todo-n">' + waiting.length + '</span></div>' +
+      '<ul class="needs-list">' + waiting.map(function (m) {
+        var name = m.name || m.id;
+        return '<li class="needs-item" data-id="' + esc(m.id) + '">' +
+          '<i class="dot waiting"></i>' +
+          '<span class="needs-what"><b>' + esc(name) + '</b> is waiting on you</span>' +
+          '<a class="btn needs-answer" target="_top" data-id="' + esc(m.id) + '"' +
+          ' href="/tasks/agents?ask=' + encodeURIComponent(name + ", ") + '">Answer</a></li>';
+      }).join("") + '</ul>';
+  }
+
   function drawTodo() {
     var el = document.getElementById("todo");
     if (!el) return;
@@ -1718,8 +1872,13 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       '</div>' +
       (open.length ? '<ul class="todo-list">' + open.map(function (t) { return line(t, false); }).join("") + '</ul>'
                    : '<p class="todo-none">Nothing outstanding.</p>') +
-      (done.length ? '<ul class="todo-list todo-recent">' +
-         done.map(function (t) { return line(t, true); }).join("") + '</ul>' : "");
+      // Finished work behind a disclosure rather than struck through under
+      // the open work: a column that opened on four crossed-out lines read
+      // as clutter ("revise the ui", 2026-10-16). The count says it is there.
+      (done.length ? '<details class="todo-done"><summary>Recently done' +
+         '<span class="todo-n">' + done.length + '</span></summary>' +
+         '<ul class="todo-list todo-recent">' +
+         done.map(function (t) { return line(t, true); }).join("") + '</ul></details>' : "");
   }
 
   document.getElementById("rooms").addEventListener("click", function (ev) {
@@ -2070,6 +2229,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
 
   document.getElementById("side").addEventListener("click", function (ev) {
     if (ev.target.closest("#side-shut")) { S.SELECTED = null; draw(); return; }
+    if (ev.target.closest("#side-fold")) { setSideFolded(!sideFolded()); drawSide(); drawZoom(true); return; }
     var sw = ev.target.closest(".swatch");
     if (!sw || !S.SELECTED) return;
     // agent.js changes the colour; the page is what redraws. It used to
@@ -2085,7 +2245,14 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       document.getElementById("tab-office").setAttribute("aria-selected", String(name === "office"));
       document.getElementById("tab-activity").setAttribute("aria-selected", String(name === "activity"));
       draw();
+      // The week of runs is read the first time the tab opens, and the
+      // tab is drawn again when it lands.
+      if (name === "activity" && !HIST_LOADED) loadHistory().then(draw);
     });
+  });
+  ["agent", "status", "source"].forEach(function (k) {
+    var sel = document.getElementById("hist-" + k);
+    if (sel) sel.addEventListener("change", drawActivity);
   });
 
   (async function init() {

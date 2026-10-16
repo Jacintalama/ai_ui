@@ -23,3 +23,10 @@ if BrowserType is not None and _CHANNEL:
         return _launch(self, *args, **kwargs)
 
     BrowserType.launch = _launch_on_channel
+
+# This file is ALSO what `from conftest import ...` resolves to for every
+# test module collected after tests/browser/ (both conftests are imported as
+# the bare name `conftest` under the default import mode, and the later one
+# wins). Eight tests outside this directory import repo_root_or_skip that
+# way, so it is re-exported here; see tests/repo_checkout.py.
+from repo_checkout import repo_root_or_skip  # noqa: E402,F401

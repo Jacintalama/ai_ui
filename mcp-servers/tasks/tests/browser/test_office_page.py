@@ -119,8 +119,9 @@ def _serve(html: bytes):
                     self.send_response(204)
                     self.end_headers()
                     return
-            elif (path.endswith("/agent-chat.css") or path.endswith("/htmx.min.js")
-                  or path.endswith("/sse.js")):
+            elif (path.endswith("/agent-chat.css") or path.endswith("/agent-chat.js")
+                  or path.endswith("/htmx.min.js") or path.endswith("/sse.js")
+                  or path.endswith("/marked.min.js") or path.endswith("/purify.min.js")):
                 # The conversation in the side column is styled by the agents
                 # page's own stylesheet and driven by htmx and its SSE
                 # extension, which is what opens the answer. Answering those
@@ -1976,8 +1977,21 @@ def test_what_a_robot_says_travels_with_it(page):
 
 def test_the_line_is_drawn_at_the_walkers_pace(page):
     """The line from the asker's desk to the colleague draws itself in the
-    time the asker takes to walk it: the same --d on both."""
-    _with_handoff(page)
+    time the asker takes to walk it: the same --d on both.
+
+    Read straight after the redraw, not after _with_handoff's half second:
+    Ada and Iris stand close enough now that the whole walk is the 450ms
+    floor, and the drawing is over before that wait is."""
+    import datetime
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    page.route("**/agents/activity**", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"activity": ACTIVITY,
+                         "handoffs": [{"from": "agent-research-assistant-0001",
+                                       "to": "agent-iris-a103", "status": "ok",
+                                       "at": now}]})))
+    page.evaluate("() => window.aiuiRefreshOffice()")
+    page.wait_for_selector(".talk-line", state="attached", timeout=3000)
     got = page.evaluate(
         "() => {"
         " const line = document.querySelector('.talk-line');"
@@ -2000,10 +2014,13 @@ def test_a_redraw_does_not_restart_a_walk(page):
     act = {"agent-iris-a103": {"state": "working", "running_for_seconds": 2,
                                "last_run_at": at, "source": "meeting"}}
     _activity(page, act)
-    page.wait_for_timeout(200)
+    # Straight away, not after a pause: with the rooms as close as they are
+    # now the whole walk can be the 450ms floor, and a wait would let it
+    # end before the redraw this test is about.
+    page.wait_for_selector(".who-slot.walking", timeout=2000)
     page.evaluate("() => { document.querySelector('.who-slot[data-id=\"agent-iris-a103\"]')._keep = 1; }")
     page.evaluate("() => window.aiuiRefreshOffice()")
-    page.wait_for_timeout(200)
+    page.wait_for_timeout(60)
     got = page.evaluate(
         "() => { const el = document.querySelector('.who-slot[data-id=\"agent-iris-a103\"]');"
         " return { same: el._keep === 1, walking: el.classList.contains('walking'),"
@@ -2207,3 +2224,242 @@ def test_a_room_is_not_cluttered_with_furniture(page):
     assert page.locator(".zone .zone-floor").count() == 0
     assert page.locator(".zone i:not(.zone-dot)").count() == 0
     assert page.locator(".who-slot .desk").count() == page.locator(".who-slot").count()
+
+
+# --- the layout pass of 2026-10-16 ----------------------------------------
+# "revise the ui what is the better?" Every earlier ask is kept (the live
+# activity card top right over the floor, a Chat for every agent, the to-do
+# at the top of the column); what changed is how much of each is on screen
+# at rest.
+
+def test_the_live_card_rests_on_its_newest_line(page):
+    """One row until the pointer reaches it, so the rooms get the height
+    the 120px band used to hold for the card."""
+    got = page.evaluate(
+        "() => { const s = document.getElementById('strip');"
+        " const rows = [...s.querySelectorAll('.feed li')];"
+        " return { h: s.getBoundingClientRect().height,"
+        "          shown: rows.filter(li => getComputedStyle(li).display !== 'none').length,"
+        "          title: getComputedStyle(s.querySelector('h2')).display }; }")
+    assert got["h"] <= 60, got
+    assert got["shown"] == 1, got
+    assert got["title"] == "none", got
+    page.locator("#strip").hover()
+    page.wait_for_timeout(350)
+    got = page.evaluate(
+        "() => { const s = document.getElementById('strip');"
+        " const rows = [...s.querySelectorAll('.feed li')];"
+        " return { shown: rows.filter(li => getComputedStyle(li).display !== 'none').length,"
+        "          title: getComputedStyle(s.querySelector('h2')).display }; }")
+    assert got["shown"] == 2 and got["title"] != "none", got
+
+
+def test_the_rooms_start_closer_to_the_top(page):
+    top = page.evaluate(
+        "() => Math.min(...[...document.querySelectorAll('.zone')]"
+        "  .map(z => parseFloat(z.style.top)))")
+    assert top <= 100, top
+
+
+def test_a_chat_pill_shows_when_you_reach_for_its_agent(page):
+    iris = page.locator('.who-slot[data-id="agent-iris-a103"]')
+    assert iris.locator(".who-chat").count() == 1
+    at_rest = iris.locator(".who-chat").evaluate("el => getComputedStyle(el).opacity")
+    assert at_rest == "0", at_rest
+    iris.locator(".who").hover()
+    page.wait_for_timeout(250)
+    assert iris.locator(".who-chat").evaluate("el => getComputedStyle(el).opacity") == "1"
+
+
+def test_the_picked_agents_pill_stays(page):
+    page.locator('.who[data-id="agent-iris-a103"]').click()
+    page.mouse.move(5, 5)
+    page.wait_for_timeout(250)
+    assert page.locator('.who-slot[data-id="agent-iris-a103"] .who-chat').evaluate(
+        "el => getComputedStyle(el).opacity") == "1"
+
+
+def test_a_rooms_totals_come_up_on_hover(page):
+    room = page.locator('.zone[data-room="dev"]')
+    assert room.locator(".zone-foot").evaluate("el => getComputedStyle(el).opacity") == "0"
+    # A corner of the room, not its middle, where the robot stands.
+    room.hover(position={"x": 24, "y": 24})
+    page.wait_for_timeout(250)
+    assert room.locator(".zone-foot").evaluate("el => getComputedStyle(el).opacity") == "1"
+    assert "RUNS: 801" in room.inner_text()
+
+
+def test_the_agent_card_folds_and_the_conversation_grows(page):
+    before = page.locator("#deskchat").bounding_box()["height"]
+    page.locator("#side-fold").click()
+    page.wait_for_timeout(200)
+    assert "folded" in (page.locator("#side-agent").get_attribute("class") or "")
+    assert page.locator("#side-agent h2").is_visible()
+    assert not page.locator("#side-agent .stats").is_visible()
+    after = page.locator("#deskchat").bounding_box()["height"]
+    assert after > before, (before, after)
+    page.locator("#side-fold").click()
+    page.wait_for_timeout(200)
+    assert page.locator("#side-agent .stats").is_visible()
+
+
+def test_the_fold_is_remembered(page):
+    page.locator("#side-fold").click()
+    page.reload()
+    page.wait_for_selector(".who", state="visible")
+    assert "folded" in (page.locator("#side-agent").get_attribute("class") or "")
+    page.locator("#side-fold").click()
+
+
+def test_finished_work_is_behind_a_disclosure(page):
+    _with_todo(page,
+               [{"id": "1", "what": "Still going", "who": "Rex",
+                 "priority": "important", "status": "running", "kind": "build", "at": None}],
+               [{"id": "9", "what": "Weekly report", "who": "Ada",
+                 "priority": "important", "status": "completed", "kind": "research",
+                 "at": "2026-10-09T11:00:00+00:00"}])
+    done = page.locator("#todo .todo-done")
+    assert done.count() == 1
+    assert "recently done" in done.locator("summary").inner_text().lower()
+    assert not page.locator("#todo .todo-item.done").is_visible()
+    done.locator("summary").click()
+    assert page.locator("#todo .todo-item.done").is_visible()
+
+
+def test_the_conversation_takes_the_larger_share_of_the_column(page):
+    chat = page.locator("#deskchat").bounding_box()["height"]
+    card = page.locator("#side-agent").bounding_box()["height"]
+    assert chat > card, (chat, card)
+
+
+# --- what needs you (2026-10-16) ---------------------------------------------
+
+def test_nobody_waiting_means_no_tray(page):
+    """A tray that says "nothing" is a tray in the way."""
+    assert page.locator("#needs").is_hidden()
+
+
+def test_an_agent_waiting_on_you_is_first_in_the_column(page):
+    _activity(page, {"agent-iris-a103": {"state": "waiting", "last_status": "waiting",
+                                          "last_run_at": "2026-10-16T08:00:00+00:00",
+                                          "source": "channel"}})
+    page.wait_for_timeout(300)
+    tray = page.locator("#needs")
+    assert tray.is_visible()
+    assert "Iris" in tray.inner_text() and "waiting on you" in tray.inner_text()
+    # First thing in the column, above the to-do and the card.
+    assert page.evaluate(
+        "() => document.getElementById('needs').getBoundingClientRect().top"
+        "  < document.getElementById('todo').getBoundingClientRect().top")
+    # Answering goes to Iris's own conversation, where the question is.
+    href = tray.locator("a.needs-answer").get_attribute("href")
+    assert "Iris" in href and tray.locator("a.needs-answer").get_attribute("target") == "_top"
+
+
+def test_the_tray_empties_when_the_question_is_answered(page):
+    _activity(page, {"agent-iris-a103": {"state": "waiting", "last_status": "waiting",
+                                          "last_run_at": "2026-10-16T08:00:00+00:00",
+                                          "source": "channel"}})
+    page.wait_for_timeout(200)
+    assert page.locator("#needs").is_visible()
+    _activity(page, {"agent-iris-a103": {"state": "ready", "last_status": "completed",
+                                          "last_run_at": "2026-10-16T08:00:00+00:00",
+                                          "source": "channel"}})
+    page.wait_for_timeout(200)
+    assert page.locator("#needs").is_hidden()
+
+
+# --- the log remembers (2026-10-16) ------------------------------------------
+
+def test_the_live_card_opens_on_what_the_server_recorded(page):
+    """Every line comes from /agents/activity's events, so a reload does not
+    start the log empty."""
+    import datetime
+    now = datetime.datetime.now(datetime.timezone.utc)
+    events = [
+        {"at": (now - datetime.timedelta(minutes=3)).isoformat(),
+         "agent_id": "agent-iris-a103", "key": "working", "text": "started working from schedule"},
+        {"at": (now - datetime.timedelta(minutes=2)).isoformat(),
+         "agent_id": "agent-iris-a103", "key": "ready", "text": "completed"},
+        {"at": (now - datetime.timedelta(minutes=1)).isoformat(),
+         "agent_id": "agent-research-assistant-0001", "target_agent_id": "agent-iris-a103",
+         "key": "working", "text": "asked"},
+        {"at": now.isoformat(), "agent_id": "agent-not-mine", "key": "ready", "text": "completed"},
+    ]
+    page.route("**/agents/activity**", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"activity": ACTIVITY, "handoffs": [], "events": events})))
+    page.evaluate("() => window.aiuiRefreshOffice()")
+    page.wait_for_timeout(300)
+    lines = page.locator("#live li").all_inner_texts()
+    assert any("Ada" in l and "asked Iris" in l for l in lines), lines
+    assert any("Iris" in l and "completed" in l for l in lines), lines
+    assert any("Iris" in l and "started working from schedule" in l for l in lines), lines
+    assert not any("agent-not-mine" in l for l in lines), lines
+    # Newest first.
+    asked = next(i for i, l in enumerate(lines) if "asked Iris" in l)
+    started = next(i for i, l in enumerate(lines) if "started working from schedule" in l)
+    assert asked < started, lines
+
+
+# --- the history view (2026-10-16) -------------------------------------------
+
+def _with_history(page, runs, spend):
+    page.route("**/agents/history**", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"runs": runs, "spend": spend, "days": 7})))
+    page.locator("#tab-activity").click()
+    page.wait_for_selector("#hist-filters:not([hidden])", timeout=3000)
+
+
+HISTORY = [
+    {"agent_id": "agent-research-assistant-0001", "source": "channel", "status": "completed",
+     "started_at": "2026-10-16T09:00:00+00:00", "seconds": 31, "cost_usd": 0.05, "model": "gpt-5"},
+    {"agent_id": "agent-research-assistant-0001", "source": "schedule", "status": "failed",
+     "started_at": "2026-10-15T09:00:00+00:00", "seconds": 4, "cost_usd": 0.01, "model": "gpt-5"},
+    {"agent_id": "agent-iris-a103", "source": "channel", "status": "waiting",
+     "started_at": "2026-10-14T09:00:00+00:00", "seconds": 2, "cost_usd": None, "model": None},
+]
+SPEND = [{"day": "2026-10-14", "cost_usd": 0.0}, {"day": "2026-10-15", "cost_usd": 0.01},
+         {"day": "2026-10-16", "cost_usd": 0.05}]
+
+
+def test_the_activity_tab_is_a_week_of_runs(page):
+    _with_history(page, HISTORY, SPEND)
+    rows = page.locator("#activity-feed li").all_inner_texts()
+    assert len(rows) == 3, rows
+    assert "Ada" in rows[0] and "completed" in rows[0] and "from channel" in rows[0] and "31s" in rows[0]
+    assert "$0.050" in rows[0]
+    assert "Iris" in rows[2] and "waiting on you" in rows[2]
+    assert "week" in page.locator("#hist-title").inner_text().lower()
+
+
+def test_the_week_can_be_filtered(page):
+    _with_history(page, HISTORY, SPEND)
+    page.select_option("#hist-agent", "agent-iris-a103")
+    assert page.locator("#activity-feed li").count() == 1
+    assert "Iris" in page.locator("#activity-feed li").first.inner_text()
+    page.select_option("#hist-agent", "")
+    page.select_option("#hist-status", "failed")
+    rows = page.locator("#activity-feed li").all_inner_texts()
+    assert len(rows) == 1 and "failed" in rows[0], rows
+    page.select_option("#hist-status", "")
+    page.select_option("#hist-source", "schedule")
+    assert page.locator("#activity-feed li").count() == 1
+
+
+def test_the_spend_strip_adds_up_the_week(page):
+    _with_history(page, HISTORY, SPEND)
+    strip = page.locator("#spend")
+    assert strip.is_visible()
+    assert "$0.06" in strip.inner_text()
+    assert strip.locator(".spend-day").count() == 3
+
+
+def test_without_a_history_route_the_tab_still_shows_each_agents_last_run(page):
+    """The fixture answers /history with nothing: the one-line-per-agent
+    view the tab always had is what shows."""
+    page.locator("#tab-activity").click()
+    page.wait_for_timeout(400)
+    assert page.locator("#hist-filters").is_hidden()
+    assert page.locator("#activity-feed li").count() == 2

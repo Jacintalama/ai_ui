@@ -1,0 +1,111 @@
+# The tasks service's tests, on every pull request.
+#
+# Three jobs, matching the tiers in CLAUDE.md:
+#   unit           the unit suite with the database tier skipped
+#                  (AIUI_SKIP_DB=1, tests/conftest.py). Required.
+#   browser        the Playwright suites against the page files. Required.
+#   database-tier  the unit suite against a throwaway Postgres, which is the
+#                  only place the db_session tests can run outside the
+#                  server. Advisory (continue-on-error) until it has been
+#                  seen green there.
+#
+# Until 2026-10-16 nothing ran any of the ~450 browser tests before a merge.
+name: CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+          # Files that open the database without the shared fixture (they
+          # run in the database-tier job) and four that read the server's
+          # own templates or a route table only the deployed app registers.
+          # Measured 2026-10-16: with these out, 4860 pass and 0 fail here.
+          NO_DB_IGNORES: >-
+            --ignore=tests/browser
+            --ignore=tests/test_agent_job_store.py
+            --ignore=tests/test_gateway_bot_routes_db.py
+            --ignore=tests/test_code_proposals.py
+            --ignore=tests/test_routes_code.py
+            --ignore=tests/test_agent_memory_db.py
+            --ignore=tests/test_functional_templates_alive.py
+            --ignore=tests/test_template_apps_animations.py
+            --ignore=tests/test_routes_agent_jobs.py
+            --ignore=tests/test_routes_fusion_page.py
+
+defaults:
+  run:
+    working-directory: mcp-servers/tasks
+
+jobs:
+  unit:
+    name: unit (no database)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: mcp-servers/tasks/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: pytest
+        env:
+          AIUI_SKIP_DB: "1"
+        run: python -m pytest tests/ -q -p no:cacheprovider $NO_DB_IGNORES
+
+  browser:
+    name: browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: mcp-servers/tasks/requirements.txt
+      - run: pip install -r requirements.txt
+      - run: python -m playwright install --with-deps chromium
+      - name: pytest
+        env:
+          AIUI_SKIP_DB: "1"
+        # test_agent_panel_live drives a running service and is for the box.
+        run: python -m pytest tests/browser -q -p no:cacheprovider --ignore=tests/browser/test_agent_panel_live.py
+
+  database-tier:
+    name: database tier (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: aiui_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: mcp-servers/tasks/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: pytest, with the database
+        env:
+          # Both guards tests/conftest.py insists on before it will TRUNCATE:
+          # the flag, and a database whose name contains "test".
+          AIUI_TEST_DB: "1"
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/aiui_test
+        run: python -m pytest tests/ -q -p no:cacheprovider --ignore=tests/browser

@@ -35,6 +35,23 @@ html:not(.embed) .strip:hover,
     opacity: 1; background: rgba(7, 15, 27, .88);
   }
 
+/* Folded to its newest line until the pointer reaches it (2026-10-16).
+   The card is still top right over the floor, as asked; but at rest it is
+   one row, so the clear band the floor keeps above the rooms for it is
+   70px rather than 120, and the rooms get the rest of the height. Hovering
+   or focusing it opens the whole log, over the rooms, which is deliberate:
+   reading it is an act, and the floor is still there when you look away. */
+  html:not(.embed) .strip:not(:hover):not(:focus-within) {
+    max-height: 56px; padding-bottom: 10px;
+  }
+  html:not(.embed) .strip:not(:hover):not(:focus-within) h2 { display: none; }
+  html:not(.embed) .strip:not(:hover):not(:focus-within) .feed li:not(:first-child) {
+    display: none;
+  }
+  html:not(.embed) .strip:not(:hover):not(:focus-within) .feed {
+    -webkit-mask-image: none; mask-image: none; overflow: hidden;
+  }
+
 /* A corner is tall, not wide: the feed stacks instead of scrolling
      sideways, and scrolls down when there is more than fits. */
   html:not(.embed) .feed {

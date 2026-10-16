@@ -1,0 +1,98 @@
+# Deploy to the Hetzner box when main changes.
+#
+# Runs scripts/deploy_orchestrator.sh exactly as a person would from a
+# workstation: it diffs against the SHA recorded on the server, rsyncs only
+# the changed files under the watched paths, rebuilds the affected services
+# and smokes /healthz before recording the new SHA. The script itself never
+# carries mcp-servers/tasks/templates.py and stops if a file was edited on
+# the box since the last deploy (CLAUDE.md, "Deploying to Hetzner").
+#
+# Needs ONE repository secret, HETZNER_SSH_KEY: a private key whose public
+# half is in root@46.224.193.25's authorized_keys. Settings, Secrets and
+# variables, Actions, New repository secret. Without it the job fails at
+# the first ssh and nothing is touched.
+#
+# Not covered here, as on a workstation: webhook-handler/ and .gitignore,
+# which the script does not watch and which still need a manual scp.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    name: unit and browser (no database)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: mcp-servers/tasks
+    env:
+          # Files that open the database without the shared fixture (they
+          # run in the database-tier job) and four that read the server's
+          # own templates or a route table only the deployed app registers.
+          # Measured 2026-10-16: with these out, 4860 pass and 0 fail here.
+          NO_DB_IGNORES: >-
+            --ignore=tests/browser
+            --ignore=tests/test_agent_job_store.py
+            --ignore=tests/test_gateway_bot_routes_db.py
+            --ignore=tests/test_code_proposals.py
+            --ignore=tests/test_routes_code.py
+            --ignore=tests/test_agent_memory_db.py
+            --ignore=tests/test_functional_templates_alive.py
+            --ignore=tests/test_template_apps_animations.py
+            --ignore=tests/test_routes_agent_jobs.py
+            --ignore=tests/test_routes_fusion_page.py
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: mcp-servers/tasks/requirements.txt
+      - run: pip install -r requirements.txt
+      - run: python -m playwright install --with-deps chromium
+      - name: unit
+        env:
+          AIUI_SKIP_DB: "1"
+        run: python -m pytest tests/ -q -p no:cacheprovider $NO_DB_IGNORES
+      - name: browser
+        env:
+          AIUI_SKIP_DB: "1"
+        run: python -m pytest tests/browser -q -p no:cacheprovider --ignore=tests/browser/test_agent_panel_live.py
+
+  deploy:
+    name: rsync and rebuild on 46.224.193.25
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The script diffs last-deployed..HEAD, so it needs the history.
+          fetch-depth: 0
+      - name: ssh key
+        env:
+          HETZNER_SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+        run: |
+          test -n "$HETZNER_SSH_KEY" || { echo "HETZNER_SSH_KEY secret is not set"; exit 1; }
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$HETZNER_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H 46.224.193.25 >> ~/.ssh/known_hosts 2>/dev/null
+      - name: deploy
+        env:
+          ORCH_HOST: 46.224.193.25
+          USER: github-actions
+        run: ./scripts/deploy_orchestrator.sh
+      - name: verify
+        run: |
+          curl -fsS https://ai-ui.coolestdomain.win/tasks/healthz
+          ssh root@46.224.193.25 "cd /root/proxy-server && docker compose -f docker-compose.unified.yml ps tasks | grep -q Up"
