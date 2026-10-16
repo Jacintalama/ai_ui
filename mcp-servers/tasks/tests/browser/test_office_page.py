@@ -639,10 +639,12 @@ def test_a_team_meeting_is_a_real_one(page):
     A meeting is real: choose_speakers has a meeting rung, so "everyone
     answer" wakes every agent with may_pass false and all of them reply. The
     button hands the chat exactly those words."""
-    from urllib.parse import unquote
-    href = page.locator('.floor-bar a.btn').first.get_attribute("href")
-    assert href.startswith("/tasks/agents?ask="), href
-    assert unquote(href.split("ask=", 1)[1]).startswith("everyone answer")
+    ask = page.locator("#brain-actions .chat-open[data-ask]").get_attribute("data-ask")
+    assert ask.startswith("everyone answer"), ask
+    # Inside the agents page's dock, where the chat is the page around the
+    # floor, the bar's link hands those same words to it.
+    assert "everyone answer" in page.evaluate(
+        "() => decodeURIComponent(document.querySelector('#brain-actions .chat-open[data-ask]').dataset.ask)")
 
 
 def test_there_is_no_button_that_fakes_agents_talking(page):
@@ -686,9 +688,21 @@ def test_every_link_out_of_the_office_leaves_the_frame(page):
     assert bad == [], bad
 
 
-def test_the_meeting_button_leaves_the_frame(page):
-    """The one that was actually clicked."""
-    assert page.locator(".floor-bar a.btn").first.get_attribute("target") == "_top"
+def test_in_the_agents_pages_dock_the_meeting_button_leaves_the_frame(docked):
+    """There the chat is the page around the floor, so the bar keeps a
+    meeting link that reaches it, and it leaves the frame."""
+    from urllib.parse import unquote
+    link = docked.locator(".floor-bar a.btn").first
+    assert link.get_attribute("target") == "_top"
+    href = link.get_attribute("href")
+    assert unquote(href.split("ask=", 1)[1]).startswith("everyone answer")
+
+
+def test_the_windows_stand_over_the_floor_not_the_column(page):
+    """A window across the agent card covered "Chat with Ada"."""
+    win = page.locator("#cw-team").bounding_box()
+    side = page.locator("#side").bounding_box()
+    assert win["x"] + win["width"] <= side["x"] + 1, (win, side)
 
 
 def test_the_chat_and_skill_links_leave_the_frame(page):
@@ -1705,22 +1719,34 @@ def test_the_to_do_escapes_what_it_is_given(page):
     assert "<img" in page.locator("#todo .todo-what").inner_text()
 
 
-def test_the_office_page_has_a_conversation(page):
-    """The office is somewhere you can ask as well as watch."""
-    assert page.locator("#deskchat").is_visible()
-    assert page.locator("#deskchat #agent-thread").count() == 1
-    form = page.locator("#deskchat .ap-composer")
+def test_the_office_page_has_a_team_chat_window(page):
+    """The office is somewhere you can ask as well as watch: the team's
+    conversation is a window along the bottom, open on the first visit
+    (2026-10-16, "a chat inside the office which is like facebook
+    messenger style")."""
+    win = page.locator("#chatdock #cw-team")
+    assert win.is_visible()
+    assert win.locator("#agent-thread").count() == 1
+    assert win.locator('#agent-thread[data-thread=""]').count() == 1
+    form = win.locator(".ap-composer")
     assert form.get_attribute("hx-post") == "/tasks/agents/chat/send"
-    # Send must not eat the row. The side column styles its buttons as
-    # full-width blocks, which is right for "Chat with Ada" and left the
-    # message box 22px wide here.
+    assert form.locator("#ap-agent").input_value() == ""
+    # Send must not eat the row.
     got = page.evaluate(
-        "() => { const f = document.querySelector('.deskchat .ap-composer');"
+        "() => { const f = document.querySelector('#cw-team .ap-composer');"
         " const i = f.querySelector('input[type=text]');"
         " const b = f.querySelector('button');"
         " return { input: i.getBoundingClientRect().width,"
         "          btn: b.getBoundingClientRect().width }; }")
     assert got["input"] > got["btn"] * 2, got
+    # Along the bottom of the window, at the right edge of the floor (the
+    # column beside it stays clear).
+    box = win.bounding_box()
+    side = page.locator("#side").bounding_box()
+    assert box["y"] + box["height"] >= 1000 - 2, box
+    assert side["x"] - 40 < box["x"] + box["width"] <= side["x"] + 1, (box, side)
+    # The column no longer holds a conversation of its own.
+    assert page.locator("#side .ap-thread").count() == 0
 
 
 def test_sending_from_the_office_opens_the_answer_stream(page):
@@ -1740,62 +1766,90 @@ def test_sending_from_the_office_opens_the_answer_stream(page):
         r.fulfill(status=200, content_type="text/event-stream",
                   body="retry: 60000\n\nevent: close\ndata: done\n\n")
     page.route("**/tasks/agents/chat/stream**", stream)
-    page.locator("#deskchat .ap-composer input[name=message]").fill("hello")
-    page.locator("#deskchat .ap-composer button[type=submit]").click()
-    page.locator("#deskchat .astream").wait_for(state="attached", timeout=3000)
+    page.locator("#cw-team .ap-composer input[name=message]").fill("hello")
+    page.locator("#cw-team .ap-composer button[type=submit]").click()
+    page.locator("#cw-team .astream").wait_for(state="attached", timeout=3000)
     page.wait_for_timeout(1500)
     assert opened, "the composer's round never opened /tasks/agents/chat/stream"
 
 
-def test_the_conversation_shuts_and_opens_like_a_messenger_window(page):
-    """Asked for 2026-10-09: "be able to close it like a facebook chat".
+def test_a_chat_pill_opens_a_private_window_without_leaving_the_floor(page):
+    """"instead of redirecting it to the ai agent tab": Chat on a robot is
+    a window with that one agent, here, loaded from that agent's own
+    conversation, and the floor stays."""
+    loads = []
+    page.route("**/tasks/agents/chat/thread**", lambda r: (
+        loads.append(r.request.url),
+        r.fulfill(status=200, content_type="text/html", body='<div class="aempty">nothing yet</div>')))
+    page.locator('.who-chat[data-id="agent-iris-a103"]').click()
+    win = page.locator('#chatdock .cw[data-chat="agent-iris-a103"]')
+    win.wait_for(state="visible", timeout=3000)
+    assert page.url.endswith("/office.html"), page.url
+    assert win.locator(".cw-name").inner_text() == "Iris"
+    assert win.locator('.ap-thread[data-thread="agent-iris-a103"]').count() == 1
+    form = win.locator(".ap-composer")
+    assert form.locator('input[name="agent"]').input_value() == "agent-iris-a103"
+    assert form.get_attribute("hx-target") == "#agent-thread-agent-iris-a103"
+    assert form.locator('input[name="message"]').get_attribute("placeholder") == "Message Iris"
+    page.wait_for_timeout(300)
+    assert any("agent=agent-iris-a103" in u for u in loads), loads
+    # Both windows stand side by side; the team's is still there.
+    assert page.locator("#chatdock .cw:visible").count() == 2
 
-    A conversation you cannot get out of the way eats the column the agent
-    card is in."""
-    box, bar = page.locator("#deskchat"), page.locator("#deskchat-toggle")
-    assert bar.get_attribute("aria-expanded") == "true"
-    assert page.locator("#deskchat-body").is_visible()
 
-    bar.click()
-    page.wait_for_timeout(250)
-    assert "shut" in (box.get_attribute("class") or "")
-    assert not page.locator("#deskchat-body").is_visible()
-    assert bar.get_attribute("aria-expanded") == "false"
-    # The bar itself stays, or there is nothing left to click to get back.
-    assert bar.is_visible()
-
-    bar.click()
-    page.wait_for_timeout(250)
-    assert page.locator("#deskchat-body").is_visible()
-    assert bar.get_attribute("aria-expanded") == "true"
+def test_the_card_and_the_tray_open_the_same_private_window(page):
+    page.locator("#side a.chat-with").click()
+    page.locator('#chatdock .cw[data-chat="agent-research-assistant-0001"]').wait_for(state="visible")
+    assert page.locator("#chatdock .cw:visible").count() == 2
 
 
-def test_it_is_still_shut_when_you_come_back(page):
-    """A preference about this screen, so it survives a reload."""
-    page.locator("#deskchat-toggle").click()
-    page.wait_for_timeout(250)
+def test_a_fourth_window_puts_the_oldest_away_as_a_circle(page):
+    """At most three open; the one opened longest ago folds to a circle in
+    the bottom left corner, and comes back when clicked."""
+    page.locator('.who-chat[data-id="agent-iris-a103"]').click()
+    page.locator('.who-chat[data-id="agent-research-assistant-0001"]').click()
+    page.wait_for_timeout(200)
+    assert page.locator("#chatdock .cw:visible").count() == 3
+    # Two agents and the team make three. A fourth conversation does not
+    # exist in this fixture, so the team is put away by hand, the way the
+    # title bar does it, and a fourth opening is tried through the API.
+    page.evaluate("() => import('/office/js/dock.js').then(d => { d.openChat('agent-iris-a103'); d.openChat('agent-research-assistant-0001'); })")
+    page.wait_for_timeout(200)
+    assert page.locator("#chatdock .cw:visible").count() == 3
+    page.locator("#cw-team .cw-head").click()
+    page.wait_for_timeout(300)
+    assert page.locator("#chatdock .cw:visible").count() == 2
+    head = page.locator("#chatdock-min .chead")
+    assert head.count() == 1
+    assert head.get_attribute("data-chat") == ""
+    box = head.bounding_box()
+    assert box["x"] < 80 and box["y"] + box["height"] > 1000 - 80, box
+    # The status pill steps up out of the circles' way.
+    assert page.evaluate("() => document.documentElement.classList.contains('has-heads')")
+    head.click()
+    page.wait_for_timeout(300)
+    assert page.locator("#chatdock-min .chead").count() == 0
+    assert page.locator("#cw-team").is_visible()
+
+
+def test_which_windows_are_open_is_remembered(page):
+    page.locator('.who-chat[data-id="agent-iris-a103"]').click()
+    page.wait_for_timeout(200)
+    page.locator("#cw-team .cw-min").click()
+    page.wait_for_timeout(200)
     page.reload()
     page.wait_for_selector(".who", state="visible")
     page.wait_for_timeout(500)
-    assert "shut" in (page.locator("#deskchat").get_attribute("class") or "")
-    assert not page.locator("#deskchat-body").is_visible()
+    assert page.locator('#chatdock .cw[data-chat="agent-iris-a103"]').is_visible()
+    assert not page.locator("#cw-team").is_visible()
+    assert page.locator('#chatdock-min .chead[data-chat=""]').count() == 1
 
 
-def test_shutting_it_gives_the_column_back(page):
-    """Not merely hidden: the space goes to the agent card above it."""
-    before = page.locator("#side-agent").bounding_box()["height"]
-    page.locator("#deskchat-toggle").click()
-    page.wait_for_timeout(300)
-    after = page.locator("#side-agent").bounding_box()["height"]
-    assert after > before, (before, after)
-
-
-def test_something_said_while_it_was_shut_is_marked(page):
-    """A dot, not a count. The thread is where you find out what was said,
-    and a number would be a claim about how much that nothing tracks."""
-    page.locator("#deskchat-toggle").click()
-    page.wait_for_timeout(250)
-    assert page.locator("#deskchat-new").is_hidden()
+def test_something_said_while_a_window_was_away_is_counted_on_its_circle(page):
+    page.locator("#cw-team .cw-min").click()
+    page.wait_for_timeout(200)
+    head = page.locator('#chatdock-min .chead[data-chat=""]')
+    assert head.locator(".chead-n").is_hidden()
     # An answer arriving on the stream, which is what lands in the thread.
     page.evaluate(
         "() => { const t = document.getElementById('agent-thread');"
@@ -1803,41 +1857,66 @@ def test_something_said_while_it_was_shut_is_marked(page):
         " d.className = 'am agent'; d.textContent = 'Ada: here you go';"
         " t.appendChild(d); }")
     page.wait_for_timeout(300)
-    assert page.locator("#deskchat-new").is_visible()
-
+    assert head.locator(".chead-n").inner_text() == "1"
     # Opening it is reading it.
-    page.locator("#deskchat-toggle").click()
+    head.click()
     page.wait_for_timeout(300)
-    assert page.locator("#deskchat-new").is_hidden()
+    assert page.locator("#chatdock-min .chead").count() == 0
+    page.locator("#cw-team .cw-min").click()
+    page.wait_for_timeout(200)
+    assert page.locator('#chatdock-min .chead[data-chat=""] .chead-n').is_hidden()
 
 
-def test_nothing_is_marked_while_it_is_open(page):
-    """The dot means "you missed this". With the thread in front of you,
-    you did not."""
+def test_nothing_is_counted_while_the_window_is_open(page):
     page.evaluate(
         "() => { const t = document.getElementById('agent-thread');"
         " const d = document.createElement('div'); d.className = 'am agent';"
         " d.textContent = 'Ada: here you go'; t.appendChild(d); }")
     page.wait_for_timeout(300)
-    assert page.locator("#deskchat-new").is_hidden()
+    page.locator("#cw-team .cw-min").click()
+    page.wait_for_timeout(200)
+    assert page.locator('#chatdock-min .chead[data-chat=""] .chead-n').is_hidden()
+
+
+def test_closing_a_window_takes_it_away_for_good(page):
+    page.locator('.who-chat[data-id="agent-iris-a103"]').click()
+    win = page.locator('#chatdock .cw[data-chat="agent-iris-a103"]')
+    win.wait_for(state="visible")
+    win.locator(".cw-close").click()
+    page.wait_for_timeout(200)
+    assert page.locator('#chatdock .cw[data-chat="agent-iris-a103"]').count() == 0
+    assert page.locator("#chatdock-min .chead").count() == 0
+
+
+def test_the_meeting_button_fills_the_team_window(page):
+    """Nothing is ever sent for you: it fills the composer and stops."""
+    sent = []
+    page.route("**/tasks/agents/chat/send", lambda r: (sent.append(1), r.fulfill(status=200, body="")))
+    page.locator('#brain-actions .chat-open[data-ask]').click()
+    page.wait_for_timeout(200)
+    assert page.locator("#cw-team input[name=message]").input_value() == "everyone answer: "
+    assert sent == []
+    page.locator("#cw-team .cw-meet").click()
+    assert page.locator("#cw-team input[name=message]").input_value() == "everyone answer: "
 
 
 def test_the_dock_has_no_conversation_of_its_own(docked):
     """The agents page around the dock already has one, and two threads on
     one screen would both open the stream and both draw the same round."""
-    assert docked.locator("#deskchat").count() == 1
-    assert not docked.locator("#deskchat").is_visible()
+    assert docked.locator("#chatdock").count() == 1
+    assert not docked.locator("#chatdock").is_visible()
+    assert docked.locator("#chatdock .cw").count() == 0 or not docked.locator("#chatdock .cw").first.is_visible()
 
 
-def test_the_card_is_redrawn_without_taking_the_rest_with_it(page):
-    """The column is a stack of three and only the middle one is rebuilt.
-    Redrawing the whole column would throw away the round in flight."""
-    page.evaluate("() => { document.querySelector('#deskchat #agent-thread')"
+def test_the_card_is_redrawn_without_taking_the_chat_with_it(page):
+    """Only the card is rebuilt. Redrawing the chat would throw away the
+    round in flight."""
+    page.evaluate("() => { document.querySelector('#cw-team #agent-thread')"
                   ".setAttribute('data-kept', 'yes'); }")
     page.locator('.who[data-id="agent-iris-a103"]').click()
     page.wait_for_timeout(400)
     assert page.locator("#side-agent h2").inner_text() == "Iris"
-    assert page.locator('#deskchat #agent-thread[data-kept="yes"]').count() == 1
+    assert page.locator('#cw-team #agent-thread[data-kept="yes"]').count() == 1
     assert page.locator("#todo").count() == 1
 
 
@@ -2291,15 +2370,12 @@ def test_a_rooms_totals_come_up_on_hover(page):
     assert "RUNS: 801" in room.inner_text()
 
 
-def test_the_agent_card_folds_and_the_conversation_grows(page):
-    before = page.locator("#deskchat").bounding_box()["height"]
+def test_the_agent_card_folds_to_its_head(page):
     page.locator("#side-fold").click()
     page.wait_for_timeout(200)
     assert "folded" in (page.locator("#side-agent").get_attribute("class") or "")
     assert page.locator("#side-agent h2").is_visible()
     assert not page.locator("#side-agent .stats").is_visible()
-    after = page.locator("#deskchat").bounding_box()["height"]
-    assert after > before, (before, after)
     page.locator("#side-fold").click()
     page.wait_for_timeout(200)
     assert page.locator("#side-agent .stats").is_visible()
@@ -2326,12 +2402,6 @@ def test_finished_work_is_behind_a_disclosure(page):
     assert not page.locator("#todo .todo-item.done").is_visible()
     done.locator("summary").click()
     assert page.locator("#todo .todo-item.done").is_visible()
-
-
-def test_the_conversation_takes_the_larger_share_of_the_column(page):
-    chat = page.locator("#deskchat").bounding_box()["height"]
-    card = page.locator("#side-agent").bounding_box()["height"]
-    assert chat > card, (chat, card)
 
 
 # --- what needs you (2026-10-16) ---------------------------------------------
@@ -2597,6 +2667,137 @@ def test_framed_by_the_shell_the_office_has_no_header_and_keeps_its_search(brows
         srv.shutdown()
 
 
+def test_in_the_shell_the_bars_logs_button_opens_the_activity_log(browser):
+    """The header's Activity tab is hidden with the header, so the floor's
+    own bar opens the log, as a drawer over the floor that still moves
+    behind it (2026-10-16, "add the logs so user can see the activity logs
+    of the agents")."""
+    srv = _serve((STATIC / "office.html").read_bytes())
+    ctx = browser.new_context(viewport={"width": 1500, "height": 900})
+    pg = ctx.new_page()
+    pg.set_default_timeout(8000)
+
+    def route(r):
+        url = r.request.url
+        body = ({"items": AGENTS, "total": len(AGENTS)} if "/models/list" in url
+                else {"activity": ACTIVITY, "handoffs": []} if "/agents/activity" in url
+                else {"runs": [{"agent_id": "agent-iris-a103", "source": "schedule",
+                                "status": "completed", "started_at": "2026-10-16T09:00:00+00:00",
+                                "seconds": 5, "cost_usd": 0.01, "model": "gpt-5"}],
+                      "spend": [], "days": 7} if "/agents/history" in url
+                else {"stats": {}} if "/agents/stats" in url
+                else {"skills": []} if "/agents/skills" in url else {})
+        r.fulfill(status=200, content_type="application/json", body=json.dumps(body))
+
+    pg.route("**/api/**", route)
+    try:
+        pg.goto("http://127.0.0.1:%d/tall-frame" % srv.server_address[1])
+        frame = pg.frame_locator("iframe")
+        frame.locator(".who").first.wait_for(state="visible")
+        assert not frame.locator("#panel-activity").is_visible()
+        frame.locator("#brain-actions .logs-open").click()
+        frame.locator("#panel-activity").wait_for(state="visible")
+        frame.locator("#activity-feed li").first.wait_for(state="visible")
+        assert "Iris" in frame.locator("#activity-feed").inner_text()
+        # The floor is still there behind it.
+        assert frame.locator(".who").first.is_visible()
+        frame.locator("#logs-close").click()
+        pg.wait_for_timeout(100)
+        assert not frame.locator("#panel-activity").is_visible()
+    finally:
+        ctx.close()
+        srv.shutdown()
+
+
 def test_on_its_own_page_the_office_keeps_its_header(page):
     assert page.locator(".top").is_visible()
     assert page.locator(".top #q").count() == 1
+
+
+# --- making an agent from the office (2026-10-16) ----------------------------
+# "how can the user able to create or add agents in the office tab". The
+# agents page's "+ New agent" was a link out of the office, and in the shell
+# the header it sat in is hidden. The office has its own short form now, and
+# the new agent stands up at its desk without a reload.
+
+def _new_agent_routes(pg, created):
+    def route(r):
+        url = r.request.url
+        if "/models/create" in url and r.request.method == "POST":
+            created.append(json.loads(r.request.post_data or "{}"))
+            r.fulfill(status=200, content_type="application/json",
+                      body=json.dumps({"id": created[-1]["id"]}))
+            return
+        items = AGENTS + [dict(id=c["id"], name=c["name"], meta=c["meta"], params={},
+                               base_model_id=c["base_model_id"], user_id="me")
+                          for c in created]
+        body = ({"items": items, "total": len(items)} if "/models/list" in url
+                else {"data": [{"id": "gpt-5", "name": "GPT-5"},
+                               {"id": "auto_router.auto", "name": "Auto"},
+                               {"id": "gpt-image-2", "name": "Image"}]} if url.endswith("/api/models")
+                else {"tools": [], "default_model": "gpt-5"} if "/agents/tools" in url
+                else {"activity": ACTIVITY, "handoffs": []} if "/agents/activity" in url
+                else {"stats": {}} if "/agents/stats" in url
+                else {"skills": []} if "/agents/skills" in url else {})
+        r.fulfill(status=200, content_type="application/json", body=json.dumps(body))
+    pg.route("**/api/**", route)
+
+
+def test_a_new_agent_made_from_the_bar_stands_up_on_the_floor(browser):
+    srv = _serve((STATIC / "office.html").read_bytes())
+    ctx = browser.new_context(viewport={"width": 1500, "height": 900})
+    pg = ctx.new_page()
+    pg.set_default_timeout(8000)
+    created = []
+    _new_agent_routes(pg, created)
+    try:
+        pg.goto("http://127.0.0.1:%d/tall-frame" % srv.server_address[1])
+        frame = pg.frame_locator("iframe")
+        frame.locator(".who").first.wait_for(state="visible")
+        assert frame.locator(".who").count() == 2
+        frame.locator("#brain-actions .new-agent-open").click()
+        frame.locator("#newagent").wait_for(state="visible")
+        # The model list leaves out the callback pipe and the image model,
+        # and starts on the platform default.
+        pg.wait_for_timeout(300)
+        options = frame.locator("#na-model option").all_inner_texts()
+        assert options == ["GPT-5"], options
+        frame.locator("#na-name").fill("Jack")
+        frame.locator("#na-role").fill("Bookkeeper")
+        frame.locator("#na-instructions").fill("Keep the books straight and say so plainly.")
+        # The pane is 1600px tall in this harness (see /tall-frame), so the
+        # centred dialog sits partly below the window: clicked by event.
+        frame.locator('input[name="na-access"][value="ask"]').evaluate("el => el.click()")
+        frame.locator("#na-save").evaluate("el => el.click()")
+        frame.locator('.who-slot[data-id^="agent-jack-"]').wait_for(state="attached")
+        assert len(created) == 1
+        body = created[0]
+        assert body["name"] == "Jack" and body["base_model_id"] == "gpt-5"
+        assert body["meta"]["role"] == "Bookkeeper" and body["meta"]["access"] == "ask"
+        assert body["meta"]["toolIds"] == ["server:mcp-proxy"]
+        assert body["params"]["system"].startswith("Keep the books")
+        assert body["access_grants"] == [] and body["is_active"] is True
+        assert not frame.locator("#newagent").is_visible()
+        assert frame.locator(".who").count() == 3
+        # Picked out, so the card beside the floor is the new agent's.
+        assert "Jack" in frame.locator("#side-agent h2").inner_text()
+    finally:
+        ctx.close()
+        srv.shutdown()
+
+
+def test_the_form_refuses_a_two_word_name_and_keeps_what_was_typed(page):
+    created = []
+    _new_agent_routes(page, created)
+    page.locator(".top .new-agent-open").click()
+    page.locator("#newagent").wait_for(state="visible")
+    page.locator("#na-name").fill("Research Agent")
+    page.locator("#na-instructions").fill("Look things up.")
+    page.locator("#na-save").click()
+    page.wait_for_timeout(100)
+    assert "one word" in page.locator("#na-error").inner_text().lower()
+    assert page.locator("#na-name").input_value() == "Research Agent"
+    assert created == []
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(100)
+    assert not page.locator("#newagent").is_visible()

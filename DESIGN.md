@@ -291,6 +291,26 @@ messenger").
 - **Focus:** the border turns periwinkle and gains a 2px periwinkle ring. A
   focused composer must look different from an idle one.
 
+### Chat dock (the office)
+- **What it is:** on the Agent Office the conversations are windows along
+  the bottom right of the floor, one per conversation: the team (the room)
+  and one per agent (a private word). Each window is the same Thread and
+  Composer as the agents page, 300px wide and at most 420px tall, with a
+  title bar carrying the avatar, the name, the agent's state light and
+  Minimise and Close.
+- **Three open at most.** Opening a fourth puts the one opened longest ago
+  away as a 44px circle in the bottom left corner, carrying the avatar, the
+  state light and a red count of what was said while it was away. Clicking
+  the circle or the title bar swaps a window between open and away.
+- **Remembered.** Which windows are open and which are away is kept per
+  browser, so a reload puts them back. A window for an agent that no longer
+  exists is dropped.
+- **Nothing leaves the floor.** Chat on a robot, Chat with on the card, the
+  tray's Answer and the Meeting button all open a window here; the meeting
+  button only fills the team composer with "everyone answer: " and stops.
+- **Not in the dock on the agents page,** which has the one conversation
+  already: there the windows are not drawn and Chat asks the page around it.
+
 ### Details panel
 - **Layout:** 320px wide on the Panel layer, separated by a hairline. It is
   collapsible, and its open or closed state is remembered.

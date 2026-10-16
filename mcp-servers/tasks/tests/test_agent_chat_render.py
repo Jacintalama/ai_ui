@@ -650,3 +650,14 @@ def test_one_day_line_per_day_not_per_message():
         {"role": "user", "content": "c", "turn_id": "t2", "at": "2026-10-16T09:00:00+00:00"},
     ])
     assert html.count('class="aday"') == 1
+
+
+def test_a_queued_turn_names_the_thread_of_its_own_conversation():
+    """The office draws a window per conversation (office/js/dock.js), each
+    thread marked data-thread; the agents page has one unmarked
+    #agent-thread. A queued message has to land in the right window and
+    never in a window about somebody else."""
+    assert render.thread_selector(None) == '#agent-thread:not([data-thread]), [data-thread=""]'
+    assert render.thread_selector("agent-ada-1") == (
+        '#agent-thread:not([data-thread]), [data-thread="agent-ada-1"]')
+    assert '"' not in render.thread_selector('x"y').split("[data-thread=")[1][1:-2]

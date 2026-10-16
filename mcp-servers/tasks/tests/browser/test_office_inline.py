@@ -461,21 +461,21 @@ def test_it_opens_the_conversation_and_sends_nothing(page):
     assert page.locator(".ap-composer input[name=message]").input_value() == ""
 
 
-def test_a_frame_that_does_not_host_the_office_still_follows_the_link(page, server):
-    """The office is a pane in the shell too, at /ai-agents/office. Being in a
-    frame is not the same as having somebody listening, and swallowing the
-    click with no listener would make Chat do nothing at all there."""
+def test_a_frame_that_does_not_host_the_office_gets_the_chat_in_the_office(page, server):
+    """The office is a pane in the shell too, at /ai-agents/office, and it
+    can be framed by anything. Nobody listening used to mean the link was
+    followed out of the frame; the office has its own chat windows now
+    (office/js/dock.js), so Chat opens Iris's window right here and the
+    frame stays where it was."""
     page.goto("http://127.0.0.1:%d/bare" % server.server_address[1])
     frame = page.frame_locator("iframe")
     frame.locator('.who-chat[data-id="agent-iris-a103"]').wait_for()
     frame.locator('.who-chat[data-id="agent-iris-a103"]').click()
-    page.wait_for_timeout(600)
-    # It left /bare, which is the point: the link was followed rather than
-    # swallowed. The agents page takes ?ask= out of the address bar once it is
-    # in the box, so the question is checked where it lands.
-    assert "/bare" not in page.url, page.url
-    assert page.locator(".ap-composer input[name=message]").input_value(
-        ).startswith("Iris,")
+    frame.locator('#chatdock .cw[data-chat="agent-iris-a103"]').wait_for(state="visible")
+    page.wait_for_timeout(300)
+    assert "/bare" in page.url, page.url
+    assert frame.locator('#chatdock .cw[data-chat="agent-iris-a103"] input[name=message]'
+                         ).get_attribute("placeholder") == "Message Iris"
 
 
 # --- it has to LOOK like part of the page -----------------------------------
@@ -942,26 +942,23 @@ def test_the_brain_opens_the_graph_pane_and_leaves_the_page_alone(browser, serve
         ctx.close()
 
 
-def test_in_the_shell_a_chat_pill_asks_for_the_agents_pane(page, server):
-    """The Agent Office pane on its own, inside the shell. Nobody hosts it,
-    so its Chat pill asks the shell to open AI Agents with the question, and
-    names the agent the way it does when docked, so the agents page can open
-    that agent's own conversation either way."""
+def test_in_the_shell_a_chat_pill_opens_a_window_in_the_office(page, server):
+    """The Agent Office pane on its own, inside the shell. Its Chat pill
+    used to ask the shell to open AI Agents with the question; the office
+    has its own chat windows now (office/js/dock.js, 2026-10-16), so the
+    pill opens Iris's window here and nothing leaves the floor."""
     page.goto("http://127.0.0.1:%d/shell" % server.server_address[1])
     office = page.frame_locator("#pane")
     office.locator('.who-chat[data-id="agent-iris-a103"]').wait_for()
     assert page.evaluate("() => window.__aiuiTaskPanelLoaded === true")
-    # Standalone, so the floor still offers the chat.
-    assert office.locator(".floor-bar a", has_text="Open the chat").count() == 1
+    # Standalone, so the floor still offers the chat: beside The Brain.
+    assert office.locator("#brain-actions .chat-open", has_text="Chat").count() == 1
     page.evaluate("() => { window.__stillHere = true; }")
     office.locator('.who-chat[data-id="agent-iris-a103"]').click()
-    page.wait_for_timeout(400)
+    office.locator('#chatdock .cw[data-chat="agent-iris-a103"]').wait_for(state="visible")
+    page.wait_for_timeout(300)
     assert page.evaluate("() => window.__stillHere === true"), "the shell was replaced"
-    origin = "http://127.0.0.1:%d" % server.server_address[1]
-    assert page.evaluate("() => window.__panes") == [
-        {"data": {"type": "aiui:open-pane", "path": "/ai-agents",
-                  "ask": "Iris, ", "agent": "agent-iris-a103", "name": "Iris"},
-         "origin": origin}]
+    assert page.evaluate("() => window.__panes") == []
 
 
 def test_in_the_shell_the_brain_asks_for_the_graph_pane(page, server):

@@ -15,24 +15,30 @@
     if (token) { e.detail.headers["Authorization"] = "Bearer " + token; }
   });
 
-  function thread() { return document.getElementById("agent-thread"); }
+  //: Every conversation on the page. The agents page has one, #agent-thread;
+  //: the office has a window per conversation (office/js/dock.js), each an
+  //: .ap-thread of its own, so everything here works per thread and an
+  //: answer landing in one window never scrolls or retypes another.
+  function threads() { return document.querySelectorAll(".ap-thread"); }
+  function thread() { return document.getElementById("agent-thread") || threads()[0] || null; }
 
-  //: Has the thread been drawn once? A replayed conversation jumps to its
+  //: Has a thread been drawn once? A replayed conversation jumps to its
   //: end; everything after that glides, the way a messenger follows a new
-  //: message in, unless the person has asked for less motion.
-  var SETTLED = false;
-  function toBottom() {
-    var el = thread();
+  //: message in, unless the person has asked for less motion. Kept on the
+  //: element, since each window settles on its own.
+  function settled(el) { return !!(el && el.getAttribute("data-settled")); }
+  function toBottom(el) {
+    el = el || thread();
     if (!el) return;
     var reduce = false;
     try { reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches; }
     catch (e) { /* no media queries: jump */ }
-    if (SETTLED && !reduce && typeof el.scrollTo === "function") {
+    if (settled(el) && !reduce && typeof el.scrollTo === "function") {
       el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
     } else {
       el.scrollTop = el.scrollHeight;
     }
-    SETTLED = true;
+    el.setAttribute("data-settled", "1");
   }
 
   //: A run of messages from one agent shares one avatar and one name, the
@@ -40,8 +46,7 @@
   //: Decided here, from data-agent on each row, because the server emits
   //: each answer on its own as it lands and cannot know what will follow
   //: it. A card (an approval, a job plan) ends a run: it has its own box.
-  function groupBubbles() {
-    var el = thread();
+  function groupBubbles(el) {
     if (!el) return;
     function plain(n) {
       return !!n && n.classList.contains("am") && n.classList.contains("agent") &&
@@ -67,8 +72,7 @@
   // appended after it, so without this "Pick who is in the room, then ask."
   // sits above a conversation that has plainly already started. New chat puts
   // it back by replacing the whole thread, which is the one time it belongs.
-  function dropInvitation() {
-    var el = thread();
+  function dropInvitation(el) {
     if (!el) return;
     var invitations = el.querySelectorAll(".aempty");
     if (!invitations.length) return;
@@ -90,8 +94,7 @@
     el.classList.add("done");
   }
 
-  function renderAll() {
-    var el = thread();
+  function renderAll(el) {
     if (!el) return;
     var texts = el.querySelectorAll(".atext.md");
     for (var i = 0; i < texts.length; i++) { renderMarkdown(texts[i]); }
@@ -117,8 +120,7 @@
       return d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
     } catch (e) { return d.toDateString(); }
   }
-  function stampTimes() {
-    var el = thread();
+  function stampTimes(el) {
     if (!el) return;
     el.querySelectorAll(".am[data-at]:not([data-stamped])").forEach(function (row) {
       var d = new Date(row.getAttribute("data-at"));
@@ -167,6 +169,12 @@
     TYPING_NOW = true;
     typeIn(text, function () { TYPING_NOW = false; typeNext(); });
   }
+  //: A caret in a window nobody can see types for nobody: an answer that
+  //: lands in a hidden window (the office's dock, minimised) is shown
+  //: whole, so it is there the moment the window opens.
+  function unseen(el) {
+    return !el || !el.isConnected || el.offsetParent === null;
+  }
   function typeIn(el, done) {
     // Every word in its own span, shown in order. The words are all in the
     // document from the first frame, so what the eye sees arriving is
@@ -192,27 +200,28 @@
     });
     if (!words.length) { el.classList.remove("typing"); if (done) done(); return; }
     var ms = speakMs(chars), start = performance.now(), shown = 0;
+    var box = el.closest(".ap-thread");
     function frame(now) {
       var gone = now - start;
-      var want = gone >= ms ? words.length : Math.floor(words.length * gone / ms);
+      var want = (gone >= ms || unseen(box)) ? words.length
+               : Math.floor(words.length * gone / ms);
       while (shown < want) { words[shown].classList.remove("aw-wait"); shown++; }
-      toBottom();
+      toBottom(box);
       if (shown < words.length) requestAnimationFrame(frame);
       else { el.classList.remove("typing"); if (done) done(); }
     }
     el.classList.add("typing");
     requestAnimationFrame(frame);
   }
-  function typeNewAnswers() {
-    var el = thread();
-    if (!el || !SETTLED) return;
+  function typeNewAnswers(el) {
+    if (!el || !settled(el)) return;
     var reduce = false;
     try { reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches; }
     catch (e) { /* no media queries */ }
     el.querySelectorAll(".am.agent:not([data-typed]) .atext").forEach(function (text) {
       var row = text.closest(".am");
       row.setAttribute("data-typed", "1");
-      if (reduce || row.classList.contains("awaiting") || row.classList.contains("ajob")) return;
+      if (reduce || unseen(el) || row.classList.contains("awaiting") || row.classList.contains("ajob")) return;
       // Its turn comes when the answer before it has been said.
       if (TYPING_NOW || TYPING_QUEUE.length) row.hidden = true;
       TYPING_QUEUE.push(text);
@@ -220,20 +229,33 @@
     typeNext();
   }
 
-  function settle() {
-    dropInvitation();
-    renderAll();
-    groupBubbles();
-    stampTimes();
+  function settleOne(el) {
+    dropInvitation(el);
+    renderAll(el);
+    groupBubbles(el);
+    stampTimes(el);
     // Everything on screen at the first draw is history, not arriving.
-    if (!SETTLED) {
-      thread() && thread().querySelectorAll(".am.agent").forEach(function (r) {
+    if (!settled(el)) {
+      el.querySelectorAll(".am.agent").forEach(function (r) {
         r.setAttribute("data-typed", "1");
       });
     }
-    typeNewAnswers();
-    toBottom();
+    typeNewAnswers(el);
+    toBottom(el);
   }
+  //: Settle the thread an event landed in, or every thread when the event
+  //: cannot say (an out-of-band swap names its own target, not the thread).
+  function settle(ev) {
+    var target = ev && ev.detail && (ev.detail.target || ev.detail.elt);
+    var one = target && target.closest ? target.closest(".ap-thread") : null;
+    if (one && !(ev && ev.detail && ev.detail.xhr && ev.detail.xhr.responseText &&
+                 ev.detail.xhr.responseText.indexOf("hx-swap-oob") !== -1)) {
+      settleOne(one);
+      return;
+    }
+    threads().forEach(settleOne);
+  }
+  window.aiuiSettleChat = function (el) { if (el) settleOne(el); else threads().forEach(settleOne); };
 
   document.body.addEventListener("htmx:afterSwap", settle);
   document.body.addEventListener("htmx:sseMessage", settle);
@@ -251,11 +273,17 @@
     var said = (status === 401 || status === 403)
       ? "Your sign-in has expired. Reload the page and sign in again."
       : "That did not go through. Try again in a moment.";
-    var el = thread();
+    // The thread the failed send was aimed at, where the person is looking.
+    var el = null, elt = detail.elt;
+    var form = elt && elt.closest ? elt.closest("form") : null;
+    var sel = form && form.getAttribute("hx-target");
+    if (sel) { try { el = document.querySelector(sel); } catch (x) { el = null; } }
+    if (!el && elt && elt.closest) el = elt.closest(".ap-thread");
+    if (!el) el = thread();
     if (!el) return;
     el.insertAdjacentHTML("beforeend",
       '<div class="am note">' + said + "</div>");
-    settle();
+    settleOne(el);
   });
 
   // When the round closes, stop the element listening. The SSE extension leaves
@@ -276,9 +304,9 @@
     // stream route with the tail no longer "user", which closes right away
     // with no round and no clearing event, and "X is working..." would
     // otherwise stay pinned on that turn until the page is reloaded.
-    document.querySelectorAll("#agent-thread .aturn-status")
+    document.querySelectorAll("#agent-thread .aturn-status, .ap-thread .aturn-status")
       .forEach(function (el) { el.innerHTML = ""; });
-    settle();
+    threads().forEach(settleOne);
   });
 
   // Clearing is the only destructive thing in the panel, so it is the only

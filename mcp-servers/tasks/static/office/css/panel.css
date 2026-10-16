@@ -115,3 +115,61 @@ a.tag.skill:hover { border-color: var(--cyan); color: var(--cyan); }
   content: ">_ ACTIVITY: ";
   color: var(--cyan); font-weight: 700; letter-spacing: .06em;
 }
+
+/* --- the activity log drawer (2026-10-16) ----------------------------------
+   Over the floor's right edge, not instead of the floor: the header's
+   Activity tab and the bar's Logs button both open it, and in the shell
+   the bar is the only one of those on screen. */
+.main { position: relative; }
+.logs {
+  position: absolute; top: 0; right: 0; bottom: 0; z-index: 60;
+  width: min(560px, 94%); padding: 16px 20px 20px; overflow-y: auto;
+  background: var(--surface); border-left: 1px solid var(--border);
+  box-shadow: -24px 0 48px rgba(0, 0, 0, .5);
+  animation: logs-in .22s cubic-bezier(.2, .7, .2, 1) both;
+}
+@keyframes logs-in { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .logs { animation: none; } }
+.logs-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.logs-head h2 { font-size: 15px; margin: 0; }
+.logs-shut { display: block; position: static; margin-left: auto; }
+.floor-bar .btn.logs-open { pointer-events: auto; }
+
+/* --- the new agent form (2026-10-16) ----------------------------------- */
+.modal-back {
+  position: fixed; inset: 0; z-index: 90; display: grid; place-items: center;
+  padding: 16px; background: rgba(4, 9, 18, .66);
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+}
+.modal.na {
+  width: min(520px, 100%); max-height: 100%; overflow-y: auto;
+  padding: 20px 22px 18px; margin: 0;
+  background: var(--surface); border: 1px solid var(--border-2);
+  border-radius: var(--radius-lg); box-shadow: 0 28px 70px rgba(0, 0, 0, .55);
+  animation: na-in .2s cubic-bezier(.2, .7, .2, 1) both;
+}
+@keyframes na-in { from { transform: translateY(8px) scale(.985); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .modal.na { animation: none; } }
+.modal.na h2 { font-size: 16px; margin: 0 0 12px; }
+.modal.na label { display: block; font-size: 12px; color: var(--muted); margin: 11px 0 5px; }
+.modal.na input[type="text"], .modal.na textarea, .modal.na select {
+  width: 100%; padding: 8px 11px; font: inherit; font-size: 13.5px;
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.modal.na textarea { resize: vertical; min-height: 96px; }
+.modal.na input:focus, .modal.na textarea:focus, .modal.na select:focus {
+  outline: none; border-color: var(--cyan);
+}
+.modal.na .hint { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
+.na-access { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px 10px; margin: 12px 0 0; }
+.na-access legend { font-size: 12px; color: var(--muted); padding: 0 4px; }
+.na-access label { display: flex; align-items: baseline; gap: 8px; margin: 6px 0 0; color: var(--text); font-size: 13px; }
+.na-access label em { font-style: normal; color: var(--muted); font-size: 12px; }
+.na-access input { margin: 0; }
+.form-error { color: var(--bad); font-size: 12.5px; margin: 10px 0 0; }
+.na-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.na-foot .btn { width: auto; }
+/* On the bare page the header has its own New agent; the bar's is for
+   the shell, where the header is hidden. */
+html:not(.shell) .floor-bar .new-agent-open { display: none; }

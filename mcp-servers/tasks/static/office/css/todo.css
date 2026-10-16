@@ -1,21 +1,18 @@
-/* The to-do above the agent card, and the conversation below it.
-   Added 2026-10-09, asked for as "a direct chat in here and task in the top
-   of agents like have todo".
+/* The to-do above the agent card. Added 2026-10-09, asked for as "a
+   direct chat in here and task in the top of agents like have todo".
 
-   The column is a stack of three now: what the team still has to do, then
-   whoever is selected, then somewhere to ask. The card in the middle is the
-   only one that is redrawn, so the other two keep their state. */
+   The column is what needs you, what the team still has to do, then
+   whoever is selected. The conversation that used to close the column is
+   the chat dock now (dock.css, 2026-10-16): windows along the bottom of
+   the floor, one per conversation. The card is the only block that is
+   redrawn, so the others keep their state. */
 
 .side {
   display: flex; flex-direction: column; gap: 14px;
   min-height: 0;
 }
-/* The conversation and the card share the slack, the conversation taking
-   the larger part (2026-10-16: the column is somewhere to ASK first). The
-   list stays at the top and the composer at the bottom however tall the
-   column is; a shut conversation gives its share back to the card, and a
-   folded card gives its share to the conversation. */
-#side-agent { flex: 1 1 42%; min-height: 0; overflow-y: auto; position: relative; }
+/* The card takes the slack under the lists. */
+#side-agent { flex: 1 1 auto; min-height: 0; overflow-y: auto; position: relative; }
 #side-agent.folded { flex: 0 0 auto; overflow: hidden; }
 #side-agent.folded > :not(.side-head):not(.side-shut) { display: none; }
 .side-who { min-width: 0; flex: 1 1 auto; }
@@ -27,6 +24,14 @@
 }
 .side-fold:hover { border-color: var(--border-2); color: var(--text); }
 .side-fold:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+/* The fold's caret: the same chevron the conversation's bar used to turn. */
+.deskchat-caret {
+  width: 7px; height: 7px;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translate(-2px, -2px);
+  transition: transform .18s ease;
+}
+@media (prefers-reduced-motion: reduce) { .deskchat-caret { transition: none; } }
 .side-fold .deskchat-caret { margin: 0; }
 #side-agent.folded .side-fold .deskchat-caret {
   transform: rotate(-135deg) translate(-2px, -2px);
@@ -151,78 +156,3 @@
 }
 .todo-who { font-weight: 600; color: var(--text-2, var(--muted)); }
 .todo-state { letter-spacing: .04em; }
-
-/* --- the conversation ----------------------------------------------------- */
-.deskchat {
-  flex: 1 1 58%; display: flex; flex-direction: column;
-  min-height: 0;
-  border-top: 1px solid var(--border); padding-top: 12px;
-}
-/* The bar: the whole title row is the button, the way a messenger window's
-   is. Shut, this is all that is left of the conversation. */
-.deskchat-bar {
-  flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
-  width: 100%; margin: 0 0 8px; padding: 6px 2px;
-  background: none; border: 0; cursor: pointer; text-align: left;
-  color: var(--muted); font: inherit;
-}
-.deskchat-bar:hover .deskchat-title { color: var(--text); }
-.deskchat-bar:focus-visible {
-  outline: 2px solid var(--cyan, #22d3ee); outline-offset: 2px;
-  border-radius: 6px;
-}
-.deskchat-title {
-  font-size: 11px; font-weight: 700;
-  letter-spacing: .12em; text-transform: uppercase;
-}
-/* Something was said while it was shut. A dot, not a number: the thread is
-   the place to find out what, and a count would be a claim about how much
-   that nothing here actually tracks. */
-.deskchat-new {
-  width: 7px; height: 7px; border-radius: 50%;
-  background: var(--cyan, #22d3ee); flex: 0 0 7px;
-}
-.deskchat-caret {
-  margin-left: auto; width: 7px; height: 7px;
-  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
-  transform: rotate(45deg) translate(-2px, -2px);
-  transition: transform .18s ease;
-}
-.deskchat.shut .deskchat-caret { transform: rotate(-135deg) translate(-2px, -2px); }
-.deskchat-body { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
-/* Shut, it gives the column back to the agent card above it rather than
-   holding its height empty. */
-.deskchat.shut { flex: 0 0 auto; }
-.deskchat.shut .deskchat-body { display: none; }
-@media (prefers-reduced-motion: reduce) {
-  .deskchat-caret { transition: none; }
-}
-/* The thread scrolls inside the block rather than growing the column, so
-   the composer stays where it was left. */
-.deskchat .ap-thread {
-  flex: 1 1 auto; min-height: 90px; overflow-y: auto;
-}
-.deskchat .ap-composer {
-  flex: 0 0 auto; display: flex; gap: 6px; margin-top: 10px;
-}
-.deskchat .ap-composer input[type="text"] {
-  flex: 1 1 auto; min-width: 0;
-  padding: 7px 14px; font-size: 12.5px;
-  border: 1px solid var(--border-2); border-radius: 999px;
-  background: var(--surface-2, rgba(255, 255, 255, .03)); color: var(--text);
-}
-.deskchat .ap-composer input[type="text"]:focus {
-  outline: none; border-color: var(--cyan, #22d3ee);
-}
-/* width:auto is the load-bearing part. The side column styles its buttons
-   as full-width blocks, which is right for "Chat with Ada" and wrong here:
-   Send took the whole row and left the input 22px wide. */
-.deskchat .ap-composer .btn {
-  flex: 0 0 auto; width: auto; padding: 7px 14px; font-size: 12.5px;
-  border-radius: 999px;
-}
-
-/* In the dock the agents page around this already has a conversation, and
-   two threads on one screen would both open the stream and both draw the
-   same round. */
-html.embed .deskchat { display: none; }

@@ -991,7 +991,7 @@ async def agent_chat_send(message: str = Form(...),
         # Its own turn, appended to the thread out of band so it lands after
         # the running turn rather than inside it.
         return HTMLResponse(
-            f'<div hx-swap-oob="beforeend:#agent-thread">'
+            f'<div hx-swap-oob="beforeend:{render.thread_selector(who)}">'
             f'{render.turn_open(body, tid, at=_now_iso())}{render.turn_close()}</div>')
 
     tid = render.new_turn_id()

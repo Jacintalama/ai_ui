@@ -671,3 +671,61 @@ def test_a_page_opened_mid_meeting_still_breaks_up_on_the_round(
     _settled(page)
     assert not _in_meeting_room(page, ADA)
     assert not _in_meeting_room(page, IRIS)
+
+
+# --- a handoff ends with the run (2026-10-16) ---------------------------------
+# "if they done talking in the office they didnt stop collaborating like
+# talking to each other": the line, the walk and the "Asking Iris…" bubble
+# lived their whole 90 s window whatever the asker was doing. A handoff is
+# the asker's run calling a colleague; it ends when that run ends.
+
+@pytest.fixture
+def ada_asks_iris_then_finishes():
+    STREAM["body"] = _sse(
+        {"event": "run_started", "agent_id": ADA, "source": "channel", "at": _now()},
+        {"event": "handoff", "agent_id": ADA, "target_agent_id": IRIS,
+         "status": "ok", "at": _now()},
+        retry=300)
+    yield
+    STREAM["body"] = _sse()
+
+
+def test_the_asking_stops_when_the_askers_run_ends(ada_asks_iris_then_finishes, page):
+    page.locator(".talk-line").first.wait_for(state="attached", timeout=4000)
+    assert "Iris" in page.locator(".say").first.inner_text()
+    # The round is over: Ada's run finishes.
+    STREAM["body"] = _sse(
+        {"event": "run_started", "agent_id": ADA, "source": "channel", "at": _now()},
+        {"event": "handoff", "agent_id": ADA, "target_agent_id": IRIS,
+         "status": "ok", "at": _now()},
+        {"event": "run_finished", "agent_id": ADA, "status": "completed", "at": _now()},
+        retry=60000)
+    page.wait_for_function(
+        "() => !document.querySelector('.talk-line:not(.fading)')"
+        " && !document.querySelector('.say:not(.going)')", timeout=4000)
+    page.wait_for_timeout(800)
+    assert page.locator(".talk-line").count() == 0
+    assert page.locator(".say").count() == 0
+
+
+@pytest.mark.parametrize("page", [{"activity": {
+    ADA: {"state": "ready", "last_status": "completed",
+          "last_run_at": _now(), "source": "channel"},
+    IRIS: {"state": "ready", "last_status": "completed",
+           "last_run_at": _now(), "source": "colleague"}}}], indirect=True)
+def test_a_finished_askers_handoff_is_not_drawn_from_the_poll(page):
+    """The poll says Ada is done. A handoff row from her run, however fresh,
+    is over: nothing joins the two."""
+    import json
+    page.route("**/agents/activity**", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"activity": {
+            ADA: {"state": "ready", "last_status": "completed",
+                  "last_run_at": _now(), "source": "channel"},
+            IRIS: {"state": "ready", "last_status": "completed",
+                   "last_run_at": _now(), "source": "colleague"}},
+            "handoffs": [{"from": ADA, "to": IRIS, "status": "ok", "at": _now()}]})))
+    page.evaluate("() => window.aiuiRefreshOffice()")
+    page.wait_for_timeout(500)
+    assert page.locator(".talk-line").count() == 0
+    assert page.locator(".say").count() == 0

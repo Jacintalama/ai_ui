@@ -9,6 +9,8 @@
 // is broken into the modules beside it, and goes then.
 
 import { S, nameOf } from "./state.js";
+import { initNewAgent } from "./newagent.js";
+import { initDock, drawDock, openChat, pruneDock, TEAM } from "./dock.js";
 import { getJson, esc, ago, saying, authHeaders } from "./util.js";
 import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   from "./agent.js";
@@ -784,6 +786,12 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
         el.innerHTML = slotInner(m);
         el.setAttribute("data-sig", slotStructure(m));
         watchArrival(el);
+        // Somebody new on a floor already drawn (an agent just made) pops
+        // up at its desk; the first draw's agents were simply there.
+        if (FLOOR_DRAWN) {
+          el.classList.add("born");
+          setTimeout(function () { el.classList.remove("born"); }, 700);
+        }
         layer.appendChild(el);
         return;
       }
@@ -804,15 +812,38 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     });
   }
 
-  //: How long a handoff keeps two robots visibly together. The server only
-  //: sends the last few minutes, and this is the slice of that which reads as
-  //: "now" rather than "recently".
+  //: How long a handoff keeps two robots visibly together, at most. The
+  //: server only sends the last few minutes, and this is the slice of that
+  //: which reads as "now" rather than "recently".
   var TALK_SECONDS = 90;
 
+  //: A handoff is a fact about a RUN: the asker's run called a colleague
+  //: and waited. It ends when that run ends, which run_finished says and
+  //: the poll's state says. Until 2026-10-16 the line, the walk and the
+  //: "Asking X…" bubble lived the whole 90 s whatever the asker was doing,
+  //: and nothing redrew when the 90 s ran out, so two robots stood together
+  //: for up to two minutes after the chat was over ("if they done talking
+  //: they didnt stop collaborating").
   function _fresh(h) {
     var at = Date.parse(h && h.at || "");
     if (!at) return false;
-    return (Date.now() - at) / 1000 <= TALK_SECONDS;
+    if ((Date.now() - at) / 1000 > TALK_SECONDS) return false;
+    var a = S.ACTIVITY[h.from];
+    return !a || a.state === "working";
+  }
+
+  //: Redraw the moment the oldest live handoff runs out, so a line never
+  //: outlives its window waiting for the next event or poll.
+  var TALK_TIMER = null;
+  function redrawWhenTalkEnds(handoffs) {
+    var soonest = 0;
+    handoffs.forEach(function (h) {
+      var until = Date.parse(h && h.at || "") + TALK_SECONDS * 1000;
+      if (until > Date.now() && (!soonest || until < soonest)) soonest = until;
+    });
+    if (TALK_TIMER) { clearTimeout(TALK_TIMER); TALK_TIMER = null; }
+    if (soonest) TALK_TIMER = setTimeout(function () { TALK_TIMER = null; draw(); },
+                                         soonest - Date.now() + 30);
   }
 
   //: How far along the line an asking robot walks. Changed 2026-10-08 from a
@@ -852,9 +883,10 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   //:   lines   one per pair, from the asker's desk to the colleague
   //:   nudges  one per asker (the latest), how far it walks along that line
   function planTalk() {
-    var lines = [], nudges = {}, seen = {};
+    var lines = [], nudges = {}, seen = {}, live = [];
     S.HANDOFFS.forEach(function (h) {
       if (!h || !h.from || !h.to || h.from === h.to || !_fresh(h)) return;
+      live.push(h);
       var a = S.AT[h.from], b = S.AT[h.to];
       // One of them is filtered out of the search, or in a room nobody is
       // drawing. A line to nowhere is worse than no line.
@@ -878,6 +910,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
                    rot: (Math.atan2(py, px) * 180 / Math.PI).toFixed(2),
                    dur: walkDuration(nudge.dist) });
     });
+    redrawWhenTalkEnds(live);
     return { lines: lines, nudges: nudges };
   }
 
@@ -1232,14 +1265,16 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
                         : (newest.a.last_status || "finished")) + ' ' +
                     esc(ago(newest.a.last_run_at))
                   : "nothing has run yet")) + '</span>' +
-      '<span class="right">' +
-        '<a class="btn" target="_top" href="/tasks/agents?ask=' +
-          encodeURIComponent("everyone answer: ") + '">Call a team meeting</a>' +
-        // Not in the card on the agents page: the chat it opens is the page
-        // around this floor, so following it only reloaded that page.
-        (document.documentElement.classList.contains("embed") ? "" :
-          '<a class="btn ghost" target="_top" href="/tasks/agents">Open the chat</a>') +
-      '</span>';
+      // Only in the dock on the agents page, where the chat is the page
+      // around this floor and the floor's own dock is not drawn. Elsewhere
+      // the buttons stand beside The Brain (#brain-actions), out from under
+      // the chat windows.
+      (document.documentElement.classList.contains("embed")
+        ? '<span class="right">' +
+          '<a class="btn" target="_top" href="/tasks/agents?ask=' +
+            encodeURIComponent("everyone answer: ") + '">Call a team meeting</a>' +
+          '</span>'
+        : "");
     var rooms = document.getElementById("floor-rooms");
     var barEl = rooms && rooms.querySelector(".floor-bar");
     if (rooms && !barEl) {
@@ -1612,49 +1647,6 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   //: (connectLive) normally drives the floor, with a 30 second poll as the
   //: fallback; the hook exists so a test can prove what the floor does with
   //: a given set of rows instead of waiting.
-  //: The conversation shuts and opens like a messenger window, and stays
-  //: how it was left. Per browser, not per session: it is a preference about
-  //: this screen, and localStorage can throw outright in a private window,
-  //: so every read and write is guarded and the page renders fine without it.
-  var CHAT_KEY = "aiuiOfficeChatShut";
-
-  (function deskChat() {
-    var box = document.getElementById("deskchat");
-    var bar = document.getElementById("deskchat-toggle");
-    var dot = document.getElementById("deskchat-new");
-    if (!box || !bar) return;
-
-    function setShut(shut, remember) {
-      box.classList.toggle("shut", shut);
-      bar.setAttribute("aria-expanded", shut ? "false" : "true");
-      // Opening it is reading it, so whatever arrived is no longer new.
-      if (!shut && dot) dot.hidden = true;
-      if (!remember) return;
-      try {
-        if (shut) localStorage.setItem(CHAT_KEY, "1");
-        else localStorage.removeItem(CHAT_KEY);
-      } catch (e) { /* a preference that cannot be stored is still obeyed now */ }
-    }
-
-    try { if (localStorage.getItem(CHAT_KEY) === "1") setShut(true, false); }
-    catch (e) { /* unreadable storage means the default, which is open */ }
-
-    bar.addEventListener("click", function () {
-      setShut(!box.classList.contains("shut"), true);
-    });
-
-    // Something said while it was shut. Watched on the thread rather than
-    // hooked into the send, because an answer arrives on the stream long
-    // after the message went, and a reply from an agent is exactly the thing
-    // worth a dot.
-    if (dot && window.MutationObserver) {
-      new MutationObserver(function () {
-        if (box.classList.contains("shut")) dot.hidden = false;
-      }).observe(document.getElementById("agent-thread"),
-                 { childList: true, subtree: true });
-    }
-  })();
-
   window.aiuiRefreshOffice = async function () {
     // Everything the floor shows that can change, not just the activity.
     // The to-do was left out at first and simply never refreshed: it is a
@@ -1664,10 +1656,12 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   };
 
   function draw() {
-    document.getElementById("panel-office").hidden = TAB !== "office";
+    // The floor is always drawn: the log is a drawer over it, not a page
+    // instead of it, so what happens while you read still happens here.
     document.getElementById("panel-activity").hidden = TAB !== "activity";
-    document.getElementById("strip").hidden = TAB !== "office";
-    if (TAB === "office") { drawRooms(); drawLive(); } else { drawActivity(); }
+    drawRooms(); drawLive();
+    if (TAB === "activity") drawActivity();
+    drawDock();
     drawSide();
     drawNeeds();
     drawTodo();
@@ -1747,6 +1741,9 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       }
     } else if (e.event === "run_finished") {
       delete S.TOOL_NOW[e.agent_id];
+      // Whoever this run asked, it has stopped asking: the walk home, the
+      // line's fade and the bubble's going all start from here.
+      S.HANDOFFS = S.HANDOFFS.filter(function (h) { return !(h && h.from === e.agent_id); });
       var next = Object.assign({}, a, { last_status: e.status,
         state: e.status === "waiting" ? "waiting"
              : e.status === "failed" ? "failed" : "ready" });
@@ -1903,7 +1900,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   //: The tray's buttons press THOSE buttons, so an answer from the desk
   //: is the same answer, through the same route, as one from the thread.
   function pendingBubbleFor(name) {
-    var rows = document.querySelectorAll('#agent-thread .am.awaiting');
+    var rows = document.querySelectorAll('.ap-thread .am.awaiting');
     for (var i = rows.length - 1; i >= 0; i--) {
       if (rows[i].getAttribute("data-agent") === name) return rows[i];
     }
@@ -2328,17 +2325,24 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   //     opens that pane exactly as its sidebar entry would;
   //   anywhere else: the link is followed, target=_top as written.
   // Nothing is ever sent. An ask only fills the composer.
+  //: The office has a chat of its own (the dock) everywhere but inside the
+  //: agents page, which has the one conversation already.
+  function hasDock() {
+    return !document.documentElement.classList.contains("embed") &&
+      !!document.getElementById("chatdock");
+  }
   document.addEventListener("click", function (ev) {
     // A new tab or window was asked for: that is the link's job.
     if (ev.defaultPrevented || ev.button !== 0 ||
         ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+    // The buttons beside The Brain: the team chat, or a meeting in it.
+    var btn = ev.target.closest(".chat-open");
+    if (btn) { openChat(TEAM, btn.getAttribute("data-ask") || ""); return; }
     var a = ev.target.closest("a[href]");
     if (!a) return;
     if ((a.getAttribute("href") || "").charAt(0) === "#") return;
     var path = PANE_OF[a.pathname];
     if (!path) return;
-    var shell = !HOSTED && inShell();
-    if (!HOSTED && !shell) return;
     var ask = "";
     var raw = a.href.split("ask=")[1];
     if (raw != null) {
@@ -2346,6 +2350,17 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       catch (e) { return; }                // malformed: let the link do its job
     }
     var id = a.getAttribute("data-id") || "";
+    // A chat link, with the office's own dock to open it in: "Chat" on a
+    // robot is a private window with them, the meeting button is the team
+    // window with the meeting words filled in, and nothing leaves the
+    // floor (2026-10-16, "instead of redirecting it to the ai agent tab").
+    if (raw != null && hasDock()) {
+      ev.preventDefault();
+      openChat(id || TEAM, id ? "" : ask);
+      return;
+    }
+    var shell = !HOSTED && inShell();
+    if (!HOSTED && !shell) return;
     ev.preventDefault();
     // Same origin only, both ways. The office, the agents page and the shell
     // are served by the same host, and a wildcard would hand whatever is
@@ -2392,16 +2407,23 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     draw();
   });
   document.getElementById("q").addEventListener("input", draw);
+  function showTab(name) {
+    TAB = name;
+    document.getElementById("tab-office").setAttribute("aria-selected", String(name === "office"));
+    document.getElementById("tab-activity").setAttribute("aria-selected", String(name === "activity"));
+    draw();
+    // The week of runs is read the first time the log opens, and the
+    // drawer is drawn again when it lands.
+    if (name === "activity" && !HIST_LOADED) loadHistory().then(draw);
+  }
   ["office", "activity"].forEach(function (name) {
-    document.getElementById("tab-" + name).addEventListener("click", function () {
-      TAB = name;
-      document.getElementById("tab-office").setAttribute("aria-selected", String(name === "office"));
-      document.getElementById("tab-activity").setAttribute("aria-selected", String(name === "activity"));
-      draw();
-      // The week of runs is read the first time the tab opens, and the
-      // tab is drawn again when it lands.
-      if (name === "activity" && !HIST_LOADED) loadHistory().then(draw);
-    });
+    document.getElementById("tab-" + name).addEventListener("click", function () { showTab(name); });
+  });
+  document.getElementById("logs-close").addEventListener("click", function () { showTab("office"); });
+  // The Logs button beside The Brain, which is the only way in from the
+  // shell, where the header and its Activity tab are hidden.
+  document.addEventListener("click", function (ev) {
+    if (ev.target.closest(".logs-open")) showTab(TAB === "activity" ? "office" : "activity");
   });
   ["agent", "status", "source"].forEach(function (k) {
     var sel = document.getElementById("hist-" + k);
@@ -2419,6 +2441,25 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     if (q && brain) brain.insertBefore(q, zoom || null);
   })();
 
+  initDock(S, { stateOf: function (key) {
+    if (key === TEAM) {
+      var n = S.AGENTS.filter(function (m) { return stateOf(m.id).key === "working"; }).length;
+      return { key: n ? "working" : "ready", label: n ? n + " working" : S.AGENTS.length + " agents" };
+    }
+    return stateOf(key);
+  } });
+
+  initNewAgent({
+    agents: function () { return S.AGENTS; },
+    onCreated: async function (id) {
+      // The new agent is read back from the list, so what the floor draws
+      // is what the server has, and it stands at its desk picked out.
+      try { await loadAgents(); } catch (e) { console.warn("[office] could not reload agents", e); }
+      S.SELECTED = id;
+      draw();
+    }
+  });
+
   (async function init() {
     try {
       await loadAgents();
@@ -2429,6 +2470,9 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       return;
     }
     await Promise.all([loadActivity(), loadStats(), loadSkills(), loadTodo()]);
+    // A remembered window for an agent that is gone is dropped now the
+    // roster is known.
+    pruneDock();
     // Not in the card: a panel that opens by itself takes the width the
     // floor was moved inline to get. On its own page the column is always
     // there, so showing somebody in it beats showing an empty prompt.
