@@ -10,12 +10,44 @@
   display: flex; flex-direction: column; gap: 14px;
   min-height: 0;
 }
-/* The card takes the slack, so the list stays at the top and the composer
-   stays at the bottom however tall the column is. */
-#side-agent { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+/* The conversation and the card share the slack, the conversation taking
+   the larger part (2026-10-16: the column is somewhere to ASK first). The
+   list stays at the top and the composer at the bottom however tall the
+   column is; a shut conversation gives its share back to the card, and a
+   folded card gives its share to the conversation. */
+#side-agent { flex: 1 1 42%; min-height: 0; overflow-y: auto; position: relative; }
+#side-agent.folded { flex: 0 0 auto; overflow: hidden; }
+#side-agent.folded > :not(.side-head):not(.side-shut) { display: none; }
+.side-who { min-width: 0; flex: 1 1 auto; }
+.side-fold {
+  flex: 0 0 auto; width: 28px; height: 28px; margin-left: auto;
+  display: grid; place-items: center; padding: 0;
+  background: none; border: 1px solid transparent; border-radius: 8px;
+  color: var(--muted); cursor: pointer;
+}
+.side-fold:hover { border-color: var(--border-2); color: var(--text); }
+.side-fold:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.side-fold .deskchat-caret { margin: 0; }
+#side-agent.folded .side-fold .deskchat-caret {
+  transform: rotate(-135deg) translate(-2px, -2px);
+}
 
 /* --- what the team has to do --------------------------------------------- */
+/* Compact: a few open lines in view and the rest scrolling, finished work
+   behind a disclosure. The list used to open on every crossed-out line. */
 .todo { flex: 0 0 auto; }
+.todo > .todo-list { max-height: 118px; overflow-y: auto; }
+.todo-done { margin-top: 6px; }
+.todo-done summary {
+  display: flex; align-items: baseline; gap: 8px; cursor: pointer;
+  list-style: none; padding: 4px 6px; border-radius: 7px;
+  font-size: 11px; font-weight: 600; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--muted);
+}
+.todo-done summary::-webkit-details-marker { display: none; }
+.todo-done summary:hover { background: var(--surface-2, rgba(255, 255, 255, .03)); }
+.todo-done summary .todo-n { margin-left: 0; }
+.todo-done[open] summary { color: var(--text); }
 .todo-head {
   display: flex; align-items: baseline; gap: 8px;
   margin-bottom: 8px;
@@ -89,8 +121,8 @@
 
 /* --- the conversation ----------------------------------------------------- */
 .deskchat {
-  flex: 0 0 auto; display: flex; flex-direction: column;
-  min-height: 0; max-height: 46%;
+  flex: 1 1 58%; display: flex; flex-direction: column;
+  min-height: 0;
   border-top: 1px solid var(--border); padding-top: 12px;
 }
 /* The bar: the whole title row is the button, the way a messenger window's
@@ -127,7 +159,7 @@
 .deskchat-body { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
 /* Shut, it gives the column back to the agent card above it rather than
    holding its height empty. */
-.deskchat.shut { max-height: none; }
+.deskchat.shut { flex: 0 0 auto; }
 .deskchat.shut .deskchat-body { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .deskchat-caret { transition: none; }

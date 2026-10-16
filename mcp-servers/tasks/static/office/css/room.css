@@ -168,6 +168,13 @@
   background: color-mix(in srgb, var(--glow, var(--cyan)) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--glow, var(--cyan)) 25%, transparent);
 }
+/* The totals come up when you look at the room; at rest the room is its
+   name, its CLEAN badge and its people. The agent's card says the same
+   numbers for whoever is picked, so the floor need not repeat them six
+   times over (2026-10-16). Not on a screen with no pointer. */
+.zone-foot { opacity: 0; transition: opacity .2s ease; }
+.zone:hover .zone-foot, .zone:focus-within .zone-foot { opacity: 1; }
+@media (hover: none) { .zone-foot { opacity: 1; } }
 .zone-foot {
   position: absolute; left: 12px; right: 12px; bottom: 9px;
   display: flex; justify-content: space-between; gap: 8px;

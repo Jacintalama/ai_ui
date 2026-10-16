@@ -145,7 +145,9 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   //: rather than left to overlap: a card sitting on a room hides the agent
   //: it is reporting on, which is the opposite of what it is for. Zero in
   //: the dock, where the card is under the floor and not over it.
-  var TOP_RESERVE = 120;
+  //: 70, down from 120 (2026-10-16): the card rests folded to one line
+  //: now (embed.css), so the band only has to clear that line.
+  var TOP_RESERVE = 70;
   //: The room a meeting happens in. A FIXTURE on the floor from 2026-10-08:
   //: drawn whether or not anybody is in it, because a room people are called
   //: to has to be somewhere they can already see. Every other room still
@@ -1220,6 +1222,19 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       }).join("") + '</div>';
   }
 
+  //: Whether the agent card is folded to its header row. Per browser, and
+  //: guarded like every other localStorage read here.
+  var FOLD_KEY = "aiuiOfficeCardFolded";
+  function sideFolded() {
+    try { return localStorage.getItem(FOLD_KEY) === "1"; } catch (e) { return false; }
+  }
+  function setSideFolded(folded) {
+    try {
+      if (folded) localStorage.setItem(FOLD_KEY, "1");
+      else localStorage.removeItem(FOLD_KEY);
+    } catch (e) { /* obeyed now, forgotten next time */ }
+  }
+
   function drawSide() {
     // The CARD, not the whole column. The to-do above it and the
     // conversation below it are not redrawn, and must not be: rebuilding the
@@ -1252,13 +1267,21 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
         '</ul>'
       : '<p class="empty">No runs recorded yet.</p>';
 
+    side.classList.toggle("folded", sideFolded());
     side.innerHTML =
       '<button class="side-shut" type="button" id="side-shut" ' +
         'aria-label="Close the details">&times;</button>' +
       '<div class="side-head">' +
         '<div class="side-bot">' + robot(m.id, st.key, "p") + '</div>' +
-        '<div><h2>' + esc(m.name || m.id) + '</h2>' +
+        '<div class="side-who"><h2>' + esc(m.name || m.id) + '</h2>' +
         '<div class="st"><i class="dot ' + st.key + '"></i>' + esc(st.label) + '</div></div>' +
+        // The card folds to this row, so the conversation under it gets the
+        // column. Remembered per browser, like the conversation's own bar.
+        '<button class="side-fold" type="button" id="side-fold" ' +
+          'aria-expanded="' + (sideFolded() ? "false" : "true") + '" ' +
+          'aria-controls="side-agent" title="' +
+          (sideFolded() ? "Show the details" : "Fold the details away") + '">' +
+          '<span class="deskchat-caret" aria-hidden="true"></span></button>' +
       '</div>' +
       '<p class="role" style="margin:9px 0 0;color:var(--muted)">' +
         esc(roleOf(m) || "No role set") + '</p>' +
@@ -1718,8 +1741,13 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       '</div>' +
       (open.length ? '<ul class="todo-list">' + open.map(function (t) { return line(t, false); }).join("") + '</ul>'
                    : '<p class="todo-none">Nothing outstanding.</p>') +
-      (done.length ? '<ul class="todo-list todo-recent">' +
-         done.map(function (t) { return line(t, true); }).join("") + '</ul>' : "");
+      // Finished work behind a disclosure rather than struck through under
+      // the open work: a column that opened on four crossed-out lines read
+      // as clutter ("revise the ui", 2026-10-16). The count says it is there.
+      (done.length ? '<details class="todo-done"><summary>Recently done' +
+         '<span class="todo-n">' + done.length + '</span></summary>' +
+         '<ul class="todo-list todo-recent">' +
+         done.map(function (t) { return line(t, true); }).join("") + '</ul></details>' : "");
   }
 
   document.getElementById("rooms").addEventListener("click", function (ev) {
@@ -2070,6 +2098,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
 
   document.getElementById("side").addEventListener("click", function (ev) {
     if (ev.target.closest("#side-shut")) { S.SELECTED = null; draw(); return; }
+    if (ev.target.closest("#side-fold")) { setSideFolded(!sideFolded()); drawSide(); drawZoom(true); return; }
     var sw = ev.target.closest(".swatch");
     if (!sw || !S.SELECTED) return;
     // agent.js changes the colour; the page is what redraws. It used to

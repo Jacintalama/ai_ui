@@ -1977,8 +1977,21 @@ def test_what_a_robot_says_travels_with_it(page):
 
 def test_the_line_is_drawn_at_the_walkers_pace(page):
     """The line from the asker's desk to the colleague draws itself in the
-    time the asker takes to walk it: the same --d on both."""
-    _with_handoff(page)
+    time the asker takes to walk it: the same --d on both.
+
+    Read straight after the redraw, not after _with_handoff's half second:
+    Ada and Iris stand close enough now that the whole walk is the 450ms
+    floor, and the drawing is over before that wait is."""
+    import datetime
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    page.route("**/agents/activity**", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"activity": ACTIVITY,
+                         "handoffs": [{"from": "agent-research-assistant-0001",
+                                       "to": "agent-iris-a103", "status": "ok",
+                                       "at": now}]})))
+    page.evaluate("() => window.aiuiRefreshOffice()")
+    page.wait_for_selector(".talk-line", state="attached", timeout=3000)
     got = page.evaluate(
         "() => {"
         " const line = document.querySelector('.talk-line');"
@@ -2208,3 +2221,109 @@ def test_a_room_is_not_cluttered_with_furniture(page):
     assert page.locator(".zone .zone-floor").count() == 0
     assert page.locator(".zone i:not(.zone-dot)").count() == 0
     assert page.locator(".who-slot .desk").count() == page.locator(".who-slot").count()
+
+
+# --- the layout pass of 2026-10-16 ----------------------------------------
+# "revise the ui what is the better?" Every earlier ask is kept (the live
+# activity card top right over the floor, a Chat for every agent, the to-do
+# at the top of the column); what changed is how much of each is on screen
+# at rest.
+
+def test_the_live_card_rests_on_its_newest_line(page):
+    """One row until the pointer reaches it, so the rooms get the height
+    the 120px band used to hold for the card."""
+    got = page.evaluate(
+        "() => { const s = document.getElementById('strip');"
+        " const rows = [...s.querySelectorAll('.feed li')];"
+        " return { h: s.getBoundingClientRect().height,"
+        "          shown: rows.filter(li => getComputedStyle(li).display !== 'none').length,"
+        "          title: getComputedStyle(s.querySelector('h2')).display }; }")
+    assert got["h"] <= 60, got
+    assert got["shown"] == 1, got
+    assert got["title"] == "none", got
+    page.locator("#strip").hover()
+    page.wait_for_timeout(350)
+    got = page.evaluate(
+        "() => { const s = document.getElementById('strip');"
+        " const rows = [...s.querySelectorAll('.feed li')];"
+        " return { shown: rows.filter(li => getComputedStyle(li).display !== 'none').length,"
+        "          title: getComputedStyle(s.querySelector('h2')).display }; }")
+    assert got["shown"] == 2 and got["title"] != "none", got
+
+
+def test_the_rooms_start_closer_to_the_top(page):
+    top = page.evaluate(
+        "() => Math.min(...[...document.querySelectorAll('.zone')]"
+        "  .map(z => parseFloat(z.style.top)))")
+    assert top <= 100, top
+
+
+def test_a_chat_pill_shows_when_you_reach_for_its_agent(page):
+    iris = page.locator('.who-slot[data-id="agent-iris-a103"]')
+    assert iris.locator(".who-chat").count() == 1
+    at_rest = iris.locator(".who-chat").evaluate("el => getComputedStyle(el).opacity")
+    assert at_rest == "0", at_rest
+    iris.locator(".who").hover()
+    page.wait_for_timeout(250)
+    assert iris.locator(".who-chat").evaluate("el => getComputedStyle(el).opacity") == "1"
+
+
+def test_the_picked_agents_pill_stays(page):
+    page.locator('.who[data-id="agent-iris-a103"]').click()
+    page.mouse.move(5, 5)
+    page.wait_for_timeout(250)
+    assert page.locator('.who-slot[data-id="agent-iris-a103"] .who-chat').evaluate(
+        "el => getComputedStyle(el).opacity") == "1"
+
+
+def test_a_rooms_totals_come_up_on_hover(page):
+    room = page.locator('.zone[data-room="dev"]')
+    assert room.locator(".zone-foot").evaluate("el => getComputedStyle(el).opacity") == "0"
+    # A corner of the room, not its middle, where the robot stands.
+    room.hover(position={"x": 24, "y": 24})
+    page.wait_for_timeout(250)
+    assert room.locator(".zone-foot").evaluate("el => getComputedStyle(el).opacity") == "1"
+    assert "RUNS: 801" in room.inner_text()
+
+
+def test_the_agent_card_folds_and_the_conversation_grows(page):
+    before = page.locator("#deskchat").bounding_box()["height"]
+    page.locator("#side-fold").click()
+    page.wait_for_timeout(200)
+    assert "folded" in (page.locator("#side-agent").get_attribute("class") or "")
+    assert page.locator("#side-agent h2").is_visible()
+    assert not page.locator("#side-agent .stats").is_visible()
+    after = page.locator("#deskchat").bounding_box()["height"]
+    assert after > before, (before, after)
+    page.locator("#side-fold").click()
+    page.wait_for_timeout(200)
+    assert page.locator("#side-agent .stats").is_visible()
+
+
+def test_the_fold_is_remembered(page):
+    page.locator("#side-fold").click()
+    page.reload()
+    page.wait_for_selector(".who", state="visible")
+    assert "folded" in (page.locator("#side-agent").get_attribute("class") or "")
+    page.locator("#side-fold").click()
+
+
+def test_finished_work_is_behind_a_disclosure(page):
+    _with_todo(page,
+               [{"id": "1", "what": "Still going", "who": "Rex",
+                 "priority": "important", "status": "running", "kind": "build", "at": None}],
+               [{"id": "9", "what": "Weekly report", "who": "Ada",
+                 "priority": "important", "status": "completed", "kind": "research",
+                 "at": "2026-10-09T11:00:00+00:00"}])
+    done = page.locator("#todo .todo-done")
+    assert done.count() == 1
+    assert "recently done" in done.locator("summary").inner_text().lower()
+    assert not page.locator("#todo .todo-item.done").is_visible()
+    done.locator("summary").click()
+    assert page.locator("#todo .todo-item.done").is_visible()
+
+
+def test_the_conversation_takes_the_larger_share_of_the_column(page):
+    chat = page.locator("#deskchat").bounding_box()["height"]
+    card = page.locator("#side-agent").bounding_box()["height"]
+    assert chat > card, (chat, card)
