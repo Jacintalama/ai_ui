@@ -595,3 +595,54 @@ def test_a_bad_step_number_draws_no_label():
         {"role": "assistant", "agent_name": "Ada", "content": "x",
          "step": "two", "of": None}])
     assert "Step" not in html and ">x<" in html
+
+
+# --- when it was said (2026-10-16) ------------------------------------------
+
+def test_a_message_carries_the_instant_it_was_said():
+    html = render.turn_open("hi", "abc123def456", at="2026-10-16T09:15:00+00:00")
+    assert 'class="am user" data-at="2026-10-16T09:15:00+00:00"' in html
+    bubble = render.agent_bubble("Ada", "hello", at="2026-10-16T09:15:30+00:00")
+    assert 'data-at="2026-10-16T09:15:30+00:00"' in bubble
+
+
+def test_a_message_without_a_time_carries_none():
+    assert "data-at" not in render.turn_open("hi", "abc123def456")
+    assert "data-at" not in render.agent_bubble("Ada", "hello")
+
+
+def test_the_time_is_escaped_like_everything_else():
+    assert '"><img' not in render.turn_open("hi", "abc", at='"><img onerror=x>')
+
+
+def test_a_replayed_thread_puts_a_line_between_days():
+    html = render.thread([
+        {"role": "user", "content": "yesterday's question", "turn_id": "t1",
+         "at": "2026-10-15T20:00:00+00:00"},
+        {"role": "assistant", "agent_name": "Ada", "content": "an answer",
+         "at": "2026-10-15T20:00:10+00:00"},
+        {"role": "user", "content": "today's question", "turn_id": "t2",
+         "at": "2026-10-16T08:00:00+00:00"},
+    ])
+    assert html.count('class="aday"') == 2
+    assert 'datetime="2026-10-15"' in html and 'datetime="2026-10-16"' in html
+    # The day line is before the turn, not inside it.
+    assert html.index('datetime="2026-10-16"') < html.index('id="aturn-t2"')
+
+
+def test_messages_from_before_times_were_kept_draw_no_day_line():
+    html = render.thread([
+        {"role": "user", "content": "old", "turn_id": "t1"},
+        {"role": "assistant", "agent_name": "Ada", "content": "older answer"},
+    ])
+    assert 'class="aday"' not in html
+    assert "data-at" not in html
+
+
+def test_one_day_line_per_day_not_per_message():
+    html = render.thread([
+        {"role": "user", "content": "a", "turn_id": "t1", "at": "2026-10-16T08:00:00+00:00"},
+        {"role": "assistant", "agent_name": "Ada", "content": "b", "at": "2026-10-16T08:00:05+00:00"},
+        {"role": "user", "content": "c", "turn_id": "t2", "at": "2026-10-16T09:00:00+00:00"},
+    ])
+    assert html.count('class="aday"') == 1

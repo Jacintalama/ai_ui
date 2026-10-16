@@ -95,7 +95,20 @@ def turn_status_target(turn_id: str) -> str:
     return f"#aturn-{esc(turn_id)} .aturn-status"
 
 
-def turn_open(text: str, turn_id: str) -> str:
+def _when(at) -> str:
+    """The data-at attribute for a message said at `at`, or nothing. The
+    browser formats it (agent-chat.js stampTimes) in the reader's own time
+    zone; the server only passes the recorded instant through."""
+    return f' data-at="{esc(str(at))}"' if at else ""
+
+
+def day_line(day: str) -> str:
+    """A line between messages from different days, drawn by thread().
+    The browser rewrites the date as Today, Yesterday or the weekday."""
+    return f'<div class="aday"><time datetime="{esc(day)}">{esc(day)}</time></div>'
+
+
+def turn_open(text: str, turn_id: str, at=None) -> str:
     """One turn: the person's message, a status row, and room for answers.
 
     Carries its own id because more than one turn can be open on screen at
@@ -105,7 +118,7 @@ def turn_open(text: str, turn_id: str) -> str:
     turn it belongs to regardless of what has been appended after it since.
     """
     return (f'<div class="aturn" id="aturn-{esc(turn_id)}">'
-            '<div class="am user"><div class="ab">'
+            f'<div class="am user"{_when(at)}><div class="ab">'
             f'{esc(text)}</div></div>'
             '<div class="aturn-status"></div>'
             '<div class="aturn-body"></div>')
@@ -225,7 +238,7 @@ def _without_route_footer(content: str) -> str:
 
 
 def agent_bubble(name: str, content: str, replying_to=None,
-                 label: str = "") -> str:
+                 label: str = "", at=None) -> str:
     """One agent's finished answer: its own row, its own name, its own avatar.
 
     This is the entire feature. Nothing is stacked into another agent's bubble,
@@ -255,7 +268,7 @@ def agent_bubble(name: str, content: str, replying_to=None,
     # data-agent is what the thread groups by: two answers in a row from
     # the same agent share one avatar and one name, the way a messenger
     # draws a run of messages from one person (agent-chat.js groupBubbles).
-    return (f'<div class="am agent" data-agent="{esc(name)}">'
+    return (f'<div class="am agent" data-agent="{esc(name)}"{_when(at)}>'
             f'{_avatar(name)}'
             '<div class="abody">'
             f'{_quote(replying_to)}'
@@ -531,14 +544,25 @@ def thread(messages: list[dict], private: bool = False,
     jobs = jobs if isinstance(jobs, dict) else {}
     out = []
     open_turn = False
+    last_day = None
     for m in messages or []:
         role = m.get("role")
         content = m.get("content") or ""
+        # A day line where the day changes, before whatever is said on the
+        # new day. Only messages that carry a time can move the day; older
+        # ones have none and sit under whatever line came before them.
+        at = m.get("at") if isinstance(m.get("at"), str) else None
+        if at and role in ("user", "assistant") and at[:10] != last_day:
+            if open_turn and role == "user":
+                out.append(turn_close())
+                open_turn = False
+            out.append(day_line(at[:10]))
+            last_day = at[:10]
         if role == "user":
             if open_turn:
                 out.append(turn_close())
             turn_id = str(m.get("turn_id") or new_turn_id())
-            out.append(turn_open(content, turn_id))
+            out.append(turn_open(content, turn_id, at=at))
             open_turn = True
             continue
         if role == "note":
@@ -568,7 +592,7 @@ def thread(messages: list[dict], private: bool = False,
                 # screen a moment ago.
                 out.append(agent_bubble(name, shown,
                                         m.get("replying_to"),
-                                        label=step_label(m)))
+                                        label=step_label(m), at=at))
             awaiting = m.get("awaiting")
             if isinstance(awaiting, dict) and awaiting.get("calls"):
                 out.append(approval_bubble(name,

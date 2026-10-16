@@ -38,6 +38,11 @@
 
 * { box-sizing: border-box; }
 
+/* The hidden attribute wins over any display rule a component sets, so a
+   panel that is display:flex when shown is still gone when the script
+   says hidden. Without this the history filters stayed on screen. */
+[hidden] { display: none !important; }
+
 body {
     margin: 0; background: var(--base); color: var(--text);
     font-family: var(--font-ui); font-size: 14px; line-height: 1.5;

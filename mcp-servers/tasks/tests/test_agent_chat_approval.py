@@ -617,7 +617,10 @@ def test_an_ordinary_question_never_reaches_the_job_worker(monkeypatch):
                headers=_hdr())
     assert "Sent it." in r.text and "Step" not in r.text
     assert got == []
-    stored = mod.store.get_session(EMAIL).messages[-1]
+    stored = dict(mod.store.get_session(EMAIL).messages[-1])
+    # When it was said rides on every stored message now (2026-10-16); the
+    # shape this test pins is everything else.
+    assert stored.pop("at", None)
     assert stored == {"role": "assistant", "agent_id": "agent-a",
                       "agent_name": "Ada", "content": "Sent it."}
 

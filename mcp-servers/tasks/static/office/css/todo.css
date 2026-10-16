@@ -32,6 +32,31 @@
   transform: rotate(-135deg) translate(-2px, -2px);
 }
 
+/* --- what needs you ------------------------------------------------------- */
+/* First in the column and lit in the waiting amber, because it is the one
+   thing a person opening the office wants to know. Gone when empty. */
+.needs {
+  flex: 0 0 auto; padding: 10px 12px; border-radius: var(--radius-lg, 12px);
+  background: color-mix(in srgb, #fbbf24 9%, var(--surface-2));
+  border: 1px solid color-mix(in srgb, #fbbf24 40%, transparent);
+}
+.needs-head {
+  display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px;
+  font-size: 11px; font-weight: 700; letter-spacing: .12em;
+  text-transform: uppercase; color: color-mix(in srgb, #fbbf24 85%, white);
+}
+.needs-head .todo-n { color: inherit; }
+.needs-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.needs-item {
+  display: flex; align-items: center; gap: 8px; font-size: 12.5px;
+}
+.needs-item .dot { background: #fbbf24; }
+.needs-what { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.needs-item .btn {
+  flex: 0 0 auto; width: auto; margin: 0; padding: 4px 10px; font-size: 11.5px;
+  border-radius: 999px;
+}
+
 /* --- what the team has to do --------------------------------------------- */
 /* Compact: a few open lines in view and the rest scrolling, finished work
    behind a disclosure. The list used to open on every crossed-out line. */

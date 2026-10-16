@@ -337,6 +337,23 @@
   from { opacity: 0; transform: translate(6px, 4px); }
   to   { opacity: 1; transform: translate(0, 0); }
 }
+/* When it was said: beside the bubble, shown when the row is hovered or
+   holds focus, the way a messenger reveals a time. A message stored before
+   times were recorded has none and shows nothing. */
+.awhen {
+  flex: 0 0 auto; align-self: center; font-size: 12px; color: var(--muted);
+  opacity: 0; transition: opacity .15s ease; white-space: nowrap;
+}
+.am:hover .awhen, .am:focus-within .awhen { opacity: 1; }
+@media (hover: none) { .awhen { opacity: .7; } }
+/* A line between days, centred like the room's own lines. */
+.aday {
+  display: flex; align-items: center; gap: 10px; margin: 8px 0 2px;
+  font-size: 12px; color: var(--muted);
+}
+.aday::before, .aday::after {
+  content: ""; flex: 1 1 auto; height: 1px; background: var(--border);
+}
 /* The room's own lines (a skipped agent, a hint) fade without rising:
    they are not from anybody, so they should not arrive like somebody. */
 .am.note { animation: note-in .35s ease-out both; }

@@ -97,10 +97,56 @@
     for (var i = 0; i < texts.length; i++) { renderMarkdown(texts[i]); }
   }
 
+  //: When a message was said, in the reader's own clock. The server stores
+  //: the instant (data-at, agent_chat_render._when); the browser puts a
+  //: <time> beside the bubble that shows on hover, the way a messenger
+  //: does, and rewrites each day line as Today, Yesterday or the weekday.
+  function sameDay(a, b) {
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() &&
+      a.getDate() === b.getDate();
+  }
+  function clock(d) {
+    try { return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
+    catch (e) { return d.getHours() + ":" + ("0" + d.getMinutes()).slice(-2); }
+  }
+  function dayWords(d) {
+    var now = new Date(), yesterday = new Date(now.getTime() - 86400000);
+    if (sameDay(d, now)) return "Today";
+    if (sameDay(d, yesterday)) return "Yesterday";
+    try {
+      return d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+    } catch (e) { return d.toDateString(); }
+  }
+  function stampTimes() {
+    var el = thread();
+    if (!el) return;
+    el.querySelectorAll(".am[data-at]:not([data-stamped])").forEach(function (row) {
+      var d = new Date(row.getAttribute("data-at"));
+      row.setAttribute("data-stamped", "1");
+      if (isNaN(d.getTime())) return;
+      var t = document.createElement("time");
+      t.className = "awhen";
+      t.setAttribute("datetime", row.getAttribute("data-at"));
+      t.textContent = (sameDay(d, new Date()) ? "" : dayWords(d) + " ") + clock(d);
+      // Beside the bubble, on the side the row has room: before a message
+      // of yours (it sits on the right), after an agent's (on the left).
+      if (row.classList.contains("user")) row.insertBefore(t, row.firstChild);
+      else row.appendChild(t);
+    });
+    el.querySelectorAll(".aday time:not([data-stamped])").forEach(function (t) {
+      t.setAttribute("data-stamped", "1");
+      var parts = (t.getAttribute("datetime") || "").split("-");
+      if (parts.length !== 3) return;
+      var d = new Date(+parts[0], +parts[1] - 1, +parts[2]);
+      if (!isNaN(d.getTime())) t.textContent = dayWords(d);
+    });
+  }
+
   function settle() {
     dropInvitation();
     renderAll();
     groupBubbles();
+    stampTimes();
     toBottom();
   }
 

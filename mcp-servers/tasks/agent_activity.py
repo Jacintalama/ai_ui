@@ -458,6 +458,135 @@ async def handoffs_for(user_email: str) -> list[dict]:
     return [d for d in drawn if d]
 
 
+#: How far back the activity log reaches when a page opens. Hours: "what
+#: happened while I was away" is a question about today, not about the
+#: month, and the history view below is for the rest.
+EVENTS_HOURS = 24
+EVENTS_LIMIT = 60
+
+
+def _shape_events(runs, steps, now: datetime) -> list[dict]:
+    """Recorded runs and handoffs as the log lines the office draws, newest
+    first. A run is one line while it is open and two once it has finished
+    (started, then finished/failed/waiting at its finish time), so the log
+    reads in the order things happened rather than one line per run."""
+    out = []
+    for r in runs:
+        started = r["started_at"]
+        out.append({"at": started.isoformat(), "agent_id": r["agent_id"],
+                    "key": "working", "text": "started working" +
+                    (" from " + r["source"] if r["source"] else "")})
+        finished = r["finished_at"]
+        if finished is None:
+            if now - started > _stale_after(r["source"]):
+                out.append({"at": started.isoformat(), "agent_id": r["agent_id"],
+                            "key": "failed", "text": "never finished"})
+            continue
+        status = r["status"] or "finished"
+        key = ("waiting" if status == "waiting" else
+               "failed" if status == "failed" else "ready")
+        text = ("is waiting on you" if status == "waiting" else
+                "failed" if status == "failed" else status)
+        out.append({"at": finished.isoformat(), "agent_id": r["agent_id"],
+                    "key": key, "text": text})
+    for st in steps:
+        shaped = _shape_handoff(st)
+        if not shaped:
+            continue
+        refused = shaped["status"] in ("refused", "failed")
+        out.append({"at": shaped["at"], "agent_id": shaped["from"],
+                    "target_agent_id": shaped["to"],
+                    "key": "failed" if refused else "working",
+                    "text": "could not reach" if refused else "asked"})
+    out.sort(key=lambda e: e["at"], reverse=True)
+    return out[:EVENTS_LIMIT]
+
+
+async def events_for(user_email: str) -> list[dict]:
+    """The last day of this person's agents' recorded activity, as log
+    lines, so the office's live card survives a reload and can say what
+    happened while nobody was looking. Scoped to the caller like every
+    other read here. Empty on any database trouble: the floor still draws."""
+    if not user_email:
+        return []
+    try:
+        async with session() as s:
+            runs = (await s.execute(
+                sql_text(
+                    "SELECT agent_id, source, started_at, finished_at, status "
+                    "FROM tasks.agent_run "
+                    "WHERE user_email = :email "
+                    "  AND started_at > now() - make_interval(hours => :hours) "
+                    "ORDER BY started_at DESC LIMIT :lim"),
+                {"email": user_email, "hours": EVENTS_HOURS,
+                 "lim": EVENTS_LIMIT})).mappings().all()
+            steps = (await s.execute(
+                sql_text(
+                    "SELECT agent_id, target_agent_id, status, started_at "
+                    "FROM tasks.agent_step "
+                    "WHERE user_email = :email AND tool = :tool "
+                    "  AND started_at > now() - make_interval(hours => :hours) "
+                    "ORDER BY started_at DESC LIMIT :lim"),
+                {"email": user_email, "tool": "ask_colleague",
+                 "hours": EVENTS_HOURS, "lim": EVENTS_LIMIT})).mappings().all()
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not read agent events", exc_info=True)
+        return []
+    return _shape_events(runs, steps, datetime.now(timezone.utc))
+
+
+#: How far back the history view reaches. A week of runs is a few hundred
+#: rows for a busy office and answers "what did they do, and what did it
+#: cost" without a date picker.
+HISTORY_DAYS = 7
+HISTORY_LIMIT = 500
+
+
+def _shape_history_row(r) -> dict:
+    started, finished = r["started_at"], r["finished_at"]
+    return {"agent_id": r["agent_id"], "source": r["source"],
+            "status": r["status"] or ("running" if finished is None else "finished"),
+            "started_at": started.isoformat(),
+            "seconds": (max(0, int((finished - started).total_seconds()))
+                        if finished is not None else None),
+            "cost_usd": float(r["cost_usd"]) if r["cost_usd"] is not None else None,
+            "model": r["model"]}
+
+
+def _spend_by_day(rows: list[dict]) -> list[dict]:
+    """Cost per calendar day (UTC), oldest first, from shaped rows."""
+    days: dict[str, float] = {}
+    for r in rows:
+        day = r["started_at"][:10]
+        days[day] = days.get(day, 0.0) + (r["cost_usd"] or 0.0)
+    return [{"day": d, "cost_usd": round(c, 4)} for d, c in sorted(days.items())]
+
+
+async def history_for(user_email: str) -> dict:
+    """Every run of this person's agents in the last week, newest first,
+    with what each cost and the spend per day. Every number is a
+    tasks.agent_run row; the view filters, it does not invent."""
+    if not user_email:
+        return {"runs": [], "spend": [], "days": HISTORY_DAYS}
+    try:
+        async with session() as s:
+            rows = (await s.execute(
+                sql_text(
+                    "SELECT agent_id, source, started_at, finished_at, status, "
+                    "       cost_usd, model "
+                    "FROM tasks.agent_run "
+                    "WHERE user_email = :email "
+                    "  AND started_at > now() - make_interval(days => :days) "
+                    "ORDER BY started_at DESC LIMIT :lim"),
+                {"email": user_email, "days": HISTORY_DAYS,
+                 "lim": HISTORY_LIMIT})).mappings().all()
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not read agent history", exc_info=True)
+        return {"runs": [], "spend": [], "days": HISTORY_DAYS}
+    shaped = [_shape_history_row(r) for r in rows]
+    return {"runs": shaped, "spend": _spend_by_day(shaped), "days": HISTORY_DAYS}
+
+
 async def activity_for(user_email: str) -> dict:
     """The latest run of each of this person's agents, keyed by agent id.
 

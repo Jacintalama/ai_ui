@@ -40,13 +40,15 @@ AGENTS = [
 
 THREAD = render.thread([
     {"role": "user", "content": "What did we decide about the launch?",
-     "turn_id": "t1"},
+     "turn_id": "t1", "at": "2026-10-15T09:15:00+00:00"},
     {"role": "assistant", "agent_name": "Ada", "content": "We moved it to **Thursday**."},
     {"role": "assistant", "agent_name": "Ada", "content": "Marketing wanted one more day."},
     {"role": "assistant", "agent_name": "Ada", "content": "I put it on the calendar."},
     {"role": "note", "content": "Ada asked Mia"},
-    {"role": "assistant", "agent_name": "Mia", "content": "Inbox is clear."},
-    {"role": "user", "content": "Can you draft the announcement?", "turn_id": "t2"},
+    {"role": "assistant", "agent_name": "Mia", "content": "Inbox is clear.",
+     "at": "2026-10-15T09:16:00+00:00"},
+    {"role": "user", "content": "Can you draft the announcement?", "turn_id": "t2",
+     "at": "2026-10-16T08:00:00+00:00"},
 ])
 #: What the stream delivers while Ada answers the second turn. Put into the
 #: turn's status row after the thread has loaded, the way the round does
@@ -262,3 +264,34 @@ def test_the_thread_is_scrolled_to_its_newest_message(page):
     got = page.locator("#agent-thread").evaluate(
         "el => ({ top: el.scrollTop, max: el.scrollHeight - el.clientHeight })")
     assert got["max"] == 0 or got["top"] >= got["max"] - 2, got
+
+
+def test_when_a_message_was_said_shows_on_hover(page):
+    """The server stores the instant; the browser puts the reader's own clock
+    beside the bubble, hidden until the row is hovered."""
+    row = page.locator('#agent-thread .am.agent[data-agent="Mia"]').first
+    when = row.locator("time.awhen")
+    assert when.count() == 1
+    assert when.get_attribute("datetime") == "2026-10-15T09:16:00+00:00"
+    assert re.search(r"\d{1,2}:\d{2}", when.inner_text()), when.inner_text()
+    assert when.evaluate("el => getComputedStyle(el).opacity") == "0"
+    row.hover()
+    page.wait_for_timeout(250)
+    assert when.evaluate("el => getComputedStyle(el).opacity") == "1"
+
+
+def test_a_message_from_before_times_were_kept_shows_no_time(page):
+    ada = page.locator('#agent-thread .am.agent[data-agent="Ada"]').first
+    assert ada.locator("time.awhen").count() == 0
+
+
+def test_a_day_line_sits_between_days(page):
+    days = page.locator("#agent-thread .aday")
+    assert days.count() == 2
+    words = [d.inner_text() for d in days.all()]
+    # Rewritten as words, never left as a bare ISO date.
+    assert not any(re.fullmatch(r"\d{4}-\d{2}-\d{2}", w) for w in words), words
+    assert page.evaluate(
+        "() => { const d = document.querySelectorAll('.aday')[1];"
+        " const t = document.getElementById('aturn-t2');"
+        " return d.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING; }")

@@ -122,7 +122,24 @@
     </div>
 
     <section id="panel-activity" hidden>
-      <p class="section-title">Most recent run of each agent</p>
+      <!-- A week of runs from tasks.agent_run (2026-10-16), filtered here
+           and never invented; before this the tab was one line per agent.
+           The spend strip is cost_usd per calendar day, UTC. -->
+      <div class="hist-head">
+        <p class="section-title" id="hist-title">Most recent run of each agent</p>
+        <div class="hist-filters" id="hist-filters" hidden>
+          <select id="hist-agent" aria-label="Agent"><option value="">Every agent</option></select>
+          <select id="hist-status" aria-label="Outcome">
+            <option value="">Any outcome</option>
+            <option value="completed">Completed</option>
+            <option value="failed">Failed</option>
+            <option value="waiting">Waiting on you</option>
+            <option value="running">Running</option>
+          </select>
+          <select id="hist-source" aria-label="Started from"><option value="">Started anywhere</option></select>
+        </div>
+      </div>
+      <div class="spend" id="spend" hidden></div>
       <ul class="rows" id="activity-feed"></ul>
       <p class="note">
         This is every run the platform records. It does not show which tool a
@@ -134,6 +151,13 @@
   </main>
 
   <aside class="side" id="side">
+    <!-- What needs you, before anything else. Every row is an agent whose
+         last run stopped to wait on the person (tasks.agent_run status
+         waiting, the same row that gives the robot its wide-eyed face).
+         Hidden outright when nobody is waiting: a tray that says "nothing"
+         is a tray in the way. -->
+    <section class="needs" id="needs" aria-label="What needs you" hidden></section>
+
     <!-- What the team still has to do, above whoever is selected. Read from
          tasks.items, which has recorded it since migration 001 and which
          nothing on this surface has ever shown: the live feed says what

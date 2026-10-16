@@ -2014,10 +2014,13 @@ def test_a_redraw_does_not_restart_a_walk(page):
     act = {"agent-iris-a103": {"state": "working", "running_for_seconds": 2,
                                "last_run_at": at, "source": "meeting"}}
     _activity(page, act)
-    page.wait_for_timeout(200)
+    # Straight away, not after a pause: with the rooms as close as they are
+    # now the whole walk can be the 450ms floor, and a wait would let it
+    # end before the redraw this test is about.
+    page.wait_for_selector(".who-slot.walking", timeout=2000)
     page.evaluate("() => { document.querySelector('.who-slot[data-id=\"agent-iris-a103\"]')._keep = 1; }")
     page.evaluate("() => window.aiuiRefreshOffice()")
-    page.wait_for_timeout(200)
+    page.wait_for_timeout(60)
     got = page.evaluate(
         "() => { const el = document.querySelector('.who-slot[data-id=\"agent-iris-a103\"]');"
         " return { same: el._keep === 1, walking: el.classList.contains('walking'),"
@@ -2327,3 +2330,136 @@ def test_the_conversation_takes_the_larger_share_of_the_column(page):
     chat = page.locator("#deskchat").bounding_box()["height"]
     card = page.locator("#side-agent").bounding_box()["height"]
     assert chat > card, (chat, card)
+
+
+# --- what needs you (2026-10-16) ---------------------------------------------
+
+def test_nobody_waiting_means_no_tray(page):
+    """A tray that says "nothing" is a tray in the way."""
+    assert page.locator("#needs").is_hidden()
+
+
+def test_an_agent_waiting_on_you_is_first_in_the_column(page):
+    _activity(page, {"agent-iris-a103": {"state": "waiting", "last_status": "waiting",
+                                          "last_run_at": "2026-10-16T08:00:00+00:00",
+                                          "source": "channel"}})
+    page.wait_for_timeout(300)
+    tray = page.locator("#needs")
+    assert tray.is_visible()
+    assert "Iris" in tray.inner_text() and "waiting on you" in tray.inner_text()
+    # First thing in the column, above the to-do and the card.
+    assert page.evaluate(
+        "() => document.getElementById('needs').getBoundingClientRect().top"
+        "  < document.getElementById('todo').getBoundingClientRect().top")
+    # Answering goes to Iris's own conversation, where the question is.
+    href = tray.locator("a.needs-answer").get_attribute("href")
+    assert "Iris" in href and tray.locator("a.needs-answer").get_attribute("target") == "_top"
+
+
+def test_the_tray_empties_when_the_question_is_answered(page):
+    _activity(page, {"agent-iris-a103": {"state": "waiting", "last_status": "waiting",
+                                          "last_run_at": "2026-10-16T08:00:00+00:00",
+                                          "source": "channel"}})
+    page.wait_for_timeout(200)
+    assert page.locator("#needs").is_visible()
+    _activity(page, {"agent-iris-a103": {"state": "ready", "last_status": "completed",
+                                          "last_run_at": "2026-10-16T08:00:00+00:00",
+                                          "source": "channel"}})
+    page.wait_for_timeout(200)
+    assert page.locator("#needs").is_hidden()
+
+
+# --- the log remembers (2026-10-16) ------------------------------------------
+
+def test_the_live_card_opens_on_what_the_server_recorded(page):
+    """Every line comes from /agents/activity's events, so a reload does not
+    start the log empty."""
+    import datetime
+    now = datetime.datetime.now(datetime.timezone.utc)
+    events = [
+        {"at": (now - datetime.timedelta(minutes=3)).isoformat(),
+         "agent_id": "agent-iris-a103", "key": "working", "text": "started working from schedule"},
+        {"at": (now - datetime.timedelta(minutes=2)).isoformat(),
+         "agent_id": "agent-iris-a103", "key": "ready", "text": "completed"},
+        {"at": (now - datetime.timedelta(minutes=1)).isoformat(),
+         "agent_id": "agent-research-assistant-0001", "target_agent_id": "agent-iris-a103",
+         "key": "working", "text": "asked"},
+        {"at": now.isoformat(), "agent_id": "agent-not-mine", "key": "ready", "text": "completed"},
+    ]
+    page.route("**/agents/activity**", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"activity": ACTIVITY, "handoffs": [], "events": events})))
+    page.evaluate("() => window.aiuiRefreshOffice()")
+    page.wait_for_timeout(300)
+    lines = page.locator("#live li").all_inner_texts()
+    assert any("Ada" in l and "asked Iris" in l for l in lines), lines
+    assert any("Iris" in l and "completed" in l for l in lines), lines
+    assert any("Iris" in l and "started working from schedule" in l for l in lines), lines
+    assert not any("agent-not-mine" in l for l in lines), lines
+    # Newest first.
+    asked = next(i for i, l in enumerate(lines) if "asked Iris" in l)
+    started = next(i for i, l in enumerate(lines) if "started working from schedule" in l)
+    assert asked < started, lines
+
+
+# --- the history view (2026-10-16) -------------------------------------------
+
+def _with_history(page, runs, spend):
+    page.route("**/agents/history**", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"runs": runs, "spend": spend, "days": 7})))
+    page.locator("#tab-activity").click()
+    page.wait_for_selector("#hist-filters:not([hidden])", timeout=3000)
+
+
+HISTORY = [
+    {"agent_id": "agent-research-assistant-0001", "source": "channel", "status": "completed",
+     "started_at": "2026-10-16T09:00:00+00:00", "seconds": 31, "cost_usd": 0.05, "model": "gpt-5"},
+    {"agent_id": "agent-research-assistant-0001", "source": "schedule", "status": "failed",
+     "started_at": "2026-10-15T09:00:00+00:00", "seconds": 4, "cost_usd": 0.01, "model": "gpt-5"},
+    {"agent_id": "agent-iris-a103", "source": "channel", "status": "waiting",
+     "started_at": "2026-10-14T09:00:00+00:00", "seconds": 2, "cost_usd": None, "model": None},
+]
+SPEND = [{"day": "2026-10-14", "cost_usd": 0.0}, {"day": "2026-10-15", "cost_usd": 0.01},
+         {"day": "2026-10-16", "cost_usd": 0.05}]
+
+
+def test_the_activity_tab_is_a_week_of_runs(page):
+    _with_history(page, HISTORY, SPEND)
+    rows = page.locator("#activity-feed li").all_inner_texts()
+    assert len(rows) == 3, rows
+    assert "Ada" in rows[0] and "completed" in rows[0] and "from channel" in rows[0] and "31s" in rows[0]
+    assert "$0.050" in rows[0]
+    assert "Iris" in rows[2] and "waiting on you" in rows[2]
+    assert "week" in page.locator("#hist-title").inner_text().lower()
+
+
+def test_the_week_can_be_filtered(page):
+    _with_history(page, HISTORY, SPEND)
+    page.select_option("#hist-agent", "agent-iris-a103")
+    assert page.locator("#activity-feed li").count() == 1
+    assert "Iris" in page.locator("#activity-feed li").first.inner_text()
+    page.select_option("#hist-agent", "")
+    page.select_option("#hist-status", "failed")
+    rows = page.locator("#activity-feed li").all_inner_texts()
+    assert len(rows) == 1 and "failed" in rows[0], rows
+    page.select_option("#hist-status", "")
+    page.select_option("#hist-source", "schedule")
+    assert page.locator("#activity-feed li").count() == 1
+
+
+def test_the_spend_strip_adds_up_the_week(page):
+    _with_history(page, HISTORY, SPEND)
+    strip = page.locator("#spend")
+    assert strip.is_visible()
+    assert "$0.06" in strip.inner_text()
+    assert strip.locator(".spend-day").count() == 3
+
+
+def test_without_a_history_route_the_tab_still_shows_each_agents_last_run(page):
+    """The fixture answers /history with nothing: the one-line-per-agent
+    view the tab always had is what shows."""
+    page.locator("#tab-activity").click()
+    page.wait_for_timeout(400)
+    assert page.locator("#hist-filters").is_hidden()
+    assert page.locator("#activity-feed li").count() == 2
