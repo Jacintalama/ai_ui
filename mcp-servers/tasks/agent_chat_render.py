@@ -142,6 +142,22 @@ def into_turn(turn_id: str, fragment: str) -> str:
             f'{fragment}</div>')
 
 
+def thread_selector(agent: str | None) -> str:
+    """Where a fragment for one conversation lands when it has to name the
+    thread itself (a queued message, appended out of band).
+
+    The agents page has one thread, #agent-thread, which shows whichever
+    conversation is open and says nothing about which. The office draws a
+    window per conversation (office/js/dock.js), each thread marked with
+    data-thread: "" for the room, the agent's id for a private chat. Both
+    are named, so the fragment lands in the right window there and in the
+    one thread on the agents page, and never in a window about somebody
+    else.
+    """
+    who = esc(agent or "")
+    return f'#agent-thread:not([data-thread]), [data-thread="{who}"]'
+
+
 def turn_status(turn_id: str, fragment: str) -> str:
     """Wraps a status line the way into_turn wraps an answer."""
     return (f'<div hx-swap-oob="innerHTML:{turn_status_target(turn_id)}">'
@@ -309,11 +325,11 @@ def approval_bubble(name: str, ask_id: str, calls: list[dict]) -> str:
             f'<ul class="acalls">{"".join(items)}</ul>'
             '<div class="aactions">'
             '<button class="btn primary" type="button" '
-            'hx-post="/tasks/agents/chat/approve" '
+            'hx-post="/tasks/agents/chat/approve" hx-include="#ap-agent" '
             f'hx-vals=\'{{"ask_id": "{aid}", "approved": "yes"}}\' '
             f'hx-target="#await-{aid}" hx-swap="outerHTML">Yes</button>'
             '<button class="btn" type="button" '
-            'hx-post="/tasks/agents/chat/approve" '
+            'hx-post="/tasks/agents/chat/approve" hx-include="#ap-agent" '
             f'hx-vals=\'{{"ask_id": "{aid}", "approved": "no"}}\' '
             f'hx-target="#await-{aid}" hx-swap="outerHTML">No</button>'
             '</div></div></div>')

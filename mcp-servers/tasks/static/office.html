@@ -54,6 +54,7 @@
      match here, so nothing of the office is restyled by loading it. -->
 <link rel="stylesheet" href="/tasks/static/agent-chat.css">
 <link rel="stylesheet" href="/tasks/static/office/css/todo.css">
+<link rel="stylesheet" href="/tasks/static/office/css/dock.css">
 <link rel="stylesheet" href="/tasks/static/office/css/responsive.css">
 </head>
 <script>
@@ -86,16 +87,59 @@
   <button class="tab" role="tab" id="tab-activity" aria-selected="false">Activity</button>
   <div class="top-right">
     <input class="search" id="q" type="search" placeholder="Search agents…" aria-label="Search agents">
-    <a class="btn" target="_top" href="/tasks/agents">+ New agent</a>
+    <button class="btn new-agent-open" type="button">+ New agent</button>
   </div>
 </header>
 
+<!-- Making an agent here, without leaving the office (office/js/newagent.js).
+     The agents page keeps the long form (tools, skills); this is the short
+     one, and it writes the same agent. -->
+<div class="modal-back" id="newagent" hidden>
+  <form class="modal na" aria-labelledby="na-title" role="dialog" aria-modal="true">
+    <h2 id="na-title">New agent</h2>
+    <label for="na-name">Name</label>
+    <input id="na-name" type="text" maxlength="24" autocomplete="off" placeholder="Jack">
+    <div class="hint">One word, so you can say it in a sentence: "hi Jack, are you there".</div>
+    <label for="na-role">Role</label>
+    <input id="na-role" type="text" maxlength="32" autocomplete="off" placeholder="Project manager">
+    <label for="na-instructions">Instructions</label>
+    <textarea id="na-instructions" rows="6"
+              placeholder="Tell it what to do and how to answer. Plain sentences."></textarea>
+    <label for="na-model">Model</label>
+    <select id="na-model" aria-label="Model"></select>
+    <fieldset class="na-access"><legend>Access</legend>
+      <label><input type="radio" name="na-access" value="read" checked> Read only
+        <em>Looks things up and tells you. Changes nothing.</em></label>
+      <label><input type="radio" name="na-access" value="ask"> With access
+        <em>Can act, but asks you first every time.</em></label>
+      <label><input type="radio" name="na-access" value="all"> All access
+        <em>Acts without asking.</em></label>
+    </fieldset>
+    <p class="form-error" id="na-error" hidden></p>
+    <div class="na-foot">
+      <button class="btn ghost na-cancel" type="button">Cancel</button>
+      <button class="btn" type="submit" id="na-save">Create agent</button>
+    </div>
+  </form>
+</div>
+
 <div class="wrap">
-  <main class="main">
+  <main class="main" id="main">
     <div class="brain">
       <a href="/tasks/graph" target="_top" title="What this platform knows about you, which every agent reads before answering">
         <i class="dot working"></i>The Brain
       </a>
+      <!-- What used to sit in the bar along the bottom of the floor. The
+           chat windows stand there now (dock.css), and a button under a
+           window is no button. -->
+      <span class="brain-actions" id="brain-actions">
+        <button class="btn ghost new-agent-open" type="button">+ New agent</button>
+        <button class="btn ghost logs-open" type="button"
+                title="Every run the platform recorded this week">Logs</button>
+        <button class="btn ghost chat-open" type="button" data-ask="everyone answer: "
+                title="Every agent answers, and none may pass">Call a team meeting</button>
+        <button class="btn chat-open" type="button">Chat</button>
+      </span>
       <span class="zoom">
         <button class="zoom-btn" type="button" id="zoom-out" aria-label="Zoom out">&minus;</button>
         <button class="zoom-btn wide" type="button" id="zoom-fit"
@@ -131,7 +175,18 @@
       </div>
     </div>
 
-    <section id="panel-activity" hidden>
+    <!-- The activity log, as a drawer over the floor rather than a page of
+         its own (2026-10-16, "add the logs so user can see the activity
+         logs of the agents"). In the shell the header and its Activity tab
+         are hidden, so the floor's bar has a Logs button that opens this;
+         the floor stays drawn behind it, so a run that finishes while you
+         read is still seen to finish. -->
+    <section id="panel-activity" class="logs" hidden aria-label="Activity log">
+      <div class="logs-head">
+        <h2>Activity log</h2>
+        <button class="side-shut logs-shut" type="button" id="logs-close"
+                aria-label="Close the activity log">&times;</button>
+      </div>
       <!-- A week of runs from tasks.agent_run (2026-10-16), filtered here
            and never invented; before this the tab was one line per agent.
            The spend strip is cost_usd per calendar day, UTC. -->
@@ -182,47 +237,23 @@
       <p class="empty">Pick an agent to see what it has been doing.</p>
     </div>
 
-    <!-- The conversation, so the office is somewhere you can ask as well as
-         watch. Hidden in the dock (html.embed), where the agents page around
-         it already has one: two threads on one screen would both open the
-         stream and both draw the same round. -->
-    <section class="deskchat" id="deskchat">
-      <!-- The whole bar is the control, the way a messenger window's title
-           is: a 10px caret is a target nobody hits. It stays in the column
-           when shut rather than disappearing, so there is always something
-           to click to get back. -->
-      <button class="deskchat-bar" type="button" id="deskchat-toggle"
-              aria-expanded="true" aria-controls="deskchat-body">
-        <span class="deskchat-title">Ask your agents</span>
-        <i class="deskchat-new" id="deskchat-new" hidden
-           title="Something was said while this was shut"></i>
-        <span class="deskchat-caret" aria-hidden="true"></span>
-      </button>
-      <div class="deskchat-body" id="deskchat-body">
-      <div class="ap-thread" id="agent-thread"
-           hx-get="/tasks/agents/chat/thread" hx-trigger="load"
-           hx-swap="innerHTML">
-        <div class="aempty">Ask anything. Every agent hears it, and the ones
-          with something to say answer. Name one and only they reply.</div>
-      </div>
-      <form class="ap-composer" hx-post="/tasks/agents/chat/send"
-            hx-target="#agent-thread" hx-swap="beforeend"
-            hx-on::after-request="this.reset()">
-        <input type="hidden" name="agent" id="ap-agent" value="">
-        <input type="text" name="message" autocomplete="off"
-               placeholder="Message everyone" aria-label="Message everyone">
-        <button class="btn primary" type="submit">Send</button>
-      </form>
-      </div><!-- .deskchat-body -->
-    </section>
   </aside>
+</div>
+
+<!-- The chat dock: the team's conversation and a private one per agent as
+     windows along the bottom (office/js/dock.js), the ones put away as
+     circles bottom left. Not drawn in the dock on the agents page
+     (html.embed), which has the one conversation already. -->
+<div class="chatdock" id="chatdock">
+  <div class="chatdock-min" id="chatdock-min"></div>
+  <div class="chatdock-open" id="chatdock-open"></div>
 </div>
 
 <script src="/tasks/static/vendor/htmx.min.js"></script>
 <!-- The answer arrives over htmx's SSE extension: the fragment a send returns
      opens the round with sse-connect, which does nothing without this. -->
 <script src="/tasks/static/vendor/sse.js"></script>
-<!-- The conversation in the side column is the agents page's own: its
+<!-- The conversations in the dock are the agents page's own: their
      answers are markdown (marked renders it, DOMPurify sanitises it, as
      there), and agent-chat.js is what scrolls a new message into view,
      renders it, and groups a run of answers from one agent. Without these

@@ -338,7 +338,11 @@
   to   { opacity: 1; transform: translate(0, 0); }
 }
 /* An answer being typed in: a caret at the end of what has arrived so
-   far, gone when the last word lands. */
+   far, gone when the last word lands. The words still to come take no
+   room, so the bubble grows as they land. */
+.aw-wait { display: none; }
+/* An answer waiting its turn to be said (agent-chat.js typeNext). */
+.am[hidden] { display: none !important; }
 .atext.typing::after {
   content: ""; display: inline-block; width: 2px; height: 1em;
   margin-left: 2px; vertical-align: -0.15em; background: var(--text-2, #b8b8c0);

@@ -66,3 +66,16 @@
 }
 .talk-line.fading { animation: line-fade .45s ease-in both; }
 @keyframes line-fade { to { opacity: 0; } }
+
+/* A new agent, made from the floor's own form: it appears at its desk
+   rather than being there all along (office.js syncAgents, `born`). */
+.who-slot.born .bot {
+  animation: born .55s cubic-bezier(.34, 1.56, .64, 1) 1;
+  transform-origin: 50% 92%;
+}
+@keyframes born {
+  0%   { transform: translateY(10px) scale(.6); opacity: 0; }
+  60%  { transform: translateY(-3px) scale(1.06); opacity: 1; }
+  100% { transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) { .who-slot.born .bot { animation: none; } }

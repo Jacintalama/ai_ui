@@ -229,7 +229,7 @@
 
 .floor-bar .right { margin-left: auto; display: flex; gap: 8px; }
 
-.floor-bar .now, .floor-bar a { pointer-events: auto; }
+.floor-bar .now, .floor-bar a, .floor-bar button { pointer-events: auto; }
 
 /* The layers inside the floor. All fill it, so a child positioned at
    left:120px;top:40px lands in the same place in any of them. The lines

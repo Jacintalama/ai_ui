@@ -102,6 +102,24 @@ def get_session(email: str, agent_id: str | None = None) -> RoomSession:
     return s
 
 
+def session_holding(email: str, ask_id: str) -> RoomSession | None:
+    """Whichever of this person's conversations is waiting on `ask_id`.
+
+    A question is asked in one conversation (the room, or a private chat)
+    and answered by a click in the browser. The click says which
+    conversation it was made in, but the page can be showing a different
+    one than the question was asked in: Yes on a private chat used to look
+    the question up in the room and tell the person it was no longer
+    waiting (2026-10-16). Ask ids are unique, so the question itself says
+    where it lives. Only this person's sessions are searched, so nobody can
+    answer a stranger's question by guessing its id.
+    """
+    for (owner, _agent), s in _SESSIONS.items():
+        if owner == email and ask_id in s.pending:
+            return s
+    return None
+
+
 def title_from(message: str) -> str:
     """A conversation's name in the list, taken from its opening message."""
     one_line = " ".join((message or "").split())

@@ -721,3 +721,56 @@ def test_dropping_questions_never_raises(monkeypatch):
     _job_question(mod)
     import asyncio
     assert asyncio.run(mod.drop_job_questions(EMAIL, "job-1")) == 1
+
+
+# --- a question asked in a private chat (2026-10-16) --------------------------
+# "when theres a answer needed after you click yes it doesnt work": the Yes
+# was looked up in the room, and the question was waiting in Ada's private
+# conversation, so the page said it was no longer waiting for an answer.
+
+def _ask_privately(app, agent="agent-a", message="email the boss"):
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/send", data={"message": message, "agent": agent},
+           headers=_hdr())
+    body = c.get("/tasks/agents/chat/stream", params={"agent": agent},
+                 headers=_hdr()).text
+    return c, body
+
+
+def test_yes_in_a_private_chat_reaches_the_question(monkeypatch):
+    app, mod, resumed = _app(monkeypatch, _asking_turn())
+    c, body = _ask_privately(app)
+    assert ">Yes<" in body
+    private = mod.store.get_session(EMAIL, "agent-a")
+    assert list(private.pending) and not mod.store.get_session(EMAIL).pending
+    r = c.post("/tasks/agents/chat/approve",
+               data={"ask_id": list(private.pending)[0], "approved": "yes",
+                     "agent": "agent-a"},
+               headers=_hdr())
+    assert "no longer waiting" not in r.text
+    assert [x["agent_id"] for x in resumed] == ["agent-a"]
+    assert not private.pending
+
+
+def test_a_click_that_does_not_say_which_chat_still_finds_the_question(monkeypatch):
+    """The form field can be empty (an older page, or a page showing the
+    room while the question sits in a private chat). The question's own id
+    says where it lives."""
+    app, mod, resumed = _app(monkeypatch, _asking_turn())
+    c, _ = _ask_privately(app)
+    ask = list(mod.store.get_session(EMAIL, "agent-a").pending)[0]
+    r = c.post("/tasks/agents/chat/approve",
+               data={"ask_id": ask, "approved": "yes"}, headers=_hdr())
+    assert "no longer waiting" not in r.text
+    assert [x["approved"] for x in resumed] == [True]
+
+
+def test_a_stranger_cannot_find_your_private_question_by_its_id(monkeypatch):
+    app, mod, resumed = _app(monkeypatch, _asking_turn())
+    c, _ = _ask_privately(app)
+    ask = list(mod.store.get_session(EMAIL, "agent-a").pending)[0]
+    r = c.post("/tasks/agents/chat/approve",
+               data={"ask_id": ask, "approved": "yes"},
+               headers=_hdr("stranger@example.com"))
+    assert resumed == []
+    assert "no longer waiting" in r.text

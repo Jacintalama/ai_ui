@@ -391,19 +391,16 @@ def test_a_robots_chat_in_the_office_pane_opens_that_agents_conversation(
         pill = office.locator('.who-chat[data-id="agent-iris-a103"]')
         pill.wait_for()
         pill.click()
-        page.wait_for_function("() => location.pathname === '/ai-agents'")
-        agents = _pane_frame(page, "/tasks/agents")
-        try:
-            agents.wait_for_function(
-                "() => (document.getElementById('ap-agent') || {}).value"
-                " === 'agent-iris-a103'", timeout=6000)
-        except playwright_api.TimeoutError:
-            raise AssertionError(
-                "the click did not open Iris's conversation: talking to %r,"
-                " box %r" % (agents.locator("#ap-agent").input_value(),
-                             agents.locator(".ap-composer input[name=message]"
-                                            ).input_value()))
-        assert agents.locator("#ap-who").inner_text() == "Iris"
-        assert agents.locator(".ap-composer input[name=message]").input_value() == ""
+        # The office has its own chat windows now (office/js/dock.js,
+        # 2026-10-16): Iris's conversation opens as a window in the office
+        # pane, and the shell stays on the office rather than switching to
+        # AI Agents.
+        office.locator('#chatdock .cw[data-chat="agent-iris-a103"]').wait_for(state="visible")
+        page.wait_for_timeout(300)
+        assert page.evaluate("() => location.pathname") == "/ai-agents/office"
+        win = office.locator('#chatdock .cw[data-chat="agent-iris-a103"]')
+        assert win.locator(".cw-name").inner_text() == "Iris"
+        assert win.locator('input[name="agent"]').input_value() == "agent-iris-a103"
+        assert win.locator(".ap-composer input[name=message]").input_value() == ""
     finally:
         page.close()
