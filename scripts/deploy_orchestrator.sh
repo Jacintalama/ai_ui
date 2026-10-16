@@ -70,6 +70,14 @@ else
   CHANGED=$(git diff --name-only "${PREVIOUS_SHA}..${CURRENT_SHA}" | grep -E "${ORCH_PATH_PATTERN}" || true)
 fi
 
+# Files that are NEVER deployed from the repo. The server's templates.py is
+# ahead of the repo's (more App Builder templates, CLAUDE.md "Hard rules"), so
+# carrying the repo's copy would silently drop templates. ORCH_DEPLOY_TEMPLATES=1
+# overrides, for the one deploy that is meant to replace it.
+if [[ "${ORCH_DEPLOY_TEMPLATES:-0}" -ne 1 ]]; then
+  CHANGED=$(echo "${CHANGED}" | grep -v -E '^mcp-servers/tasks/templates\.py$' || true)
+fi
+
 if [[ -z "${CHANGED}" ]]; then
   echo "  no orchestrator-relevant files changed"
   # Record SHA bump anyway so next run is fast — but mention nothing rebuilt
@@ -80,6 +88,38 @@ fi
 
 echo "  changed paths:"
 echo "${CHANGED}" | sed 's/^/    /'
+
+echo "==> [2b] server-edit sweep"
+
+# Teammates edit files directly on the box, and the server's git tree makes
+# its own snapshot commits (CLAUDE.md, "Server realities"). A repo-wins rsync
+# over such a file silently reverts their work. So before anything is sent,
+# every changed file on the server is compared with the version the LAST
+# deploy sent (git show PREVIOUS_SHA:path), CRLF-normalised. A file that
+# differs was edited on the box: the deploy stops and names it, unless
+# ORCH_OVERWRITE_SERVER_EDITS=1 says the repo is meant to win.
+if [[ -n "${PREVIOUS_SHA}" && "${ORCH_OVERWRITE_SERVER_EDITS:-0}" -ne 1 ]]; then
+  EDITED_ON_SERVER=""
+  while IFS= read -r path; do
+    [[ -z "${path}" ]] && continue
+    # Not deployed before: nothing on the box to protect.
+    if ! git cat-file -e "${PREVIOUS_SHA}:${path}" 2>/dev/null; then continue; fi
+    want="$(git show "${PREVIOUS_SHA}:${path}" | tr -d '\r' | sha256sum | cut -d' ' -f1)"
+    have="$(${SSH} "test -f '${ORCH_PATH}/${path}' && tr -d '\r' < '${ORCH_PATH}/${path}' | sha256sum | cut -d' ' -f1 || echo missing")"
+    if [[ "${have}" != "missing" && "${have}" != "${want}" ]]; then
+      EDITED_ON_SERVER+="    ${path}"$'\n'
+    fi
+  done <<< "${CHANGED}"
+  if [[ -n "${EDITED_ON_SERVER}" ]]; then
+    echo "ERROR: these files were changed on the server since the last deploy;"
+    echo "       deploying would overwrite that work:"
+    printf '%s' "${EDITED_ON_SERVER}"
+    echo "       Pull the server's version into the repo first, or re-run with"
+    echo "       ORCH_OVERWRITE_SERVER_EDITS=1 if the repo is meant to win."
+    exit 3
+  fi
+  echo "  ok: nothing changed on the server behind the last deploy"
+fi
 
 echo "==> [3/6] map paths to services"
 

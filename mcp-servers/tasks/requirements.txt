@@ -19,3 +19,6 @@ python-docx
 reportlab
 python-pptx
 PyYAML>=6.0
+
+# Test-only: fakes httpx transports in tests/test_account_tool.py and friends.
+respx>=0.21.0
