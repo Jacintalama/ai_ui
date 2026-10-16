@@ -12,6 +12,15 @@
     --warn:      #fbbf24;
     --bad:       #fb7185;
     --radius:    10px;
+    --radius-lg: 12px;
+    /* What the conversation in the side column reads (agent-chat.css is
+       the agents page's sheet, written against that page's tokens). The
+       office never defined these, so your own messages there had no fill
+       at all: the accent is this page's cyan, deepened for the bubble so
+       white text reads on it. */
+    --text-2:    #b8c4d9;
+    --accent:    #22D3EE;
+    --accent-2:  #0e7490;
     /* --- one clock for the whole floor -----------------------------------
        Every journey on this floor (an agent walking, a room moving over
        to make space, the floor itself reshaping, a talk line being drawn)

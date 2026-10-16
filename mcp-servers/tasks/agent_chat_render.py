@@ -252,7 +252,10 @@ def agent_bubble(name: str, content: str, replying_to=None,
         # Only the footer was there. thread() draws no bubble for it on a
         # reload (_shown), so the live view draws none either.
         return ""
-    return ('<div class="am agent">'
+    # data-agent is what the thread groups by: two answers in a row from
+    # the same agent share one avatar and one name, the way a messenger
+    # draws a run of messages from one person (agent-chat.js groupBubbles).
+    return (f'<div class="am agent" data-agent="{esc(name)}">'
             f'{_avatar(name)}'
             '<div class="abody">'
             f'{_quote(replying_to)}'
@@ -284,7 +287,8 @@ def approval_bubble(name: str, ask_id: str, calls: list[dict]) -> str:
         items.append(f'<li><code>{name_txt}</code> '
                      f'<span class="aargs">{args_txt}</span></li>')
     aid = esc(ask_id)
-    return (f'<div class="am agent awaiting" id="await-{aid}">'
+    return (f'<div class="am agent awaiting" id="await-{aid}" '
+            f'data-agent="{esc(name)}">'
             f'{_avatar(name)}'
             '<div class="abody">'
             f'<div class="awho">{esc(name)}</div>'
@@ -366,7 +370,8 @@ def job_card(job_id: str, lead_name: str, steps: list[dict],
     else:
         buttons = ""
     lead = str(lead_name or "Agent")
-    return (f'<div class="am agent ajob" id="job-{esc(job_id)}">'
+    return (f'<div class="am agent ajob" id="job-{esc(job_id)}" '
+            f'data-agent="{esc(lead)}">'
             f'{_avatar(lead)}'
             '<div class="abody">'
             f'<div class="awho">{esc(lead)}</div>'
@@ -380,13 +385,20 @@ def job_card(job_id: str, lead_name: str, steps: list[dict],
 
 
 def working(name: str) -> str:
-    """Which agent is running right now.
+    """Which agent is running right now, drawn the way a messenger draws
+    somebody typing: the agent's avatar and a bubble of three moving dots,
+    with the words beside it for anyone the dots alone would not tell.
 
     A round of three agents that each use tools can hold the stream open for
-    minutes. Without this line a slow round is indistinguishable from a broken
-    one.
+    minutes. Without this a slow round is indistinguishable from a broken
+    one. It was a plain line of text with a pulsing dot in front of it; the
+    office floor beside the thread shows the same run as the robot's typing
+    dots, and the two now look like the same thing.
     """
-    return f'<div class="aworking">{esc(name)} is working...</div>'
+    return (f'<div class="aworking" data-agent="{esc(name)}">'
+            f'{_avatar(name)}'
+            '<span class="atyping" aria-hidden="true"><i></i><i></i><i></i></span>'
+            f'<span class="aworking-who">{esc(name)} is working...</span></div>')
 
 
 def note(text: str) -> str:

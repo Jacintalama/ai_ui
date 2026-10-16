@@ -142,8 +142,8 @@
 }
 .deskchat .ap-composer input[type="text"] {
   flex: 1 1 auto; min-width: 0;
-  padding: 7px 10px; font-size: 12.5px;
-  border: 1px solid var(--border-2); border-radius: var(--radius, 8px);
+  padding: 7px 14px; font-size: 12.5px;
+  border: 1px solid var(--border-2); border-radius: 999px;
   background: var(--surface-2, rgba(255, 255, 255, .03)); color: var(--text);
 }
 .deskchat .ap-composer input[type="text"]:focus {
@@ -153,7 +153,8 @@
    as full-width blocks, which is right for "Chat with Ada" and wrong here:
    Send took the whole row and left the input 22px wide. */
 .deskchat .ap-composer .btn {
-  flex: 0 0 auto; width: auto; padding: 7px 12px; font-size: 12.5px;
+  flex: 0 0 auto; width: auto; padding: 7px 14px; font-size: 12.5px;
+  border-radius: 999px;
 }
 
 /* In the dock the agents page around this already has a conversation, and

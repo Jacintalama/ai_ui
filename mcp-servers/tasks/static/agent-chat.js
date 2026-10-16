@@ -17,9 +17,50 @@
 
   function thread() { return document.getElementById("agent-thread"); }
 
+  //: Has the thread been drawn once? A replayed conversation jumps to its
+  //: end; everything after that glides, the way a messenger follows a new
+  //: message in, unless the person has asked for less motion.
+  var SETTLED = false;
   function toBottom() {
     var el = thread();
-    if (el) { el.scrollTop = el.scrollHeight; }
+    if (!el) return;
+    var reduce = false;
+    try { reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches; }
+    catch (e) { /* no media queries: jump */ }
+    if (SETTLED && !reduce && typeof el.scrollTo === "function") {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
+    SETTLED = true;
+  }
+
+  //: A run of messages from one agent shares one avatar and one name, the
+  //: way a messenger draws several messages from one person in a row.
+  //: Decided here, from data-agent on each row, because the server emits
+  //: each answer on its own as it lands and cannot know what will follow
+  //: it. A card (an approval, a job plan) ends a run: it has its own box.
+  function groupBubbles() {
+    var el = thread();
+    if (!el) return;
+    function plain(n) {
+      return !!n && n.classList.contains("am") && n.classList.contains("agent") &&
+        !n.classList.contains("awaiting") && !n.classList.contains("ajob");
+    }
+    // Siblings, wherever the row sits: a replayed answer is a child of its
+    // turn, a live one lands in the turn's .aturn-body, and either way the
+    // run is the rows next to each other.
+    el.querySelectorAll(".am.agent").forEach(function (row) {
+      row.classList.remove("g-first", "g-mid", "g-last");
+      if (!plain(row)) return;
+      var who = row.getAttribute("data-agent");
+      var prev = row.previousElementSibling, next = row.nextElementSibling;
+      var up = plain(prev) && prev.getAttribute("data-agent") === who;
+      var down = plain(next) && next.getAttribute("data-agent") === who;
+      if (up && down) row.classList.add("g-mid");
+      else if (down) row.classList.add("g-first");
+      else if (up) row.classList.add("g-last");
+    });
   }
 
   // The page ships with the invitation already in the thread, and messages are
@@ -59,6 +100,7 @@
   function settle() {
     dropInvitation();
     renderAll();
+    groupBubbles();
     toBottom();
   }
 

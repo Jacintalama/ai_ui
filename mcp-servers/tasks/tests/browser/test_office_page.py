@@ -119,8 +119,9 @@ def _serve(html: bytes):
                     self.send_response(204)
                     self.end_headers()
                     return
-            elif (path.endswith("/agent-chat.css") or path.endswith("/htmx.min.js")
-                  or path.endswith("/sse.js")):
+            elif (path.endswith("/agent-chat.css") or path.endswith("/agent-chat.js")
+                  or path.endswith("/htmx.min.js") or path.endswith("/sse.js")
+                  or path.endswith("/marked.min.js") or path.endswith("/purify.min.js")):
                 # The conversation in the side column is styled by the agents
                 # page's own stylesheet and driven by htmx and its SSE
                 # extension, which is what opens the answer. Answering those

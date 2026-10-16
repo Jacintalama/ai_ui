@@ -181,31 +181,75 @@
   flex: 1 1 auto; min-height: 0; overflow-y: auto;
   display: flex; flex-direction: column; gap: 14px; padding-right: 2px;
 }
-.am { display: flex; gap: 10px; }
+/* --- the thread, the way a messenger draws it (2026-10-16) ---------------
+   "like a facebook messenger." What that means here, and nothing more:
+   what you said is a filled bubble on the right; what an agent said is a
+   bubble on the left with the agent's avatar beside it; a run of messages
+   from one agent shares one avatar and one name, with the corners between
+   them tightened (agent-chat.js groupBubbles sets g-first/g-mid/g-last);
+   an agent that is answering is its avatar beside three moving dots; the
+   composer is a pill. Everything in a bubble is still a recorded message
+   drawn by the server; only the shape of it changed.
+
+   The two fills. Yours is the accent, deepened so white text reads on it
+   (periwinkle itself is 3.5:1 under white, the deepened fill is over
+   5:1); theirs is the raised surface, so the two sides never need the
+   alignment alone to tell them apart. */
+:root {
+  --bubble-mine: color-mix(in srgb, var(--accent-2, var(--accent, #5d6cff)) 78%, #0b1221);
+  --bubble-mine-text: #ffffff;
+  --bubble-theirs: var(--surface-2, #17171a);
+  --bubble-r: 18px;
+  --bubble-r-tight: 5px;
+}
+.am { display: flex; gap: 8px; align-items: flex-end; }
 .am.user { justify-content: flex-end; }
-/* What the person said reads as theirs: tinted with the accent and pulled to
-   their side. It was the same grey as an agent's answer on the same surface,
-   which left a thread where the only way to tell who said what was the
-   alignment, and alignment alone is not enough at a glance. */
 .am.user .ab {
-  max-width: min(76%, 68ch); padding: 9px 13px;
-  border-radius: var(--radius-lg) var(--radius-lg) 4px var(--radius-lg);
-  background: color-mix(in srgb, var(--accent) 16%, var(--surface-2));
-  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
-  color: var(--text);
+  max-width: min(76%, 68ch); padding: 8px 14px;
+  border-radius: var(--bubble-r) var(--bubble-r) var(--bubble-r-tight) var(--bubble-r);
+  background: var(--bubble-mine); color: var(--bubble-mine-text);
   white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .25);
 }
-/* An answer gets the mirrored corner, so the two read as a conversation
-   rather than as two lists that happen to be indented differently. */
+/* The agent's side: the avatar sits at the FOOT of the bubble, the way a
+   messenger places it, and the body is a column so the pieces can be put
+   in reading order (name, quote, step, text, cards) whatever order the
+   renderer emits them in. */
 .am.agent .abody {
-  max-width: 88%;
-  border-radius: 4px var(--radius-lg) var(--radius-lg) var(--radius-lg);
+  max-width: 88%; min-width: 0;
+  display: flex; flex-direction: column; gap: 3px; align-items: flex-start;
 }
+.am.agent .awho   { order: 0; }
+.am.agent .aquote { order: 1; }
+.am.agent .astep  { order: 2; }
+.am.agent .atext  { order: 3; }
+.am.agent .acard, .am.agent .acalls, .am.agent .aactions,
+.am.agent .ajob-steps, .am.agent .ajob-status, .am.agent .ajob-note { order: 4; }
+/* The bubble itself is the text. A card (an approval, a job plan) draws
+   its own box below and keeps its text plain inside it. */
+.am.agent .atext {
+  padding: 8px 14px;
+  border-radius: var(--bubble-r) var(--bubble-r) var(--bubble-r) var(--bubble-r-tight);
+  background: var(--bubble-theirs); color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .2);
+}
+.am.agent.awaiting .atext, .am.agent.ajob .atext {
+  padding: 0; background: none; box-shadow: none; border-radius: 0;
+}
+/* A run of messages from one agent. The first keeps the name, the last
+   keeps the avatar, and the corners facing each other are tightened so the
+   run reads as one person talking rather than three strangers. */
+.am.agent.g-first .atext { border-radius: var(--bubble-r) var(--bubble-r) var(--bubble-r) var(--bubble-r-tight); }
+.am.agent.g-mid .atext   { border-radius: var(--bubble-r-tight) var(--bubble-r) var(--bubble-r) var(--bubble-r-tight); }
+.am.agent.g-last .atext  { border-radius: var(--bubble-r-tight) var(--bubble-r) var(--bubble-r) var(--bubble-r); }
+.am.agent.g-first .aav, .am.agent.g-mid .aav { visibility: hidden; }
+.am.agent.g-mid .awho, .am.agent.g-last .awho { display: none; }
+.am.agent.g-mid, .am.agent.g-last { margin-top: -7px; }
 /* The agent's mark in the thread. agent_chat_render sets its solid hue
    inline; white letters on it, the same as .roster-av and the card's
    .avatar (DESIGN.md, Agent identity). */
 .aav {
-  flex: 0 0 28px; width: 28px; height: 28px; border-radius: 6px;
+  flex: 0 0 28px; width: 28px; height: 28px; border-radius: 50%;
   display: grid; place-items: center;
   font-size: 12px; font-weight: 500; color: #ffffff;
 }
@@ -217,64 +261,52 @@
    reply to it, and here the answer says what it belongs to by itself. */
 .aquote {
   border-left: 2px solid var(--accent, #7c8cff);
-  padding: 2px 0 2px 8px; margin-bottom: 6px;
+  padding: 2px 0 2px 8px; margin: 0 0 1px 6px;
   font-size: 12px; line-height: 1.45; color: var(--muted, #8b8b95);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
 }
 .awho {
-  font-size: 13px; font-weight: 600; color: var(--text);
-  margin-bottom: 3px; letter-spacing: -.01em;
+  font-size: 12px; font-weight: 600; color: var(--muted);
+  margin: 0 0 0 10px; letter-spacing: 0;
 }
+.astep { font-size: 12px; color: var(--muted); margin-left: 10px; }
 /* A reading line (DESIGN.md, Message): never wider than 68 characters. */
-.atext { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55;
+.atext { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5;
          max-width: 68ch; }
 /* A line from the room itself rather than from anybody in it, so it sits in
    the middle and is not dressed as a message. */
 .am.note {
-  justify-content: center; text-align: center;
+  justify-content: center; text-align: center; align-items: center;
   font-size: 12px; color: var(--muted); font-style: italic;
-  padding: 2px 0;
+  padding: 2px 0; margin: 0;
+  /* Both pages also have a boxed .note (the panel's footnote), and a
+     system line in the thread was wearing its border and left bar. */
+  background: none; border: 0; box-shadow: none; border-radius: 0;
 }
-/* Which agent is running. A round of three agents that each use tools holds
-   the thread open for minutes, so this is the only thing telling somebody the
-   panel is working rather than broken. The dot is what makes it read as
-   activity instead of as a sentence that arrived and stopped. */
+/* Which agent is running: its avatar beside a bubble of three moving dots,
+   what every messenger shows for "typing", and the words after it for
+   anyone the dots alone would not tell. A round of three agents that each
+   use tools holds the thread open for minutes, so this is the only thing
+   telling somebody the panel is working rather than broken. */
 .aworking {
-  display: inline-flex; align-items: center; gap: 7px;
-  font-size: 13px; color: var(--text-2);
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--muted);
 }
-.aworking::before {
-  content: ""; width: 6px; height: 6px; border-radius: 50%;
-  background: var(--accent); animation: apulse 1.1s ease-in-out infinite;
+.atyping {
+  display: inline-flex; gap: 4px; align-items: center;
+  padding: 10px 13px; border-radius: var(--bubble-r);
+  background: var(--bubble-theirs);
+  border-bottom-left-radius: var(--bubble-r-tight);
 }
-@keyframes apulse {
-  0%, 100% { opacity: .25; transform: scale(.8); }
-  50%      { opacity: 1;   transform: scale(1.15); }
+.atyping i {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--text-2, #b8b8c0);
+  animation: typing 1.2s ease-in-out infinite;
 }
-/* The line arrives rather than appears, the same way a message does, so
-   the thread reads as one conversation moving and not as rows being
-   stamped onto it. */
-.aworking { animation: msg-in .3s ease-out both; }
-
-/* --- motion in the thread --------------------------------------------------
-   A message that has just landed rises into place. Short and small (a
-   quarter second, six pixels): the thread is read, not watched, and a
-   replayed conversation of forty turns has to settle at once rather than
-   cascade. The office floor beside this thread moves on the same recorded
-   events, so a robot's mouth starts moving as "is working..." appears here,
-   and its answer lands here as the robot sits back down there. */
-.am, .afail, .acard { animation: msg-in .28s cubic-bezier(.2, .7, .2, 1) both; }
-@keyframes msg-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-/* The room's own lines (a skipped agent, a hint) fade without rising:
-   they are not from anybody, so they should not arrive like somebody. */
-.am.note { animation: note-in .35s ease-out both; }
-@keyframes note-in { from { opacity: 0; } }
-@media (prefers-reduced-motion: reduce) {
-  .aworking::before { animation: none; opacity: .8; }
-  .aworking, .am, .afail, .acard, .am.note { animation: none; }
+.atyping i:nth-child(2) { animation-delay: .15s; }
+.atyping i:nth-child(3) { animation-delay: .3s; }
+@keyframes typing {
+  0%, 60%, 100% { transform: translateY(0);    opacity: .4; }
+  30%           { transform: translateY(-4px); opacity: 1; }
 }
 .acalls { margin: 6px 0; padding-left: 18px; font-size: 13px; }
 .aargs { color: var(--text-2); overflow-wrap: anywhere; }
@@ -285,6 +317,34 @@
 .afail { border-left: 2px solid #f87171; padding: 6px 0 6px 10px;
          font-size: 13px; color: var(--muted, #8b8b95); line-height: 1.5; }
 .afail-fix { margin-top: 3px; color: var(--text-2, #b8b8c0); }
+
+/* --- motion in the thread --------------------------------------------------
+   A message that has just landed rises into place from the side it belongs
+   to. Short and small (a quarter second, a few pixels): the thread is read,
+   not watched, and a replayed conversation of forty turns has to settle at
+   once rather than cascade. The office floor beside this thread moves on
+   the same recorded events, so a robot's typing dots start as the dots
+   appear here, and its answer lands here as the robot sits back down. */
+.am.user { animation: msg-in-right .26s cubic-bezier(.2, .7, .2, 1) both; }
+.am.agent, .aworking, .afail, .acard {
+  animation: msg-in-left .26s cubic-bezier(.2, .7, .2, 1) both;
+}
+@keyframes msg-in-left {
+  from { opacity: 0; transform: translate(-6px, 4px); }
+  to   { opacity: 1; transform: translate(0, 0); }
+}
+@keyframes msg-in-right {
+  from { opacity: 0; transform: translate(6px, 4px); }
+  to   { opacity: 1; transform: translate(0, 0); }
+}
+/* The room's own lines (a skipped agent, a hint) fade without rising:
+   they are not from anybody, so they should not arrive like somebody. */
+.am.note { animation: note-in .35s ease-out both; }
+@keyframes note-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .atyping i { animation: none; opacity: .8; }
+  .aworking, .am, .afail, .acard, .am.note { animation: none; }
+}
 
 /* A turn is the person's message and everything that answered it. Grouping
    them gives status and failures somewhere to live that is not a bubble
@@ -371,7 +431,7 @@
 
 .ap-composer { display: flex; gap: 8px; }
 .ap-composer input {
-  flex: 1; min-width: 0; padding: 9px 12px; border-radius: var(--radius);
+  flex: 1; min-width: 0; padding: 9px 16px; border-radius: 999px;
   background: var(--surface-2); color: inherit;
   border: 1px solid var(--border); font: inherit;
 }
@@ -437,8 +497,8 @@
 /* Sized against the input rather than the panel, so Send reads as the
    input's action and not as the panel's main event. */
 .ap-composer .btn {
-  flex: 0 0 auto; padding: 9px 14px; font-size: 13px;
-  border-radius: var(--radius); white-space: nowrap;
+  flex: 0 0 auto; padding: 9px 16px; font-size: 13px;
+  border-radius: 999px; white-space: nowrap;
 }
 /* Markdown from an agent. Its own spacing, because pre-wrap plus real
    block elements otherwise double every gap. */

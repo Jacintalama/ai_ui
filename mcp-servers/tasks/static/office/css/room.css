@@ -38,7 +38,10 @@
   border: 1px solid color-mix(in srgb, var(--glow, var(--cyan)) 30%, transparent);
   box-shadow: 0 10px 30px rgba(0, 0, 0, .35),
               inset 0 1px 0 rgba(255, 255, 255, .03);
-  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  /* No backdrop blur (2026-10-16). Six panes re-blurring the floor behind
+     them on every frame of a two second resize was the single largest
+     paint cost on the page, and the floor behind them is a flat gradient
+     the blur did nothing visible to. */
   /* A room is kept across redraws and MOVED, on the same clock as the
      agents (--d, office.css). When the meeting room grows to seat the
      team, the rooms beside it slide over in the time the team takes to
@@ -118,16 +121,21 @@
    reads as the meeting. */
 .zone[data-room="meeting"][data-live="1"] {
   border-color: color-mix(in srgb, #fbbf24 55%, transparent);
-  animation: meeting-glow 3.2s ease-in-out infinite;
 }
-@keyframes meeting-glow {
-  0%, 100% { box-shadow: 0 10px 30px rgba(0, 0, 0, .35),
-                         0 0 0 1px color-mix(in srgb, #fbbf24 18%, transparent),
-                         0 0 40px color-mix(in srgb, #fbbf24 14%, transparent); }
-  50%      { box-shadow: 0 10px 30px rgba(0, 0, 0, .35),
-                         0 0 0 1px color-mix(in srgb, #fbbf24 28%, transparent),
-                         0 0 52px color-mix(in srgb, #fbbf24 26%, transparent); }
+/* The glow is a layer of its own whose OPACITY breathes. Animating the
+   room's box-shadow repainted the room and everything under it on every
+   frame; opacity on a pseudo-element is composited and costs nothing. */
+.zone::after {
+  content: ""; position: absolute; inset: -1px; border-radius: inherit;
+  pointer-events: none; opacity: 0;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #fbbf24 28%, transparent),
+              0 0 52px color-mix(in srgb, #fbbf24 26%, transparent);
+  transition: opacity .5s ease;
 }
+.zone[data-room="meeting"][data-live="1"]::after {
+  opacity: 1; animation: meeting-glow 3.2s ease-in-out infinite;
+}
+@keyframes meeting-glow { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
 
 
 /* --- the room's own chrome -------------------------------------------------

@@ -188,6 +188,14 @@
 <!-- The answer arrives over htmx's SSE extension: the fragment a send returns
      opens the round with sse-connect, which does nothing without this. -->
 <script src="/tasks/static/vendor/sse.js"></script>
+<!-- The conversation in the side column is the agents page's own: its
+     answers are markdown (marked renders it, DOMPurify sanitises it, as
+     there), and agent-chat.js is what scrolls a new message into view,
+     renders it, and groups a run of answers from one agent. Without these
+     the office thread showed raw asterisks and never scrolled. -->
+<script src="/tasks/static/vendor/marked.min.js"></script>
+<script src="/tasks/static/vendor/purify.min.js"></script>
+<script src="/tasks/static/agent-chat.js"></script>
 <script type="module" src="/tasks/static/office/js/office.js"></script>
 </body>
 </html>
