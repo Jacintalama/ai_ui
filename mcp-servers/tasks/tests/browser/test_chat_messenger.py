@@ -295,3 +295,48 @@ def test_a_day_line_sits_between_days(page):
         "() => { const d = document.querySelectorAll('.aday')[1];"
         " const t = document.getElementById('aturn-t2');"
         " return d.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING; }")
+
+
+# --- answers type in (2026-10-16) -------------------------------------------
+# "the chat isnt one by one it didnt like the chat typing animation no. it
+# just popup". An answer arrives whole; it is revealed word by word over the
+# time the floor gives the robot's mouth, with every word in the document
+# from the first frame.
+
+def _arrives(page, html):
+    page.evaluate("h => { document.querySelector('#aturn-t2 .aturn-body').insertAdjacentHTML('beforeend', h);"
+                  " document.body.dispatchEvent(new CustomEvent('htmx:sseMessage')); }", html)
+
+
+def test_a_live_answer_types_in_and_a_replayed_one_does_not(page):
+    # Everything drawn at load is history: no caret, nothing faded.
+    assert page.locator("#agent-thread .atext.typing").count() == 0
+    assert page.locator("#agent-thread .aw").count() == 0
+    _arrives(page, render.agent_bubble("Ada", "Here is the announcement, drafted and ready for **Thursday**."))
+    live = page.locator('#agent-thread .am.agent[data-agent="Ada"]').last.locator(".atext")
+    assert "typing" in (live.get_attribute("class") or "")
+    # The whole answer is in the document from the first frame.
+    assert "ready for Thursday" in live.inner_text()
+    faded = live.evaluate("el => [...el.querySelectorAll('.aw')].filter(w => w.style.opacity === '0').length")
+    assert faded > 0, faded
+    page.wait_for_function("() => !document.querySelector('#agent-thread .atext.typing')", timeout=8000)
+    assert live.evaluate("el => [...el.querySelectorAll('.aw')].every(w => w.style.opacity !== '0')")
+    assert live.locator("strong").count() == 1
+
+
+def test_the_reveal_lasts_as_long_as_the_robots_mouth(page):
+    """max(1500, min(5000, chars * 40)) ms, the floor's own formula."""
+    import time
+    _arrives(page, render.agent_bubble("Mia", "Short."))
+    t0 = time.monotonic()
+    page.wait_for_function("() => !document.querySelector('#agent-thread .atext.typing')", timeout=8000)
+    took = time.monotonic() - t0
+    assert 1.0 <= took <= 3.0, took
+
+
+def test_reduced_motion_shows_the_answer_at_once(page):
+    page.emulate_media(reduced_motion="reduce")
+    _arrives(page, render.agent_bubble("Mia", "At once."))
+    live = page.locator('#agent-thread .am.agent[data-agent="Mia"]').last.locator(".atext")
+    assert "typing" not in (live.get_attribute("class") or "")
+    assert live.locator(".aw").count() == 0

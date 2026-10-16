@@ -9,7 +9,7 @@
 // is broken into the modules beside it, and goes then.
 
 import { S, nameOf } from "./state.js";
-import { getJson, esc, ago, saying } from "./util.js";
+import { getJson, esc, ago, saying, authHeaders } from "./util.js";
 import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   from "./agent.js";
 
@@ -153,6 +153,15 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   //: to has to be somewhere they can already see. Every other room still
   //: appears only when somebody works in it.
   var MEETING_KEY = "meeting";
+  //: Your own desk, a fixture like the meeting room (2026-10-16, "add a
+  //: desk of the user so he or she can approve"). An agent whose run has
+  //: stopped to wait on you walks here and stands at your desk until you
+  //: answer, from the tray in the column or in the thread, or until you
+  //: set it to Auto, after which it never has to ask again. Drawn from the
+  //: same recorded state as the robot's wide-eyed face.
+  var YOU_KEY = "you";
+  var YOU = { key: YOU_KEY, label: "Your desk", tools: [], glow: "#fbbf24", fixture: true };
+  function atYourDesk(id) { return stateOf(id).key === "waiting"; }
 
   function topReserve() {
     try {
@@ -301,8 +310,10 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   //: leaving 400px of it empty beside a floor that shrank to fit the height.
   function layoutFloor(rooms, rowCap, cols) {
     var boxes = rooms.map(function (r) {
-      // The meeting room holds its table under the people in it.
-      var table = r.z.key === MEETING_KEY && r.of.length ? TABLE_SPACE : 0;
+      // The meeting room holds its table, and your desk its desk, under
+      // the people standing in it.
+      var table = (r.z.key === MEETING_KEY || r.z.key === YOU_KEY) && r.of.length
+        ? TABLE_SPACE : 0;
       return roomBox(r.of.length, rowCap, table);
     });
     cols = Math.max(1, Math.min(cols || boxes.length, boxes.length));
@@ -1039,6 +1050,20 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       // same recorded state as the robot's face, so the two cannot disagree.
       el.setAttribute("data-busy", n.working ? "1" : "0");
 
+      if (key === YOU_KEY) {
+        // Your desk, and whether anybody is standing at it.
+        if (!el.querySelector(".you-desk")) {
+          el.insertAdjacentHTML("beforeend",
+            '<div class="you-desk" aria-hidden="true">' +
+              '<svg viewBox="0 0 120 70"><rect x="10" y="38" width="100" height="10" rx="3"/>' +
+              '<rect x="18" y="48" width="6" height="18" rx="2"/><rect x="96" y="48" width="6" height="18" rx="2"/>' +
+              '<rect x="44" y="16" width="32" height="20" rx="3" class="you-screen"/>' +
+              '<circle cx="60" cy="58" r="7" class="you-head"/><rect x="50" y="64" width="20" height="6" rx="3" class="you-body"/></svg>' +
+              '<span class="you-label">You</span></div>');
+        }
+        el.setAttribute("data-live", r.of.length ? "1" : "0");
+        return;
+      }
       if (key !== MEETING_KEY) return;
       // Said on the room itself while a meeting is running, so the table in
       // it is never ambiguous about whether it is in use. Laid when the
@@ -1094,9 +1119,12 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     // change of coordinates IS the walk there. No seat geometry of its own,
     // no band floating above the floor, and they arrive somewhere that is
     // really on the plan rather than hovering over it.
-    var met = [], here = {};
+    var met = [], blocked = [], here = {};
     Object.keys(byZone).forEach(function (k) {
       here[k] = byZone[k].of.filter(function (m) {
+        // Waiting on you outranks a meeting: a robot cannot be in two
+        // rooms, and the one with a question for you stands at your desk.
+        if (atYourDesk(m.id)) { blocked.push(m); return false; }
         if (!inMeeting(m.id)) return true;
         met.push(m);
         return false;
@@ -1108,12 +1136,13 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     // with its desks visibly empty, which is the point: you can see they
     // left. `residents` is who DESKS here and `of` is who is standing here
     // now, so a room's totals stay its own while a meeting is running.
-    var occupied = ZONES.concat([LOUNGE])
-      .filter(function (z) { return z.key === MEETING_KEY || byZone[z.key]; })
+    var occupied = ZONES.concat([LOUNGE, YOU])
+      .filter(function (z) { return z.key === MEETING_KEY || z.key === YOU_KEY || byZone[z.key]; })
       .map(function (z) {
         var mine = here[z.key] || [];
         return { z: z, residents: (byZone[z.key] && byZone[z.key].of) || [],
-                 of: z.key === MEETING_KEY ? mine.concat(met) : mine };
+                 of: z.key === MEETING_KEY ? mine.concat(met)
+                   : z.key === YOU_KEY ? blocked : mine };
       });
 
     // The canvas is whatever the rooms need, and the rooms are whatever the
@@ -1824,6 +1853,19 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   //: person. The same recorded state that gives the robot its wide-eyed
   //: face, so the tray and the floor cannot disagree. Answering goes to
   //: that agent's own conversation, which is where the question is.
+  //: The question an agent is waiting on, if the thread beside the floor
+  //: holds it: the approval bubble the round drew (agent_chat_render
+  //: approval_bubble), with the calls it wants to run and its Yes and No.
+  //: The tray's buttons press THOSE buttons, so an answer from the desk
+  //: is the same answer, through the same route, as one from the thread.
+  function pendingBubbleFor(name) {
+    var rows = document.querySelectorAll('#agent-thread .am.awaiting');
+    for (var i = rows.length - 1; i >= 0; i--) {
+      if (rows[i].getAttribute("data-agent") === name) return rows[i];
+    }
+    return null;
+  }
+
   function drawNeeds() {
     var el = document.getElementById("needs");
     if (!el) return;
@@ -1834,14 +1876,81 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       '<div class="needs-head">Needs you' +
         '<span class="todo-n">' + waiting.length + '</span></div>' +
       '<ul class="needs-list">' + waiting.map(function (m) {
-        var name = m.name || m.id;
-        return '<li class="needs-item" data-id="' + esc(m.id) + '">' +
-          '<i class="dot waiting"></i>' +
-          '<span class="needs-what"><b>' + esc(name) + '</b> is waiting on you</span>' +
-          '<a class="btn needs-answer" target="_top" data-id="' + esc(m.id) + '"' +
-          ' href="/tasks/agents?ask=' + encodeURIComponent(name + ", ") + '">Answer</a></li>';
+        var name = m.name || m.id, bubble = pendingBubbleFor(name);
+        var auto = (m.meta && m.meta.access) === "all";
+        var calls = bubble ? Array.prototype.map.call(
+          bubble.querySelectorAll(".acalls li code"), function (c) { return c.textContent; }) : [];
+        return '<li class="needs-item" data-id="' + esc(m.id) + '"' +
+          (bubble ? ' data-ask="' + esc(bubble.id) + '"' : "") + '>' +
+          '<div class="needs-row"><i class="dot waiting"></i>' +
+          '<span class="needs-what"><b>' + esc(name) + '</b> ' +
+            (bubble ? 'wants to run ' + esc(calls.join(", ") || "a tool") : 'is waiting on you') +
+          '</span></div>' +
+          '<div class="needs-actions">' +
+          (bubble
+            ? '<button class="btn primary needs-yes" type="button" data-id="' + esc(m.id) + '">Yes</button>' +
+              '<button class="btn ghost needs-no" type="button" data-id="' + esc(m.id) + '">No</button>'
+            : '<a class="btn needs-answer" target="_top" data-id="' + esc(m.id) + '"' +
+              ' href="/tasks/agents?ask=' + encodeURIComponent(name + ", ") + '">Answer</a>') +
+          // Auto: this agent never has to ask again. It is the agent's own
+          // access level (meta.access, agent_access.LEVEL_ALL), written to
+          // its model row exactly as the agents page writes it. The question
+          // already standing is answered Yes as part of the same press.
+          '<label class="needs-auto" title="Let ' + esc(name) + ' run its tools without asking">' +
+            '<input type="checkbox" class="needs-auto-box" data-id="' + esc(m.id) + '"' +
+            (auto ? " checked" : "") + '> Auto</label>' +
+          '</div></li>';
       }).join("") + '</ul>';
   }
+
+  //: Press the thread's own button for this agent's standing question.
+  function answerPending(id, yes) {
+    var m = S.AGENTS.filter(function (a) { return a.id === id; })[0];
+    var bubble = m && pendingBubbleFor(m.name || m.id);
+    if (!bubble) return false;
+    var btn = bubble.querySelector("button[hx-vals*='\"approved\": \"" + (yes ? "yes" : "no") + "\"']");
+    if (!btn) return false;
+    btn.click();
+    return true;
+  }
+
+  //: Give an agent all access, or take it back to asking. Reads the whole
+  //: model row and writes it back with only meta.access changed: a partial
+  //: body to this endpoint drops tools and instructions, which is why the
+  //: office never wrote one before.
+  var MODELS_API = "/api/v1/models";
+  async function setAuto(id, on) {
+    var r = await fetch(MODELS_API + "/model?id=" + encodeURIComponent(id),
+                        { headers: authHeaders(), credentials: "include" });
+    if (!r.ok) throw new Error("model " + r.status);
+    var row = await r.json();
+    row.meta = Object.assign({}, row.meta || {}, { access: on ? "all" : "ask" });
+    var w = await fetch(MODELS_API + "/model/update?id=" + encodeURIComponent(id),
+                        { method: "POST", headers: authHeaders(), credentials: "include",
+                          body: JSON.stringify(row) });
+    if (!w.ok) throw new Error("update " + w.status);
+    var m = S.AGENTS.filter(function (a) { return a.id === id; })[0];
+    if (m) m.meta = Object.assign({}, m.meta || {}, { access: on ? "all" : "ask" });
+  }
+
+  document.getElementById("needs").addEventListener("click", function (ev) {
+    var yes = ev.target.closest(".needs-yes"), no = ev.target.closest(".needs-no");
+    if (yes || no) { answerPending((yes || no).getAttribute("data-id"), !!yes); return; }
+  });
+  document.getElementById("needs").addEventListener("change", function (ev) {
+    var box = ev.target.closest(".needs-auto-box");
+    if (!box) return;
+    var id = box.getAttribute("data-id"), on = box.checked;
+    box.disabled = true;
+    setAuto(id, on).then(function () {
+      // The question already standing is answered as part of the same
+      // press: Auto means "and go ahead".
+      if (on) answerPending(id, true);
+    }).catch(function (e) {
+      console.warn("[office] could not change access", e);
+      box.checked = !on;
+    }).then(function () { box.disabled = false; drawNeeds(); });
+  });
 
   function drawTodo() {
     var el = document.getElementById("todo");
@@ -2254,6 +2363,17 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     var sel = document.getElementById("hist-" + k);
     if (sel) sel.addEventListener("change", drawActivity);
   });
+
+  // In the shell the header is hidden (embed.css html.shell), and the
+  // search box in it would be hidden with it. It moves down beside The
+  // Brain, where the zoom controls already are, so searching still works
+  // on a floor that fills the pane.
+  (function moveSearchIntoTheFloor() {
+    if (!document.documentElement.classList.contains("shell")) return;
+    var q = document.getElementById("q"), brain = document.querySelector(".brain");
+    var zoom = brain && brain.querySelector(".zoom");
+    if (q && brain) brain.insertBefore(q, zoom || null);
+  })();
 
   (async function init() {
     try {

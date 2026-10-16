@@ -337,6 +337,16 @@
   from { opacity: 0; transform: translate(6px, 4px); }
   to   { opacity: 1; transform: translate(0, 0); }
 }
+/* An answer being typed in: a caret at the end of what has arrived so
+   far, gone when the last word lands. */
+.atext.typing::after {
+  content: ""; display: inline-block; width: 2px; height: 1em;
+  margin-left: 2px; vertical-align: -0.15em; background: var(--text-2, #b8b8c0);
+  animation: caret 1s steps(2) infinite;
+}
+@keyframes caret { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .atext.typing::after { animation: none; } }
+
 /* When it was said: beside the bubble, shown when the row is hovered or
    holds focus, the way a messenger reveals a time. A message stored before
    times were recorded has none and shows nothing. */

@@ -100,7 +100,7 @@
 
   // ===== Styles =====
   const css = `
-    .aiui-tp { position: fixed; bottom: 80px; right: 24px; width: 520px; max-height: 78vh;
+    .aiui-tp { position: fixed; top: 64px; right: 24px; width: 520px; max-height: 78vh;
       background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 14px;
       overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04);
       display: flex; flex-direction: column; z-index: 9999;
@@ -116,6 +116,7 @@
     .aiui-tp-head .ctrls { display: flex; gap: 4px; }
     .aiui-tp-head .ctrls button { background: transparent; border: 0; color: #888; padding: 2px 8px; cursor: pointer; font-size: 14px; border-radius: 4px; }
     .aiui-tp-head .ctrls button:hover { background: #2a2a2a; color: #fff; }
+    .aiui-tp-head .ctrls button[data-act="hide-fab"] { font-size: 11.5px; }
     .aiui-tp-tabs { display: flex; border-bottom: 1px solid #2a2a2a; background: #0f0f0f; }
     .aiui-tp-tab { flex: 1; padding: 10px 12px; background: transparent; border: 0; color: #888; font-size: 12px; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; text-transform: uppercase; letter-spacing: 0.5px; }
     .aiui-tp-tab:hover { color: #ccc; }
@@ -166,8 +167,11 @@
     /* ===== FAB launcher ===== */
     .aiui-tp-fab {
       /* position must establish a containing block for the absolute badge below. */
-      position: fixed; bottom: 24px; right: 24px; z-index: 9998;
-      width: 44px; height: 44px; border-radius: 50%;
+      /* Top right, not bottom right (2026-10-16): bottom right is where
+         the chat composer and the office's buttons live, and the launcher
+         sat on them. Under Open WebUI's own top bar. */
+      position: fixed; top: 12px; right: 20px; z-index: 9998;
+      width: 40px; height: 40px; border-radius: 50%;
       background: #1a1a1a; border: 1px solid #2a2a2a;
       color: #fff; cursor: pointer;
       display: flex; align-items: center; justify-content: center;
@@ -196,7 +200,7 @@
       100% { box-shadow: 0 6px 20px rgba(0,0,0,0.55), 0 0 0 0 rgba(239,68,68,0); }
     }
     @media (max-width: 640px) {
-      .aiui-tp-fab { width: 48px; height: 48px; bottom: 16px; right: 16px; }
+      .aiui-tp-fab { width: 44px; height: 44px; top: 10px; right: 12px; }
     }
     @media (max-width: 640px) {
       .aiui-tp {
@@ -237,6 +241,7 @@
       <div class="ctrls">
         <button data-act="new-task" title="Create a new task">+</button>
         <button data-act="refresh" title="Refresh">⟳</button>
+        <button data-act="hide-fab" title="Hide the floating button; the Tasks entry in the + menu brings this panel back">Hide button</button>
         <button data-act="close" title="Close">✕</button>
       </div>
     </div>
@@ -988,14 +993,36 @@
     render();
   }
 
+  // ===== The launcher's own visibility =====
+  // Three things can take it off the screen, and none of them may undo the
+  // others: the person chose to hide it (remembered per browser; the Tasks
+  // entry in the + menu still opens the panel), an AIUI pane is open (the
+  // pane has its own top-right controls and the office its chat), or the
+  // panel is open in its place.
+  const FAB_HIDDEN_KEY = "aiui-tasks-fab-hidden";
+  let _fabPaneOpen = false;
+  function fabHiddenByChoice() {
+    try { return localStorage.getItem(FAB_HIDDEN_KEY) === "1"; } catch (_) { return false; }
+  }
+  function setFabHiddenByChoice(hidden) {
+    try {
+      if (hidden) localStorage.setItem(FAB_HIDDEN_KEY, "1");
+      else localStorage.removeItem(FAB_HIDDEN_KEY);
+    } catch (_) {}
+    syncFab();
+  }
+  function syncFab() {
+    const show = _initDone && panel.classList.contains("hidden") &&
+      !_fabPaneOpen && !fabHiddenByChoice() && !onAuthRoute();
+    fab.classList.toggle("hidden", !show);
+    const hideBtn = panel.querySelector('[data-act="hide-fab"]');
+    if (hideBtn) hideBtn.textContent = fabHiddenByChoice() ? "Show button" : "Hide button";
+  }
+  window.__aiuiSyncTasksFab = syncFab;
+
   function setOpen(open) {
-    if (open) {
-      panel.classList.remove("hidden");
-      fab.classList.add("hidden");
-    } else {
-      panel.classList.add("hidden");
-      fab.classList.remove("hidden");
-    }
+    panel.classList.toggle("hidden", !open);
+    syncFab();
   }
 
   // ===== Header controls =====
@@ -1007,6 +1034,7 @@
     else if (act === "close") {
       setOpen(false);
     }
+    else if (act === "hide-fab") setFabHiddenByChoice(!fabHiddenByChoice());
     else if (act === "history") showHistoryModal();
     else if (tab) switchTab(tab);
   });
@@ -1071,7 +1099,7 @@
 
       // Show the FAB launcher; the panel itself stays collapsed until the
       // user clicks the FAB (or the + menu entry).
-      fab.classList.remove("hidden");
+      syncFab();
     } finally {
       _initRunning = false;
     }
@@ -1438,6 +1466,8 @@
     }
 
     function closeAiuiEmbed() {
+      _fabPaneOpen = false;
+      syncFab();
       const wrap = document.querySelector("[data-aiui-embed]");
       if (wrap) {
         // Hidden, NOT removed. Removing it would throw away every cached frame
@@ -1537,6 +1567,8 @@
     }
 
     function openAiuiEmbed(cfg) {
+      _fabPaneOpen = true;
+      syncFab();
       const wrap = aiuiEmbedShell();
       // Same page already showing -> treat the click as a no-op toggle.
       if (wrap.getAttribute("data-open") === cfg.href) return;
@@ -1910,7 +1942,7 @@
       // Reset init when entering or leaving /auth
       if (onAuthRoute()) {
         panel.classList.add("hidden");
-        fab.classList.add("hidden");
+        syncFab();
       } else {
         _initDone = false;
         init();

@@ -62,6 +62,16 @@
     if (new URLSearchParams(location.search).get("embed") === "1") {
       document.documentElement.classList.add("embed");
     }
+    // Framed by the shell at /ai-agents/office (not the dock, which is
+    // embed above): the shell has the navigation, and the floor is what
+    // this pane is for, so the page's own header stays out of the way and
+    // the agents and their meetings get the whole height (2026-10-16,
+    // "remove the header of it i want the user can see the whole
+    // animation"). Search moves down beside The Brain. On the bare page,
+    // the header stays.
+    else if (window.parent !== window) {
+      document.documentElement.classList.add("shell");
+    }
   } catch (e) { /* no flag, no embed: the page looks like itself */ }
 </script>
 <body>
