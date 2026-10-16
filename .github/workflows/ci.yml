@@ -54,6 +54,9 @@ jobs:
           cache: pip
           cache-dependency-path: mcp-servers/tasks/requirements.txt
       - run: pip install -r requirements.txt
+      # tests/test_picker_js.py drives a browser from the unit tier; the
+      # first run of this job erred on twelve of them for want of one.
+      - run: python -m playwright install --with-deps chromium
       - name: pytest
         env:
           AIUI_SKIP_DB: "1"
