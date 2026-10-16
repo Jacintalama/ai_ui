@@ -34,6 +34,9 @@ export const S = {
   //: meeting_started or meeting_ended arrives; from then on it, not each
   //: run's source, says who is in the meeting room.
   MEETING: null,
+  //: When the last meeting this page heard closed (ms), so a meeting
+  //: opened from the runs alone keeps the previous round's stragglers out.
+  LAST_MEETING_END: 0,
   //: What the team still has to do, from tasks.items.
   TODO: { open: [], done: [] },
 };

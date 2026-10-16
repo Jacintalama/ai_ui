@@ -315,13 +315,37 @@ def test_a_live_answer_types_in_and_a_replayed_one_does_not(page):
     _arrives(page, render.agent_bubble("Ada", "Here is the announcement, drafted and ready for **Thursday**."))
     live = page.locator('#agent-thread .am.agent[data-agent="Ada"]').last.locator(".atext")
     assert "typing" in (live.get_attribute("class") or "")
-    # The whole answer is in the document from the first frame.
-    assert "ready for Thursday" in live.inner_text()
-    faded = live.evaluate("el => [...el.querySelectorAll('.aw')].filter(w => w.style.opacity === '0').length")
-    assert faded > 0, faded
+    # The whole answer is in the document from the first frame, but only
+    # what has been said so far takes room: the bubble grows as the words
+    # land rather than standing at its full height, blank.
+    assert "ready for Thursday" in live.text_content()
+    waiting = live.evaluate("el => el.querySelectorAll('.aw.aw-wait').length")
+    assert waiting > 0, waiting
+    assert live.evaluate("el => getComputedStyle(el.querySelector('.aw.aw-wait')).display") == "none"
     page.wait_for_function("() => !document.querySelector('#agent-thread .atext.typing')", timeout=8000)
-    assert live.evaluate("el => [...el.querySelectorAll('.aw')].every(w => w.style.opacity !== '0')")
+    assert live.evaluate("el => el.querySelectorAll('.aw.aw-wait').length") == 0
+    assert "ready for Thursday" in live.inner_text()
     assert live.locator("strong").count() == 1
+
+
+def test_answers_that_land_together_are_said_one_at_a_time(page):
+    """A meeting's answers can arrive faster than they are read out. The
+    second waits, out of sight, until the first has been said; then it
+    types in itself."""
+    _arrives(page, render.agent_bubble("Ada", "First, the launch moved to Thursday, which gives marketing the extra day they asked for."))
+    _arrives(page, render.agent_bubble("Mia", "Second, the inbox is clear."))
+    ada = page.locator('#agent-thread .am.agent[data-agent="Ada"]').last
+    mia = page.locator('#agent-thread .am.agent[data-agent="Mia"]').last
+    assert "typing" in (ada.locator(".atext").get_attribute("class") or "")
+    assert mia.is_hidden()
+    page.wait_for_function(
+        "() => { const all = document.querySelectorAll('#agent-thread .am.agent[data-agent=\"Ada\"] .atext');"
+        " const a = all[all.length - 1]; return a && !a.classList.contains('typing'); }", timeout=8000)
+    page.wait_for_timeout(50)
+    assert mia.is_visible()
+    assert "typing" in (mia.locator(".atext").get_attribute("class") or "")
+    page.wait_for_function("() => !document.querySelector('#agent-thread .atext.typing')", timeout=8000)
+    assert "inbox is clear" in mia.inner_text()
 
 
 def test_the_reveal_lasts_as_long_as_the_robots_mouth(page):

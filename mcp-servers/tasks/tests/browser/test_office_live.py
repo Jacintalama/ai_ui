@@ -515,6 +515,45 @@ def test_a_reconnect_does_not_leave_a_meeting_standing(
 
 
 @pytest.fixture
+def a_meeting_closed_then_another_begins_unannounced():
+    """One meeting ran and closed. The next round's meeting_started is lost
+    (the stream dropped between the two), and all this page hears is the
+    first speaker's run beginning, from a meeting. Until 2026-10-16 the
+    closed meeting blocked the source rule for good, so the new round drew
+    nobody in the room."""
+    STREAM["body"] = _sse(
+        {"event": "meeting_started", "agent_id": ADA,
+         "participants": [ADA, IRIS], "at": _now()},
+        {"event": "meeting_ended", "agent_id": IRIS, "at": _now()},
+        retry=300)
+    yield
+    STREAM["body"] = _sse()
+
+
+def test_a_later_meeting_still_gathers_from_its_runs(
+        a_meeting_closed_then_another_begins_unannounced, page):
+    page.wait_for_function(
+        "() => document.getElementById('rooms').getAttribute('data-meeting') === '2'",
+        timeout=3000)
+    # The harness replays its body on every reconnect, which would close the
+    # meeting afresh each time; from here the stream says hello and nothing.
+    STREAM["body"] = _sse(retry=300)
+    page.wait_for_function(
+        "() => document.getElementById('rooms').getAttribute('data-meeting') === ''",
+        timeout=8000)
+    _settled(page)
+    STREAM["body"] = _sse(
+        {"event": "run_started", "agent_id": IRIS, "source": "meeting",
+         "at": _now()}, retry=60000)
+    page.wait_for_function(
+        "() => document.getElementById('rooms').getAttribute('data-meeting') === '1'",
+        timeout=6000)
+    _settled(page)
+    assert _in_meeting_room(page, IRIS)
+    assert not _in_meeting_room(page, ADA)
+
+
+@pytest.fixture
 def the_last_word_is_long():
     """Iris answers last with 125 characters (5 s of talking), and the round
     closes a moment later: the room has to wait for her to finish."""

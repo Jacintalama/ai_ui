@@ -1162,6 +1162,11 @@ async def agent_chat_approve(ask_id: str = Form(...),
     browser.
     """
     s = store.get_session(user.email, _which_chat(agent))
+    if ask_id not in s.pending:
+        # The page said which conversation it was showing, but the question
+        # may have been asked in another of this person's (a private chat
+        # answered from the room's page, or the form field left empty).
+        s = store.session_holding(user.email, ask_id) or s
     # Looked up, not popped: a stranger's click or a click mid round must not
     # discard the real owner's still-pending question, so nothing is taken
     # off the session until both of those are ruled out.

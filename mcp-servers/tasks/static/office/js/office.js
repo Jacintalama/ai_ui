@@ -693,6 +693,12 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   //: back mid-sentence (review, 2026-10-14).
   var SPEECH_GRACE_MS = 300;
 
+  //: Closed, lingered, and nobody in it mid-sentence: the room is free.
+  function meetingOver(m) {
+    return !!(m && m.ended && Date.now() - m.ended > MEETING_LINGER_MS &&
+              !stillTalking(m));
+  }
+
   //: Is anybody in this meeting still talking, or still walking in to say
   //: something they have been given? Then the room stays.
   function stillTalking(m) {
@@ -713,17 +719,43 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   //: has heard neither (measured 2026-10-13: driven by sources, 0 robots
   //: were in the room at the first answer, and a private chat drew 3).
   function inMeeting(id) {
-    var m = S.MEETING;
-    if (m) {
-      if (m.ended && Date.now() - m.ended > MEETING_LINGER_MS &&
-          !stillTalking(m)) return false;
-      return m.ids.indexOf(id) !== -1;
+    var m = S.MEETING, a = S.ACTIVITY[id];
+    if (m && !meetingOver(m)) {
+      if (m.ids.indexOf(id) !== -1) return true;
+      // The round named everybody: nobody else is in it.
+      if (m.heard) return false;
+      // Opened from the runs (this page missed meeting_started): the ids are
+      // only the speakers heard so far, and the source rule fills in the
+      // rest, but only runs begun since the last meeting closed. An agent
+      // whose meeting run was the previous round's is not in this one.
+      return bySource(a) && beganAfter(a, m.after);
     }
-    var a = S.ACTIVITY[id];
+    if (m) {
+      // The last meeting this page heard is over. It still stops stale
+      // sources from drawing it again, but not a NEW round: a run that
+      // began after it closed is the next meeting, whose meeting_started
+      // this page may not have heard (a reconnect in between, or the
+      // poll's truth arriving first). Until 2026-10-16 one finished
+      // meeting blocked every later one from the source rule for good.
+      return !!(a && a.state === "working") && bySource(a) && beganAfter(a, m.ended);
+    }
+    return bySource(a);
+  }
+  //: Still recorded, still in the room: the source is the run's own, so
+  //: this never puts an agent in a meeting it was not part of.
+  function bySource(a) {
     if (!a || a.source !== "meeting") return false;
-    // Still recorded, still in the room: the source is the run's own, so
-    // this never puts an agent in a meeting it was not part of.
     return a.state === "working" || meetingIsOn();
+  }
+  function beganAfter(a, when) {
+    if (!when) return true;
+    return (Date.parse((a && a.last_run_at) || "") || 0) > when;
+  }
+  //: A meeting this page opens from the runs, not from meeting_started.
+  //: `after` is when the last one closed, so its stragglers stay out.
+  function meetingFromRuns(id) {
+    return { ids: [id], ended: null, heard: false,
+             after: (S.MEETING && S.MEETING.ended) || S.LAST_MEETING_END || 0 };
   }
 
   //: Bring the agents layer in line with the plan, WITHOUT rebuilding it.
@@ -1690,6 +1722,18 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       S.ACTIVITY[e.agent_id] = Object.assign({}, a, { state: "working",
         running_for_seconds: 0, _since: since, last_run_at: e.at },
         e.source ? { source: e.source } : {});
+      // A meeting run with no open meeting on this page: its meeting_started
+      // was missed (the page connected mid-round, or the stream dropped
+      // between the two). Open one from the runs themselves, speaker by
+      // speaker, and let a meeting_started that does arrive replace it.
+      if (e.source === "meeting") {
+        if (!S.MEETING || meetingOver(S.MEETING)) {
+          S.MEETING = meetingFromRuns(e.agent_id);
+        } else if (!S.MEETING.ended && !S.MEETING.heard &&
+                   S.MEETING.ids.indexOf(e.agent_id) === -1) {
+          S.MEETING.ids.push(e.agent_id);
+        }
+      }
     } else if (e.event === "tool_started") {
       S.TOOL_NOW[e.agent_id] = e.tool;
     } else if (e.event === "tool_finished") {
@@ -1721,7 +1765,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       // source rule has in the room is, and they leave together too.
       if (!S.MEETING) {
         S.MEETING = { ids: S.AGENTS.map(function (m) { return m.id; })
-          .filter(inMeeting), ended: null, heard: false };
+          .filter(inMeeting), ended: null, heard: false, after: 0 };
       }
       // Events carry no meeting id. The round names its first speaker on
       // meeting_started and its last on meeting_ended, so an end whose
@@ -1731,7 +1775,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       var last = S.MEETING.ids[S.MEETING.ids.length - 1];
       if (S.MEETING.heard && last && e.agent_id !== last) return;
       if (!S.MEETING.ended) {
-        S.MEETING.ended = Date.now();
+        S.MEETING.ended = S.LAST_MEETING_END = Date.now();
         setTimeout(draw, MEETING_LINGER_MS + 30);
       }
     }

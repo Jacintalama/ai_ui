@@ -112,6 +112,10 @@ def test_approval_shows_the_call_and_offers_both_answers():
     assert "boss@example.com" in html
     assert ">Yes<" in html and ">No<" in html
     assert 'hx-post="/tasks/agents/chat/approve"' in html
+    # Both answers say which conversation the page is showing (the agents
+    # page and the office both keep it in #ap-agent): without it a Yes in a
+    # private chat was looked up in the room and refused (2026-10-16).
+    assert html.count('hx-include="#ap-agent"') == 2
 
 
 def test_approval_never_leaks_the_held_conversation():

@@ -153,11 +153,28 @@
   //: motion. Markdown is rendered first and the reveal walks its text
   //: nodes, so emphasis, lists and links come up in place.
   function speakMs(chars) { return Math.max(1500, Math.min(5000, chars * 40)); }
-  function typeIn(el) {
-    // Every word in its own span, faded in in order. The words are all in
-    // the document from the first frame (opacity, never removal), so what
-    // the eye sees arriving is already there for a screen reader, a
-    // search, or anything reading the thread.
+  //: One answer at a time. A meeting's answers can land faster than they
+  //: are read out (the next agent's turn starts the moment the last one's
+  //: lands), and typing them all at once had three bubbles growing
+  //: together. Each waits, out of sight, for the one before it to finish.
+  var TYPING_QUEUE = [], TYPING_NOW = false;
+  function typeNext() {
+    if (TYPING_NOW) return;
+    var text = TYPING_QUEUE.shift();
+    if (!text) return;
+    var row = text.closest(".am");
+    if (row) row.hidden = false;
+    TYPING_NOW = true;
+    typeIn(text, function () { TYPING_NOW = false; typeNext(); });
+  }
+  function typeIn(el, done) {
+    // Every word in its own span, shown in order. The words are all in the
+    // document from the first frame, so what the eye sees arriving is
+    // already there for anything reading the thread. The ones still to come
+    // take no room: fading them in left a bubble at its full height, blank,
+    // with a caret at the bottom, which read as an answer stuck mid-typing
+    // after it had already landed (screenshot, 2026-10-16). The bubble
+    // grows as the words land, the way a typed message does.
     var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     var texts = [], n;
     while ((n = walker.nextNode())) texts.push(n);
@@ -168,20 +185,20 @@
         if (!part) return;
         if (/^\s+$/.test(part)) { frag.appendChild(document.createTextNode(part)); return; }
         var w = document.createElement("span");
-        w.className = "aw"; w.textContent = part; w.style.opacity = "0";
+        w.className = "aw aw-wait"; w.textContent = part;
         frag.appendChild(w); words.push(w); chars += part.length;
       });
       node.parentNode.replaceChild(frag, node);
     });
-    if (!words.length) { el.classList.remove("typing"); return; }
+    if (!words.length) { el.classList.remove("typing"); if (done) done(); return; }
     var ms = speakMs(chars), start = performance.now(), shown = 0;
     function frame(now) {
       var gone = now - start;
       var want = gone >= ms ? words.length : Math.floor(words.length * gone / ms);
-      while (shown < want) { words[shown].style.opacity = ""; shown++; }
+      while (shown < want) { words[shown].classList.remove("aw-wait"); shown++; }
       toBottom();
       if (shown < words.length) requestAnimationFrame(frame);
-      else el.classList.remove("typing");
+      else { el.classList.remove("typing"); if (done) done(); }
     }
     el.classList.add("typing");
     requestAnimationFrame(frame);
@@ -196,8 +213,11 @@
       var row = text.closest(".am");
       row.setAttribute("data-typed", "1");
       if (reduce || row.classList.contains("awaiting") || row.classList.contains("ajob")) return;
-      typeIn(text);
+      // Its turn comes when the answer before it has been said.
+      if (TYPING_NOW || TYPING_QUEUE.length) row.hidden = true;
+      TYPING_QUEUE.push(text);
     });
+    typeNext();
   }
 
   function settle() {

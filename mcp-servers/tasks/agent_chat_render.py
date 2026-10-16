@@ -309,11 +309,11 @@ def approval_bubble(name: str, ask_id: str, calls: list[dict]) -> str:
             f'<ul class="acalls">{"".join(items)}</ul>'
             '<div class="aactions">'
             '<button class="btn primary" type="button" '
-            'hx-post="/tasks/agents/chat/approve" '
+            'hx-post="/tasks/agents/chat/approve" hx-include="#ap-agent" '
             f'hx-vals=\'{{"ask_id": "{aid}", "approved": "yes"}}\' '
             f'hx-target="#await-{aid}" hx-swap="outerHTML">Yes</button>'
             '<button class="btn" type="button" '
-            'hx-post="/tasks/agents/chat/approve" '
+            'hx-post="/tasks/agents/chat/approve" hx-include="#ap-agent" '
             f'hx-vals=\'{{"ask_id": "{aid}", "approved": "no"}}\' '
             f'hx-target="#await-{aid}" hx-swap="outerHTML">No</button>'
             '</div></div></div>')
