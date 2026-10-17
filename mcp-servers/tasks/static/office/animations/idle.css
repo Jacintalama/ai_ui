@@ -4,3 +4,20 @@
     0%, 100% { transform: translateY(0) }
     50%      { transform: translateY(-2.5px) }
   }
+
+/* Hello: the right arm up and waving when the robot is clicked (office.js
+   wave). The hand goes with the arm, as in the walk. */
+.who-slot.waving .bot-arm-r {
+  transform-box: fill-box; transform-origin: 50% 8%;
+  animation: wave-arm .45s ease-in-out 4 alternate;
+}
+@keyframes wave-arm {
+  0%   { transform: rotate(-150deg); }
+  100% { transform: rotate(-115deg); }
+}
+.who-slot.waving .bot-figure { animation: wave-bounce .45s ease-in-out 2; }
+@keyframes wave-bounce { 50% { transform: translateY(-3px); } }
+@media (prefers-reduced-motion: reduce) {
+  .who-slot.waving .bot-arm-r { animation: none; transform: rotate(-130deg); }
+  .who-slot.waving .bot-figure { animation: none; }
+}

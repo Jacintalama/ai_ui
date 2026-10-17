@@ -159,7 +159,19 @@
   //: are read out (the next agent's turn starts the moment the last one's
   //: lands), and typing them all at once had three bubbles growing
   //: together. Each waits, out of sight, for the one before it to finish.
-  var TYPING_QUEUE = [], TYPING_NOW = false;
+  var TYPING_QUEUE = [], TYPING_NOW = false, TYPING_WATCH = null;
+  //: The reveal in flight, so it can be finished from outside: when the
+  //: tab is hidden (rAF stops there, and an answer stuck at its first
+  //: word with a caret was what the person came back to), or when
+  //: anything goes wrong mid-reveal. Nothing may wedge the queue: a stuck
+  //: TYPING_NOW hid every later answer for good (seen 2026-10-17).
+  var REVEALING = null;
+  function finishReveal() {
+    var r = REVEALING;
+    if (!r) return;
+    REVEALING = null;
+    try { r.finish(); } catch (e) { /* the words are shown below either way */ }
+  }
   function typeNext() {
     if (TYPING_NOW) return;
     var text = TYPING_QUEUE.shift();
@@ -167,8 +179,26 @@
     var row = text.closest(".am");
     if (row) row.hidden = false;
     TYPING_NOW = true;
-    typeIn(text, function () { TYPING_NOW = false; typeNext(); });
+    clearTimeout(TYPING_WATCH);
+    // The watchdog: however the reveal ends, the queue moves on.
+    TYPING_WATCH = setTimeout(function () { finishReveal(); }, 5000 + 2000);
+    function done() {
+      clearTimeout(TYPING_WATCH);
+      REVEALING = null;
+      TYPING_NOW = false;
+      typeNext();
+    }
+    try { typeIn(text, done); }
+    catch (e) { showAll(text); done(); }
   }
+  //: Every word of an answer, at once.
+  function showAll(el) {
+    el.querySelectorAll(".aw-wait").forEach(function (w) { w.classList.remove("aw-wait"); });
+    el.classList.remove("typing");
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) finishReveal();
+  });
   //: A caret in a window nobody can see types for nobody: an answer that
   //: lands in a hidden window (the office's dock, minimised) is shown
   //: whole, so it is there the moment the window opens.
@@ -199,17 +229,32 @@
       node.parentNode.replaceChild(frag, node);
     });
     if (!words.length) { el.classList.remove("typing"); if (done) done(); return; }
-    var ms = speakMs(chars), start = performance.now(), shown = 0;
+    var ms = speakMs(chars), start = performance.now(), shown = 0, over = false;
     var box = el.closest(".ap-thread");
+    function end() {
+      if (over) return;
+      over = true;
+      clearInterval(ticker);
+      el.classList.remove("typing");
+      if (done) done();
+    }
     function frame(now) {
-      var gone = now - start;
-      var want = (gone >= ms || unseen(box)) ? words.length
+      if (over) return;
+      var gone = (now || performance.now()) - start;
+      var want = (gone >= ms || unseen(box) || document.hidden) ? words.length
                : Math.floor(words.length * gone / ms);
       while (shown < want) { words[shown].classList.remove("aw-wait"); shown++; }
       toBottom(box);
       if (shown < words.length) requestAnimationFrame(frame);
-      else { el.classList.remove("typing"); if (done) done(); }
+      else end();
     }
+    // A clock that does not stop with the tab: rAF pauses in a background
+    // tab, and this keeps the reveal moving (slowly) and ends it on time.
+    var ticker = setInterval(function () { frame(); }, 250);
+    REVEALING = { finish: function () {
+      while (shown < words.length) { words[shown].classList.remove("aw-wait"); shown++; }
+      end();
+    } };
     el.classList.add("typing");
     requestAnimationFrame(frame);
   }

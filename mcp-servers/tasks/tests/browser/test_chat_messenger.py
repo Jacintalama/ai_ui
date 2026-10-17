@@ -364,3 +364,24 @@ def test_reduced_motion_shows_the_answer_at_once(page):
     live = page.locator('#agent-thread .am.agent[data-agent="Mia"]').last.locator(".atext")
     assert "typing" not in (live.get_attribute("class") or "")
     assert live.locator(".aw").count() == 0
+
+
+def test_a_reveal_finishes_at_once_when_the_tab_is_hidden(page):
+    """rAF stops in a background tab, and an answer that arrived while the
+    person was on another tab sat at its first word with a caret until they
+    came back (screenshot, 2026-10-17). Hidden means shown whole, and the
+    queue behind it moves on."""
+    _arrives(page, render.agent_bubble("Ada", "First, the launch moved to Thursday, which gives marketing the extra day they asked for, and I put it on the calendar."))
+    _arrives(page, render.agent_bubble("Mia", "Second, the inbox is clear."))
+    ada = page.locator('#agent-thread .am.agent[data-agent="Ada"]').last
+    assert "typing" in (ada.locator(".atext").get_attribute("class") or "")
+    page.evaluate("() => { Object.defineProperty(document, 'hidden', { get: () => true, configurable: true });"
+                  " document.dispatchEvent(new Event('visibilitychange')); }")
+    page.wait_for_timeout(100)
+    assert ada.locator(".aw.aw-wait").count() == 0
+    assert "typing" not in (ada.locator(".atext").get_attribute("class") or "")
+    page.evaluate("() => { Object.defineProperty(document, 'hidden', { get: () => false, configurable: true }); }")
+    page.wait_for_function("() => !document.querySelector('#agent-thread .am[hidden]')", timeout=4000)
+    page.wait_for_function("() => !document.querySelector('#agent-thread .atext.typing')", timeout=8000)
+    mia = page.locator('#agent-thread .am.agent[data-agent="Mia"]').last
+    assert mia.is_visible() and "inbox is clear" in mia.inner_text()
