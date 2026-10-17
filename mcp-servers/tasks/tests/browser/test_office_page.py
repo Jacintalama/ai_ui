@@ -2859,3 +2859,24 @@ def test_a_bubble_in_a_chat_window_is_not_squeezed_by_its_time_stamp(page):
     when = win.locator(".am.agent .awhen")
     assert when.count() == 1
     assert when.evaluate("el => getComputedStyle(el).position") == "absolute"
+
+
+# --- a build is the agent working (2026-10-17) ---------------------------------
+
+def test_an_agent_building_an_app_is_drawn_building(page):
+    """Rex kicked off a build and the floor said Ready. A build run reads as
+    working, said as what it is, and without the chat's typing dots: it is
+    making an app, not answering."""
+    page.route("**/agents/activity**", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"activity": {
+            "agent-research-assistant-0001": {
+                "state": "working", "running_for_seconds": 240,
+                "last_run_at": "2026-10-17T09:00:00+00:00", "source": "build"}},
+            "handoffs": []})))
+    page.evaluate("() => window.aiuiRefreshOffice()")
+    page.wait_for_timeout(400)
+    who = page.locator('.who[data-id="agent-research-assistant-0001"]')
+    assert who.get_attribute("data-state") == "working"
+    assert "Building" in who.locator(".who-label small").inner_text()
+    assert who.get_attribute("data-typing") is None

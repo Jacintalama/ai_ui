@@ -73,7 +73,10 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       var secs = a._since != null
         ? Math.max(0, Math.round((Date.now() - a._since) / 1000))
         : a.running_for_seconds;
-      return { key: "working", label: "Working" + (secs != null ? " " + secs + "s" : "") };
+      // A build is the agent working on an app, for minutes: said as what
+      // it is, so "Building 4m" beside Rex is the job the to-do lists.
+      var verb = a.source === "build" ? "Building" : "Working";
+      return { key: "working", label: verb + (secs != null ? " " + secs + "s" : "") };
     }
     if (a.state === "waiting") return { key: "waiting", label: "Waiting on you" };
     if (a.state === "failed") return { key: "failed", label: "Last run failed" };

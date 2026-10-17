@@ -117,6 +117,14 @@ SOURCE_MEETING = "meeting"
 #: person pressed Start. Nobody is sitting in a chat waiting for it, but the
 #: office and the run log must still tell a step from a chat turn.
 SOURCE_JOB = "job"
+#: An App Builder job the agent started (routes_code /create, /apply). The
+#: run lasts as long as the build: opened when the job is spawned, closed
+#: by the execution pipeline when the item finishes (finish_task_runs).
+SOURCE_BUILD = "build"
+#: A build runs the Claude Code CLI for minutes, and a long one with the
+#: fix passes behind it for longer; the pipeline closes the run itself, so
+#: this only catches a process that died mid-build.
+STALE_AFTER_BUILD = timedelta(minutes=45)
 
 #: The four values tasks.agent_step.status may hold, named so the code that
 #: produces an outcome can say which one it means.
@@ -141,6 +149,7 @@ STEP_HELD = "held"
 def _stale_after(source: str):
     """How long a run of this kind may go unfinished before it is a failure."""
     return (STALE_AFTER_SCHEDULE if source == SOURCE_SCHEDULE
+            else STALE_AFTER_BUILD if source == SOURCE_BUILD
             else STALE_AFTER_CHANNEL)
 
 
@@ -189,7 +198,8 @@ def in_job_step() -> bool:
 
 
 async def start_run(agent_id: str, user_email: str, source: str,
-                    parent_run_id: str | None = None) -> str | None:
+                    parent_run_id: str | None = None,
+                    task_id: str | None = None) -> str | None:
     """Record that an agent has started working. Returns the run id, or None.
 
     None means the bookkeeping failed, and the caller carries on regardless:
@@ -198,6 +208,9 @@ async def start_run(agent_id: str, user_email: str, source: str,
     `parent_run_id` is the run that asked for this one, for a handoff. None
     for a run nobody asked for, which is every run that existed before
     agents could ask each other.
+
+    `task_id` is the tasks.items row this run IS, for a build (SOURCE_BUILD):
+    the execution pipeline closes the run by it when the item finishes.
     """
     if not agent_id or not user_email:
         return None
@@ -207,12 +220,13 @@ async def start_run(agent_id: str, user_email: str, source: str,
             await s.execute(
                 sql_text(
                     "INSERT INTO tasks.agent_run "
-                    "(id, agent_id, user_email, source, status, parent_run_id) "
+                    "(id, agent_id, user_email, source, status, parent_run_id, task_id) "
                     "VALUES (:id, :agent_id, :user_email, :source, 'running', "
-                    ":parent_run_id)"),
+                    ":parent_run_id, CAST(:task_id AS UUID))"),
                 {"id": run_id, "agent_id": agent_id,
                  "user_email": user_email, "source": source,
-                 "parent_run_id": parent_run_id})
+                 "parent_run_id": parent_run_id,
+                 "task_id": str(task_id) if task_id else None})
             await s.commit()
         # After the commit, so the office is never told about a run the
         # database does not have.
@@ -274,6 +288,41 @@ async def finish_run(run_id: str | None, status: str,
     except Exception:                                       # noqa: BLE001
         logger.warning("could not record the end of an agent run",
                        exc_info=True)
+
+
+#: What a build's outcome (routes_execution outcome.kind) says about the
+#: agent's run: the item's own words, in the run's own vocabulary.
+BUILD_OUTCOME_STATUS = {"completed": "completed", "needs_steps": "completed",
+                        "needs_input": "waiting", "failed": "failed"}
+
+
+async def finish_task_runs(task_id, status: str) -> int:
+    """Close every open run that IS this build (start_run task_id), with
+    `status`, and tell the office. Returns how many were closed.
+
+    Called from the execution pipeline when a tasks.items row reaches its
+    end, whatever the end was. Fails open like the rest of this module: a
+    build must never fail because its bookkeeping did.
+    """
+    if not task_id:
+        return 0
+    try:
+        async with session() as s:
+            rows = (await s.execute(
+                sql_text(
+                    "UPDATE tasks.agent_run "
+                    "SET finished_at = now(), status = :status "
+                    "WHERE task_id = CAST(:task_id AS UUID) AND finished_at IS NULL "
+                    "RETURNING agent_id, user_email"),
+                {"task_id": str(task_id), "status": status})).all()
+            await s.commit()
+        for row in rows:
+            agent_events.publish("run_finished", agent_id=row[0],
+                                 user_email=row[1], status=status)
+        return len(rows)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not close the runs of a build", exc_info=True)
+        return 0
 
 
 async def record_step(run_id: str | None, agent_id: str, user_email: str,
