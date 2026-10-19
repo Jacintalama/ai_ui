@@ -119,9 +119,9 @@ def test_the_compose_cap_turns_escalation_off(monkeypatch):
     # replaced.
     ("AGENT_DEFAULT_MODEL", "z-ai/glm-5.3-flash"),
     ("AGENT_FREE_MODELS", "z-ai/glm-5.3-flash,z-ai/glm-4.7-flash"),
-    # Left alone on purpose: whether GLM wants it is checked against a real
-    # call separately.
-    ("AGENT_FREE_REASONING", "none"),
+    # minimal, not none: measured live 2026-10-19, GLM 5.3 Flash answers 400
+    # "Reasoning is mandatory" to none, and every agent turn failed with it.
+    ("AGENT_FREE_REASONING", "minimal"),
 ])
 def test_the_agent_pool_reaches_the_container_as_glm(name, expected):
     assert _reaches_container(name, {}) == expected
