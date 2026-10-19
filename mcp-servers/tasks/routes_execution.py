@@ -266,6 +266,17 @@ async def _run_autofix(
         return report
 
 
+async def _finish_agent_runs(task_id, outcome_kind: str) -> None:
+    """Close the office's run for this build. Fails open, like every step
+    after the agent: a build must never fail because its bookkeeping did."""
+    try:
+        import agent_activity
+        status = agent_activity.BUILD_OUTCOME_STATUS.get(outcome_kind, "completed")
+        await agent_activity.finish_task_runs(task_id, status)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not close the agent run of a build", exc_info=True)
+
+
 async def _run_execution(
     task_id: UUID,
     execution_id: UUID,
@@ -520,8 +531,13 @@ async def _run_execution(
             )
             await _grant_creator_membership(s, task_id, slug)
             await s.commit()
+        # The agent that asked for this build has been "working" on the
+        # office floor since the job was spawned (routes_code
+        # _mark_building); the item ending is the run ending.
+        await _finish_agent_runs(task_id, outcome.kind)
     except Exception as exc:
         logger.exception("Execution failed: %s", exc)
+        await _finish_agent_runs(task_id, "failed")
         async with session() as s:
             await s.execute(
                 update(TaskExecution).where(TaskExecution.id == execution_id)

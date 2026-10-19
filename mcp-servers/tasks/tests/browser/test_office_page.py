@@ -2657,6 +2657,10 @@ def test_framed_by_the_shell_the_office_has_no_header_and_keeps_its_search(brows
         frame.locator(".who").first.wait_for(state="visible")
         assert frame.locator(".top").count() == 1
         assert not frame.locator(".top").is_visible()
+        # The column starts at the top, with no header to sit under, and
+        # scrolls as one: the card is not a scroll box of its own.
+        assert frame.locator("#side").evaluate("el => getComputedStyle(el).top") == "0px"
+        assert frame.locator("#side-agent").evaluate("el => getComputedStyle(el).overflowY") == "visible"
         # The search box moved down beside The Brain and still narrows.
         assert frame.locator(".brain #q").count() == 1
         frame.locator("#q").fill("librarian")
@@ -2801,3 +2805,78 @@ def test_the_form_refuses_a_two_word_name_and_keeps_what_was_typed(page):
     page.keyboard.press("Escape")
     page.wait_for_timeout(100)
     assert not page.locator("#newagent").is_visible()
+
+
+# --- a robot says hello when clicked (2026-10-17) ------------------------------
+# "if i click the agent in the office it should hi to me like waving the
+# hands". The click still picks the agent for the card; the wave and the
+# word are on top of that, and gone again in under two seconds.
+
+def test_a_clicked_robot_waves_and_says_hello_by_name(page):
+    page.route("**/api/v1/auths/**", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"id": "u1", "name": "Ralph Benitez", "email": "r@example.com"})))
+    page.reload()
+    page.wait_for_selector(".who", state="visible")
+    page.wait_for_timeout(300)
+    page.locator('.who[data-id="agent-iris-a103"]').click()
+    slot = page.locator('.who-slot[data-id="agent-iris-a103"]')
+    assert "waving" in (slot.get_attribute("class") or "")
+    assert slot.locator(".hello").inner_text().startswith("Hi, Ralph!")
+    assert slot.locator(".bot-arm-r").evaluate("el => getComputedStyle(el).animationName") == "wave-arm"
+    # The card still follows the click.
+    assert page.locator("#side-agent h2").inner_text() == "Iris"
+    page.wait_for_timeout(2700)
+    assert "waving" not in (slot.get_attribute("class") or "")
+    assert slot.locator(".hello").count() == 0
+
+
+def test_a_robot_says_hi_without_a_name_when_nobody_is_known(page):
+    page.locator('.who[data-id="agent-iris-a103"]').click()
+    assert page.locator('.who-slot[data-id="agent-iris-a103"] .hello').inner_text().startswith("Hi!")
+
+
+# --- a window's bubbles use the window (2026-10-17) ---------------------------
+
+def test_a_bubble_in_a_chat_window_is_not_squeezed_by_its_time_stamp(page):
+    """The hover-only <time> beside a bubble took 120px of a 300px window
+    and left the words in a column three words wide (screenshot)."""
+    long = ("He did not have the specific error messages, but based on what he "
+            "could see the project appears empty apart from the README.")
+    page.route("**/tasks/agents/chat/thread**", lambda r: r.fulfill(
+        status=200, content_type="text/html",
+        body=render.thread([{"role": "user", "content": "What happened?", "turn_id": "t1",
+                             "at": "2026-10-16T13:46:00+00:00"},
+                            {"role": "assistant", "agent_name": "Mia", "content": long,
+                             "at": "2026-10-16T13:46:30+00:00"}])))
+    page.locator('.who-chat[data-id="agent-iris-a103"]').click()
+    win = page.locator('#chatdock .cw[data-chat="agent-iris-a103"]')
+    win.locator(".am.agent .atext").wait_for(state="visible")
+    bubble = win.locator(".am.agent .atext").bounding_box()
+    box = win.bounding_box()
+    assert bubble["width"] > box["width"] * 0.6, (bubble, box)
+    # The stamp is there, above the row's corner, taking no width.
+    when = win.locator(".am.agent .awhen")
+    assert when.count() == 1
+    assert when.evaluate("el => getComputedStyle(el).position") == "absolute"
+
+
+# --- a build is the agent working (2026-10-17) ---------------------------------
+
+def test_an_agent_building_an_app_is_drawn_building(page):
+    """Rex kicked off a build and the floor said Ready. A build run reads as
+    working, said as what it is, and without the chat's typing dots: it is
+    making an app, not answering."""
+    page.route("**/agents/activity**", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"activity": {
+            "agent-research-assistant-0001": {
+                "state": "working", "running_for_seconds": 240,
+                "last_run_at": "2026-10-17T09:00:00+00:00", "source": "build"}},
+            "handoffs": []})))
+    page.evaluate("() => window.aiuiRefreshOffice()")
+    page.wait_for_timeout(400)
+    who = page.locator('.who[data-id="agent-research-assistant-0001"]')
+    assert who.get_attribute("data-state") == "working"
+    assert "Building" in who.locator(".who-label small").inner_text()
+    assert who.get_attribute("data-typing") is None

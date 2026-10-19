@@ -18,6 +18,7 @@ _finalize_run stores and delivers it without knowing which kind of run it was.
 """
 import logging
 import os
+import re
 import time
 
 import httpx
@@ -661,6 +662,27 @@ async def _record_step(run_id, agent_id, user_email, call,
         logger.warning("could not record a tool call", exc_info=True)
 
 
+#: A reasoning model's thinking, when the provider leaves it inline. The
+#: free pool's models (Nemotron among them) sometimes return their working
+#: wrapped in <think> tags ahead of the answer, and until 2026-10-17 the
+#: whole thing landed in the bubble: paragraphs of "But wait, the user is
+#: asking..." before, or instead of, a reply. Closed blocks are dropped
+#: wherever they sit; an opening tag never closed is dropped on its own,
+#: because what follows it is the only answer there is.
+_THINK_BLOCK = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.S | re.I)
+_THINK_OPEN = re.compile(r"</?think(?:ing)?>\s*", re.I)
+
+
+def strip_reasoning(text):
+    """`text` without its <think> blocks, or `text` as it was when it is
+    not a string."""
+    if not isinstance(text, str) or "think" not in text.lower():
+        return text
+    out = _THINK_BLOCK.sub("", text)
+    out = _THINK_OPEN.sub("", out)
+    return out.strip()
+
+
 async def _chat(token: str, model: str, messages: list[dict],
                 tool_ids: list[str] | None, user_email: str,
                 tool_mode: str | None,
@@ -847,7 +869,7 @@ async def _chat(token: str, model: str, messages: list[dict],
                 raise RuntimeError("the model returned no answer")
             message = choices[0].get("message") or {}
             calls = message.get("tool_calls") or []
-            content = (message.get("content") or "").strip()
+            content = strip_reasoning((message.get("content") or "").strip())
 
             reason = None
             if probe_reason and not (not calls
@@ -981,7 +1003,7 @@ async def _chat(token: str, model: str, messages: list[dict],
                                   max(timeout, FINAL_ROUND_MIN_TIMEOUT_SECONDS))
             choices = data.get("choices") or []
             message = (choices[0].get("message") or {}) if choices else {}
-            final = (message.get("content") or "").strip()
+            final = strip_reasoning((message.get("content") or "").strip())
         except Exception:                                   # noqa: BLE001
             logger.warning("the final answer round after the tool cap failed",
                            exc_info=True)

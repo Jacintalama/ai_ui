@@ -73,7 +73,10 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       var secs = a._since != null
         ? Math.max(0, Math.round((Date.now() - a._since) / 1000))
         : a.running_for_seconds;
-      return { key: "working", label: "Working" + (secs != null ? " " + secs + "s" : "") };
+      // A build is the agent working on an app, for minutes: said as what
+      // it is, so "Building 4m" beside Rex is the job the to-do lists.
+      var verb = a.source === "build" ? "Building" : "Working";
+      return { key: "working", label: verb + (secs != null ? " " + secs + "s" : "") };
     }
     if (a.state === "waiting") return { key: "waiting", label: "Waiting on you" };
     if (a.state === "failed") return { key: "failed", label: "Last run failed" };
@@ -2031,11 +2034,46 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
          done.map(function (t) { return line(t, true); }).join("") + '</ul></details>' : "");
   }
 
+  //: Who is looking: the signed-in person's first name, for the robots to
+  //: say hello to. Read once, and the office works without it ("Hi!").
+  var MY_NAME = "";
+  getJson("/api/v1/auths/").then(function (me) {
+    var name = me && typeof me.name === "string" ? me.name.trim() : "";
+    MY_NAME = name.split(/\s+/)[0] || "";
+  }).catch(function () { /* nobody to greet by name */ });
+
+  //: A robot clicked says hello: a wave of the arm and a word over its
+  //: head (2026-10-17, "if i click the agent in the office it should hi
+  //: to me like waving the hands"). The bubble is its own element, not
+  //: the handoff's .say, which syncSays owns and would take away on the
+  //: redraw the click causes.
+  var WAVE_MS = 1800;
+  function wave(id) {
+    var el = slotEl(document.getElementById("agents-layer"), id);
+    if (!el) return;
+    clearTimeout(el._wave);
+    el.classList.remove("waving");
+    void el.offsetWidth;                  // restart the animation on a second click
+    el.classList.add("waving");
+    var old = el.querySelector(".hello");
+    if (old) old.remove();
+    var hi = document.createElement("div");
+    hi.className = "say hello";
+    hi.textContent = "Hi" + (MY_NAME ? ", " + MY_NAME : "") + "! \uD83D\uDC4B";
+    el.appendChild(hi);
+    el._wave = setTimeout(function () {
+      el.classList.remove("waving");
+      hi.classList.add("going");
+      setTimeout(function () { hi.remove(); }, 650);
+    }, WAVE_MS);
+  }
+
   document.getElementById("rooms").addEventListener("click", function (ev) {
     var who = ev.target.closest(".who");
     if (!who) return;
     S.SELECTED = who.getAttribute("data-id");
     draw();
+    wave(S.SELECTED);
   });
   // --- how big the floor is drawn -----------------------------------------
   //

@@ -18,6 +18,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
 
+import agent_activity
 import app_code_access
 import design_skill
 from app_code_access import CodeAccessError
@@ -152,6 +153,20 @@ async def _spawn_build(user_email: str, seed: str, description: str,
     from routes_aiuibuilder import _create_and_spawn_build
     return await _create_and_spawn_build(user_email, seed, description,
                                          design_skill=design_skill)
+
+
+async def _mark_building(agent_id: str | None, user_email: str, task_id) -> None:
+    """Open the agent's run for this build (agent_activity SOURCE_BUILD),
+    closed by the execution pipeline when the item finishes. Nothing when
+    no agent asked (the person used the builder directly)."""
+    if not agent_id or not task_id:
+        return
+    try:
+        await agent_activity.start_run(agent_id, user_email,
+                                       agent_activity.SOURCE_BUILD,
+                                       task_id=str(task_id))
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not mark the agent as building", exc_info=True)
 
 
 async def _require_member(user_email: str, slug: str) -> None:
@@ -344,6 +359,7 @@ async def apply(body: ApplyIn,
         task_id, slug = await _spawn_enhance(
             body.user_email, proposal["slug"], proposal["description"],
             design_skill=design)
+        await _mark_building(body.agent_id, body.user_email, task_id)
     except HTTPException as exc:
         # These three are raised before the builder inserts anything, so no
         # work began and the person's approval should still be good. Any
@@ -430,6 +446,10 @@ async def create(body: CreateIn,
     design = await _design_for(body.user_email, body.agent_id)
     task_id, slug = await _spawn_build(body.user_email, seed, description,
                                        design_skill=design)
+    # The agent is working until the build ends, not until this turn ends:
+    # the turn is over in seconds and the build takes minutes, and the office
+    # drew the agent as Ready with the build still running (2026-10-17).
+    await _mark_building(body.agent_id, body.user_email, task_id)
     # This build, not the list of everything. Falls back to App Builder only
     # when there is no public address configured to build a link from.
     return {"task_id": task_id, "slug": slug,

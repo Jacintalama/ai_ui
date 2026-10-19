@@ -78,6 +78,9 @@ html:not(.embed) .feed li { min-width: 0; font-size: 12px; padding: 7px 10px; }
      The dock (html.embed) hides the bar too, with its own rules below. */
   html.shell .top { display: none; }
   html.shell .main { padding-top: 12px; }
+  /* No header to sit under: the column starts at the top and may use the
+     whole height, like the floor beside it. */
+  html.shell .side { top: 0; max-height: 100vh; }
   html.shell .brain .search { min-width: 160px; padding: 6px 11px; font-size: 12.5px; }
 
 /* --- embedded in the agents column --------------------------------------

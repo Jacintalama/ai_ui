@@ -11,8 +11,12 @@
   display: flex; flex-direction: column; gap: 14px;
   min-height: 0;
 }
-/* The card takes the slack under the lists. */
-#side-agent { flex: 1 1 auto; min-height: 0; overflow-y: auto; position: relative; }
+/* The card under the lists. It used to take the column's slack and scroll
+   inside itself, which in the shell left a box a few lines tall with the
+   robot's head scrolled out of it (screenshot, 2026-10-17). The column is
+   the one thing that scrolls now (panel.css .side), so the lists and the
+   card move together. */
+#side-agent { flex: 0 0 auto; position: relative; }
 #side-agent.folded { flex: 0 0 auto; overflow: hidden; }
 #side-agent.folded > :not(.side-head):not(.side-shut) { display: none; }
 .side-who { min-width: 0; flex: 1 1 auto; }

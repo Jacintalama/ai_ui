@@ -78,6 +78,17 @@
 .cw .ap-composer input[type="text"]:focus { outline: none; border-color: var(--cyan); }
 .cw .ap-composer .btn { flex: 0 0 auto; width: auto; padding: 7px 13px; font-size: 12.5px; border-radius: 999px; }
 .cw .aempty { color: var(--muted); font-size: 12.5px; padding: 8px 4px; }
+/* When a message was said: beside the bubble on the agents page, where
+   the thread is wide. In a 300px window that same <time>, invisible until
+   hovered, still took its 120px and squeezed the bubble to a column of
+   three words (screenshot, 2026-10-17). Here it sits above the row's
+   corner and takes no room. */
+.cw .am { position: relative; }
+.cw .awhen {
+  position: absolute; top: -13px; right: 2px; font-size: 10.5px; line-height: 1;
+}
+.cw .am.user .awhen { right: auto; left: 2px; }
+.cw .am.agent .abody { max-width: calc(100% - 36px); }
 
 /* --- a window put away ---------------------------------------------------- */
 .chead {
