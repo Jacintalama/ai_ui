@@ -472,7 +472,9 @@ services:
       # replaced. Pool membership is agent_runner._in_pool, not :free.
       - AGENT_DEFAULT_MODEL=${AGENT_DEFAULT_MODEL:-z-ai/glm-5.3-flash}
       - AGENT_FREE_MODELS=${AGENT_FREE_MODELS:-z-ai/glm-5.3-flash,z-ai/glm-4.7-flash}
-      - AGENT_FREE_REASONING=${AGENT_FREE_REASONING:-none}
+      # 2026-10-19: minimal, not none. GLM 5.3 Flash answers 400 "Reasoning is
+      # mandatory" to none; minimal measured 0.8 s (5.3) and 10 s (4.7).
+      - AGENT_FREE_REASONING=${AGENT_FREE_REASONING:-minimal}
       - AGENT_REFLECT_MODEL=${AGENT_REFLECT_MODEL:-}
       # A free agent moves to the paid model on its own for app builds,
       # code, pasted errors, very long conversations, and when the free
