@@ -673,3 +673,47 @@ async def test_the_notes_store_folds_the_address(monkeypatch):
     bound = [p["email"] for p in fake.params if "email" in p]
     assert len(bound) >= 5, bound
     assert all(e == "o@example.com" for e in bound), fake.params
+
+
+# --- GLM in the pool, 2026-10-19 --------------------------------------------
+# Reflection runs on the head of the tool loop's pool, which is now GLM ids
+# with no ":free" suffix. It must still send reasoning off and still fall
+# back down the pool when the provider fails.
+
+async def test_a_glm_reflection_sends_reasoning_off_and_falls_back(monkeypatch):
+    import agent_runner
+
+    class _NoCatalogue:
+        async def __call__(self):
+            return None
+
+    monkeypatch.delenv("AGENT_REFLECT_MODEL", raising=False)
+    monkeypatch.setattr(agent_runner, "FREE_MODELS",
+                        ["z-ai/glm-5.3-flash", "z-ai/glm-4.7-flash"])
+    monkeypatch.setattr(agent_runner, "FREE_REASONING", "none")
+    monkeypatch.setattr(agent_runner, "_available_free_ids", _NoCatalogue())
+    assert am.reflect_model() == "z-ai/glm-5.3-flash"
+    assert am.agent_runner_reasoning() == "none"
+
+    seen = []
+    bodies = [{"error": {"message": "Provider returned error"}},
+              {"choices": [{"message": {"content": "{}"}}]}]
+
+    async def fake_post(payload, token, timeout):
+        seen.append(payload["model"])
+        return bodies[len(seen) - 1]
+
+    monkeypatch.setattr(agent_runner, "_post_chat", fake_post)
+    out = await am._complete({"model": "z-ai/glm-5.3-flash", "messages": []},
+                             "tok", 5)
+    assert seen == ["z-ai/glm-5.3-flash", "z-ai/glm-4.7-flash"]
+    assert out["choices"]
+
+
+def test_a_reflection_on_a_paid_model_outside_the_pool_sends_no_reasoning(monkeypatch):
+    import agent_runner
+    monkeypatch.setattr(agent_runner, "FREE_MODELS",
+                        ["z-ai/glm-5.3-flash", "z-ai/glm-4.7-flash"])
+    monkeypatch.setattr(agent_runner, "FREE_REASONING", "none")
+    monkeypatch.setenv("AGENT_REFLECT_MODEL", "gpt-5.5")
+    assert am.agent_runner_reasoning() == ""

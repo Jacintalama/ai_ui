@@ -468,8 +468,10 @@ services:
       # measured 2026-09-15, a truncated reply with it on leaked the model's
       # thinking into the answer. AGENT_REFLECT_MODEL blank means the first
       # pool id (agent_memory.reflect_model).
-      - AGENT_DEFAULT_MODEL=${AGENT_DEFAULT_MODEL:-nvidia/nemotron-3-super-120b-a12b:free}
-      - AGENT_FREE_MODELS=${AGENT_FREE_MODELS:-nvidia/nemotron-3-super-120b-a12b:free,nvidia/nemotron-3-ultra-550b-a55b:free,nvidia/nemotron-3.5-lightning:free,cohere/north-mini-code:free}
+      # 2026-10-19: the owner asked for the cheapest GLM; nemotron free ids
+      # replaced. Pool membership is agent_runner._in_pool, not :free.
+      - AGENT_DEFAULT_MODEL=${AGENT_DEFAULT_MODEL:-z-ai/glm-5.3-flash}
+      - AGENT_FREE_MODELS=${AGENT_FREE_MODELS:-z-ai/glm-5.3-flash,z-ai/glm-4.7-flash}
       - AGENT_FREE_REASONING=${AGENT_FREE_REASONING:-none}
       - AGENT_REFLECT_MODEL=${AGENT_REFLECT_MODEL:-}
       # A free agent moves to the paid model on its own for app builds,
@@ -489,11 +491,13 @@ services:
       # 400 "Function tools with reasoning_effort are not supported ... set
       # reasoning_effort to 'none'" (measured 2026-09-17), and agent turns
       # always carry tools.
+      # 2026-10-19: cap 0, escalation off, while agents run on GLM. The GLM
+      # prices were read that day from OpenRouter's public model list.
       - AGENT_PAID_MODEL=${AGENT_PAID_MODEL-gpt-5.5}
       - AGENT_PAID_REASONING=${AGENT_PAID_REASONING-none}
       - AGENT_PAID_TIMEOUT_SECONDS=${AGENT_PAID_TIMEOUT_SECONDS:-90}
-      - AGENT_PAID_DAILY_CAP=${AGENT_PAID_DAILY_CAP:-40}
-      - AGENT_PAID_PRICES=${AGENT_PAID_PRICES:-gpt-5.5=5:30}
+      - AGENT_PAID_DAILY_CAP=${AGENT_PAID_DAILY_CAP:-0}
+      - AGENT_PAID_PRICES=${AGENT_PAID_PRICES:-gpt-5.5=5:30,z-ai/glm-5.3-flash=0.0352:0.2,z-ai/glm-4.7-flash=0.0605:0.4}
       # tasks renders the Channels page and decides from THIS var whether to
       # offer the Terminal row. webhook-handler serves the channel and reads
       # the same name. Set on only one of them, the channel is live while the

@@ -311,14 +311,16 @@ def _router_gave_up(content) -> bool:
 #: _fallback_pool drops a withdrawn id rather than dialling it, so nothing
 #: ever errored. free_pool.py reports the state of this list now.
 #:
+#: 2026-10-19: the owner asked for the cheapest GLM; nemotron free ids
+#: replaced. The pool is now paid ids with no ":free" suffix, which is why
+#: membership is decided by _in_pool and not by the suffix.
+#:
 #: Must stay in step with AGENT_FREE_MODELS in docker-compose.unified.yml,
 #: which is what actually sets it on the server.
 FREE_MODELS = [m.strip() for m in os.environ.get(
     "AGENT_FREE_MODELS",
-    "nvidia/nemotron-3-super-120b-a12b:free,"
-    "nvidia/nemotron-3-ultra-550b-a55b:free,"
-    "nvidia/nemotron-3.5-lightning:free,"
-    "cohere/north-mini-code:free").split(",") if m.strip()]
+    "z-ai/glm-5.3-flash,"
+    "z-ai/glm-4.7-flash").split(",") if m.strip()]
 
 #: Sent as reasoning_effort on every free completion. Open WebUI passes it
 #: through untouched for a base model, and for a derived model whose own
@@ -339,8 +341,19 @@ _available_ids: set | None = None
 _available_at = 0.0
 
 
-def _is_free(model_id) -> bool:
-    return isinstance(model_id, str) and model_id.endswith(":free")
+def _in_pool(model_id) -> bool:
+    """Whether an id gets the pool's behaviour: fallback down FREE_MODELS on
+    a provider failure and FREE_REASONING on the payload.
+
+    A ":free" id, or any id listed in FREE_MODELS. The suffix alone stopped
+    being enough on 2026-10-19, when the pool moved to GLM ids that cost
+    money and carry no suffix: a busy provider would have failed the turn
+    instead of falling back. Read FREE_MODELS late so a test that patches it
+    is honoured.
+    """
+    if not isinstance(model_id, str) or not model_id:
+        return False
+    return model_id.endswith(":free") or model_id in FREE_MODELS
 
 
 def _provider_failed(exc_or_body) -> bool:
@@ -428,10 +441,10 @@ async def _available_free_ids() -> set | None:
 
 
 async def _fallback_pool(agent: dict | None) -> list[str]:
-    """The free ids to try after the agent's own base, in order, or [] for
-    an agent that is not on a free model (or no agent at all)."""
+    """The pool ids to try after the agent's own base, in order, or [] for
+    an agent that is not on a pool model (or no agent at all)."""
     base = (agent or {}).get("base_model_id")
-    if not _is_free(base):
+    if not _in_pool(base):
         return []
     available = await _available_free_ids()
     pool = [m for m in FREE_MODELS if m != base]
@@ -702,7 +715,7 @@ async def _chat(token: str, model: str, messages: list[dict],
     content = ""
 
     base = (agent or {}).get("base_model_id")
-    free = _is_free(base)
+    free = _in_pool(base)
     pool = await _fallback_pool(agent) if free else []
     active = model            # the model id posted; the agent id until a fallback
     instructions = _agent_system(agent)

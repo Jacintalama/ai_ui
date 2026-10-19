@@ -61,8 +61,11 @@ def _reaches_container(name: str, env: dict[str, str]) -> str:
     # agent turn carries tools.
     ("AGENT_PAID_REASONING", "none"),
     ("AGENT_PAID_TIMEOUT_SECONDS", "90"),
-    ("AGENT_PAID_DAILY_CAP", "40"),
-    ("AGENT_PAID_PRICES", "gpt-5.5=5:30"),
+    # 0 since 2026-10-19: escalation to gpt-5.5 is off while every agent
+    # runs on GLM.
+    ("AGENT_PAID_DAILY_CAP", "0"),
+    ("AGENT_PAID_PRICES",
+     "gpt-5.5=5:30,z-ai/glm-5.3-flash=0.0352:0.2,z-ai/glm-4.7-flash=0.0605:0.4"),
 ])
 def test_each_paid_setting_reaches_the_container_with_the_agreed_default(name, expected):
     assert _default(name) == expected
@@ -94,8 +97,37 @@ def test_blank_model_in_the_container_turns_the_feature_off(monkeypatch):
     assert not agent_escalation.enabled()
 
 
-def test_the_compose_prices_parse_to_the_price_read_on_2026_09_17():
+def test_the_compose_prices_parse_to_the_prices_read_on_their_dates():
     # No braces in the value: compose interpolation ends ${VAR:-...} at the
-    # first closing brace, so a JSON default would be cut short.
+    # first closing brace, so a JSON default would be cut short. gpt-5.5
+    # read 2026-09-17 from OpenAI; the two GLMs 2026-10-19 from OpenRouter's
+    # public model list.
     assert agent_escalation.parse_prices(_default("AGENT_PAID_PRICES")) == {
-        "gpt-5.5": (5.0, 30.0)}
+        "gpt-5.5": (5.0, 30.0), "z-ai/glm-5.3-flash": (0.0352, 0.2),
+        "z-ai/glm-4.7-flash": (0.0605, 0.4)}
+
+
+def test_the_compose_cap_turns_escalation_off(monkeypatch):
+    monkeypatch.setattr(agent_escalation, "PAID_MODEL", "gpt-5.5")
+    monkeypatch.setattr(agent_escalation, "DAILY_CAP", int(
+        _reaches_container("AGENT_PAID_DAILY_CAP", {})))
+    assert not agent_escalation.enabled()
+
+
+@pytest.mark.parametrize("name,expected", [
+    # 2026-10-19: the owner asked for the cheapest GLM; nemotron free ids
+    # replaced.
+    ("AGENT_DEFAULT_MODEL", "z-ai/glm-5.3-flash"),
+    ("AGENT_FREE_MODELS", "z-ai/glm-5.3-flash,z-ai/glm-4.7-flash"),
+    # Left alone on purpose: whether GLM wants it is checked against a real
+    # call separately.
+    ("AGENT_FREE_REASONING", "none"),
+])
+def test_the_agent_pool_reaches_the_container_as_glm(name, expected):
+    assert _reaches_container(name, {}) == expected
+
+
+def test_the_compose_pool_matches_the_code_default():
+    import agent_runner
+    assert _default("AGENT_FREE_MODELS").split(",") == agent_runner.FREE_MODELS
+    assert _default("AGENT_DEFAULT_MODEL") == agent_runner.FREE_MODELS[0]

@@ -160,7 +160,7 @@ async def test_the_form_is_told_the_platform_default_model(monkeypatch):
 async def test_the_default_is_the_fallback_when_nothing_is_set(monkeypatch):
     monkeypatch.delenv("AGENT_DEFAULT_MODEL", raising=False)
     r = await _tools_client(monkeypatch).get("/api/tasks/agents/tools")
-    assert r.json()["default_model"] == "nvidia/nemotron-3-super-120b-a12b:free"
+    assert r.json()["default_model"] == "z-ai/glm-5.3-flash"
 
 
 async def test_the_listing_every_agent_turn_reads_does_not_change(monkeypatch):

@@ -57,7 +57,8 @@ PAID_REASONING = os.environ.get("AGENT_PAID_REASONING", "none").strip()
 PAID_TIMEOUT_SECONDS = _int_env("AGENT_PAID_TIMEOUT_SECONDS", 90)
 
 #: Paid turns per person per UTC day. 0 switches the feature off. Blank is
-#: not an off switch: compose and _int_env both read it as 40.
+#: not an off switch: it reads as the default, which is 40 here and 0 in
+#: compose since 2026-10-19 (escalation off while agents run on GLM).
 DAILY_CAP = _int_env("AGENT_PAID_DAILY_CAP", 40)
 
 #: How long an agent stays on the paid model for this person after a paid
@@ -126,23 +127,31 @@ def parse_prices(raw: str) -> dict[str, tuple[float, float]]:
 
 
 #: Read 2026-09-17 from developers.openai.com/api/docs/pricing: gpt-5.5 is
-#: $5.00 input and $30.00 output per million tokens.
-PRICES = parse_prices(os.environ.get("AGENT_PAID_PRICES", "gpt-5.5=5:30"))
+#: $5.00 input and $30.00 output per million tokens. The two GLMs read
+#: 2026-10-19 from OpenRouter's public model list: z-ai/glm-5.3-flash $0.0352
+#: and $0.20, z-ai/glm-4.7-flash $0.0605 and $0.40. 2026-10-19: the owner
+#: asked for the cheapest GLM; nemotron free ids replaced, and the pool now
+#: costs money, so it needs a price or every run records cost unknown.
+PRICES = parse_prices(os.environ.get(
+    "AGENT_PAID_PRICES",
+    "gpt-5.5=5:30,z-ai/glm-5.3-flash=0.0352:0.2,z-ai/glm-4.7-flash=0.0605:0.4"))
 
 
 def cost_of(model: str, prompt_tokens: int,
             completion_tokens: int) -> float | None:
     """What one completion cost in dollars, or None when nothing says.
 
-    Free ids cost nothing. A model with no price is None rather than 0, so a
-    row never claims a paid run was free.
+    A listed price wins first. Otherwise ":free" ids cost nothing, and a
+    model with no price is None rather than 0, so a row never claims a paid
+    run was free.
     """
+    price = PRICES.get(model) if isinstance(model, str) else None
+    if price is not None:
+        return (prompt_tokens * price[0]
+                + completion_tokens * price[1]) / 1_000_000
     if isinstance(model, str) and model.endswith(":free"):
         return 0.0
-    price = PRICES.get(model)
-    if price is None:
-        return None
-    return (prompt_tokens * price[0] + completion_tokens * price[1]) / 1_000_000
+    return None
 
 
 def _is_count(value: object) -> TypeGuard[int | float]:
@@ -184,6 +193,8 @@ class TurnUsage:
     cost_usd: float | None = 0.0
 
     def add(self, model: str, usage: object) -> None:
+        # "Costs nothing", which is ":free" only. A pool id that costs money
+        # (the GLMs since 2026-10-19) is priced like any paid completion.
         free = isinstance(model, str) and model.endswith(":free")
         paid_answered = (isinstance(self.model, str)
                          and not self.model.endswith(":free"))

@@ -445,3 +445,53 @@ def test_a_blank_params_system_falls_through_to_the_meta_copy():
                  "meta": {"agent_instructions": "Be Ada."}}
         assert agent_runner._agent_system(agent) == "Be Ada.", params
     assert agent_runner._agent_system({"id": "a", "params": {}, "meta": {}}) == ""
+
+
+# --- GLM in the pool, 2026-10-19 --------------------------------------------
+# The owner asked for the cheapest GLM, so the pool is now paid ids with no
+# ":free" suffix. The pool behaviour (fallback, reasoning off) must follow the
+# configured pool, not the suffix, or a busy provider fails the whole turn.
+
+GLM_FLASH = "z-ai/glm-5.3-flash"
+GLM_FALLBACK = "z-ai/glm-4.7-flash"
+
+
+def test_the_pool_rule_is_the_suffix_or_the_configured_list(monkeypatch):
+    monkeypatch.setattr(agent_runner, "FREE_MODELS", [GLM_FLASH, GLM_FALLBACK])
+    assert agent_runner._in_pool("nvidia/nemotron-3-super-120b-a12b:free")
+    assert agent_runner._in_pool(GLM_FLASH)
+    assert agent_runner._in_pool(GLM_FALLBACK)
+    assert not agent_runner._in_pool("gpt-5.5")
+    assert not agent_runner._in_pool("z-ai/glm-5.3")
+    assert not agent_runner._in_pool(None)
+    assert not agent_runner._in_pool("")
+
+
+async def test_a_glm_agent_falls_back_to_the_next_glm_with_reasoning_off(monkeypatch):
+    monkeypatch.setattr(agent_runner, "FREE_MODELS", [GLM_FLASH, GLM_FALLBACK])
+    posts = []
+
+    async def fake_post(payload, token, timeout=None):
+        posts.append(payload)
+        if len(posts) == 1:
+            raise _http_400()
+        return _reply("answered on glm 4.7")
+
+    with patch.object(agent_runner, "_post_chat", new=fake_post):
+        answer, _notes = await agent_runner._chat(
+            token="t", model="agent-1",
+            messages=[{"role": "user", "content": "q"}],
+            tool_ids=None, user_email="o@example.com",
+            tool_mode="read_only", agent=_agent(base=GLM_FLASH))
+
+    assert answer == "answered on glm 4.7"
+    assert [p["model"] for p in posts] == ["agent-1", GLM_FALLBACK]
+    assert posts[0]["reasoning_effort"] == "none"
+    assert posts[1]["reasoning_effort"] == "none"
+    assert posts[1]["messages"][0] == {"role": "system", "content": "Be Ada."}
+
+
+async def test_an_agent_on_a_paid_id_outside_the_pool_still_does_not_fall_back(monkeypatch):
+    monkeypatch.setattr(agent_runner, "FREE_MODELS", [GLM_FLASH, GLM_FALLBACK])
+    assert await agent_runner._fallback_pool(_agent(base="gpt-5.5")) == []
+    assert await agent_runner._fallback_pool(_agent(base=GLM_FLASH)) == [GLM_FALLBACK]

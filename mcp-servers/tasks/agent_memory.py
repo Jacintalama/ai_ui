@@ -723,7 +723,11 @@ def agent_runner_reasoning() -> str:
 
 
 def _is_free_id(model_id: str) -> bool:
-    return isinstance(model_id, str) and model_id.endswith(":free")
+    """The tool loop's pool rule (agent_runner._in_pool), so a reflection on
+    a GLM pool id gets reasoning off and the fallback the way a turn does.
+    Lazy import for the cycle described on _complete."""
+    import agent_runner
+    return agent_runner._in_pool(model_id)
 
 
 def schedule_reflection(user_email: str, agent: dict, token: str,

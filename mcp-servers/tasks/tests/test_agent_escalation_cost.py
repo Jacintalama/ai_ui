@@ -130,3 +130,68 @@ def test_a_bad_number_in_the_environment_falls_back_to_the_default(monkeypatch):
     assert esc._int_env("AGENT_PAID_DAILY_CAP", 40) == 40
     monkeypatch.setenv("AGENT_PAID_DAILY_CAP", "7")
     assert esc._int_env("AGENT_PAID_DAILY_CAP", 40) == 7
+
+
+# --- GLM, 2026-10-19 ---------------------------------------------------------
+# The pool moved to z-ai/glm-5.3-flash with z-ai/glm-4.7-flash behind it.
+# Prices read 2026-10-19 from OpenRouter's public model list, dollars per
+# million tokens: 0.0352 in / 0.20 out, and 0.0605 in / 0.40 out.
+
+GLM_PRICES = {"gpt-5.5": (5.0, 30.0), "z-ai/glm-5.3-flash": (0.0352, 0.2),
+              "z-ai/glm-4.7-flash": (0.0605, 0.4)}
+
+
+def test_a_listed_glm_is_priced_and_free_and_unknown_are_unchanged(monkeypatch):
+    monkeypatch.setattr(esc, "PRICES", dict(GLM_PRICES))
+    assert esc.cost_of("z-ai/glm-5.3-flash", 1_000_000, 0) == pytest.approx(0.0352)
+    assert esc.cost_of("z-ai/glm-5.3-flash", 0, 1_000_000) == pytest.approx(0.2)
+    assert esc.cost_of("z-ai/glm-4.7-flash", 1_000_000, 1_000_000) == pytest.approx(0.4605)
+    assert esc.cost_of("nvidia/nemotron-3-super-120b-a12b:free", 9000, 900) == 0.0
+    assert esc.cost_of("gpt-4o-mini", 1000, 100) is None
+
+
+def test_a_price_listed_for_a_free_suffixed_id_is_used(monkeypatch):
+    """Listed first, so a priced id is never recorded as $0."""
+    monkeypatch.setattr(esc, "PRICES", {"x/y:free": (1.0, 2.0)})
+    assert esc.cost_of("x/y:free", 1_000_000, 0) == pytest.approx(1.0)
+
+
+def test_a_turn_over_two_glm_completions_sums_their_cost(monkeypatch):
+    monkeypatch.setattr(esc, "PRICES", dict(GLM_PRICES))
+    u = esc.TurnUsage()
+    u.add("z-ai/glm-5.3-flash", {"prompt_tokens": 10_000, "completion_tokens": 500})
+    u.add("z-ai/glm-4.7-flash", {"prompt_tokens": 20_000, "completion_tokens": 1000})
+    assert (u.prompt_tokens, u.completion_tokens) == (30_000, 1500)
+    assert u.cost_usd == pytest.approx(
+        (10_000 * 0.0352 + 500 * 0.2 + 20_000 * 0.0605 + 1000 * 0.4) / 1_000_000)
+    assert u.model == "z-ai/glm-4.7-flash"
+
+
+def test_a_glm_reply_without_usage_is_unknown_not_free(monkeypatch):
+    monkeypatch.setattr(esc, "PRICES", dict(GLM_PRICES))
+    u = esc.TurnUsage()
+    u.add("z-ai/glm-5.3-flash", None)
+    assert u.cost_usd is None
+
+
+def test_the_shipped_default_prices_name_gpt_5_5_and_both_glms():
+    """The module's own default, read in a clean process with the variable
+    unset, so neither the fixture above nor the caller's environment hides
+    it."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    env = {k: v for k, v in os.environ.items() if k != "AGENT_PAID_PRICES"}
+    out = subprocess.run(
+        [sys.executable, "-c",
+         "import agent_escalation as e; print(sorted(e.PRICES.items()))"],
+        cwd=Path(esc.__file__).parent, env=env, capture_output=True,
+        text=True, check=True).stdout.strip()
+    assert out == str(sorted(GLM_PRICES.items()))
+
+
+def test_a_zero_cap_switches_escalation_off_with_glm_prices(monkeypatch):
+    monkeypatch.setattr(esc, "PRICES", dict(GLM_PRICES))
+    monkeypatch.setattr(esc, "DAILY_CAP", 0)
+    assert not esc.enabled()

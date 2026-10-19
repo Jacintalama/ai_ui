@@ -81,12 +81,12 @@ def _database_url() -> str:
 def _default_model() -> str:
     """The platform default, read at call time so tests can monkeypatch it.
 
-    Falls back to the first free model in the pool (see
+    Falls back to the first model in the pool (see
     agent_runner.FREE_MODELS). It was gpt-4o-mini until 2026-09-15, when
-    every agent moved to free models.
+    every agent moved to free models. 2026-10-19: the owner asked for the
+    cheapest GLM; nemotron free ids replaced.
     """
-    return os.environ.get("AGENT_DEFAULT_MODEL",
-                          "nvidia/nemotron-3-super-120b-a12b:free")
+    return os.environ.get("AGENT_DEFAULT_MODEL", "z-ai/glm-5.3-flash")
 
 
 async def _already_seeded(email: str) -> bool:

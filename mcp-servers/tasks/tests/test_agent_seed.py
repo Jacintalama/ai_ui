@@ -137,9 +137,11 @@ async def test_an_unknown_user_is_not_seeded():
     assert out["created"] == 0
 
 
-def test_new_agents_start_on_the_free_model_by_default(monkeypatch):
+def test_new_agents_start_on_the_cheapest_glm_by_default(monkeypatch):
+    # 2026-10-19: the owner asked for the cheapest GLM; nemotron free ids
+    # replaced.
     monkeypatch.delenv("AGENT_DEFAULT_MODEL", raising=False)
-    assert routes_agents._default_model() == "nvidia/nemotron-3-super-120b-a12b:free"
+    assert routes_agents._default_model() == "z-ai/glm-5.3-flash"
 
 
 def test_the_default_is_the_head_of_the_free_pool(monkeypatch):
@@ -153,7 +155,7 @@ def test_the_default_is_the_head_of_the_free_pool(monkeypatch):
     """
     monkeypatch.delenv("AGENT_DEFAULT_MODEL", raising=False)
     monkeypatch.delenv("AGENT_FREE_MODELS", raising=False)
-    assert agent_runner.FREE_MODELS[0] == "nvidia/nemotron-3-super-120b-a12b:free"
+    assert agent_runner.FREE_MODELS == ["z-ai/glm-5.3-flash", "z-ai/glm-4.7-flash"]
     assert routes_agents._default_model() == agent_runner.FREE_MODELS[0]
 
 
