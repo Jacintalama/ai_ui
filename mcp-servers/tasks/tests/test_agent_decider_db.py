@@ -46,7 +46,9 @@ async def test_a_recorded_decision_reads_back(clean):
     assert row["provider"] == "jev" and row["path"] == "one_agent"
     assert row["agent_id"] == "agent-dev" and row["ms"] == 281
     assert row["kind_confidence"] == pytest.approx(0.96)
-    assert float(row["cost_usd"]) == pytest.approx(436 * 0.042 / 1e6)
+    # NUMERIC(12,8): stored to the hundred-millionth of a dollar.
+    assert float(row["cost_usd"]) == pytest.approx(436 * 0.042 / 1e6,
+                                                   abs=1e-8)
     assert row["reason"] is None
 
 

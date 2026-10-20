@@ -121,7 +121,9 @@ def test_the_service_serves_the_page(monkeypatch):
         from cryptography.fernet import Fernet
         monkeypatch.setenv("AIUI_FERNET_KEY", Fernet.generate_key().decode())
     from main import app
-    assert "/tasks/agents/debug" in {getattr(r, "path", "") for r in app.routes}
+    # Asked of the app, not read off app.routes (see the same test in
+    # test_routes_agent_jobs): served refuses a stranger, missing is a 404.
+    assert TestClient(app).get("/tasks/agents/debug").status_code == 401
 
 
 def test_the_agents_page_links_to_it():

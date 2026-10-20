@@ -280,8 +280,13 @@ def test_the_service_serves_these_routes(monkeypatch):
         from cryptography.fernet import Fernet
         monkeypatch.setenv("AIUI_FERNET_KEY", Fernet.generate_key().decode())
     from main import app
-    paths = {getattr(r, "path", "") for r in app.routes}
-    for path in ("/tasks/agents/jobs/{job_id}/start",
-                 "/tasks/agents/jobs/{job_id}/cancel",
-                 "/tasks/agents/jobs/badge", "/tasks/agents/jobs/seen"):
-        assert path in paths
+    # Asked of the app, not read off app.routes: FastAPI 0.143 (the
+    # container) lists included routers differently from 0.115, and the
+    # listing check failed there while the routes served. A served route
+    # refuses a stranger (401); a missing one is a 404.
+    client = TestClient(app)
+    for method, path in (("post", "/tasks/agents/jobs/job-1/start"),
+                         ("post", "/tasks/agents/jobs/job-1/cancel"),
+                         ("get", "/tasks/agents/jobs/badge"),
+                         ("post", "/tasks/agents/jobs/seen")):
+        assert getattr(client, method)(path).status_code == 401, path
