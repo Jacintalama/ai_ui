@@ -647,9 +647,10 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
     # Jev first (agent_decider): sure it is one answer and sure who should
     # give it, only that agent answers, may not pass, and nobody triages. Any
     # other decision, no key or a failure leaves `chosen` None and the triage
-    # below runs exactly as it did before Jev.
+    # below runs exactly as it did before Jev. Never for a meeting: "each of
+    # you" or a roll call asked everybody on purpose (design 2026-10-19, 2.1).
     chosen = (await _jev_choice(email, s.chat_id, asked, history, agents)
-              if team_gate else None)
+              if team_gate and why != agent_routing.ROUTE_MEETING else None)
     if chosen is not None:
         speakers, may_pass, met = [chosen], False, []
     if team_gate and chosen is None:

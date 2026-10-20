@@ -1111,6 +1111,21 @@ def test_jev_is_only_asked_inside_the_team_gate(monkeypatch, message):
     assert jev == []
 
 
+def test_a_meeting_the_person_called_is_never_cut_to_one(monkeypatch):
+    """The design keeps meeting messages on today's rules: a roll call or
+    "each of you give me an idea" asked everyone on purpose."""
+    import agent_decider
+    app, mod, seen = _app(monkeypatch)
+    _jobs(monkeypatch, steps=None)
+    jev = _jev(monkeypatch, path=agent_decider.PATH_ONE_AGENT)
+    message = "each of you give me one idea for the offsite"
+    assert mod.agent_routing.choose_speakers(
+        message, [ADA, MIA])[2] == mod.agent_routing.ROUTE_MEETING
+    body = _say(app, message)
+    assert jev == []
+    assert "Ada here" in body and "Mia here" in body
+
+
 def test_jev_is_not_asked_while_a_job_runs(monkeypatch):
     app, mod, seen = _app(monkeypatch)
     _jobs(monkeypatch, live=True)

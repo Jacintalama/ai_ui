@@ -30,10 +30,10 @@ LIMIT = 50
 
 _RUNS = ("SELECT started_at, agent_id, source, model, status, "
          "EXTRACT(EPOCH FROM (finished_at - started_at)) AS secs, cost_usd "
-         "FROM tasks.agent_run WHERE user_email = :email "
+         "FROM tasks.agent_run WHERE lower(user_email) = lower(:email) "
          "ORDER BY started_at DESC LIMIT :limit")
 _ASKS = ("SELECT started_at, agent_id, target_agent_id, status "
-         "FROM tasks.agent_step WHERE user_email = :email "
+         "FROM tasks.agent_step WHERE lower(user_email) = lower(:email) "
          "AND target_agent_id IS NOT NULL "
          "ORDER BY started_at DESC LIMIT :limit")
 _JOBS = ("SELECT j.created_at, j.status, j.lead_agent_id, "
@@ -41,7 +41,7 @@ _JOBS = ("SELECT j.created_at, j.status, j.lead_agent_id, "
          "COUNT(st.id) FILTER (WHERE st.status = 'done') AS done "
          "FROM tasks.agent_job j "
          "LEFT JOIN tasks.agent_job_step st ON st.job_id = j.id "
-         "WHERE j.user_email = :email GROUP BY j.id "
+         "WHERE lower(j.user_email) = lower(:email) GROUP BY j.id "
          "ORDER BY j.created_at DESC LIMIT :limit")
 
 

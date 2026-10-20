@@ -35,6 +35,9 @@ URL = os.environ.get("TYPESAFE_URL", "https://api.typesafe.ai/v1/systemone")
 #: 500 ms and the real call took 0.28 s; past this it is not worth waiting.
 TIMEOUT_SECONDS = 2.0
 
+#: The most the round waits for a decision to be written.
+RECORD_TIMEOUT_SECONDS = 1.0
+
 #: Dollars per million input tokens; output is free (TypeSafe, 2026-10).
 PRICE_PER_M_INPUT = 0.042
 
@@ -225,7 +228,8 @@ async def recent(email: str, limit: int = 50) -> list[dict]:
         rows = await s.execute(sql_text(
             "SELECT created_at, provider, model, kind, kind_confidence, "
             "agent_id, agent_confidence, path, reason, ms, input_tokens, "
-            "cost_usd FROM tasks.agent_decision WHERE user_email = :email "
+            "cost_usd FROM tasks.agent_decision "
+            "WHERE lower(user_email) = lower(:email) "
             "ORDER BY created_at DESC, id DESC LIMIT :limit"),
             {"email": email, "limit": limit})
         return [dict(r._mapping) for r in rows]
@@ -241,7 +245,9 @@ async def decide(email: str, chat_id: str | None, message: str,
     started = time.monotonic()
     body = build_request(message, history, agents)
     if body is None:
-        decision = Decision(path=PATH_FALLBACK, reason="names not unique")
+        reason = ("too few named agents" if len(_named(agents)) < 2
+                  else "names not unique")
+        decision = Decision(path=PATH_FALLBACK, reason=reason)
     else:
         try:
             data = await _post(body, key)
@@ -255,8 +261,12 @@ async def decide(email: str, chat_id: str | None, message: str,
             decision = Decision(path=PATH_FALLBACK,
                                 reason=f"error: {type(e).__name__}")
     decision.ms = int((time.monotonic() - started) * 1000)
+    # Bounded: the person is waiting, and a busy connection pool would
+    # otherwise hold the round for its 30 s pool timeout over bookkeeping.
     try:
-        await record(email, chat_id, decision)
+        await asyncio.wait_for(record(email, chat_id, decision),
+                               RECORD_TIMEOUT_SECONDS)
     except Exception:                                       # noqa: BLE001
-        logger.warning("agent decider: recording raised", exc_info=True)
+        logger.warning("agent decider: recording failed or was slow",
+                       exc_info=True)
     return decision

@@ -57,3 +57,18 @@ async def test_one_persons_decisions_are_not_anothers(clean):
                                        reason="timeout"))
     assert await d.recent(b) == []
     assert [r["reason"] for r in await d.recent(a)] == ["timeout"]
+
+
+async def test_an_email_in_any_case_finds_its_decisions(clean):
+    tag = uuid.uuid4().hex[:8]
+    await d.record("%s%s@Example.com" % ("JEVTEST-", tag), None,
+                   d.Decision(path=d.PATH_FALLBACK, reason="timeout"))
+    try:
+        rows = await d.recent("%s%s@example.com" % (PREFIX, tag))
+        assert [r["reason"] for r in rows] == ["timeout"]
+    finally:
+        async with session() as s:
+            await s.execute(sql_text(
+                "DELETE FROM tasks.agent_decision WHERE user_email = :e"),
+                {"e": "%s%s@Example.com" % ("JEVTEST-", tag)})
+            await s.commit()

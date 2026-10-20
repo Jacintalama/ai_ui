@@ -129,3 +129,10 @@ def test_the_agents_page_links_to_it():
     agents = (pathlib.Path(page.__file__).parent / "static" / "agents.html"
               ).read_text(encoding="utf-8")
     assert 'href="/tasks/agents/debug"' in agents
+
+
+def test_the_queries_match_email_in_any_case():
+    """Some agent rows were stored with the email as typed (agent_activity
+    reads them with lower() for that reason)."""
+    for query in (page._RUNS, page._ASKS, page._JOBS):
+        assert "lower(" in query and "lower(:email)" in query

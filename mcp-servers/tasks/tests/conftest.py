@@ -65,6 +65,19 @@ def _no_agent_step_recording(monkeypatch):
     monkeypatch.setattr(agent_activity, "record_step", _noop)
 
 
+@pytest.fixture(autouse=True)
+def _no_typesafe_key(monkeypatch):
+    """No test reaches Jev unless it sets the key itself.
+
+    The tasks container carries the real TYPESAFE_API_KEY, and any test that
+    drives a team round without stubbing agent_decider.decide would call
+    TypeSafe and write a decision row there. With the key gone, decide()
+    returns None before any call (see test_agent_decider for the tests that
+    set a key of their own).
+    """
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+
+
 @pytest_asyncio.fixture
 async def db_session():
     """Initialize the global session maker on the current event loop, then

@@ -241,3 +241,37 @@ async def test_the_real_record_never_raises(monkeypatch):
     monkeypatch.setattr(agent_decider, "session", broken_session)
     await agent_decider.record("p@example.com", None,
                                agent_decider.Decision(path="fallback"))
+
+
+# --- review fixes, 2026-10-20 -----------------------------------------------
+
+def test_no_test_reaches_jev_unless_it_asks_to():
+    """The container has the real key. A test that drives a team round and
+    forgot to stub decide must not call TypeSafe or write a decision row."""
+    import os
+    assert "TYPESAFE_API_KEY" not in os.environ
+
+
+async def test_too_few_named_agents_is_said_so(seams):
+    calls, _ = seams
+    got = await d.decide("p@example.com", None, "how many apps do I have",
+                         [], [DEV, {"id": "agent-x", "name": "  "}])
+    assert got.path == d.PATH_FALLBACK
+    assert got.reason == "too few named agents"
+    assert calls["post"] == []
+
+
+async def test_a_slow_record_does_not_hold_the_round(seams, monkeypatch):
+    _, state = seams
+    import time
+
+    async def slow_record(email, chat_id, decision):
+        await asyncio.sleep(5)
+
+    monkeypatch.setattr(d, "record", slow_record)
+    monkeypatch.setattr(d, "RECORD_TIMEOUT_SECONDS", 0.1)
+    started = time.monotonic()
+    got = await d.decide("p@example.com", None, "how many apps do I have",
+                         [], TEAM)
+    assert time.monotonic() - started < 1.0
+    assert got.path == d.PATH_ONE_AGENT
