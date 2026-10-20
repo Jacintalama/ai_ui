@@ -6,6 +6,8 @@ between agents, and nothing but this test stops that coming back.
 """
 import importlib
 
+import pytest
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -65,6 +67,15 @@ def _app(monkeypatch, turn=None, agents=(ADA, MIA)):
         return None
 
     monkeypatch.setattr(agent_job_triage, "triage", no_job)
+    # Before the triage, Jev is asked who should take a team message
+    # (agent_decider). No decision is what a server without a key gets, and
+    # it leaves the round as it was. The Jev tests below replace this.
+    import agent_decider
+
+    async def no_decision(email, chat_id, message, history, agents):
+        return None
+
+    monkeypatch.setattr(agent_decider, "decide", no_decision)
 
     app = FastAPI()
     app.include_router(routes_agent_chat.router)
@@ -993,6 +1004,131 @@ def test_one_agent_is_never_triaged(monkeypatch):
     body = _say(app, "prepare the weekly summary")
     assert calls["triage"] == []
     assert "Ada here" in body
+
+
+# --- Jev decides first ------------------------------------------------------
+# Inside the same gate as the triage, Jev is asked whether the message is one
+# answer or a job, and who should take it (agent_decider). Sure it is one
+# answer by one agent: only that agent replies, and nobody triages. Every
+# other outcome, including Jev failing, is the round above, unchanged.
+
+def _jev(monkeypatch, path=None, agent_id="agent-m", error=None):
+    import agent_decider
+    calls = []
+
+    async def decide(email, chat_id, message, history, agents):
+        calls.append({"email": email, "chat_id": chat_id, "message": message,
+                      "roster": [a["id"] for a in agents],
+                      "history": history})
+        if error is not None:
+            raise error
+        if path is None:
+            return None
+        return agent_decider.Decision(path=path, kind="answer",
+                                      kind_confidence=0.95,
+                                      agent_id=agent_id,
+                                      agent_confidence=0.9)
+
+    monkeypatch.setattr(agent_decider, "decide", decide)
+    return calls
+
+
+def test_jev_sure_of_one_agent_means_only_that_agent_answers(monkeypatch):
+    import agent_decider
+    app, mod, seen = _app(monkeypatch)
+    calls = _jobs(monkeypatch)
+    jev = _jev(monkeypatch, path=agent_decider.PATH_ONE_AGENT)
+    log = _record(monkeypatch, mod)
+    body = _say(app, CHATTY)
+
+    assert len(jev) == 1
+    assert jev[0]["email"] == EMAIL and jev[0]["message"] == CHATTY
+    assert jev[0]["roster"] == ["agent-a", "agent-m"]
+    assert calls["triage"] == []
+    # One speaker is not a meeting, and nobody is offered a pass.
+    assert log == [("turn", "agent-m"),
+                   ("speaking_started", "agent-m", None, len("Mia here"))]
+    assert "Mia here" in body and "Ada here" not in body
+
+
+def test_the_agent_jev_chose_may_not_pass(monkeypatch):
+    import agent_decider
+    app, mod, seen = _app(monkeypatch)
+    _jobs(monkeypatch)
+    _jev(monkeypatch, path=agent_decider.PATH_ONE_AGENT)
+    _say(app, CHATTY)
+    assert [t["agent"] for t in seen] == ["agent-m"]
+    assert seen[0]["messages"][-1]["content"] != mod.PASS_INSTRUCTION
+
+
+def test_jev_sure_of_a_job_leaves_the_plan_to_the_lead(monkeypatch):
+    import agent_decider
+    app, mod, seen = _app(monkeypatch)
+    calls = _jobs(monkeypatch)
+    _jev(monkeypatch, path=agent_decider.PATH_PLAN)
+    body = _say(app, "prepare the weekly summary")
+    assert len(calls["triage"]) == 1
+    assert 'id="job-job-1"' in body
+
+
+def test_jev_unsure_leaves_the_round_as_it_was(monkeypatch):
+    import agent_decider
+    app, mod, seen = _app(monkeypatch)
+    calls = _jobs(monkeypatch, steps=None)
+    _jev(monkeypatch, path=agent_decider.PATH_FALLBACK)
+    body = _say(app, CHATTY)
+    assert len(calls["triage"]) == 1
+    assert "Ada here" in body and "Mia here" in body
+
+
+def test_jev_raising_leaves_the_round_as_it_was(monkeypatch):
+    """decide() promises never to raise. The round does not lean on it."""
+    app, mod, seen = _app(monkeypatch)
+    calls = _jobs(monkeypatch, steps=None)
+    _jev(monkeypatch, error=RuntimeError("jev down"))
+    body = _say(app, CHATTY)
+    assert len(calls["triage"]) == 1
+    assert "Ada here" in body and "Mia here" in body
+
+
+def test_jev_naming_someone_not_in_the_room_is_ignored(monkeypatch):
+    import agent_decider
+    app, mod, seen = _app(monkeypatch)
+    calls = _jobs(monkeypatch, steps=None)
+    _jev(monkeypatch, path=agent_decider.PATH_ONE_AGENT, agent_id="agent-x")
+    body = _say(app, CHATTY)
+    assert len(calls["triage"]) == 1
+    assert "Ada here" in body and "Mia here" in body
+
+
+@pytest.mark.parametrize("message", ["Ada, can you check the weekly numbers",
+                                     "thanks everyone"])
+def test_jev_is_only_asked_inside_the_team_gate(monkeypatch, message):
+    app, mod, seen = _app(monkeypatch)
+    _jobs(monkeypatch)
+    jev = _jev(monkeypatch)
+    _say(app, message)
+    assert jev == []
+
+
+def test_jev_is_not_asked_while_a_job_runs(monkeypatch):
+    app, mod, seen = _app(monkeypatch)
+    _jobs(monkeypatch, live=True)
+    jev = _jev(monkeypatch)
+    _say(app, "prepare the weekly summary")
+    assert jev == []
+
+
+def test_jev_is_not_asked_in_a_private_conversation(monkeypatch):
+    app, mod, seen = _app(monkeypatch)
+    _jobs(monkeypatch)
+    jev = _jev(monkeypatch)
+    c = TestClient(app)
+    c.post("/tasks/agents/chat/send",
+           data={"message": "prepare the weekly summary", "agent": "agent-a"},
+           headers=_hdr())
+    c.get("/tasks/agents/chat/stream?agent=agent-a", headers=_hdr())
+    assert jev == []
 
 
 # --- the thread draws the card with the job's live status -------------------

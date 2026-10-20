@@ -34,6 +34,7 @@ import agent_job_store as job_store
 # (agent_job_worker._room), so this top-level import is the only one of the
 # pair and the two never form an import cycle.
 import agent_job_worker
+import agent_decider
 import agent_job_triage
 import agent_routing
 from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS, FREE_POOL_EXHAUSTED,
@@ -455,6 +456,27 @@ async def _has_live_job(email: str) -> bool:
         return True
 
 
+async def _jev_choice(email: str, chat_id: str | None, message: str,
+                      history: list[dict], agents: list[dict]) -> dict | None:
+    """The one agent Jev is sure should answer this team message, or None.
+
+    None for every other outcome: no key, a plan, an unsure or failed Jev,
+    or an agent that is not in this room. decide() promises never to raise;
+    the round does not lean on that promise, as it does not for triage().
+    """
+    try:
+        decision = await agent_decider.decide(email, chat_id, message,
+                                              history, agents)
+    except Exception:                                       # noqa: BLE001
+        log.warning("agent chat: Jev raised; the round runs as normal",
+                    exc_info=True)
+        return None
+    if decision is None or decision.path != agent_decider.PATH_ONE_AGENT:
+        return None
+    return next((a for a in agents
+                 if str(a.get("id") or "") == decision.agent_id), None)
+
+
 async def _propose_job(email: str, chat_id: str | None, lead: dict,
                        request: str, steps: list[dict]) -> str | None:
     """Save the lead's plan as a proposed job. Its id, or None.
@@ -618,10 +640,19 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
     # After the private and approval branches, which have each already put
     # the message to one agent, and before `met` is announced, so a message
     # that becomes a plan never calls a meeting it does not hold.
-    if (JOBS_ENABLED and not private and why in TEAM_ROUTES
-            and len(agents) >= 2
-            and len((asked or "").split()) >= MIN_TRIAGE_WORDS
-            and not await _has_live_job(email)):
+    team_gate = (JOBS_ENABLED and not private and why in TEAM_ROUTES
+                 and len(agents) >= 2
+                 and len((asked or "").split()) >= MIN_TRIAGE_WORDS
+                 and not await _has_live_job(email))
+    # Jev first (agent_decider): sure it is one answer and sure who should
+    # give it, only that agent answers, may not pass, and nobody triages. Any
+    # other decision, no key or a failure leaves `chosen` None and the triage
+    # below runs exactly as it did before Jev.
+    chosen = (await _jev_choice(email, s.chat_id, asked, history, agents)
+              if team_gate else None)
+    if chosen is not None:
+        speakers, may_pass, met = [chosen], False, []
+    if team_gate and chosen is None:
         lead = agent_job_plan.choose_lead(agents)
         # Bound before the wait, for the reason `messages` is bound below: a
         # New chat while the lead thinks must not land this card in the
