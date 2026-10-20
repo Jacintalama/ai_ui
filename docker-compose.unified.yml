@@ -475,6 +475,11 @@ services:
       # 2026-10-19: minimal, not none. GLM 5.3 Flash answers 400 "Reasoning is
       # mandatory" to none; minimal measured 0.8 s (5.3) and 10 s (4.7).
       - AGENT_FREE_REASONING=${AGENT_FREE_REASONING:-minimal}
+      # 2026-10-20: Jev (TypeSafe) is asked who handles a message to the whole
+      # team before the lead triages it (agent_decider). Blank key: no call,
+      # and every team message takes the lead's triage as before.
+      - TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}
+      - JEV_MIN_CONFIDENCE=${JEV_MIN_CONFIDENCE:-0.8}
       - AGENT_REFLECT_MODEL=${AGENT_REFLECT_MODEL:-}
       # A free agent moves to the paid model on its own for app builds,
       # code, pasted errors, very long conversations, and when the free
