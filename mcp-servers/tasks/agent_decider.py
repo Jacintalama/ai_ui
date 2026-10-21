@@ -89,6 +89,11 @@ def _key() -> str:
     return os.environ.get("TYPESAFE_API_KEY", "").strip()
 
 
+def enabled() -> bool:
+    """Whether decide() would call Jev at all."""
+    return bool(_key())
+
+
 def _role(agent: dict) -> str:
     meta = agent.get("meta") if isinstance(agent.get("meta"), dict) else {}
     for field in ("role", "description"):

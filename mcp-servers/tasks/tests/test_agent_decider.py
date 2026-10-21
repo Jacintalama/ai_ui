@@ -252,6 +252,14 @@ def test_no_test_reaches_jev_unless_it_asks_to():
     assert "TYPESAFE_API_KEY" not in os.environ
 
 
+@pytest.mark.parametrize("value, on", [(None, False), ("", False),
+                                       ("   ", False), ("apikey_x", True)])
+def test_jev_is_enabled_only_with_a_key(monkeypatch, value, on):
+    if value is not None:
+        monkeypatch.setenv("TYPESAFE_API_KEY", value)
+    assert d.enabled() is on
+
+
 async def test_too_few_named_agents_is_said_so(seams):
     calls, _ = seams
     got = await d.decide("p@example.com", None, "how many apps do I have",

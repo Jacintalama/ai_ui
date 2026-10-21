@@ -430,6 +430,15 @@ def working(name: str) -> str:
             f'<span class="aworking-who">{esc(name)} is working...</span></div>')
 
 
+def choosing() -> str:
+    """The wait while Jev decides who answers a team message
+    (agent_decider). The same row as working(), with no avatar: nobody has
+    been chosen yet."""
+    return ('<div class="aworking aworking-choosing">'
+            '<span class="atyping" aria-hidden="true"><i></i><i></i><i></i></span>'
+            '<span class="aworking-who">Choosing who answers...</span></div>')
+
+
 def note(text: str) -> str:
     """A system line in the thread: a skipped agent, a refusal, a hint."""
     return f'<div class="am note">{esc(text)}</div>'

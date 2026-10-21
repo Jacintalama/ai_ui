@@ -1126,6 +1126,37 @@ def test_a_meeting_the_person_called_is_never_cut_to_one(monkeypatch):
     assert "Ada here" in body and "Mia here" in body
 
 
+def test_the_person_is_told_while_jev_decides(monkeypatch):
+    """Jev is a wait before anybody answers, like the lead's triage, and an
+    unexplained wait reads as a broken panel."""
+    import agent_decider
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
+    app, mod, seen = _app(monkeypatch)
+    _jobs(monkeypatch)
+    _jev(monkeypatch, path=agent_decider.PATH_ONE_AGENT)
+    body = _say(app, CHATTY)
+    assert "Choosing who answers" in body
+    assert body.index("Choosing who answers") < body.index("Mia here")
+
+
+def test_no_wait_is_shown_when_jev_is_off(monkeypatch):
+    import agent_decider
+    app, mod, seen = _app(monkeypatch)
+    _jobs(monkeypatch, steps=None)
+    _jev(monkeypatch, path=agent_decider.PATH_ONE_AGENT)
+    body = _say(app, CHATTY)
+    assert "Choosing who answers" not in body
+
+
+def test_no_wait_is_shown_outside_the_team_gate(monkeypatch):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
+    app, mod, seen = _app(monkeypatch)
+    _jobs(monkeypatch)
+    _jev(monkeypatch)
+    body = _say(app, "Ada, can you check the weekly numbers")
+    assert "Choosing who answers" not in body
+
+
 def test_jev_is_not_asked_while_a_job_runs(monkeypatch):
     app, mod, seen = _app(monkeypatch)
     _jobs(monkeypatch, live=True)
