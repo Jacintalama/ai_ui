@@ -111,6 +111,23 @@ container, 52 calls, $0.0011 together):**
 - ivandermuega's two agents have no role, so both read as "team member" and
   Jev has nothing to tell them apart by.
 
+**Rewording the answer-or-job question, 2026-10-21 (rule fixed first: a
+new wording wins only with zero wrong picks at 0.8 and more right picks
+than the current one, in both runs; 156 calls, about $0.0032):**
+
+| wording | right / wrong at 0.8, run 1 | run 2 |
+|---------|-----------------------------|-------|
+| current | 9 / 0                       | 9 / 0 |
+| alone   | 7 / 0                       | 7 / 0 |
+| count   | 6 / 0                       | 6 / 0 |
+
+Neither wins; the current wording stays. Both alternatives still scored
+"the login button does nothing" and "why is my page slow" low (0.14 to
+0.38), and pulled down project-status questions the current wording gets
+(for example "what deadlines do we have" 0.90 current, 0.22 alone, and
+"count" called it a job). The wordings stay in the script
+(`jev_calibrate.py alone|count`) to compare future ones.
+
 ### Task 4: Deploy and live e2e with screenshots
 
 **Step 1:** fetch fork, check divergence, hash-sweep the server, deploy the

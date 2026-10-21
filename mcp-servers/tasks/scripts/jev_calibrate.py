@@ -14,7 +14,7 @@ roles only. Calls Jev directly, so it writes no tasks.agent_decision rows.
 Run where the key is, in the tasks container:
 
     docker cp jev_calibrate.py tasks:/app/scripts/
-    docker exec tasks python /app/scripts/jev_calibrate.py
+    docker exec tasks python /app/scripts/jev_calibrate.py [current|alone|count]
 
 Spend is capped (CAP_USD); one full run is about 26 calls of about 500
 input tokens at $0.042 per million, so about $0.0006.
@@ -99,6 +99,33 @@ CASES = [
 ]
 
 
+#: Ways to ask the answer-or-job question. Keys stay "answer" and "job",
+#: the two choices agent_decider.read_answer reads. "current" is what the
+#: decider sends today. The others exist because the current wording scored
+#: clear one-agent messages ("the login button does nothing") 0.04 to 0.30:
+#: fixing a bug is not "one reply", though it is one person's work.
+WORDINGS = {
+    "current": {"instructions": agent_decider.KIND_INSTRUCTIONS,
+                "criteria": dict(agent_decider.KIND_CRITERIA)},
+    "alone": {
+        "instructions": ("Does the new message need only one team member, or "
+                         "work from several team members with different "
+                         "roles?"),
+        "criteria": {
+            "answer": "one team member can handle all of it alone, even if "
+                      "it takes some work",
+            "job": "it clearly needs two or more team members with "
+                   "different roles",
+        },
+    },
+    "count": {
+        "instructions": "How many team members does the new message need?",
+        "criteria": {"answer": "one team member",
+                     "job": "two or more team members"},
+    },
+}
+
+
 def outcome(case, kind, kc, who, wc, cut) -> str:
     """What the round would do with this answer at this cut-off."""
     if kind == "answer" and kc >= cut and wc >= cut:
@@ -118,23 +145,33 @@ def table(rows, cuts) -> dict:
     return out
 
 
-async def run(cases, key: str, cap_usd: float = CAP_USD):
+async def run(cases, key: str, cap_usd: float = CAP_USD, wording=None):
     """Ask Jev about each case. ([(case, kind, kc, who, wc)], dollars spent).
-    Stops before a call that would pass the cap, judged by the last call."""
+    Stops before a call that would pass the cap, judged by the last call.
+    `wording` (one of WORDINGS) replaces the answer-or-job question for this
+    run only; the decider's own wording is put back afterwards."""
+    saved = agent_decider.KIND_INSTRUCTIONS, agent_decider.KIND_CRITERIA
+    if wording is not None:
+        agent_decider.KIND_INSTRUCTIONS = wording["instructions"]
+        agent_decider.KIND_CRITERIA = dict(wording["criteria"])
     rows, spent, last = [], 0.0, 0.0
-    for case in cases:
-        if spent + last > cap_usd:
-            print(f"stopped at the ${cap_usd} cap after {len(rows)} calls")
-            break
-        body = agent_decider.build_request(case["message"], [],
-                                           ROSTERS[case["roster"]])
-        data = await agent_decider._post(body, key)
-        last = agent_decider.cost_usd(
-            (data.get("usage") or {}).get("input_tokens")) or 0.0
-        spent += last
-        a = data["answers"]
-        rows.append((case, a["kind"]["choice"], float(a["kind"]["confidence"]),
-                     a["who"]["choice"], float(a["who"]["confidence"])))
+    try:
+        for case in cases:
+            if spent + last > cap_usd:
+                print(f"stopped at the ${cap_usd} cap after {len(rows)} calls")
+                break
+            body = agent_decider.build_request(case["message"], [],
+                                               ROSTERS[case["roster"]])
+            data = await agent_decider._post(body, key)
+            last = agent_decider.cost_usd(
+                (data.get("usage") or {}).get("input_tokens")) or 0.0
+            spent += last
+            a = data["answers"]
+            rows.append((case, a["kind"]["choice"],
+                         float(a["kind"]["confidence"]),
+                         a["who"]["choice"], float(a["who"]["confidence"])))
+    finally:
+        agent_decider.KIND_INSTRUCTIONS, agent_decider.KIND_CRITERIA = saved
     return rows, spent
 
 
@@ -142,7 +179,11 @@ def main() -> None:
     key = agent_decider._key()
     if not key:
         sys.exit("TYPESAFE_API_KEY is not set")
-    rows, spent = asyncio.run(run(CASES, key))
+    name = sys.argv[1] if len(sys.argv) > 1 else "current"
+    if name not in WORDINGS:
+        sys.exit(f"unknown wording {name!r}; one of {', '.join(WORDINGS)}")
+    print(f"wording: {name}")
+    rows, spent = asyncio.run(run(CASES, key, wording=WORDINGS[name]))
     print("expected | jev kind conf | jev who conf | message")
     for case, kind, kc, who, wc in rows:
         want = "job" if case["kind"] == "job" else "/".join(sorted(case["who"]))

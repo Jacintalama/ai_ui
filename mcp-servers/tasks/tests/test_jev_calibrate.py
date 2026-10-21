@@ -79,6 +79,33 @@ def test_every_case_is_a_message_the_round_puts_to_jev():
         assert len(case["message"].split()) >= r.MIN_TRIAGE_WORDS
 
 
+async def test_a_wording_reaches_the_request_and_is_put_back(monkeypatch):
+    bodies = []
+
+    async def post(body, key):
+        bodies.append(body)
+        return {"answers": {"kind": {"choice": "answer", "confidence": 0.9},
+                            "who": {"choice": "Dev", "confidence": 0.9}},
+                "usage": {"input_tokens": 400}}
+
+    monkeypatch.setattr(c.agent_decider, "_post", post)
+    before = (c.agent_decider.KIND_INSTRUCTIONS,
+              dict(c.agent_decider.KIND_CRITERIA))
+    wording = c.WORDINGS["alone"]
+    await c.run(c.CASES[:1], key="k", wording=wording)
+    kind = bodies[0]["questions"]["kind"]
+    assert kind["instructions"] == wording["instructions"]
+    assert kind["criteria"] == wording["criteria"]
+    assert (c.agent_decider.KIND_INSTRUCTIONS,
+            c.agent_decider.KIND_CRITERIA) == before
+
+
+def test_every_wording_keeps_the_two_choices_the_decider_reads():
+    import agent_decider
+    for name, w in c.WORDINGS.items():
+        assert set(w["criteria"]) == set(agent_decider.KIND_CRITERIA), name
+
+
 async def test_the_run_stops_at_the_spend_cap(monkeypatch):
     calls = []
 
