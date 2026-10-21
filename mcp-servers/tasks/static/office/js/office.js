@@ -80,7 +80,30 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     }
     if (a.state === "waiting") return { key: "waiting", label: "Waiting on you" };
     if (a.state === "failed") return { key: "failed", label: "Last run failed" };
+    if (asleep(a)) return { key: "asleep", label: "Asleep, last run " + ago(a.last_run_at) };
     return { key: "ready", label: "Ready" };
+  }
+
+  //: How long a desk is quiet before the robot at it dozes off (2026-10-21,
+  //: "robots idle sleeping like you know human working"). Nothing is
+  //: invented: asleep is "finished, and nothing since", drawn so a floor of
+  //: twenty agents reads at a glance as who is actually doing something.
+  //: A sleeping robot also costs the browser nothing: no blink, no halo, one
+  //: slow breath (agent.css). It wakes the moment a run starts.
+  var SLEEP_AFTER_MS = 30 * 60 * 1000;
+  function asleep(a) {
+    if (!a || a.state !== "ready") return false;
+    // Quiet since the later of: when the last run began (the server's
+    // word) and when this page saw it finish (its own clock). A run that
+    // ended a moment ago is not a quiet desk, whatever its start stamp.
+    var at = Math.max(Date.parse(a.last_run_at || "") || 0, a._finished || 0);
+    return !at || Date.now() - at > SLEEP_AFTER_MS;
+  }
+  //: Who is asleep right now, as one string, so a timer can tell when
+  //: somebody has just dozed off and redraw only then.
+  function sleepers() {
+    return S.AGENTS.filter(function (m) { return asleep(S.ACTIVITY[m.id]); })
+      .map(function (m) { return m.id; }).join(",");
   }
 
   // Which part of the office an agent belongs to, decided by the tools it
@@ -570,7 +593,10 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     // The role normally, but the STATE the moment there is one worth
     // reading. A dot alone says something is happening without saying
     // what, and "Working 12s" is the whole reason to look at this floor.
-    return st.key === "ready" || st.key === "idle" ? (roleOf(m) || "no role") : st.label;
+    // Asleep is quiet too: the face, the "z" and the card say it, and the
+    // label keeps telling one agent from another.
+    return st.key === "ready" || st.key === "idle" || st.key === "asleep"
+      ? (roleOf(m) || "no role") : st.label;
   }
 
   var DOTS = '<span class="talk-dots" aria-hidden="true"><i></i><i></i><i></i></span>';
@@ -613,6 +639,16 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     if (!who) { el.innerHTML = slotInner(m); return; }
     var st = stateOf(m.id);
     if (who.getAttribute("data-state") !== st.key) {
+      // Waking up: a stretch before anything else, so a run starting at a
+      // quiet desk is seen to start.
+      if (who.getAttribute("data-state") === "asleep") {
+        var slot = who.closest(".who-slot");
+        if (slot) {
+          slot.classList.add("waking");
+          clearTimeout(slot._wake);
+          slot._wake = setTimeout(function () { slot.classList.remove("waking"); }, 900);
+        }
+      }
       who.setAttribute("data-state", st.key);
       who.setAttribute("title", st.label);
       var f = who.querySelector(".bot-face");
@@ -1747,7 +1783,7 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       // Whoever this run asked, it has stopped asking: the walk home, the
       // line's fade and the bubble's going all start from here.
       S.HANDOFFS = S.HANDOFFS.filter(function (h) { return !(h && h.from === e.agent_id); });
-      var next = Object.assign({}, a, { last_status: e.status,
+      var next = Object.assign({}, a, { last_status: e.status, _finished: Date.now(),
         state: e.status === "waiting" ? "waiting"
              : e.status === "failed" ? "failed" : "ready" });
       delete next.running_for_seconds;
@@ -2055,6 +2091,13 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     el.classList.remove("waving");
     void el.offsetWidth;                  // restart the animation on a second click
     el.classList.add("waving");
+    // A sleeping robot wakes to say hello, and dozes off again after.
+    var who = el.querySelector(".who"), f = who && who.querySelector(".bot-face");
+    var dozing = who && who.getAttribute("data-state") === "asleep";
+    if (dozing) {
+      el.classList.add("woken");
+      if (f) f.innerHTML = face(id, "ready");
+    }
     var old = el.querySelector(".hello");
     if (old) old.remove();
     var hi = document.createElement("div");
@@ -2065,6 +2108,11 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       el.classList.remove("waving");
       hi.classList.add("going");
       setTimeout(function () { hi.remove(); }, 650);
+      if (dozing) {
+        el.classList.remove("woken");
+        // Still asleep, as far as the floor knows: back to it.
+        if (f && who.getAttribute("data-state") === "asleep") f.innerHTML = face(id, "asleep");
+      }
     }, WAVE_MS);
   }
 
@@ -2525,6 +2573,13 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     // cookie, a gap the heartbeat missed), slowed from 5s to 30s.
     connectLive();
     setInterval(pollWhenOnScreen, 30000);
+    // Desks go quiet without any event: once a minute, whoever has just
+    // dozed off is drawn asleep.
+    var SLEPT = sleepers();
+    setInterval(function () {
+      var now = sleepers();
+      if (now !== SLEPT) { SLEPT = now; draw(); }
+    }, 60000);
     // The working timer moves between events without redrawing the floor.
     setInterval(function () {
       document.querySelectorAll('.who[data-state="working"]').forEach(function (el) {

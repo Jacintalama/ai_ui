@@ -126,6 +126,8 @@ h1 { font-size: 16px; margin: 0; letter-spacing: -.01em; }
 
 .dot.idle { background: #3d4d6b; }
 
+.dot.asleep { background: #3d4d6b; box-shadow: inset 0 0 0 1.5px #5a6c8f; }
+
 /* The panel's state line, which lost its rule in the same commit: lit
      again, its light would otherwise sit flush against the words. */
   .st { display: flex; align-items: center; gap: 6px; }

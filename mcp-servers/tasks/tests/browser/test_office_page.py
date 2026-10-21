@@ -1334,11 +1334,12 @@ def test_the_state_light_is_lit_in_the_states_colour(page):
         " const d = document.querySelector('.who[data-id=\"agent-iris-a103\"] .dot');"
         " return {"
         "  working: bg('.who[data-id=\"agent-research-assistant-0001\"] .dot.working'),"
-        "  ready: bg('.who[data-id=\"agent-iris-a103\"] .dot.ready'),"
+        "  asleep: bg('.who[data-id=\"agent-iris-a103\"] .dot.asleep'),"
         "  live: bg('#live .dot'),"
         "  round: getComputedStyle(d).borderRadius }; }")
     assert got["working"] == "rgb(34, 211, 238)", got    # --cyan
-    assert got["ready"] == "rgb(52, 211, 153)", got      # --ok
+    # Iris last ran weeks ago: asleep, and the light says so, dimly.
+    assert got["asleep"] == "rgb(61, 77, 107)", got
     assert got["live"] != "rgba(0, 0, 0, 0)", got
     assert got["round"] == "50%", got
 
@@ -2115,9 +2116,11 @@ def test_a_change_of_state_changes_the_face_not_the_figure(page):
     was breathing is the same node, still breathing."""
     page.evaluate("() => { document.querySelector('.who[data-id=\"agent-research-assistant-0001\"] svg.bot')._keep = 1; }")
     act = dict(ACTIVITY)
+    import datetime
     act["agent-research-assistant-0001"] = {
         "state": "ready", "last_status": "completed",
-        "last_run_at": "2026-09-24T10:02:22+00:00", "source": "channel"}
+        "last_run_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "source": "channel"}
     _activity(page, act)
     page.wait_for_timeout(200)
     got = page.evaluate(
@@ -2880,3 +2883,55 @@ def test_an_agent_building_an_app_is_drawn_building(page):
     assert who.get_attribute("data-state") == "working"
     assert "Building" in who.locator(".who-label small").inner_text()
     assert who.get_attribute("data-typing") is None
+
+
+# --- a quiet desk dozes off (2026-10-21) ---------------------------------------
+# "robots idle sleeping like you know human working". Asleep is nothing
+# invented: finished, and nothing since (office.js SLEEP_AFTER_MS). The
+# label keeps the role; the face, the light, the "z" and the card say it.
+
+def test_an_agent_quiet_for_half_an_hour_is_asleep(page):
+    """The default fixture's Iris last ran weeks ago."""
+    who = page.locator('.who[data-id="agent-iris-a103"]')
+    assert who.get_attribute("data-state") == "asleep"
+    # Eyes shut: two arcs, and no blink running.
+    assert who.locator(".bot-face .bot-eye").count() == 2
+    assert who.locator(".bot-face .bot-eye").first.evaluate("el => el.tagName") == "path"
+    assert who.locator(".bot-think").count() == 0
+    # A "z" over the head, and a slow breath instead of the waking one.
+    assert "z" in who.evaluate("el => getComputedStyle(el, '::before').content")
+    assert who.locator(".bot").evaluate("el => getComputedStyle(el).animationName") == "breathe-asleep"
+    # The label still says what the agent is for.
+    assert "Drive librarian" in who.locator(".who-label").inner_text()
+    # And the card says it is asleep, and since when.
+    who.click()
+    page.wait_for_timeout(200)
+    assert "Asleep" in page.locator("#side-agent .st").inner_text()
+    assert page.locator("#side-agent .st .dot.asleep").count() == 1
+
+
+def test_a_sleeping_robot_wakes_to_wave_and_dozes_off_again(page):
+    who = page.locator('.who[data-id="agent-iris-a103"]')
+    who.click()
+    slot = page.locator('.who-slot[data-id="agent-iris-a103"]')
+    assert "woken" in (slot.get_attribute("class") or "")
+    # Eyes open for the hello: the ready face's smile.
+    assert who.locator(".bot-face .bot-mouth").evaluate("el => el.getAttribute('d') || ''").startswith("M58 83")
+    page.wait_for_timeout(2300)
+    assert "woken" not in (slot.get_attribute("class") or "")
+    assert who.get_attribute("data-state") == "asleep"
+    assert who.locator(".bot-face .bot-mouth").evaluate("el => el.tagName") == "ellipse"
+
+
+def test_a_run_that_just_finished_is_ready_not_asleep(page):
+    import datetime
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    page.route("**/agents/activity**", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"activity": {
+            "agent-iris-a103": {"state": "ready", "last_status": "completed",
+                                "last_run_at": now, "source": "schedule"}},
+            "handoffs": []})))
+    page.evaluate("() => window.aiuiRefreshOffice()")
+    page.wait_for_timeout(400)
+    assert page.locator('.who[data-id="agent-iris-a103"]').get_attribute("data-state") == "ready"

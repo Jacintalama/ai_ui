@@ -729,3 +729,31 @@ def test_a_finished_askers_handoff_is_not_drawn_from_the_poll(page):
     page.wait_for_timeout(500)
     assert page.locator(".talk-line").count() == 0
     assert page.locator(".say").count() == 0
+
+
+# --- waking up (2026-10-21) -----------------------------------------------------
+
+@pytest.fixture
+def a_quiet_stream():
+    """Nothing on the stream yet, reconnecting fast, so the test can put a
+    run on it once the floor has drawn the sleeper."""
+    STREAM["body"] = _sse(retry=300)
+    yield
+    STREAM["body"] = _sse()
+
+
+@pytest.mark.parametrize("page", [{"activity": {
+    IRIS: {"state": "ready", "last_status": "completed",
+           "last_run_at": "2026-09-24T09:00:00+00:00", "source": "schedule"}}}], indirect=True)
+def test_a_run_starting_at_a_quiet_desk_wakes_the_robot(a_quiet_stream, page):
+    who = page.locator('.who[data-id="%s"]' % IRIS)
+    assert who.get_attribute("data-state") == "asleep"
+    STREAM["body"] = _sse({"event": "run_started", "agent_id": IRIS,
+                           "source": "schedule", "at": _now()}, retry=60000)
+    page.wait_for_function(
+        "() => document.querySelector('.who[data-id=\"%s\"]').getAttribute('data-state') === 'working'" % IRIS,
+        timeout=6000)
+    slot = page.locator('.who-slot[data-id="%s"]' % IRIS)
+    assert "waking" in (slot.get_attribute("class") or "")
+    page.wait_for_timeout(1100)
+    assert "waking" not in (slot.get_attribute("class") or "")

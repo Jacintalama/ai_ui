@@ -94,9 +94,16 @@ export function pickColour(id, hue) {
 //:   waiting  wide, looking straight at you, because it is waiting on YOU
 //:   failed   flat and dimmed, with a down-turned mouth
 //:   ready    the one that smiles
+//:   asleep   eyes shut and a soft mouth: nothing has happened for a while
+//:            (office.js SLEEP_AFTER_MS), the way a desk goes quiet
 //:   idle     open and neutral: nothing has happened yet
 function faceFor(state, a) {
   var w = '#fff';
+  if (state === "asleep") {
+    return '<path class="bot-eye" d="M50 68 Q58 76 66 68" stroke="' + a.accent + '" stroke-width="3" fill="none" stroke-linecap="round" opacity=".85"/>' +
+      '<path class="bot-eye" d="M74 68 Q82 76 90 68" stroke="' + a.accent + '" stroke-width="3" fill="none" stroke-linecap="round" opacity=".85"/>' +
+      '<ellipse class="bot-mouth" cx="70" cy="88" rx="3.5" ry="2.6" fill="' + a.accent + '" opacity=".45"/>';
+  }
   if (state === "working") {
     return '<ellipse class="bot-eye bot-think" cx="58" cy="70" rx="8" ry="9" fill="' + a.accent + '"/>' +
       '<rect class="bot-eye bot-think" x="74" y="68" width="16" height="4" rx="2" fill="' + a.accent + '"/>' +
