@@ -178,6 +178,13 @@ that it always carries meaning.
   Clear conversation). Always paired with a word.
 - **Done Green** (#4ade80): success confirmations only, such as a saved
   toast. "Ready" is the resting state and shows no colour.
+- **Asleep** (the office only): an agent whose last run finished more than
+  30 minutes ago. Nothing is invented by it: it is "ready, and quiet". The
+  robot is drawn with its eyes shut, dimmed, breathing slowly, with a "z"
+  drifting from its head; the label keeps the role and the card says
+  "Asleep, last run 2h ago". It wakes with a stretch when a run starts, and
+  wakes briefly to wave when clicked. A sleeping robot runs no blink and no
+  halo, so a floor of many agents stays cheap to draw.
 
 ### Agent identity
 Each agent's hue comes from the existing hash of its name (the same hash the

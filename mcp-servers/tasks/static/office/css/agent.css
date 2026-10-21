@@ -59,6 +59,24 @@
 
 .who .bot-think { animation: blink 2.2s ease-in-out infinite; }
 
+/* Asleep (office.js SLEEP_AFTER_MS): dimmer, one slow breath, and a "z"
+   drifting up from the head. Cheap on purpose, since on a big floor most
+   robots are asleep most of the day. */
+.who[data-state="asleep"] svg.bot { opacity: .72; filter: saturate(.7); }
+.who[data-state="asleep"] .bot {
+  animation: breathe-asleep 5.6s ease-in-out infinite; animation-delay: var(--breath, 0s);
+}
+.who[data-state="asleep"]::before, .who[data-state="asleep"]::after {
+  content: "z"; position: absolute; z-index: 3;
+  left: calc(50% + var(--bot-w) / 2 - 10px); top: 10px;
+  font: 800 12px/1 var(--font-ui); color: var(--muted); pointer-events: none;
+  animation: zz 2.8s ease-in-out infinite;
+}
+.who[data-state="asleep"]::after { font-size: 9px; animation-delay: 1.4s; left: calc(50% + var(--bot-w) / 2 - 2px); }
+/* Woken for a wave (office.js wave): back to full colour for a moment. */
+.who-slot.woken .who[data-state="asleep"] svg.bot { opacity: 1; filter: none; }
+.who-slot.woken .who[data-state="asleep"]::before, .who-slot.woken .who[data-state="asleep"]::after { display: none; }
+
 /* On the robot, not on the slot: the slot is as wide as the widest label
      and the status light belongs to the figure. */
   .who .dot {
