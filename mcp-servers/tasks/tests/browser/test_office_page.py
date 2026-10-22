@@ -2935,3 +2935,59 @@ def test_a_run_that_just_finished_is_ready_not_asleep(page):
     page.evaluate("() => window.aiuiRefreshOffice()")
     page.wait_for_timeout(400)
     assert page.locator('.who[data-id="agent-iris-a103"]').get_attribute("data-state") == "ready"
+
+
+# --- dancing (2026-10-22) -------------------------------------------------------
+# "when user click it it will say hi right then it will also popup the small
+# icon dance like that so user can select an agent to dance". A dance is for
+# you and is never a state: not offered to a robot that is working, waiting
+# or failed, and ended at once by a run starting.
+
+def test_the_hello_comes_with_a_dance_button_that_opens_the_moves(page):
+    page.locator('.who[data-id="agent-iris-a103"]').click()
+    slot = page.locator('.who-slot[data-id="agent-iris-a103"]')
+    btn = slot.locator(".dance-btn")
+    assert btn.is_visible()
+    assert "Dance" in btn.inner_text()
+    btn.click()
+    menu = slot.locator(".dance-menu")
+    assert menu.is_visible()
+    assert menu.locator("button").all_inner_texts() == ["Bop", "Twist", "The Robot", "Hands up", "Spin"]
+    menu.locator('button[data-dance="twist"]').click()
+    page.wait_for_timeout(100)
+    assert "dancing" in (slot.get_attribute("class") or "")
+    assert slot.get_attribute("data-dance") == "twist"
+    assert slot.locator(".bot-figure").evaluate("el => getComputedStyle(el).animationName") == "d-twist"
+    assert slot.locator(".bot-arm-l").evaluate("el => getComputedStyle(el).animationName") == "d-sway-l"
+    assert slot.locator(".dance-menu").count() == 0
+    # Iris was asleep; she dances awake, with the smile.
+    assert slot.locator(".bot-face path.bot-mouth").count() == 1
+    # The button is Stop now, and stops it.
+    assert btn.inner_text() == "Stop"
+    btn.click()
+    page.wait_for_timeout(100)
+    assert "dancing" not in (slot.get_attribute("class") or "")
+    assert slot.get_attribute("data-dance") is None
+
+
+def test_a_working_robot_is_not_offered_a_dance(page):
+    page.locator('.who[data-id="agent-research-assistant-0001"]').click()
+    slot = page.locator('.who-slot[data-id="agent-research-assistant-0001"]')
+    assert slot.locator(".hello").count() == 1
+    assert slot.locator(".dance-btn").count() == 0
+
+
+def test_every_move_animates_the_figure(page):
+    page.locator('.who[data-id="agent-iris-a103"]').click()
+    slot = page.locator('.who-slot[data-id="agent-iris-a103"]')
+    names = {}
+    for key in ["bop", "robot", "hands", "spin"]:
+        if slot.locator(".dance-menu").count() == 0:
+            slot.locator(".dance-btn").click()
+        slot.locator('.dance-menu button[data-dance="%s"]' % key).click()
+        page.wait_for_timeout(60)
+        names[key] = slot.locator(".bot-figure").evaluate("el => getComputedStyle(el).animationName")
+        slot.locator(".dance-btn").click()           # Stop
+        page.wait_for_timeout(60)
+        page.locator('.who[data-id="agent-iris-a103"]').click()   # offer again
+    assert names == {"bop": "d-bop", "robot": "d-lock", "hands": "d-bounce", "spin": "d-spin"}, names

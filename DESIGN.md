@@ -185,6 +185,13 @@ that it always carries meaning.
   "Asleep, last run 2h ago". It wakes with a stretch when a run starts, and
   wakes briefly to wave when clicked. A sleeping robot runs no blink and no
   halo, so a floor of many agents stays cheap to draw.
+- **Dancing** (the office only): a click's hello comes with a small
+  "♪ Dance" button that opens five moves (Bop, Twist, The Robot, Hands up,
+  Spin); the one picked runs on that robot for eight seconds on one beat,
+  with a note over its head, and the button reads Stop meanwhile. A dance
+  is for the person and is never a state: it is not offered to a robot that
+  is working, waiting or failed, it pauses while the robot walks, and a run
+  starting ends it at once. A sleeper dances awake.
 
 ### Agent identity
 Each agent's hue comes from the existing hash of its name (the same hash the

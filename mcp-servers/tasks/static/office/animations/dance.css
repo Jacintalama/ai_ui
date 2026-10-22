@@ -1,0 +1,120 @@
+/* Dancing (2026-10-22, "pop up the small icon dance ... so user can select
+   an agent to dance"). Click a robot: it says hi, and a small "Dance" button
+   appears beside it. That opens the five moves, and the one chosen runs on
+   this robot for office.js DANCE_MS, every move on one beat (--beat), then
+   stops. A dance is for you: it is never a state, it never runs on a robot
+   that is working, waiting or failed, it pauses while the robot walks (the
+   walk owns the same joints), and a run starting ends it at once.
+
+   Every move is a transform on the parts agent.js already groups: the
+   figure, the two arms, the head and the antenna. Nothing is added to the
+   robot for this. */
+
+.who-slot { --beat: 480ms; }
+
+/* The button beside the hello, and the moves it opens. */
+.dance-btn {
+  position: absolute; z-index: 32; top: -2px; right: -6px;
+  padding: 3px 8px; border-radius: 999px; cursor: pointer;
+  font: 700 10px/1.4 var(--font-ui); letter-spacing: .02em;
+  color: var(--cyan); background: var(--surface); border: 1px solid var(--cyan);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, .4);
+  animation: dance-btn-in .3s cubic-bezier(.34, 1.56, .64, 1) both;
+}
+.dance-btn:hover { background: color-mix(in srgb, var(--cyan) 16%, var(--surface)); }
+.dance-btn:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.dance-btn.going { animation: dance-btn-out .25s ease-in both; }
+.who-slot.dancing .dance-btn { color: var(--text); border-color: var(--border-2); }
+@keyframes dance-btn-in { from { transform: scale(.6) translateY(4px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes dance-btn-out { to { transform: scale(.7); opacity: 0; } }
+
+.dance-menu {
+  position: absolute; z-index: 33; top: 22px; right: -6px;
+  display: flex; flex-direction: column; gap: 3px; padding: 5px;
+  border-radius: 10px; background: var(--surface); border: 1px solid var(--border-2);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, .5);
+  animation: dance-btn-in .22s cubic-bezier(.34, 1.56, .64, 1) both;
+}
+.dance-menu button {
+  padding: 4px 10px; border-radius: 7px; cursor: pointer; text-align: left;
+  font: 600 10.5px/1.4 var(--font-ui); color: var(--text);
+  background: none; border: 1px solid transparent; white-space: nowrap;
+}
+.dance-menu button:hover, .dance-menu button:focus-visible { border-color: var(--cyan); color: var(--cyan); outline: none; }
+
+/* A note over the head while dancing. */
+.who-slot.dancing:not(.walking)::after {
+  content: "\266A"; position: absolute; z-index: 31; left: calc(50% - 30px); top: -8px;
+  font: 800 13px/1 var(--font-ui); color: var(--cyan); pointer-events: none;
+  animation: dance-note calc(var(--beat) * 4) ease-out infinite;
+}
+@keyframes dance-note {
+  0% { opacity: 0; transform: translate(0, 6px) rotate(-8deg); }
+  15% { opacity: 1; }
+  100% { opacity: 0; transform: translate(10px, -30px) rotate(10deg); }
+}
+
+/* The joints. The walk sets its own on .walking; a dance never runs over
+   a walk, so there is no fight for them. */
+.who-slot.dancing:not(.walking) .bot { animation: none; }
+.who-slot.dancing:not(.walking) .bot-figure { transform-box: fill-box; transform-origin: 50% 92%; }
+.who-slot.dancing:not(.walking) .bot-arm { transform-box: fill-box; transform-origin: 50% 8%; }
+.who-slot.dancing:not(.walking) .bot-head { transform-box: fill-box; transform-origin: 50% 90%; }
+.who-slot.dancing:not(.walking) .bot-antenna { transform-box: fill-box; transform-origin: 50% 100%; }
+/* Dancing is awake, whatever the desk looked like a moment ago. */
+.who-slot.dancing .who[data-state="asleep"] svg.bot { opacity: 1; filter: none; }
+.who-slot.dancing .who[data-state="asleep"]::before, .who-slot.dancing .who[data-state="asleep"]::after { display: none; }
+
+/* 1. Bop: a hop with pumping arms. */
+.who-slot.dancing:not(.walking)[data-dance="bop"] .bot-figure { animation: d-bop var(--beat) ease-in-out infinite; }
+.who-slot.dancing:not(.walking)[data-dance="bop"] .bot-head   { animation: d-nod var(--beat) ease-in-out infinite; }
+.who-slot.dancing:not(.walking)[data-dance="bop"] .bot-arm-l  { animation: d-pump-l var(--beat) ease-in-out infinite; }
+.who-slot.dancing:not(.walking)[data-dance="bop"] .bot-arm-r  { animation: d-pump-r var(--beat) ease-in-out infinite; animation-delay: calc(var(--beat) / 2); }
+@keyframes d-bop { 0%, 100% { transform: translateY(0) scale(1, 1); } 30% { transform: translateY(-14px) scale(.96, 1.05); } 60% { transform: translateY(0) scale(1.05, .95); } }
+@keyframes d-nod { 0%, 100% { transform: rotate(-6deg); } 50% { transform: rotate(6deg); } }
+@keyframes d-pump-l { 0%, 100% { transform: rotate(10deg); } 50% { transform: rotate(-120deg); } }
+@keyframes d-pump-r { 0%, 100% { transform: rotate(-10deg); } 50% { transform: rotate(120deg); } }
+
+/* 2. Twist: hips, arms out. */
+.who-slot.dancing:not(.walking)[data-dance="twist"] .bot-figure { animation: d-twist calc(var(--beat) * 2) ease-in-out infinite; }
+.who-slot.dancing:not(.walking)[data-dance="twist"] .bot-arm-l  { animation: d-sway-l calc(var(--beat) * 2) ease-in-out infinite; }
+.who-slot.dancing:not(.walking)[data-dance="twist"] .bot-arm-r  { animation: d-sway-r calc(var(--beat) * 2) ease-in-out infinite; }
+.who-slot.dancing:not(.walking)[data-dance="twist"] .bot-head   { animation: d-nod calc(var(--beat) * 2) ease-in-out infinite reverse; }
+@keyframes d-twist { 0%, 100% { transform: rotate(-9deg) translateY(0); } 25% { transform: rotate(0deg) translateY(-6px); } 50% { transform: rotate(9deg) translateY(0); } 75% { transform: rotate(0deg) translateY(-6px); } }
+@keyframes d-sway-l { 0%, 100% { transform: rotate(-60deg); } 50% { transform: rotate(-100deg); } }
+@keyframes d-sway-r { 0%, 100% { transform: rotate(100deg); } 50% { transform: rotate(60deg); } }
+
+/* 3. The Robot: locked joints, in steps. */
+.who-slot.dancing:not(.walking)[data-dance="robot"] .bot-figure { animation: d-lock calc(var(--beat) * 4) steps(1, end) infinite; }
+.who-slot.dancing:not(.walking)[data-dance="robot"] .bot-head   { animation: d-lock-head calc(var(--beat) * 4) steps(1, end) infinite; }
+.who-slot.dancing:not(.walking)[data-dance="robot"] .bot-arm-l  { animation: d-lock-l calc(var(--beat) * 4) steps(1, end) infinite; }
+.who-slot.dancing:not(.walking)[data-dance="robot"] .bot-arm-r  { animation: d-lock-r calc(var(--beat) * 4) steps(1, end) infinite; }
+@keyframes d-lock { 0% { transform: rotate(0); } 25% { transform: rotate(-5deg) translateX(-4px); } 50% { transform: rotate(0); } 75% { transform: rotate(5deg) translateX(4px); } }
+@keyframes d-lock-head { 0% { transform: rotate(0); } 25% { transform: rotate(14deg); } 50% { transform: rotate(0); } 75% { transform: rotate(-14deg); } }
+@keyframes d-lock-l { 0% { transform: rotate(-90deg); } 25% { transform: rotate(-90deg) translateY(-6px); } 50% { transform: rotate(-160deg); } 75% { transform: rotate(-20deg); } }
+@keyframes d-lock-r { 0% { transform: rotate(20deg); } 25% { transform: rotate(160deg); } 50% { transform: rotate(90deg) translateY(-6px); } 75% { transform: rotate(90deg); } }
+
+/* 4. Hands up: both arms high, the antenna with them. */
+.who-slot.dancing:not(.walking)[data-dance="hands"] .bot-figure  { animation: d-bounce var(--beat) ease-in-out infinite; }
+.who-slot.dancing:not(.walking)[data-dance="hands"] .bot-arm-l   { animation: d-high-l calc(var(--beat) * 2) ease-in-out infinite; }
+.who-slot.dancing:not(.walking)[data-dance="hands"] .bot-arm-r   { animation: d-high-r calc(var(--beat) * 2) ease-in-out infinite; }
+.who-slot.dancing:not(.walking)[data-dance="hands"] .bot-antenna { animation: d-wobble var(--beat) ease-in-out infinite; }
+@keyframes d-bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+@keyframes d-high-l { 0%, 100% { transform: rotate(-150deg); } 50% { transform: rotate(-175deg); } }
+@keyframes d-high-r { 0%, 100% { transform: rotate(175deg); } 50% { transform: rotate(150deg); } }
+@keyframes d-wobble { 0%, 100% { transform: rotate(-25deg); } 50% { transform: rotate(25deg); } }
+
+/* 5. Spin: a turn every four beats, a bop in between. */
+.who-slot.dancing:not(.walking)[data-dance="spin"] .bot-figure { animation: d-spin calc(var(--beat) * 4) ease-in-out infinite; }
+.who-slot.dancing:not(.walking)[data-dance="spin"] .bot-arm-l  { animation: d-pump-l var(--beat) ease-in-out infinite; }
+.who-slot.dancing:not(.walking)[data-dance="spin"] .bot-arm-r  { animation: d-pump-r var(--beat) ease-in-out infinite; animation-delay: calc(var(--beat) / 2); }
+@keyframes d-spin {
+  0%, 50% { transform: translateY(0) rotateY(0); }
+  60%     { transform: translateY(-10px) rotateY(0); }
+  100%    { transform: translateY(0) rotateY(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .who-slot.dancing .bot-figure, .who-slot.dancing .bot-arm, .who-slot.dancing .bot-head,
+  .who-slot.dancing .bot-antenna, .who-slot.dancing::after, .dance-btn, .dance-menu { animation: none; }
+}
