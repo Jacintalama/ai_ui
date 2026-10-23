@@ -11,6 +11,7 @@
 import { S, nameOf } from "./state.js";
 import { initNewAgent } from "./newagent.js";
 import { initDock, drawDock, openChat, pruneDock, TEAM } from "./dock.js";
+import { initVoice, voiceSaid, voiceRowHtml, setVoiceOf, hearSample } from "./voice.js";
 import { getJson, esc, ago, saying, authHeaders } from "./util.js";
 import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   from "./agent.js";
@@ -553,6 +554,9 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     return Math.max(SPEAK_MIN_MS, Math.min(SPEAK_MAX_MS, (chars || 0) * SPEAK_MS_PER_CHAR));
   }
   function speaking(id) {
+    // A voice being played (voice.js) keeps the mouth going for exactly as
+    // long as the sound, whatever the clock below said.
+    if (S.VOICING[id]) return true;
     var s = S.SPEAKING[id];
     return !!(s && s.until && s.until > Date.now());
   }
@@ -1445,6 +1449,10 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
             '></button>';
         }).join("") +
       '</div>' +
+      '<p class="section-title" style="margin-top:18px">Voice</p>' +
+      // How it sounds when its answers are read aloud (voice.js). Kept per
+      // browser; every agent has one of its own from its id until picked.
+      voiceRowHtml(m) +
       canDo(m) +
       '<p class="section-title" style="margin-top:18px">Recent activity</p>' + recent +
       '<p class="section-title" style="margin-top:18px">Tools it can reach</p>' +
@@ -1795,6 +1803,8 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       // Only a length (`chars`), never the words. The clock starts in
       // startSpeaking, once the robot is standing still.
       S.SPEAKING[e.agent_id] = { ms: speakFor(e.chars), heard: Date.now(), until: 0 };
+      // And read aloud, if the speaker is on and the answer is in a window.
+      voiceSaid(e.agent_id);
     } else if (e.event === "meeting_started") {
       S.MEETING = { ids: (e.participants || []).slice(), ended: null,
                     heard: true };
@@ -2573,8 +2583,16 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     }
   });
 
+  document.getElementById("side").addEventListener("change", function (ev) {
+    var pick = ev.target.closest(".voice-pick");
+    if (!pick) return;
+    setVoiceOf(pick.getAttribute("data-id"), pick.value);
+    drawSide();
+  });
   document.getElementById("side").addEventListener("click", function (ev) {
     if (ev.target.closest("#side-shut")) { S.SELECTED = null; draw(); return; }
+    var hear = ev.target.closest(".voice-hear");
+    if (hear) { hearSample(hear.getAttribute("data-id")); return; }
     if (ev.target.closest("#side-fold")) { setSideFolded(!sideFolded()); drawSide(); drawZoom(true); return; }
     var sw = ev.target.closest(".swatch");
     if (!sw || !S.SELECTED) return;
@@ -2626,6 +2644,9 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     }
     return stateOf(key);
   } });
+  // The mic and the voices in those windows; a change of who is talking
+  // redraws the floor so the mouth follows the sound.
+  initVoice({ onChange: draw });
 
   initNewAgent({
     agents: function () { return S.AGENTS; },

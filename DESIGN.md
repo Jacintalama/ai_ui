@@ -324,6 +324,18 @@ messenger").
   button only fills the team composer with "everyone answer: " and stops.
 - **Not in the dock on the agents page,** which has the one conversation
   already: there the windows are not drawn and Chat asks the page around it.
+- **Voice (2026-10-23).** A mic at the left of the composer, where the
+  browser can hear (Chrome, Edge, Safari): it turns red and pulses while
+  listening, the words land in the box grey while still being heard and
+  solid once a phrase is final, and a pause after a final phrase sends
+  them through the same form as typing. Answers are read aloud in the
+  agent's own voice (Piper on the server, one of six, picked on the card
+  under Voice, remembered per browser) and the robot's mouth moves for as
+  long as the sound plays; the row being read carries a note after the
+  name. The speaker in the title bar mutes every voice, remembered per
+  browser; auto-listen reopens the mic after an answer to a spoken
+  question, never after a typed one; the mic pressed while a robot talks
+  cuts it off. A browser without recognition shows no mic and still hears.
 
 ### Details panel
 - **Layout:** 320px wide on the Panel layer, separated by a hairline. It is

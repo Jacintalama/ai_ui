@@ -11,6 +11,7 @@ puppet show.
 """
 import http.server
 import json
+import urllib.parse
 import pathlib
 import re
 import sys
@@ -1817,7 +1818,9 @@ def test_a_fourth_window_puts_the_oldest_away_as_a_circle(page):
     page.evaluate("() => import('/office/js/dock.js').then(d => { d.openChat('agent-iris-a103'); d.openChat('agent-research-assistant-0001'); })")
     page.wait_for_timeout(200)
     assert page.locator("#chatdock .cw:visible").count() == 3
-    page.locator("#cw-team .cw-head").click()
+    # The name, as a person would: the bar's middle is a button now that
+    # the voice controls stand in it (2026-10-23).
+    page.locator("#cw-team .cw-head .cw-who").click()
     page.wait_for_timeout(300)
     assert page.locator("#chatdock .cw:visible").count() == 2
     head = page.locator("#chatdock-min .chead")
@@ -2991,3 +2994,243 @@ def test_every_move_animates_the_figure(page):
         page.wait_for_timeout(60)
         page.locator('.who[data-id="agent-iris-a103"]').click()   # offer again
     assert names == {"bop": "d-bop", "robot": "d-lock", "hands": "d-bounce", "spin": "d-spin"}, names
+
+
+# --- voice in the chat windows (2026-10-23) ----------------------------------
+# "in the chat how the ai agent talk to user ... have mic enable and disable
+# for user". Hearing is the browser's speech recognition, replaced here by a
+# fake the test drives; speaking is a WAV from /agents/voice/say, played by
+# an Audio element whose play() is replaced so a clip "ends" on a timer.
+
+_FAKE_SPEECH = """
+  window.__recs = [];
+  class FakeRec {
+    constructor() { this.continuous = false; this.interimResults = false; this.started = false; window.__recs.push(this); }
+    start() { this.started = true; }
+    stop() { this.started = false; if (this.onend) this.onend(); }
+    abort() { this.stop(); }
+    emit(list) {
+      var rs = list.map(function (r) { var a = [{ transcript: r.transcript, confidence: .9 }]; a.isFinal = !!r.isFinal; return a; });
+      if (this.onresult) this.onresult({ resultIndex: 0, results: rs });
+    }
+  }
+  window.SpeechRecognition = FakeRec; window.webkitSpeechRecognition = FakeRec;
+"""
+_NO_SPEECH = "window.SpeechRecognition = undefined; window.webkitSpeechRecognition = undefined;"
+_FAKE_AUDIO = """
+  window.__played = []; window.__audioMs = %d;
+  HTMLMediaElement.prototype.play = function () {
+    var el = this; window.__played.push(el.src);
+    el.__t = setTimeout(function () { el.dispatchEvent(new Event('ended')); }, window.__audioMs);
+    return Promise.resolve();
+  };
+  HTMLMediaElement.prototype.pause = function () { clearTimeout(this.__t); window.__paused = (window.__paused || 0) + 1; };
+"""
+# A real, silent WAV: an Audio element loads the blob it is given, and a
+# fake one raised `error`, which voice.js rightly treats as the clip ending.
+_WAV = (b"RIFF" + (36 + 800).to_bytes(4, "little") + b"WAVEfmt " + (16).to_bytes(4, "little")
+        + (1).to_bytes(2, "little") + (1).to_bytes(2, "little") + (8000).to_bytes(4, "little")
+        + (16000).to_bytes(4, "little") + (2).to_bytes(2, "little") + (16).to_bytes(2, "little")
+        + b"data" + (800).to_bytes(4, "little") + b"\0" * 800)
+VOICE_JS = "/tasks/static/office/js/voice.js"
+
+
+def _voice(page, speech=True, audio_ms=300):
+    """The office again, with a fake recognizer and a clip that ends on a
+    timer, plus the say route recording what was asked for."""
+    said = []
+
+    def say(r):
+        said.append(r.request.post_data_json)
+        r.fulfill(status=200, content_type="audio/wav", body=_WAV)
+    page.route("**/agents/voice/say", say)
+    page.route("**/tasks/agents/chat/send", lambda r: r.fulfill(
+        status=200, content_type="text/html",
+        body=render.turn_open("x", render.new_turn_id()) + render.turn_close()))
+    page.add_init_script(_FAKE_SPEECH if speech else _NO_SPEECH)
+    page.add_init_script(_FAKE_AUDIO % audio_ms)
+    page.reload()
+    page.wait_for_selector(".who", state="visible")
+    page.locator("#cw-team .ap-composer").wait_for()
+    return said
+
+
+def _answer(page, name, text, thread="#agent-thread"):
+    page.evaluate(
+        "([sel, name, text]) => { const t = document.querySelector(sel);"
+        " t.insertAdjacentHTML('beforeend', '<div class=\"am agent\" data-agent=\"' + name + '\">"
+        "<div class=\"abody\"><div class=\"awho\">' + name + '</div><div class=\"atext\">' + text + '</div></div></div>'); }",
+        [thread, name, text])
+
+
+def _said(page, agent_id):
+    page.evaluate("(id) => import('%s').then(v => v.voiceSaid(id))" % VOICE_JS, agent_id)
+
+
+def test_a_chat_window_has_a_mic_where_the_browser_can_hear(page):
+    _voice(page)
+    mic = page.locator("#cw-team .ap-composer .ap-mic")
+    assert mic.is_visible()
+    assert mic.get_attribute("aria-pressed") == "false"
+    assert page.locator("#cw-team .cw-head .cw-voice").is_visible()
+    assert page.locator("#cw-team .cw-head .cw-auto").is_visible()
+    # Left of the box, and the box still has the room.
+    got = page.evaluate(
+        "() => { const f = document.querySelector('#cw-team .ap-composer');"
+        " const m = f.querySelector('.ap-mic').getBoundingClientRect();"
+        " const i = f.querySelector('input[type=text]').getBoundingClientRect();"
+        " return { micRight: m.right, inputLeft: i.left, input: i.width, mic: m.width }; }")
+    assert got["micRight"] <= got["inputLeft"] + 1, got
+    assert got["input"] > got["mic"] * 3, got
+
+
+def test_without_speech_recognition_the_mic_is_gone_but_the_agents_still_speak(page):
+    said = _voice(page, speech=False)
+    assert page.locator("#cw-team .ap-composer .ap-mic").is_hidden()
+    assert page.locator("#cw-team .cw-head .cw-auto").is_hidden()
+    assert page.locator("#cw-team .cw-head .cw-voice").is_visible()
+    _answer(page, "Iris", "Two invoices are due Friday.")
+    _said(page, "agent-iris-a103")
+    page.wait_for_timeout(400)
+    assert len(said) == 1
+
+
+def test_talking_puts_the_words_in_the_box_grey_then_sends_after_a_pause(page):
+    _voice(page)
+    sent = []
+    page.route("**/tasks/agents/chat/send", lambda r: (
+        sent.append(r.request.post_data),
+        r.fulfill(status=200, content_type="text/html",
+                  body=render.turn_open("x", render.new_turn_id()) + render.turn_close())))
+    win = page.locator("#cw-team")
+    win.locator(".ap-mic").click()
+    assert win.locator(".ap-mic").get_attribute("aria-pressed") == "true"
+    assert page.evaluate("() => document.querySelector('#cw-team').classList.contains('listening')")
+    assert page.evaluate("() => window.__recs.length") == 1
+    assert page.evaluate("() => { const r = window.__recs[0]; return r.started && r.continuous && r.interimResults; }")
+    box = win.locator('input[name="message"]')
+    page.evaluate("() => window.__recs[0].emit([{transcript: 'chase northwind', isFinal: false}])")
+    assert box.input_value() == "chase northwind"
+    assert box.get_attribute("data-interim") == "1"
+    page.evaluate("() => window.__recs[0].emit([{transcript: 'chase northwind for me', isFinal: true}])")
+    assert box.input_value() == "chase northwind for me"
+    assert box.get_attribute("data-interim") is None
+    page.wait_for_timeout(300)
+    assert not sent, "sent before the pause"
+    page.wait_for_timeout(1400)
+    assert sent and "message=chase northwind for me" in urllib.parse.unquote_plus(sent[0]), sent
+    # Listening is over once it is sent, and the fake was told to stop.
+    assert win.locator(".ap-mic").get_attribute("aria-pressed") == "false"
+    assert page.evaluate("() => !window.__recs[0].started")
+
+
+def test_an_answer_is_read_in_the_agents_own_voice_and_the_mouth_moves(page):
+    said = _voice(page, audio_ms=700)
+    _answer(page, "Iris", "Two invoices are due Friday. Northwind is fourteen days late already.")
+    _said(page, "agent-iris-a103")
+    page.locator('.who[data-id="agent-iris-a103"][data-speaking="1"]').wait_for(state="attached", timeout=3000)
+    assert page.locator('#agent-thread .am.agent[data-voicing="1"]').count() == 1
+    assert page.evaluate("() => document.querySelector('#cw-team').classList.contains('voicing')")
+    own = page.evaluate("() => import('%s').then(v => v.defaultVoice('agent-iris-a103'))" % VOICE_JS)
+    assert said[0]["voice"] == own
+    # Sentence by sentence, in order; the second is asked for while the
+    # first plays rather than after it.
+    page.wait_for_timeout(400)
+    assert [s["text"] for s in said] == [
+        "Two invoices are due Friday.", "Northwind is fourteen days late already."], said
+    page.locator('.who[data-id="agent-iris-a103"][data-speaking="1"]').wait_for(state="detached", timeout=4000)
+    assert page.locator('#agent-thread .am.agent[data-voicing="1"]').count() == 0
+    assert page.evaluate("() => window.__played.length") == 2
+    # Told once: the same row is not read again.
+    _said(page, "agent-iris-a103")
+    page.wait_for_timeout(400)
+    assert len(said) == 2
+
+
+def test_the_speaker_mutes_every_voice_and_is_remembered(page):
+    said = _voice(page)
+    page.locator("#cw-team .cw-voice").click()
+    assert page.locator("#cw-team .cw-voice").get_attribute("aria-pressed") == "false"
+    assert page.evaluate("() => localStorage.getItem('aiui.voice.speaker')") == "0"
+    page.locator('.who-chat[data-id="agent-iris-a103"]').click()
+    win = page.locator('#chatdock .cw[data-chat="agent-iris-a103"]')
+    win.wait_for(state="visible")
+    assert win.locator(".cw-voice").get_attribute("aria-pressed") == "false"
+    _answer(page, "Iris", "Two invoices are due Friday.")
+    _said(page, "agent-iris-a103")
+    page.wait_for_timeout(500)
+    assert said == []
+    assert page.locator('.who[data-id="agent-iris-a103"][data-speaking="1"]').count() == 0
+    page.locator("#cw-team .cw-voice").click()
+    assert page.evaluate("() => localStorage.getItem('aiui.voice.speaker')") is None
+
+
+def test_the_mic_cuts_a_talking_robot_off_and_listens(page):
+    _voice(page, audio_ms=5000)
+    _answer(page, "Iris", "Two invoices are due Friday. Northwind is late.")
+    _said(page, "agent-iris-a103")
+    page.locator('.who[data-id="agent-iris-a103"][data-speaking="1"]').wait_for(state="attached", timeout=3000)
+    page.locator("#cw-team .ap-mic").click()
+    page.wait_for_timeout(200)
+    assert page.locator('.who[data-id="agent-iris-a103"][data-speaking="1"]').count() == 0
+    assert page.locator('#agent-thread .am.agent[data-voicing="1"]').count() == 0
+    assert page.evaluate("() => window.__paused") == 1
+    assert page.locator("#cw-team .ap-mic").get_attribute("aria-pressed") == "true"
+
+
+def test_auto_listen_reopens_the_mic_after_an_answer_to_a_spoken_question_only(page):
+    _voice(page, audio_ms=300)
+    win = page.locator("#cw-team")
+    # Spoken: the mic comes back on its own once the answer is said.
+    win.locator(".ap-mic").click()
+    page.evaluate("() => window.__recs[0].emit([{transcript: 'what is due', isFinal: true}])")
+    page.wait_for_timeout(1500)
+    assert win.locator(".ap-mic").get_attribute("aria-pressed") == "false"
+    _answer(page, "Iris", "Two invoices are due Friday.")
+    _said(page, "agent-iris-a103")
+    page.locator('#cw-team .ap-mic[aria-pressed="true"]').wait_for(timeout=3000)
+    assert page.evaluate("() => window.__recs.length") == 2
+    win.locator(".ap-mic").click()   # off again, nothing in the box
+    assert win.locator(".ap-mic").get_attribute("aria-pressed") == "false"
+    # Typed: an answer read aloud leaves the mic alone.
+    win.locator('input[name="message"]').fill("and acme?")
+    win.locator('button[type="submit"]').click()
+    page.wait_for_timeout(300)
+    _answer(page, "Iris", "Acme is due Friday too.")
+    _said(page, "agent-iris-a103")
+    page.wait_for_timeout(1200)
+    assert win.locator(".ap-mic").get_attribute("aria-pressed") == "false"
+    assert page.evaluate("() => window.__recs.length") == 2
+    # And with auto-listen off, neither does a spoken one.
+    win.locator(".cw-auto").click()
+    assert win.locator(".cw-auto").get_attribute("aria-pressed") == "false"
+    assert page.evaluate("() => localStorage.getItem('aiui.voice.auto')") == "0"
+    win.locator(".ap-mic").click()
+    page.evaluate("() => window.__recs[2].emit([{transcript: 'thanks', isFinal: true}])")
+    page.wait_for_timeout(1500)
+    _answer(page, "Iris", "Any time.")
+    _said(page, "agent-iris-a103")
+    page.wait_for_timeout(1200)
+    assert win.locator(".ap-mic").get_attribute("aria-pressed") == "false"
+    assert page.evaluate("() => window.__recs.length") == 3
+
+
+def test_the_card_offers_a_voice_and_the_pick_is_what_is_heard(page):
+    said = _voice(page)
+    pick = page.locator("#side .voice-pick")
+    assert pick.count() == 1
+    assert pick.get_attribute("data-id") == "agent-research-assistant-0001"
+    labels = pick.locator("option").all_inner_texts()
+    assert len(labels) == 6 and any("its own" in l for l in labels), labels
+    assert page.locator("#side .voice-hear").is_visible()
+    pick.select_option("alba")
+    assert page.evaluate("() => localStorage.getItem('aiui.voice.of.agent-research-assistant-0001')") == "alba"
+    assert page.locator("#side .voice-pick").input_value() == "alba"
+    _answer(page, "Ada", "Done, the reminder is drafted.")
+    _said(page, "agent-research-assistant-0001")
+    page.wait_for_timeout(500)
+    assert said and said[0]["voice"] == "alba", said
+    # Hear plays that voice's sample.
+    page.locator("#side .voice-hear").click()
+    page.wait_for_timeout(200)
+    assert any(src.endswith("/voices/alba.mp3") for src in page.evaluate("() => window.__played"))
