@@ -21,7 +21,7 @@ import os
 import uuid
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from pydantic import BaseModel, Field, field_validator
 
 from sqlalchemy import text as sql_text
@@ -32,7 +32,9 @@ import agent_todo
 import agent_events
 import agent_memory
 import agent_skills
+import agent_voice
 import free_pool
+import video_voices
 from agent_runner import _owui_user_id_for
 from agent_templates import TEMPLATES
 from auth import AdminUser, CurrentUser, current_admin, current_user
@@ -842,3 +844,42 @@ async def free_models(user: AdminUser = Depends(current_admin)) -> dict:
     model is busy.
     """
     return await free_pool.check()
+
+
+# --- a voice for the office chat (2026-10-23) -------------------------------
+# Hearing is the browser's own; this is the speaking half. See agent_voice.py.
+
+class SayIn(BaseModel):
+    text: str = Field(..., max_length=20000)
+    voice: str = Field("", max_length=40)
+
+
+@router.get("/voice/voices")
+async def voice_voices(user: CurrentUser = Depends(current_user)) -> dict:
+    """The voices an agent may be given: the Piper voices this container
+    carries, with a sample clip each. Ids and labels, never paths."""
+    return {"voices": video_voices.voice_catalog()}
+
+
+@router.post("/voice/say")
+async def voice_say(body: SayIn, user: CurrentUser = Depends(current_user)) -> Response:
+    """One sentence of an answer as a WAV in the agent's voice.
+
+    400 when there is nothing to say once the markdown is read out, 429 past
+    the person's sentences-per-minute, 503 when the voice cannot be made
+    (no Piper, no model, a job that failed): the client keeps the text."""
+    words = agent_voice.spoken_text(body.text)
+    if not words:
+        raise HTTPException(status_code=400, detail="nothing to say")
+    if body.voice and not video_voices.is_valid_voice(body.voice):
+        raise HTTPException(status_code=400, detail="no such voice")
+    if not agent_voice.LIMIT.allow(user.email):
+        raise HTTPException(status_code=429, detail="too many sentences a minute; the answer stays text")
+    try:
+        wav = await agent_voice.synthesize(words, body.voice or None)
+    except agent_voice.VoiceError as exc:
+        logger.warning("voice: %s", exc)
+        raise HTTPException(status_code=503, detail="the voice is not available right now")
+    return Response(content=wav, media_type="audio/wav",
+                    headers={"Cache-Control": "no-store",
+                             "X-Voice": agent_voice.voice_or_default(body.voice or None)})

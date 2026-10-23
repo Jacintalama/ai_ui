@@ -486,6 +486,8 @@ def test_the_embedded_office_drops_its_own_header(page):
     carried two headers stacked on each other."""
     _open_office(page)
     frame = page.frame_locator("#office-body iframe")
+    # count() does not wait for the frame to load; attached does.
+    frame.locator(".top").wait_for(state="attached")
     assert frame.locator(".top").count() == 1      # still in the markup
     assert not frame.locator(".top").is_visible()  # but not shown here
 

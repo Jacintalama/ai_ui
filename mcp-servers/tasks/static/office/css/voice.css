@@ -1,0 +1,79 @@
+/* Voice in the chat windows (office/js/voice.js, 2026-10-23, "how the ai
+   agent talk to user ... have mic enable and disable for user").
+
+   The mic sits at the left of the composer, the speaker and auto-listen
+   buttons in the window's title bar beside Minimise. A mic that is live is
+   red and pulses; words still being heard are grey italics in the box; a
+   window that is listening carries .listening. An answer being read aloud
+   is marked on its row (data-voicing) and on the robot's mouth
+   (speaking.css, through the same data-speaking the server's
+   speaking_started sets). */
+
+/* --- the mic ------------------------------------------------------------- */
+.cw .ap-composer .ap-mic {
+  flex: 0 0 auto; width: 32px; height: 32px; padding: 0; border-radius: 50%;
+  display: grid; place-items: center; cursor: pointer; position: relative;
+  background: var(--surface-2); border: 1px solid var(--border-2); color: var(--text-2);
+}
+.cw .ap-composer .ap-mic svg { width: 15px; height: 15px; }
+.cw .ap-composer .ap-mic:hover { border-color: var(--cyan); color: var(--cyan); }
+.cw .ap-composer .ap-mic:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.cw .ap-composer .ap-mic[aria-pressed="true"] {
+  background: var(--bad); border-color: var(--bad); color: #1a0509;
+}
+.cw .ap-composer .ap-mic[aria-pressed="true"]::after {
+  content: ""; position: absolute; inset: -1px; border-radius: 50%;
+  border: 2px solid var(--bad); animation: mic-pulse 1.2s ease-out infinite;
+}
+@keyframes mic-pulse { from { transform: scale(1); opacity: .9; } to { transform: scale(1.7); opacity: 0; } }
+/* Said while the robot talks, the mic is the way to cut in. */
+.cw.voicing .ap-composer .ap-mic:not([aria-pressed="true"]) { border-color: var(--cyan); color: var(--cyan); }
+
+/* --- the box while listening ------------------------------------------- */
+.cw.listening .ap-composer input[type="text"] { border-color: var(--bad); }
+.cw .ap-composer input[type="text"][data-interim="1"] { color: var(--muted); font-style: italic; }
+
+/* --- the title bar ------------------------------------------------------- */
+/* Two more buttons in a 300px bar: the state line gives way with an
+   ellipsis rather than wrapping under the name (seen 2026-10-23). */
+.cw-head .cw-who { min-width: 0; }
+.cw-head .cw-state { min-width: 0; }
+.cw-head .cw-state span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cw-head .cw-voice, .cw-head .cw-auto { display: grid; place-items: center; }
+.cw-head .cw-voice svg, .cw-head .cw-auto svg { width: 14px; height: 14px; }
+.cw-head .cw-voice[aria-pressed="true"], .cw-head .cw-auto[aria-pressed="true"] { color: var(--cyan); }
+.cw-head .cw-voice[aria-pressed="false"], .cw-head .cw-auto[aria-pressed="false"] { color: var(--muted); }
+.cw-head .cw-voice[aria-pressed="false"] svg, .cw-head .cw-auto[aria-pressed="false"] svg { opacity: .7; }
+.cw-head .cw-voice .off, .cw-head .cw-auto .off { display: none; }
+.cw-head .cw-voice[aria-pressed="false"] .on, .cw-head .cw-auto[aria-pressed="false"] .on { display: none; }
+.cw-head .cw-voice[aria-pressed="false"] .off, .cw-head .cw-auto[aria-pressed="false"] .off { display: block; }
+/* No speech recognition in this browser: no auto-listen either. */
+.cw-head .cw-auto[hidden] { display: none; }
+
+/* --- an answer being read ------------------------------------------------ */
+/* A robot reading aloud is awake, however long its desk had been quiet. */
+.who[data-state="asleep"][data-speaking="1"] svg.bot { opacity: 1; filter: none; }
+.who[data-state="asleep"][data-speaking="1"]::before, .who[data-state="asleep"][data-speaking="1"]::after { display: none; }
+.am.agent[data-voicing="1"] .awho::after {
+  content: " \266A"; color: var(--cyan); font-weight: 800;
+  animation: voicing-note 1s ease-in-out infinite alternate;
+}
+@keyframes voicing-note { from { opacity: .45; } to { opacity: 1; } }
+
+/* --- the voice on the card ----------------------------------------------- */
+.voice-row { display: flex; gap: 8px; align-items: center; }
+.voice-row .voice-pick {
+  flex: 1 1 auto; min-width: 0; padding: 6px 10px; font: inherit; font-size: 12.5px;
+  border-radius: 8px; background: var(--surface-2); color: var(--text); border: 1px solid var(--border-2);
+}
+.voice-row .voice-pick:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.voice-row .voice-hear {
+  flex: none; padding: 6px 10px; font: inherit; font-size: 12px; font-weight: 700; border-radius: 8px;
+  cursor: pointer; background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border-2);
+}
+.voice-row .voice-hear:hover { color: var(--cyan); border-color: var(--cyan); }
+.voice-row .voice-hear:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cw .ap-composer .ap-mic[aria-pressed="true"]::after, .am.agent[data-voicing="1"] .awho::after { animation: none; }
+}

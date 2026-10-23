@@ -11,6 +11,7 @@
 import { S, nameOf } from "./state.js";
 import { initNewAgent } from "./newagent.js";
 import { initDock, drawDock, openChat, pruneDock, TEAM } from "./dock.js";
+import { initVoice, voiceSaid, voiceRowHtml, setVoiceOf, hearSample } from "./voice.js";
 import { getJson, esc, ago, saying, authHeaders } from "./util.js";
 import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   from "./agent.js";
@@ -553,6 +554,9 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     return Math.max(SPEAK_MIN_MS, Math.min(SPEAK_MAX_MS, (chars || 0) * SPEAK_MS_PER_CHAR));
   }
   function speaking(id) {
+    // A voice being played (voice.js) keeps the mouth going for exactly as
+    // long as the sound, whatever the clock below said.
+    if (S.VOICING[id]) return true;
     var s = S.SPEAKING[id];
     return !!(s && s.until && s.until > Date.now());
   }
@@ -639,6 +643,8 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     if (!who) { el.innerHTML = slotInner(m); return; }
     var st = stateOf(m.id);
     if (who.getAttribute("data-state") !== st.key) {
+      // Work ends a dance: the floor never dances over a state.
+      if (!canDance(m.id)) stopDance(el, m.id);
       // Waking up: a stretch before anything else, so a run starting at a
       // quiet desk is seen to start.
       if (who.getAttribute("data-state") === "asleep") {
@@ -1443,6 +1449,10 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
             '></button>';
         }).join("") +
       '</div>' +
+      '<p class="section-title" style="margin-top:18px">Voice</p>' +
+      // How it sounds when its answers are read aloud (voice.js). Kept per
+      // browser; every agent has one of its own from its id until picked.
+      voiceRowHtml(m) +
       canDo(m) +
       '<p class="section-title" style="margin-top:18px">Recent activity</p>' + recent +
       '<p class="section-title" style="margin-top:18px">Tools it can reach</p>' +
@@ -1793,6 +1803,8 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       // Only a length (`chars`), never the words. The clock starts in
       // startSpeaking, once the robot is standing still.
       S.SPEAKING[e.agent_id] = { ms: speakFor(e.chars), heard: Date.now(), until: 0 };
+      // And read aloud, if the speaker is on and the answer is in a window.
+      voiceSaid(e.agent_id);
     } else if (e.event === "meeting_started") {
       S.MEETING = { ids: (e.participants || []).slice(), ended: null,
                     heard: true };
@@ -2104,19 +2116,109 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     hi.className = "say hello";
     hi.textContent = "Hi" + (MY_NAME ? ", " + MY_NAME : "") + "! \uD83D\uDC4B";
     el.appendChild(hi);
+    offerDance(el, id);
     el._wave = setTimeout(function () {
       el.classList.remove("waving");
       hi.classList.add("going");
       setTimeout(function () { hi.remove(); }, 650);
       if (dozing) {
         el.classList.remove("woken");
-        // Still asleep, as far as the floor knows: back to it.
-        if (f && who.getAttribute("data-state") === "asleep") f.innerHTML = face(id, "asleep");
+        // Still asleep, as far as the floor knows: back to it, unless it
+        // has been asked to dance meanwhile (the dance keeps it awake).
+        if (f && who.getAttribute("data-state") === "asleep" && !el.classList.contains("dancing")) {
+          f.innerHTML = face(id, "asleep");
+        }
       }
     }, WAVE_MS);
   }
 
+  //: Dancing (2026-10-22, "pop up the small icon dance ... so user can
+  //: select an agent to dance"). With the hello comes a small Dance button;
+  //: it opens the five moves (animations/dance.css), and the one picked
+  //: runs on this robot for DANCE_MS. A dance is for you and is never a
+  //: state: not offered to a robot that is working, waiting on you or
+  //: failed, ended at once by a run starting, and paused while it walks.
+  var DANCES = [["bop", "Bop"], ["twist", "Twist"], ["robot", "The Robot"],
+                ["hands", "Hands up"], ["spin", "Spin"]];
+  var DANCE_MS = 8000, DANCE_OFFER_MS = 6000;
+  function canDance(id) {
+    var k = stateOf(id).key;
+    return k === "ready" || k === "asleep" || k === "idle";
+  }
+  function offerDance(el, id) {
+    var old = el.querySelector(".dance-btn");
+    if (old) old.remove();
+    var menu = el.querySelector(".dance-menu");
+    if (menu) menu.remove();
+    if (!canDance(id)) return;
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "dance-btn";
+    b.setAttribute("data-id", id);
+    b.textContent = el.classList.contains("dancing") ? "Stop" : "\u266A Dance";
+    b.title = "Make " + (nameOf(id) || "this agent") + " dance";
+    el.appendChild(b);
+    clearTimeout(el._offer);
+    el._offer = setTimeout(function () {
+      // Gone again unless it is being used, or the robot is dancing (then
+      // it is the Stop button).
+      if (el.querySelector(".dance-menu") || el.classList.contains("dancing")) return;
+      b.classList.add("going");
+      setTimeout(function () { b.remove(); }, 300);
+    }, DANCE_OFFER_MS);
+  }
+  function openDanceMenu(el, id) {
+    var menu = el.querySelector(".dance-menu");
+    if (menu) { menu.remove(); return; }
+    menu = document.createElement("div");
+    menu.className = "dance-menu";
+    menu.setAttribute("role", "menu");
+    menu.innerHTML = DANCES.map(function (d) {
+      return '<button type="button" role="menuitem" data-dance="' + d[0] + '">' + esc(d[1]) + '</button>';
+    }).join("");
+    el.appendChild(menu);
+  }
+  function startDance(el, id, key) {
+    var menu = el.querySelector(".dance-menu");
+    if (menu) menu.remove();
+    if (!canDance(id)) return;
+    var who = el.querySelector(".who"), f = who && who.querySelector(".bot-face");
+    el.setAttribute("data-dance", key);
+    el.classList.add("dancing");
+    // Awake for it, whatever the desk looked like.
+    if (who && who.getAttribute("data-state") === "asleep" && f) f.innerHTML = face(id, "ready");
+    var b = el.querySelector(".dance-btn");
+    if (b) b.textContent = "Stop";
+    clearTimeout(el._dance);
+    el._dance = setTimeout(function () { stopDance(el, id); }, DANCE_MS);
+  }
+  function stopDance(el, id) {
+    clearTimeout(el._dance);
+    if (!el.classList.contains("dancing")) return;
+    el.classList.remove("dancing");
+    el.removeAttribute("data-dance");
+    var who = el.querySelector(".who"), f = who && who.querySelector(".bot-face");
+    if (who && who.getAttribute("data-state") === "asleep" && f && !el.classList.contains("woken")) {
+      f.innerHTML = face(id, "asleep");
+    }
+    var b = el.querySelector(".dance-btn");
+    if (b) { b.classList.add("going"); setTimeout(function () { b.remove(); }, 300); }
+  }
+
   document.getElementById("rooms").addEventListener("click", function (ev) {
+    var pick = ev.target.closest(".dance-menu button");
+    if (pick) {
+      var pslot = pick.closest(".who-slot");
+      startDance(pslot, pslot.getAttribute("data-id"), pick.getAttribute("data-dance"));
+      return;
+    }
+    var db = ev.target.closest(".dance-btn");
+    if (db) {
+      var dslot = db.closest(".who-slot"), did = dslot.getAttribute("data-id");
+      if (dslot.classList.contains("dancing")) stopDance(dslot, did);
+      else openDanceMenu(dslot, did);
+      return;
+    }
     var who = ev.target.closest(".who");
     if (!who) return;
     S.SELECTED = who.getAttribute("data-id");
@@ -2481,8 +2583,16 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     }
   });
 
+  document.getElementById("side").addEventListener("change", function (ev) {
+    var pick = ev.target.closest(".voice-pick");
+    if (!pick) return;
+    setVoiceOf(pick.getAttribute("data-id"), pick.value);
+    drawSide();
+  });
   document.getElementById("side").addEventListener("click", function (ev) {
     if (ev.target.closest("#side-shut")) { S.SELECTED = null; draw(); return; }
+    var hear = ev.target.closest(".voice-hear");
+    if (hear) { hearSample(hear.getAttribute("data-id")); return; }
     if (ev.target.closest("#side-fold")) { setSideFolded(!sideFolded()); drawSide(); drawZoom(true); return; }
     var sw = ev.target.closest(".swatch");
     if (!sw || !S.SELECTED) return;
@@ -2534,6 +2644,9 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     }
     return stateOf(key);
   } });
+  // The mic and the voices in those windows; a change of who is talking
+  // redraws the floor so the mouth follows the sound.
+  initVoice({ onChange: draw });
 
   initNewAgent({
     agents: function () { return S.AGENTS; },
