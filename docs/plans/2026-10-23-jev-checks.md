@@ -147,6 +147,27 @@ before running:
 Also re-run `jev_calibrate.py` to confirm the decider still has zero wrong
 picks at 0.8 with the urgency question added and the model pinned.
 
+**Result, 2026-10-23 (jev-1.13.0 in the tasks container, two runs of 56
+labelled cases, 112 calls, $0.0018 together):**
+
+| check | shape | lowest true / highest false, both runs | wrong at any cut | chosen cut |
+|-------|-------|----------------------------------------|------------------|------------|
+| plain_question | choice | all 14 picked right, lowest 0.70 | 0 | 0.6 |
+| rollback_version | choice | all 6 picked right, lowest 0.92 | 0 | 0.6 |
+| release | yes | true 0.80 / false 0.28 | 0 | 0.6 |
+| worth_remembering | no | true 0.88 / false 0.30 | 0 | 0.3 |
+| reply_answers | no | true 0.94 / false 0.07 | 0 | 0.3 |
+
+- Jev was steady: no answer moved more than 0.08 between the runs.
+- The test that every case reaches Jev caught that short small talk never
+  does: `should_reflect` already skips messages under 40 characters, so the
+  "nothing to remember" cases are longer ones.
+- The decider re-run with the urgency question added and the model pinned:
+  9 right, 0 wrong at 0.8 in both runs, as on 2026-10-21. Urgency adds about
+  64 input tokens a call (26 calls $0.000620, was about $0.00055).
+- 56 cases is a small set. The Debug page's "Jev checks" table records every
+  real call, so each cut can be re-checked against real use.
+
 ### Task 12: Verify and deploy
 
 Full tasks suite locally (known baseline: 3 doc_builder failures and

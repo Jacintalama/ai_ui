@@ -52,3 +52,40 @@ def test_the_cap_note_is_said_once_a_day_per_person():
     assert esc.take_cap_note("A@example.com", today="2026-09-17") == ""
     assert esc.take_cap_note("b@example.com", today="2026-09-17") != ""
     assert esc.take_cap_note("a@example.com", today="2026-09-18") != ""
+
+
+# --- Jev on the plain question (agent_jev.plain_question) -------------------
+
+@pytest.mark.parametrize("text,plain,expected", [
+    ("make it blue", True, None),
+    ("what is on my calendar tomorrow?", False, esc.REASON_STICKY),
+    ("what is on my calendar tomorrow?", None, None),
+    ("make it blue", None, esc.REASON_STICKY),
+])
+def test_jev_decides_the_plain_question_when_it_was_sure(text, plain,
+                                                         expected):
+    intent = esc.Intent(person_text=text)
+    assert esc.decide(intent, True, plain=plain) == expected
+
+
+def test_jev_never_overrides_a_rule_or_a_follow_up():
+    assert esc.decide(esc.Intent(person_text="build me an app"), True,
+                      plain=True) == esc.REASON_BUILD
+    assert esc.decide(esc.Intent(person_text="", follow_up=True), True,
+                      plain=True) == esc.REASON_STICKY
+    assert esc.decide(esc.Intent(person_text="make it blue"), False,
+                      plain=False) is None
+
+
+@pytest.mark.parametrize("text,window,follow_up,asked", [
+    ("make it blue", True, False, True),
+    ("what is on my calendar tomorrow?", True, False, True),
+    ("make it blue", False, False, False),
+    ("build me an app", True, False, False),
+    ("", True, True, False),
+    ("   ", True, False, False),
+])
+def test_jev_is_asked_only_where_the_plain_question_rule_is(
+        text, window, follow_up, asked):
+    intent = esc.Intent(person_text=text, follow_up=follow_up)
+    assert esc.needs_plain_check(intent, window) is asked

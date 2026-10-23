@@ -27,6 +27,7 @@ import uuid
 
 from sqlalchemy import text as sql_text
 
+import agent_jev
 from db import session
 from secret_scrub import scrub
 
@@ -684,6 +685,13 @@ async def _reflect_now(user_email: str, agent: dict, token: str,
     """The reflection itself, under the in-flight cap. Raises; its caller
     holds the deadline and writes the one log line."""
     agent_id = str((agent or {}).get("id") or "")
+    # Jev first: sure the turn holds nothing worth keeping, no completion is
+    # paid for. Unsure, off or failing is None, and the reflection runs.
+    if await agent_jev.worth_remembering(user_email, user_text,
+                                         answer) is False:
+        logger.info("reflection for %s skipped: nothing to remember",
+                    agent_id)
+        return
     async with _in_flight:
         notes = [n["content"] for n in await list_notes(user_email, agent_id)]
         # list_facts rather than the cache: this is the one reader that is

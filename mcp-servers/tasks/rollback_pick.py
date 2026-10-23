@@ -317,3 +317,32 @@ def choose_rollback_target(versions: list[Version], phrase: str,
         return RollbackChoice(target=older[0], reason="one step back")
 
     return _ask(versions, "Which version should I go back to?")
+
+
+def wants_before(phrase: str) -> bool:
+    """Whether the phrase asks for the version before something it names,
+    with no sha in it: the one shape a model may help with, by naming which
+    version added the thing (agent_jev.rollback_version). A sha is rule 1's
+    job and is never handed on."""
+    text = _norm(phrase)
+    if re.search(r"\b[0-9a-f]{7,40}\b", text):
+        return False
+    return "before" in text.split() or "since" in text.split()
+
+
+def before_version(versions: list[Version], sha: str) -> RollbackChoice:
+    """The version just before the one with this sha, the way rule 2 answers
+    once it has found where a feature arrived. A sha that is not in the list
+    asks, so the target is still always an element of the list passed in."""
+    for i, ver in enumerate(versions):
+        if ver["sha"] == sha:
+            older = _older_than(versions, i)
+            if not older:
+                return RollbackChoice(
+                    reason=f"'{ver['message']}' is the oldest version, "
+                           "so there is nothing before it.")
+            return RollbackChoice(
+                target=older[0],
+                reason=_explain(older[0], versions,
+                                f"the version just before '{ver['message']}'"))
+    return _ask(versions, "Which version should I go back to?")

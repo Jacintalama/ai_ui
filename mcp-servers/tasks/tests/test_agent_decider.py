@@ -39,7 +39,7 @@ def _answer(kind, kc, who=None, wc=None, tokens=400):
 
 def test_the_request_asks_two_choice_questions_of_jev():
     body = d.build_request("can someone check how many apps I have?", [], TEAM)
-    assert set(body["questions"]) == {"kind", "who"}
+    assert set(body["questions"]) == {"kind", "who", "urgency"}
     kind = body["questions"]["kind"]
     assert kind["type"] == "choice"
     assert set(kind["criteria"]) == {"answer", "job"}
@@ -291,3 +291,70 @@ async def test_a_slow_record_does_not_hold_the_round(seams, monkeypatch):
                          [], TEAM)
     assert time.monotonic() - started < 1.0
     assert got.path == d.PATH_ONE_AGENT
+
+
+# --- urgency, a third question in the same call (2026-10-23) ----------------
+# The Score answer below is the real one from tests/fixtures/
+# jev_real_2026_10_23.json, moved under the urgency id.
+
+import pathlib  # noqa: E402
+
+REAL_SCORE = json.loads((pathlib.Path(__file__).parent / "fixtures"
+                         / "jev_real_2026_10_23.json").read_text()
+                        )["response"]["answers"]["score_q"]
+
+
+def test_urgency_is_asked_as_a_score_from_low_to_high():
+    q = d.build_request("the site is down", [], TEAM)["questions"]["urgency"]
+    assert q["type"] == "score"
+    assert q["criteria"] == [desc for _, desc in d.URGENCY_LEVELS]
+    assert [label for label, _ in d.URGENCY_LEVELS] == ["low", "normal",
+                                                        "urgent"]
+
+
+def test_the_real_score_is_read_as_its_likeliest_level():
+    data = dict(REAL, answers=dict(REAL["answers"], urgency=REAL_SCORE))
+    got = d.read_answer(data, TEAM)
+    assert got.urgency == "low" and got.urgency_confidence == 0.88
+    # Nothing else moves.
+    assert got.kind == "answer" and got.agent_id == "agent-dev"
+
+
+@pytest.mark.parametrize("urgency", [
+    None, "high", {"type": "score"}, {"type": "score", "probabilities": {}},
+    {"type": "score", "probabilities": {"7": 1.0}, "confidence": 0.9},
+    {"type": "score", "probabilities": {"0": 1.0}, "confidence": "x"}])
+def test_an_unreadable_urgency_leaves_the_decision_alone(monkeypatch,
+                                                         urgency):
+    monkeypatch.setenv("JEV_MIN_CONFIDENCE", "0.8")
+    answers = dict(_answer("answer", 0.95, "Dev", 0.9)["answers"])
+    if urgency is not None:
+        answers["urgency"] = urgency
+    got = d.read_answer({"model": "jev-1.13.0", "answers": answers}, TEAM)
+    assert got.path == d.PATH_ONE_AGENT and got.agent_id == "agent-dev"
+    assert got.urgency is None and got.urgency_confidence is None
+
+
+async def test_urgency_is_recorded(monkeypatch):
+    seen = {}
+
+    class S:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def execute(self, stmt, params):
+            seen["sql"], seen["params"] = str(stmt), params
+
+        async def commit(self):
+            pass
+
+    monkeypatch.setattr(d, "session", lambda: S())
+    await d.record("p@example.com", None,
+                   d.Decision(path="fallback", urgency="urgent",
+                              urgency_confidence=0.7))
+    assert "urgency" in seen["sql"]
+    assert seen["params"]["urgency"] == "urgent"
+    assert seen["params"]["uc"] == 0.7

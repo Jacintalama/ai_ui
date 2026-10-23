@@ -69,6 +69,7 @@ def test_resolve_only_calls_things_that_read():
     allowed = {
         "_validate_slug", "session", "_user_can_see_project", "_require_role",
         "list_app_versions_core", "choose_rollback_target", "model_dump",
+        "_resolve",  # the picker, then Jev on a paraphrase; reads only
         "HTTPException", "Depends", "current_user", "Query", "get",
         "router", "v",  # the route decorator and a comprehension variable
     }
@@ -90,4 +91,70 @@ def test_resolve_uses_the_shared_version_list_not_its_own_git_call():
     picker depends on. A private git log here would lose it."""
     src = inspect.getsource(routes_aiuibuilder.resolve_rollback_target)
     assert "list_app_versions_core" in src
-    assert "choose_rollback_target" in src
+    assert "_resolve" in src
+    # The rules still decide first; Jev only ever follows them.
+    assert "choose_rollback_target" in inspect.getsource(
+        routes_aiuibuilder._resolve)
+
+
+# --- Jev on a paraphrase (agent_jev.rollback_version) -----------------------
+
+import pytest  # noqa: E402
+
+import agent_jev  # noqa: E402
+
+
+def _v(c, message, status="ok"):
+    return {"sha": c * 40, "short_sha": c * 7, "message": message,
+            "status": status, "is_current": False}
+
+
+HISTORY = [_v("e", "add cart"), _v("d", "add checkout"),
+           _v("c", "style the header"), _v("a", "Initial build")]
+
+
+@pytest.fixture
+def jev(monkeypatch):
+    asked = []
+    state = {"pick": None}
+
+    async def rollback_version(email, phrase, versions):
+        asked.append((email, phrase, versions))
+        return state["pick"]
+
+    monkeypatch.setattr(agent_jev, "rollback_version", rollback_version)
+    return asked, state
+
+
+async def test_jev_names_where_a_paraphrase_arrived(jev):
+    asked, state = jev
+    state["pick"] = HISTORY[1]            # "add checkout"
+    got = await routes_aiuibuilder._resolve(
+        "o@example.com", HISTORY, "go back to before the payment step", "shop")
+    assert got.target is HISTORY[2]
+    assert asked[0][:2] == ("o@example.com",
+                            "go back to before the payment step")
+
+
+async def test_jev_unsure_leaves_the_question_to_the_person(jev):
+    asked, _ = jev
+    got = await routes_aiuibuilder._resolve(
+        "o@example.com", HISTORY, "go back to before the payment step", "shop")
+    assert got.needs_user_choice and got.target is None
+    assert len(asked) == 1
+
+
+async def test_jev_is_not_asked_when_a_rule_decided(jev):
+    asked, _ = jev
+    got = await routes_aiuibuilder._resolve(
+        "o@example.com", HISTORY, "go back to before the checkout", "shop")
+    assert got.target is HISTORY[2]
+    assert asked == []
+
+
+async def test_jev_is_not_asked_when_the_person_must_choose_anyway(jev):
+    asked, _ = jev
+    got = await routes_aiuibuilder._resolve(
+        "o@example.com", HISTORY, "which one was nice", "shop")
+    assert got.needs_user_choice
+    assert asked == []

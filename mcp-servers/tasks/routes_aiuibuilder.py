@@ -17,13 +17,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select, text, update
 
+import agent_jev
 from auth import CurrentUser, current_user
 from db import session
 from models import ProjectMember, PublishedApp, TaskExecution, TaskItem
 from prompt_utils import clean_user_prompt
 from templates import is_valid_key
 from chat_seed import seed_user_prompt
-from rollback_pick import choose_rollback_target
+from rollback_pick import (RollbackChoice, before_version,
+                          choose_rollback_target, wants_before)
 from routes_projects import (
     _delete_slug, _publish_slug, _unpublish_slug, _validate_slug,
     _require_role, _user_can_see_project,
@@ -744,6 +746,25 @@ async def list_built_app_versions(slug: str, user: CurrentUser = Depends(current
     return await list_app_versions_core(slug)
 
 
+async def _resolve(email: str, versions: list[dict], phrase: str,
+                   slug: str) -> RollbackChoice:
+    """The picker's decision, with Jev on the one shape it can help with.
+
+    When the rules could not find what "before the payment step" names (a
+    paraphrase: the commit says "add checkout"), Jev is asked which version
+    added it, and the rules step one older from there. Unsure, off or
+    failing, the person is asked as before. Read only either way: the person
+    still sees the target and confirms before POST /rollback.
+    """
+    choice = choose_rollback_target(versions, phrase, slug=slug)
+    if not (choice.needs_user_choice and wants_before(phrase)):
+        return choice
+    added = await agent_jev.rollback_version(email, phrase, versions)
+    if added is None:
+        return choice
+    return before_version(versions, added["sha"])
+
+
 @router.get("/{slug}/rollback/resolve")
 async def resolve_rollback_target(
     slug: str,
@@ -770,7 +791,7 @@ async def resolve_rollback_target(
     versions = [v.model_dump() for v in await list_app_versions_core(slug)]
     # The slug is passed so the picker can ignore the app's own name: real
     # commit messages are conventional-commit style and carry it in every line.
-    choice = choose_rollback_target(versions, phrase, slug=slug)
+    choice = await _resolve(user.email, versions, phrase, slug)
     return {
         "target": choice.target,
         "reason": choice.reason,

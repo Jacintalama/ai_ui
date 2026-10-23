@@ -76,6 +76,14 @@ def _app(monkeypatch, turn=None, agents=(ADA, MIA)):
         return None
 
     monkeypatch.setattr(agent_decider, "decide", no_decision)
+    # After the one agent Jev chose answers, Jev checks the reply answered
+    # (agent_jev.reply_answers). None is what no key gets: the round ends.
+    import agent_jev
+
+    async def no_check(email, message, reply):
+        return None
+
+    monkeypatch.setattr(agent_jev, "reply_answers", no_check)
 
     app = FastAPI()
     app.include_router(routes_agent_chat.router)
@@ -1251,3 +1259,76 @@ def test_a_thread_without_a_card_does_not_read_the_jobs(monkeypatch):
                                headers=_hdr()).text
     assert "hello" in html
     assert asked == []
+
+
+# --- Jev checks the chosen agent's reply ------------------------------------
+# Only on the one agent path. A reply Jev is sure did not answer the message
+# lets the rest of the room try, each allowed to pass.
+
+def _reply_check(monkeypatch, verdict):
+    import agent_jev
+    calls = []
+
+    async def reply_answers(email, message, reply):
+        calls.append((email, message, reply))
+        return verdict
+
+    monkeypatch.setattr(agent_jev, "reply_answers", reply_answers)
+    return calls
+
+
+@pytest.mark.parametrize("verdict", [True, None])
+def test_a_reply_that_answered_ends_the_round(monkeypatch, verdict):
+    import agent_decider
+    app, mod, seen = _app(monkeypatch)
+    _jobs(monkeypatch)
+    _jev(monkeypatch, path=agent_decider.PATH_ONE_AGENT)
+    checks = _reply_check(monkeypatch, verdict)
+    body = _say(app, CHATTY)
+    assert checks == [(EMAIL, CHATTY, "Mia here")]
+    assert [t["agent"] for t in seen] == ["agent-m"]
+    assert "Ada here" not in body
+
+
+def test_a_reply_that_did_not_answer_lets_the_rest_of_the_room_try(
+        monkeypatch):
+    import agent_decider
+    app, mod, seen = _app(monkeypatch)
+    _jobs(monkeypatch)
+    _jev(monkeypatch, path=agent_decider.PATH_ONE_AGENT)
+    _reply_check(monkeypatch, False)
+    body = _say(app, CHATTY)
+    assert [t["agent"] for t in seen] == ["agent-m", "agent-a"]
+    # The others are offered a pass; the chosen agent was not.
+    assert seen[0]["messages"][-1]["content"] != mod.PASS_INSTRUCTION
+    assert seen[1]["messages"][-1]["content"] == mod.PASS_INSTRUCTION
+    assert body.index("Mia here") < body.index("Ada here")
+
+
+def test_when_the_rest_pass_nobody_is_asked_again(monkeypatch):
+    import agent_decider
+
+    async def turn(email, agent, messages, names=(), **kw):
+        seen.append(agent["id"])
+        answer = "Mia here" if agent["id"] == "agent-m" else "PASS"
+        return {"answer": answer, "notes": [],
+                "agent": {"id": agent["id"], "name": agent["name"]}}
+
+    seen = []
+    app, mod, _ = _app(monkeypatch, turn=turn)
+    _jobs(monkeypatch)
+    _jev(monkeypatch, path=agent_decider.PATH_ONE_AGENT)
+    _reply_check(monkeypatch, False)
+    body = _say(app, CHATTY)
+    assert seen == ["agent-m", "agent-a"]
+    assert "Nobody had anything" not in body
+
+
+def test_the_reply_is_only_checked_on_the_one_agent_path(monkeypatch):
+    app, mod, seen = _app(monkeypatch)
+    _jobs(monkeypatch, steps=None)          # no plan: the room answers
+    _jev(monkeypatch, path=None)
+    checks = _reply_check(monkeypatch, False)
+    _say(app, CHATTY)
+    assert checks == []
+    assert sorted(t["agent"] for t in seen) == ["agent-a", "agent-m"]

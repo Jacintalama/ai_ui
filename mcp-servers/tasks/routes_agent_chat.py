@@ -35,6 +35,7 @@ import agent_job_store as job_store
 # pair and the two never form an import cycle.
 import agent_job_worker
 import agent_decider
+import agent_jev
 import agent_job_triage
 import agent_routing
 from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS, FREE_POOL_EXHAUSTED,
@@ -477,6 +478,18 @@ async def _jev_choice(email: str, chat_id: str | None, message: str,
                  if str(a.get("id") or "") == decision.agent_id), None)
 
 
+async def _jev_reply_ok(email: str, message: str,
+                        reply: str) -> bool | None:
+    """Whether Jev is sure the chosen agent's reply answered the message:
+    False only when it is sure it did not. Never raises, like _jev_choice."""
+    try:
+        return await agent_jev.reply_answers(email, message, reply)
+    except Exception:                                       # noqa: BLE001
+        log.warning("agent chat: the reply check raised; the round ends as "
+                    "normal", exc_info=True)
+        return None
+
+
 async def _propose_job(email: str, chat_id: str | None, lead: dict,
                        request: str, steps: list[dict]) -> str | None:
     """Save the lead's plan as a proposed job. Its id, or None.
@@ -656,6 +669,9 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
                "data": render.turn_status(tid, render.choosing())}
     chosen = (await _jev_choice(email, s.chat_id, asked, history, agents)
               if ask_jev else None)
+    # Who would have heard the message without Jev: the rest of them get a
+    # turn if the chosen agent's reply turns out not to answer it.
+    room = list(speakers)
     if chosen is not None:
         speakers, may_pass, met = [chosen], False, []
     if team_gate and chosen is None:
@@ -739,8 +755,11 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
                              user_email=email, participants=met)
     # Closed in a finally, so a turn that raises or a browser that leaves
     # (which closes this generator) still ends the meeting on the office.
+    # Iterated while it grows: a chosen reply Jev is sure did not answer
+    # appends the rest of the room (agent_jev.reply_answers).
+    queue = list(speakers)
     try:
-        for agent in list(speakers):
+        for agent in queue:
             if request is not None and await request.is_disconnected():
                 break
             agent_id = str(agent.get("id") or "")
@@ -836,8 +855,13 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
             yield {"event": "message",
                    "data": render.into_turn(tid, render.agent_bubble(
                        name, answer, answering, at=_now_iso()))}
+            if (chosen is not None and agent is chosen
+                    and await _jev_reply_ok(email, asked, answer) is False):
+                queue.extend(a for a in room
+                             if str(a.get("id") or "") != agent_id)
+                may_pass = True
 
-        if speakers and passed == len(speakers):
+        if queue and passed == len(queue):
             # Everybody passed, which leaves the person talking to an empty
             # room. Ask the one who spoke last, or the first, and this time
             # without the option of passing. One extra call, and only in this
