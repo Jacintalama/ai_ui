@@ -39,7 +39,6 @@ def _answer(kind, kc, who=None, wc=None, tokens=400):
 
 def test_the_request_asks_two_choice_questions_of_jev():
     body = d.build_request("can someone check how many apps I have?", [], TEAM)
-    assert body["model"] == "jev-latest"
     assert set(body["questions"]) == {"kind", "who"}
     kind = body["questions"]["kind"]
     assert kind["type"] == "choice"
@@ -81,10 +80,19 @@ def test_two_agents_with_one_name_cannot_be_told_apart():
     assert d.build_request("hello there team", [], TEAM + [twin]) is None
 
 
-def test_a_model_override_reaches_the_request(monkeypatch):
-    monkeypatch.setenv("JEV_MODEL", "jev-1.13.0")
+def test_the_model_is_pinned_to_the_version_the_cut_off_was_tuned_on(
+        monkeypatch):
+    # jev-latest is an alias TypeSafe moves to each new release, which would
+    # change the answers under a cut-off measured on 1.13 (2026-10-21).
+    monkeypatch.delenv("JEV_MODEL", raising=False)
     assert d.build_request("hello there team", [], TEAM)["model"] == \
         "jev-1.13.0"
+
+
+def test_a_model_override_reaches_the_request(monkeypatch):
+    monkeypatch.setenv("JEV_MODEL", "jev-preview")
+    assert d.build_request("hello there team", [], TEAM)["model"] == \
+        "jev-preview"
 
 
 # --- reading the answer -----------------------------------------------------

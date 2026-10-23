@@ -38,6 +38,16 @@ TIMEOUT_SECONDS = 2.0
 #: The most the round waits for a decision to be written.
 RECORD_TIMEOUT_SECONDS = 1.0
 
+#: A fixed version, not the jev-latest alias: TypeSafe moves the alias to
+#: each new release, and the cut-offs here were measured on 1.13. JEV_MODEL
+#: overrides it for a deliberate move, after a calibration run on the new one.
+MODEL_DEFAULT = "jev-1.13.0"
+
+
+def model() -> str:
+    return os.environ.get("JEV_MODEL", "").strip() or MODEL_DEFAULT
+
+
 #: Dollars per million input tokens; output is free (TypeSafe, 2026-10).
 PRICE_PER_M_INPUT = 0.042
 
@@ -136,7 +146,7 @@ def build_request(message: str, history: list[dict],
     state += "\n\nNew message to the whole team:\n" + message
     return {
         "state": state,
-        "model": os.environ.get("JEV_MODEL", "jev-latest"),
+        "model": model(),
         "questions": {
             "kind": {"type": "choice", "instructions": KIND_INSTRUCTIONS,
                      "criteria": dict(KIND_CRITERIA)},
