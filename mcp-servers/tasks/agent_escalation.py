@@ -500,8 +500,21 @@ def in_window(user_email: str | None, agent_id: str | None,
     return True
 
 
-def decide(intent: Intent, window_open: bool) -> str | None:
-    """Why this turn starts on the paid model, or None."""
+def needs_plain_check(intent: Intent, window_open: bool) -> bool:
+    """Whether decide() would ask is_plain_question, which is the only time
+    Jev's answer to the same question can change anything."""
+    text = intent.person_text if isinstance(intent.person_text, str) else ""
+    return bool(window_open and not intent.follow_up and text.strip()
+                and not rule_reason(text))
+
+
+def decide(intent: Intent, window_open: bool,
+           plain: bool | None = None) -> str | None:
+    """Why this turn starts on the paid model, or None.
+
+    `plain` is Jev's answer to is_plain_question (agent_jev.plain_question)
+    when it was sure; None leaves the word rule to decide, as before Jev.
+    """
     reason = rule_reason(intent.person_text)
     if reason:
         return reason
@@ -509,7 +522,9 @@ def decide(intent: Intent, window_open: bool) -> str | None:
         return None
     if intent.follow_up:
         return REASON_STICKY
-    if is_plain_question(intent.person_text):
+    if plain is None:
+        plain = is_plain_question(intent.person_text)
+    if plain:
         return None
     return REASON_STICKY
 

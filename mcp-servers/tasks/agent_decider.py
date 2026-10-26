@@ -38,6 +38,16 @@ TIMEOUT_SECONDS = 2.0
 #: The most the round waits for a decision to be written.
 RECORD_TIMEOUT_SECONDS = 1.0
 
+#: A fixed version, not the jev-latest alias: TypeSafe moves the alias to
+#: each new release, and the cut-offs here were measured on 1.13. JEV_MODEL
+#: overrides it for a deliberate move, after a calibration run on the new one.
+MODEL_DEFAULT = "jev-1.13.0"
+
+
+def model() -> str:
+    return os.environ.get("JEV_MODEL", "").strip() or MODEL_DEFAULT
+
+
 #: Dollars per million input tokens; output is free (TypeSafe, 2026-10).
 PRICE_PER_M_INPUT = 0.042
 
@@ -60,6 +70,16 @@ KIND_CRITERIA = {
 }
 WHO_INSTRUCTIONS = ("Which one team member is best placed to handle the new "
                     "message?")
+#: A third question in the same call: Jev evaluates each question on its own
+#: against the same state, so it changes neither of the two above. Recorded
+#: and shown on the Debug page; nothing acts on it yet. Label, description.
+URGENCY_INSTRUCTIONS = "How urgent is the new message?"
+URGENCY_LEVELS = [
+    ("low", "it can wait; there is no time pressure"),
+    ("normal", "it should be handled today as usual"),
+    ("urgent", "something is broken or blocking the person now, or they say "
+               "it is urgent"),
+]
 
 
 @dataclass
@@ -73,6 +93,8 @@ class Decision:
     ms: int = 0
     model: str | None = None
     input_tokens: int | None = None
+    urgency: str | None = None
+    urgency_confidence: float | None = None
 
 
 def _min_confidence() -> float:
@@ -136,12 +158,14 @@ def build_request(message: str, history: list[dict],
     state += "\n\nNew message to the whole team:\n" + message
     return {
         "state": state,
-        "model": os.environ.get("JEV_MODEL", "jev-latest"),
+        "model": model(),
         "questions": {
             "kind": {"type": "choice", "instructions": KIND_INSTRUCTIONS,
                      "criteria": dict(KIND_CRITERIA)},
             "who": {"type": "choice", "instructions": WHO_INSTRUCTIONS,
                     "criteria": {a["name"].strip(): _role(a) for a in named}},
+            "urgency": {"type": "score", "instructions": URGENCY_INSTRUCTIONS,
+                        "criteria": [desc for _, desc in URGENCY_LEVELS]},
         },
     }
 
@@ -153,6 +177,21 @@ def _choice(answers: dict, qid: str) -> tuple[str, float]:
             or not isinstance(conf, (int, float)):
         raise ValueError(qid)
     return choice, float(conf)
+
+
+def _urgency(answers: dict) -> tuple[str | None, float | None]:
+    """The likeliest urgency level and its confidence, or (None, None) when
+    the answer is missing or not one Jev would send. Never raises."""
+    try:
+        a = answers["urgency"]
+        probs = a["probabilities"]
+        level = max(probs, key=lambda k: probs[k])
+        conf = a["confidence"]
+        if isinstance(conf, bool) or not isinstance(conf, (int, float)):
+            return None, None
+        return URGENCY_LEVELS[int(level)][0], float(conf)
+    except Exception:                                       # noqa: BLE001
+        return None, None
 
 
 def read_answer(data, agents: list[dict]) -> Decision:
@@ -182,9 +221,11 @@ def read_answer(data, agents: list[dict]) -> Decision:
         path, reason = PATH_PLAN, ""
     else:
         path, reason = PATH_FALLBACK, "low confidence"
+    urgency, uc = _urgency(answers)
     return Decision(path=path, kind=kind, kind_confidence=kc,
                     agent_id=agent_id, agent_confidence=wc, reason=reason,
-                    model=model, input_tokens=tokens)
+                    model=model, input_tokens=tokens, urgency=urgency,
+                    urgency_confidence=uc)
 
 
 def cost_usd(input_tokens: int | None) -> float | None:
@@ -211,16 +252,20 @@ async def record(email: str, chat_id: str | None, decision: Decision) -> None:
             await s.execute(sql_text(
                 "INSERT INTO tasks.agent_decision (user_email, chat_id, "
                 "provider, model, kind, kind_confidence, agent_id, "
-                "agent_confidence, path, reason, ms, input_tokens, cost_usd) "
+                "agent_confidence, path, reason, ms, input_tokens, cost_usd, "
+                "urgency, urgency_confidence) "
                 "VALUES (:email, :chat, :provider, :model, :kind, :kc, "
-                ":agent, :ac, :path, :reason, :ms, :tokens, :cost)"),
+                ":agent, :ac, :path, :reason, :ms, :tokens, :cost, "
+                ":urgency, :uc)"),
                 {"email": email, "chat": chat_id, "provider": PROVIDER,
                  "model": decision.model, "kind": decision.kind,
                  "kc": decision.kind_confidence, "agent": decision.agent_id,
                  "ac": decision.agent_confidence, "path": decision.path,
                  "reason": decision.reason or None, "ms": decision.ms,
                  "tokens": decision.input_tokens,
-                 "cost": cost_usd(decision.input_tokens)})
+                 "cost": cost_usd(decision.input_tokens),
+                 "urgency": decision.urgency,
+                 "uc": decision.urgency_confidence})
             await s.commit()
     except Exception:                                       # noqa: BLE001
         logger.warning("agent decider: could not record a decision",
@@ -233,7 +278,7 @@ async def recent(email: str, limit: int = 50) -> list[dict]:
         rows = await s.execute(sql_text(
             "SELECT created_at, provider, model, kind, kind_confidence, "
             "agent_id, agent_confidence, path, reason, ms, input_tokens, "
-            "cost_usd FROM tasks.agent_decision "
+            "cost_usd, urgency, urgency_confidence FROM tasks.agent_decision "
             "WHERE lower(user_email) = lower(:email) "
             "ORDER BY created_at DESC, id DESC LIMIT :limit"),
             {"email": email, "limit": limit})

@@ -26,9 +26,11 @@ from sqlalchemy import select
 import agent_access
 import agent_activity
 import agent_brief
+import agent_decider
 import agent_escalation
 import agent_graph
 import agent_handoff
+import agent_jev
 import agent_memory
 import agent_routing
 import routes_prefs
@@ -888,6 +890,28 @@ async def _turn_for(user_email: str, agent: dict, messages: list[dict],
     return out
 
 
+#: The longest message Jev is asked to read as a goodbye. "ok thanks, I'm
+#: done with Dev for now" is eight words; longer is a request to the agent.
+RELEASE_MAX_WORDS = 8
+
+
+async def _jev_release(key: str, email: str, text: str) -> bool:
+    """Whether Jev is sure a short message to an awake agent sends it back
+    to sleep. Asked only with a key, about a message of at most
+    RELEASE_MAX_WORDS words, in a chat with an agent pinned: everything else
+    costs no call and no wait. Never raises."""
+    try:
+        words = len((text or "").split())
+        if not (0 < words <= RELEASE_MAX_WORDS and agent_decider.enabled()):
+            return False
+        if await _read_pin(key) is None:
+            return False
+        return await agent_jev.wants_release(email, text) is True
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not ask Jev about a release", exc_info=True)
+        return False
+
+
 @router.post("/chat")
 async def chat(body: ChatIn,
                x_internal_secret: str = Header(default="")) -> dict:
@@ -903,7 +927,8 @@ async def chat(body: ChatIn,
     key = _pin_key(body.chat_id, body.user_email)
     text = agent_routing.last_user_text(body.messages)
 
-    if agent_routing.wants_release(text):
+    if (agent_routing.wants_release(text)
+            or await _jev_release(key, body.user_email, text)):
         await _clear_pin(key)
         turns = [{"agent": None, "answer": RELEASED, "notes": []}]
         return {"turns": turns, "rendered": render_turns(turns), "queue": [], "marker": ""}

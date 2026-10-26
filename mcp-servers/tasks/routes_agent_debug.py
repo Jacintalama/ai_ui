@@ -1,9 +1,10 @@
 """A plain page of what the agents decided and did, for troubleshooting.
 
 The owner asked (call, 2026-10-16) for a view that shows the agents talking
-to each other and is plainer than the office. Four tables, newest first,
-for the signed-in person only: Jev's decisions about team messages, agent
-runs with model, time and cost, one agent asking another, and team jobs.
+to each other and is plainer than the office. Five tables, newest first,
+for the signed-in person only: Jev's decisions about team messages, Jev's
+smaller checks (agent_jev), agent runs with model, time and cost, one agent
+asking another, and team jobs.
 No script and no motion: it is read, not watched.
 
 Each table is read on its own; one that fails says so and the rest still
@@ -36,6 +37,10 @@ _ASKS = ("SELECT started_at, agent_id, target_agent_id, status "
          "FROM tasks.agent_step WHERE lower(user_email) = lower(:email) "
          "AND target_agent_id IS NOT NULL "
          "ORDER BY started_at DESC LIMIT :limit")
+_CHECKS = ("SELECT created_at, purpose, model, choice, value, outcome, "
+           "reason, ms, cost_usd FROM tasks.jev_check "
+           "WHERE lower(user_email) = lower(:email) "
+           "ORDER BY created_at DESC, id DESC LIMIT :limit")
 _JOBS = ("SELECT j.created_at, j.status, j.lead_agent_id, "
          "COUNT(st.id) AS total, "
          "COUNT(st.id) FILTER (WHERE st.status = 'done') AS done "
@@ -53,10 +58,11 @@ async def _rows(query: str, email: str) -> list[dict]:
 
 
 async def _read(email: str) -> dict:
-    """The four tables for one person. A table that could not be read is
+    """The five tables for one person. A table that could not be read is
     None, so the page can say so instead of showing it empty."""
     out = {}
     reads = {"decisions": lambda: agent_decider.recent(email, LIMIT),
+             "checks": lambda: _rows(_CHECKS, email),
              "runs": lambda: _rows(_RUNS, email),
              "asks": lambda: _rows(_ASKS, email),
              "jobs": lambda: _rows(_JOBS, email)}
@@ -126,6 +132,7 @@ def _table(title: str, head: list[str], rows: list[list[str]] | None) -> str:
 
 def render_page(data: dict, names: dict) -> str:
     decisions = data.get("decisions")
+    checks = data.get("checks")
     runs = data.get("runs")
     asks = data.get("asks")
     jobs = data.get("jobs")
@@ -138,6 +145,17 @@ def render_page(data: dict, names: dict) -> str:
         _conf(r.get("kind"), r.get("kind_confidence")),
         _conf(_name(names, r.get("agent_id")) or None,
               r.get("agent_confidence")),
+        "%s ms" % _e(r.get("ms")) if r.get("ms") is not None else "",
+        _conf(r.get("urgency"), r.get("urgency_confidence")),
+        _e(r.get("reason")), _e(r.get("model")), _money(r.get("cost_usd"))])
+    c_rows = rows(checks, lambda r: [
+        _when(r.get("created_at")), _e(r.get("purpose")),
+        # A Choice shows its pick and confidence, a yes or no question its
+        # probability of yes.
+        _conf(r.get("choice"), r.get("value")) if r.get("choice")
+        else _conf("yes", r.get("value")) if r.get("value") is not None
+        else "",
+        _e(r.get("outcome")),
         "%s ms" % _e(r.get("ms")) if r.get("ms") is not None else "",
         _e(r.get("reason")), _e(r.get("model")), _money(r.get("cost_usd"))])
     r_rows = rows(runs, lambda r: [
@@ -157,8 +175,11 @@ def render_page(data: dict, names: dict) -> str:
 
     parts = [
         _table("Jev decisions about team messages",
-               ["Time (UTC)", "Path", "Kind", "Agent", "Took", "Reason",
-                "Model", "Cost"], d_rows),
+               ["Time (UTC)", "Path", "Kind", "Agent", "Took", "Urgency",
+                "Reason", "Model", "Cost"], d_rows),
+        _table("Jev checks",
+               ["Time (UTC)", "Check", "Jev said", "Done", "Took", "Reason",
+                "Model", "Cost"], c_rows),
         _table("Agent runs",
                ["Started (UTC)", "Agent", "Source", "Model", "Status",
                 "Took", "Cost"], r_rows),

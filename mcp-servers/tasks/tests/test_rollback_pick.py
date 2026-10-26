@@ -563,3 +563,41 @@ def test_a_rollback_target_says_which_state_it_actually_restores():
     assert "earlier undo" in choice.reason
     assert "add the hero banner" in choice.reason, (
         f"did not resolve what the undo restored: {choice.reason!r}")
+
+
+# ---------------------------------------------------------------------------
+# Jev names the version that added the thing (agent_jev.rollback_version);
+# these rules turn that into the one before it.
+# ---------------------------------------------------------------------------
+
+from rollback_pick import before_version, wants_before  # noqa: E402
+
+
+@pytest.mark.parametrize("phrase,expected", [
+    ("go back to before the shopping basket", True),
+    ("undo everything since the payment page", True),
+    ("go back to before 1234567abc", False),       # a sha: the rule's job
+    ("undo", False),
+    ("", False),
+])
+def test_jev_is_asked_only_about_a_before_or_since(phrase, expected):
+    assert wants_before(phrase) is expected
+
+
+def test_the_version_before_the_one_jev_named_is_the_target():
+    got = before_version(BROKE, BROKE[1]["sha"])     # "add checkout"
+    assert got.target is BROKE[2]
+    assert "add checkout" in got.reason
+    assert not got.needs_user_choice
+
+
+def test_before_the_oldest_version_there_is_nothing():
+    got = before_version(BROKE, BROKE[-1]["sha"])
+    assert got.target is None and not got.needs_user_choice
+    assert "oldest" in got.reason
+
+
+def test_a_sha_not_in_the_list_is_never_a_target():
+    got = before_version(BROKE, "f" * 40)
+    assert got.target is None and got.needs_user_choice
+    assert got.candidates and all(c in BROKE for c in got.candidates)

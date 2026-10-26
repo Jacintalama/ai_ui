@@ -29,6 +29,7 @@ import agent_brief
 import agent_escalation
 import agent_graph
 import agent_handoff
+import agent_jev
 import agent_memory
 import agent_routing
 from agent_tools import (ToolOutcome, arguments_of, execute_tool_call,
@@ -844,8 +845,13 @@ async def _chat(token: str, model: str, messages: list[dict],
     # hears "build me an app" does not pay seven times to hear six PASSes.
     probe_reason = None
     if esc.enabled:
-        reason = agent_escalation.decide(
-            intent, agent_escalation.in_window(user_email, model))
+        window = agent_escalation.in_window(user_email, model)
+        # Jev, only where the word rule for a plain question would decide.
+        plain = (await agent_jev.plain_question(user_email,
+                                                intent.person_text)
+                 if agent_escalation.needs_plain_check(intent, window)
+                 else None)
+        reason = agent_escalation.decide(intent, window, plain=plain)
         if reason and intent.may_pass:
             probe_reason = reason
         elif reason and await esc.switch(reason, active):

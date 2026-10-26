@@ -21,7 +21,16 @@ DATA = {
                    "kind": "answer", "kind_confidence": 0.96,
                    "agent_id": "agent-m", "agent_confidence": 0.67,
                    "path": "fallback", "reason": "low confidence", "ms": 281,
-                   "input_tokens": 436, "cost_usd": Decimal("0.00001831")}],
+                   "input_tokens": 436, "cost_usd": Decimal("0.00001831"),
+                   "urgency": "urgent", "urgency_confidence": 0.7}],
+    "checks": [{"created_at": T, "purpose": "release", "model": "jev-1.13.0",
+                "choice": None, "value": 0.95, "outcome": "released",
+                "reason": None, "ms": 312, "input_tokens": 448,
+                "cost_usd": Decimal("0.00001882")},
+               {"created_at": T, "purpose": "plain_question",
+                "model": "jev-1.13.0", "choice": "work", "value": 0.62,
+                "outcome": "fallback", "reason": None, "ms": 290,
+                "input_tokens": 300, "cost_usd": Decimal("0.0000126")}],
     "runs": [{"started_at": T, "agent_id": "agent-a", "source": "chat",
               "model": "z-ai/glm-5.3-flash", "status": "completed",
               "secs": 4.9, "cost_usd": 0.00013}],
@@ -95,9 +104,9 @@ def test_every_value_is_escaped():
 
 
 def test_an_empty_table_says_so():
-    html = page.render_page({"decisions": [], "runs": [], "asks": [],
-                             "jobs": []}, {})
-    assert html.count("None yet.") == 4
+    html = page.render_page({"decisions": [], "checks": [], "runs": [],
+                             "asks": [], "jobs": []}, {})
+    assert html.count("None yet.") == 5
 
 
 def test_a_table_that_could_not_be_read_says_so(monkeypatch):
@@ -136,5 +145,40 @@ def test_the_agents_page_links_to_it():
 def test_the_queries_match_email_in_any_case():
     """Some agent rows were stored with the email as typed (agent_activity
     reads them with lower() for that reason)."""
-    for query in (page._RUNS, page._ASKS, page._JOBS):
+    for query in (page._RUNS, page._ASKS, page._JOBS, page._CHECKS):
         assert "lower(" in query and "lower(:email)" in query
+
+
+# --- urgency and Jev's small checks (2026-10-23) ----------------------------
+
+def test_a_decision_shows_its_urgency():
+    html = page.render_page(DATA, NAMES)
+    assert "<th>Urgency</th>" in html
+    assert "urgent 0.70" in html
+
+
+def test_each_check_shows_what_jev_said_and_what_was_done():
+    html = page.render_page(DATA, NAMES)
+    assert "Jev checks" in html
+    assert "release" in html and "released" in html and "0.95" in html
+    assert "work 0.62" in html and "fallback" in html
+    assert "312 ms" in html and "$0.000019" in html
+
+
+def test_the_checks_are_read_for_the_signed_in_person(monkeypatch):
+    seen = []
+
+    async def rows(query, email):
+        seen.append((query, email))
+        return []
+
+    async def recent(email, limit):
+        return []
+
+    monkeypatch.setattr(page, "_rows", rows)
+    monkeypatch.setattr(page.agent_decider, "recent", recent)
+    import asyncio
+    out = asyncio.run(page._read(EMAIL))
+    assert out["checks"] == []
+    assert (page._CHECKS, EMAIL) in seen
+    assert "tasks.jev_check" in page._CHECKS

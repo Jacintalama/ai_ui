@@ -603,3 +603,78 @@ async def test_own_agents_needs_both_the_prefix_and_the_owner():
             {"id": "agent-b", "user_id": "u2"},
             "not a row"]
     assert rt.own_agents(rows, "u1") == [{"id": "agent-a", "user_id": "u1"}]
+
+
+# --- release in plain words (agent_jev.wants_release) -----------------------
+# The exact phrases above stay. Jev is asked only about a short message in a
+# chat that has an agent awake, and only when it has a key.
+
+@pytest.fixture
+def jev_release(monkeypatch):
+    import agent_jev
+    asked = []
+    state = {"verdict": True}
+
+    async def wants_release(email, text):
+        asked.append((email, text))
+        return state["verdict"]
+
+    monkeypatch.setenv("TYPESAFE_API_KEY", "apikey_test")
+    monkeypatch.setattr(agent_jev, "wants_release", wants_release)
+    return asked, state
+
+
+async def test_plain_words_release_an_awake_agent(_wire, jev_release):
+    asked, _ = jev_release
+    await rt.chat(_body("hi mia"), x_internal_secret="s")
+    rt._run_turn.reset_mock()
+    out = await rt.chat(_body("ok thanks, I'm done for now"),
+                        x_internal_secret="s")
+    assert asked == [("owner@example.com", "ok thanks, I'm done for now")]
+    assert out["turns"][0]["agent"] is None
+    assert out["turns"][0]["answer"] == rt.RELEASED
+    rt._run_turn.assert_not_awaited()
+    assert _wire == {}
+
+
+@pytest.mark.parametrize("verdict", [False, None])
+async def test_jev_not_sure_keeps_the_agent_awake(_wire, jev_release,
+                                                  verdict):
+    _, state = jev_release
+    state["verdict"] = verdict
+    await rt.chat(_body("hi mia"), x_internal_secret="s")
+    out = await rt.chat(_body("yes do it"), x_internal_secret="s")
+    assert out["turns"][0]["agent"]["name"] == "Mia"
+
+
+async def test_jev_is_not_asked_with_nobody_awake(_wire, jev_release,
+                                                 monkeypatch):
+    asked, _ = jev_release
+    monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="io"))
+    await rt.chat(_body("ok I'm done for now"), x_internal_secret="s")
+    assert asked == []
+
+
+async def test_jev_is_not_asked_about_a_long_message(_wire, jev_release):
+    asked, _ = jev_release
+    await rt.chat(_body("hi mia"), x_internal_secret="s")
+    await rt.chat(_body("can you check the calendar for next week and tell "
+                        "me what is free"), x_internal_secret="s")
+    assert asked == []
+
+
+async def test_jev_is_not_asked_about_an_exact_phrase(_wire, jev_release):
+    asked, _ = jev_release
+    await rt.chat(_body("hi mia"), x_internal_secret="s")
+    out = await rt.chat(_body("stop"), x_internal_secret="s")
+    assert out["turns"][0]["agent"] is None
+    assert asked == []
+
+
+async def test_jev_is_not_asked_without_a_key(_wire, jev_release,
+                                              monkeypatch):
+    asked, _ = jev_release
+    monkeypatch.setenv("TYPESAFE_API_KEY", "")
+    await rt.chat(_body("hi mia"), x_internal_secret="s")
+    await rt.chat(_body("ok I'm done for now"), x_internal_secret="s")
+    assert asked == []

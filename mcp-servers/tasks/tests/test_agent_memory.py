@@ -717,3 +717,33 @@ def test_a_reflection_on_a_paid_model_outside_the_pool_sends_no_reasoning(monkey
     monkeypatch.setattr(agent_runner, "FREE_REASONING", "none")
     monkeypatch.setenv("AGENT_REFLECT_MODEL", "gpt-5.5")
     assert am.agent_runner_reasoning() == ""
+
+
+# --- Jev before the reflection (agent_jev.worth_remembering) ----------------
+
+@pytest.mark.parametrize("worth,reflected", [(False, False), (True, True),
+                                             (None, True)])
+async def test_jev_sure_the_turn_holds_nothing_skips_the_reflection(
+        monkeypatch, worth, reflected):
+    import agent_jev
+    asked, completed = [], []
+
+    async def worth_remembering(email, user_text, answer):
+        asked.append((email, user_text, answer))
+        return worth
+
+    async def fake_post(payload, token, timeout=None):
+        completed.append(payload)
+        return {"choices": [{"message": {"content":
+                 '{"notes": [], "facts": []}'}}]}
+
+    monkeypatch.setattr(agent_jev, "worth_remembering", worth_remembering)
+    monkeypatch.setattr(am, "_complete", fake_post)
+    monkeypatch.setattr(am, "list_notes", AsyncMock(return_value=[]))
+    monkeypatch.setattr(am, "list_facts", AsyncMock(return_value=[]))
+    await am.reflect_after_turn("o@example.com", _reflecting_agent(), "tok",
+                                "what time is it in Manila right now?",
+                                "It is 3pm.")
+    assert asked == [("o@example.com", "what time is it in Manila right now?",
+                      "It is 3pm.")]
+    assert bool(completed) is reflected

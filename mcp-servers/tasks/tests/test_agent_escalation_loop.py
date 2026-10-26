@@ -695,3 +695,47 @@ async def test_a_turn_that_moves_at_the_start_fits_inside_the_worst_turn(wired):
                      + [("gpt-5.5", 120), ("agent-1", 120)]
                      + [(m, 120) for m in POOL[1:]])
     assert sum(t for _, t in posts) <= agent_runner.worst_turn_seconds(7, 60)
+
+
+# --- Jev on the plain question ----------------------------------------------
+
+async def test_jev_sure_it_is_about_the_work_keeps_a_question_paid(
+        wired, monkeypatch):
+    import agent_jev
+    asked = []
+
+    async def plain(email, text):
+        asked.append((email, text))
+        return False
+
+    monkeypatch.setattr(agent_jev, "plain_question", plain)
+    models = []
+
+    async def fake_post(payload, token, timeout=None):
+        models.append(payload["model"])
+        return _reply("ok")
+
+    await _run(fake_post, "build me a todo app")
+    await _run(fake_post, "what is on my calendar tomorrow?")
+    assert models == ["gpt-5.5", "gpt-5.5"]
+    # Not for the build request: a rule had already decided that one.
+    assert asked == [("ada@example.com", "what is on my calendar tomorrow?")]
+
+
+async def test_jev_unsure_leaves_the_word_rule_to_decide(wired, monkeypatch):
+    import agent_jev
+
+    async def plain(email, text):
+        return None
+
+    monkeypatch.setattr(agent_jev, "plain_question", plain)
+    models = []
+
+    async def fake_post(payload, token, timeout=None):
+        models.append(payload["model"])
+        return _reply("ok")
+
+    await _run(fake_post, "build me a todo app")
+    await _run(fake_post, "what is on my calendar tomorrow?")
+    await _run(fake_post, "make it blue")
+    assert models == ["gpt-5.5", "agent-1", "gpt-5.5"]

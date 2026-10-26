@@ -480,6 +480,9 @@ services:
       # and every team message takes the lead's triage as before.
       - TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}
       - JEV_MIN_CONFIDENCE=${JEV_MIN_CONFIDENCE:-0.8}
+      # A fixed Jev version: jev-latest moves to each new release and would
+      # change answers under cut-offs measured on 1.13.
+      - JEV_MODEL=${JEV_MODEL:-jev-1.13.0}
       - AGENT_REFLECT_MODEL=${AGENT_REFLECT_MODEL:-}
       # A free agent moves to the paid model on its own for app builds,
       # code, pasted errors, very long conversations, and when the free

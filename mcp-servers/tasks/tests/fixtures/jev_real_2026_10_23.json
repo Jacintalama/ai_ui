@@ -1,0 +1,71 @@
+{
+ "ms": 504,
+ "request": {
+  "model": "jev-1.13.0",
+  "state": "Message to the agent:\nok thanks, I'm done with you for now\n\nReply:\nSure, the login page is fixed and deployed.",
+  "questions": {
+   "choice_q": {
+    "type": "choice",
+    "instructions": "Is the message a plain question, or about the work in hand?",
+    "criteria": {
+     "plain": "a question about something other than the work",
+     "work": "about the app, code or task being worked on"
+    }
+   },
+   "noul_q": {
+    "type": "noul",
+    "instructions": "Is the person asking to stop talking to this agent?",
+    "criteria": {
+     "true": "they want to end or leave the conversation with the agent",
+     "false": "they want the agent to keep helping"
+    }
+   },
+   "score_q": {
+    "type": "score",
+    "instructions": "How urgent is the message?",
+    "criteria": [
+     "can wait",
+     "normal",
+     "urgent"
+    ]
+   }
+  }
+ },
+ "response": {
+  "model": "jev-1.13.0",
+  "answers": {
+   "choice_q": {
+    "type": "choice",
+    "choice": "work",
+    "confidence": 0.62,
+    "probabilities": {
+     "plain": 0.19,
+     "work": 0.81
+    }
+   },
+   "noul_q": {
+    "type": "noul",
+    "noul": 0.95
+   },
+   "score_q": {
+    "type": "score",
+    "score": 0.08,
+    "confidence": 0.88,
+    "legend": {
+     "0": "can wait",
+     "1": "normal",
+     "2": "urgent"
+    },
+    "probabilities": {
+     "0": 0.92,
+     "1": 0.08,
+     "2": 0.0
+    }
+   }
+  },
+  "usage": {
+   "input_tokens": 448,
+   "output_tokens": 65
+  }
+ }
+}
