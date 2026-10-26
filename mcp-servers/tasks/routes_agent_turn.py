@@ -912,6 +912,51 @@ async def _jev_release(key: str, email: str, text: str) -> bool:
         return False
 
 
+#: Jev is not asked about a greeting: a message this short has no subject
+#: to hand anyone, and the general model answers it well.
+JEV_MIN_WORDS = 4
+
+
+async def _jev_pick(body: ChatIn, text: str, agents: list[dict]) -> dict | None:
+    """The finished response when Jev is sure one agent should take this
+    message and that agent's reply answers it, else None. Never raises:
+    Jev is a bonus on top of a working chat."""
+    try:
+        if not agent_decider.enabled():
+            return None
+        if len((text or "").split()) < JEV_MIN_WORDS:
+            return None
+        decision = await agent_decider.decide(body.user_email, body.chat_id, text,
+                                              body.messages, agents)
+        if decision is None or decision.path != agent_decider.PATH_ONE_AGENT:
+            return None
+        agent = next((a for a in agents
+                      if str(a.get("id") or "") == decision.agent_id), None)
+        if agent is None:
+            return None
+        names = [a.get("name") for a in agents if a.get("name")]
+        turn = await _turn_for(body.user_email, agent, body.messages, names,
+                               roster=agents,
+                               graph=await agent_graph.graph_block(
+                                   body.user_email, text))
+        # A reply that did not answer is not shown: the general model gets
+        # the message instead, as it would have without Jev. A question the
+        # agent stopped to ask (pending) is an answer in progress and stays.
+        pending = isinstance(turn.get("pending"), dict) and bool(turn["pending"].get("calls"))
+        if not pending:
+            ok = await agent_jev.reply_answers(body.user_email, text,
+                                               str(turn.get("answer") or ""))
+            if ok is False:
+                return None
+        await _write_pin(_pin_key(body.chat_id, body.user_email), agent["id"])
+        return {"turns": [turn], "rendered": render_turns([turn]),
+                "queue": [], "marker": ""}
+    except Exception:                                       # noqa: BLE001
+        logger.warning("Jev could not pick an agent for the chat; answering as "
+                       "before", exc_info=True)
+        return None
+
+
 @router.post("/chat")
 async def chat(body: ChatIn,
                x_internal_secret: str = Header(default="")) -> dict:
@@ -994,6 +1039,20 @@ async def chat(body: ChatIn,
         owner = agent_routing.domain_owner(text, agents)
         if owner is not None:
             agent = owner
+
+    if agent is None:
+        # Nobody named, pinned or obviously owning the subject. Before the
+        # general model answers, Jev (agent_decider) is asked whether this
+        # is one agent's to take, and which: "chase the overdue invoices"
+        # with a Finance agent on the team goes to Finance rather than to a
+        # free model that cannot see the books. Only when Jev is sure, and
+        # only when the reply then answers the message (agent_jev): a pick
+        # that did not pan out costs the person nothing but a moment, and
+        # the message goes on exactly as before. This is what puts Jev in
+        # the main chat (2026-10-26): the Auto pipe asks here first.
+        picked = await _jev_pick(body, text, agents)
+        if picked is not None:
+            return picked
 
     if agent is None and getattr(body, "route_only", False):
         # The caller will answer for itself. Saying so with an empty list

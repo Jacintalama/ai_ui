@@ -773,6 +773,12 @@ services:
       - ./openwebui-overrides/index.html:/app/build/index.html:ro
     environment:
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+      # Everyone lands on Auto (Free) (auto_router_pipe.py): one model that
+      # routes to a free model, or to the person's own agents when Jev or a
+      # name says so. Open WebUI keeps this as a persistent setting, so once
+      # an admin has set a default in Admin Settings → Models, that wins and
+      # this line is only the first-run value.
+      - DEFAULT_MODELS=${DEFAULT_MODELS:-auto_router.auto}
       # Database pool. Left unset, Open WebUI runs SQLAlchemy defaults:
       # 5 connections plus 10 overflow, no recycling, and a 30 second wait
       # before giving up. Measured 2026-09-10: the 16th concurrent request

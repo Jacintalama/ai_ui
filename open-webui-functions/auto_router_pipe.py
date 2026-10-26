@@ -306,11 +306,17 @@ class Pipe:
         if not body.get("messages"):
             return "No message to answer."
 
-        # An agent named or awake in this chat answers instead of a free
-        # model, so "hi mia" reaches Mia here the same as it does on IO.
+        # An agent named, awake, or the one Jev is sure should take this
+        # answers instead of a free model, so "hi mia" reaches Mia here the
+        # same as it does on IO, and "chase the overdue invoices" reaches
+        # whoever keeps the books. The tasks service decides; this pipe
+        # only asks, and says so while the person waits.
+        await self._emit(__event_emitter__, "Choosing who answers...")
         agents = await self._agents_first(body, (__user__ or {}).get("email") or "")
         if agents is not None:
+            await self._emit(__event_emitter__, "Answered by your agent", done=True)
             return agents
+        await self._emit(__event_emitter__, "", done=True)
 
         candidates = self._candidates(category)
         # Before spending a retry on it. A withdrawn id and a rate-limited one

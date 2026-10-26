@@ -678,3 +678,115 @@ async def test_jev_is_not_asked_without_a_key(_wire, jev_release,
     await rt.chat(_body("hi mia"), x_internal_secret="s")
     await rt.chat(_body("ok I'm done for now"), x_internal_secret="s")
     assert asked == []
+
+
+# --- Jev in the main chat (2026-10-26) --------------------------------------
+# Nobody named, pinned or obviously owning the subject: before the general
+# model answers, Jev is asked whether one agent should take the message.
+# Without a key nothing here runs, which is what every test above relies on.
+
+def _jev(monkeypatch, path="one_agent", agent_id="agent-m", reply_ok=True,
+         raises=False):
+    import agent_decider
+    calls = {"decide": [], "reply": []}
+
+    async def decide(email, chat_id, message, history, agents):
+        calls["decide"].append((email, chat_id, message, [a["id"] for a in agents]))
+        if raises:
+            raise RuntimeError("jev down")
+        return agent_decider.Decision(path=path, kind="answer", agent_id=agent_id,
+                                      agent_confidence=0.9)
+
+    async def reply_answers(email, message, reply):
+        calls["reply"].append((message, reply))
+        return reply_ok
+
+    async def no_graph(email, question=""):
+        return ""
+
+    monkeypatch.setattr(rt.agent_decider, "enabled", lambda: True)
+    monkeypatch.setattr(rt.agent_decider, "decide", decide)
+    monkeypatch.setattr(rt.agent_jev, "reply_answers", reply_answers)
+    monkeypatch.setattr(rt.agent_graph, "graph_block", no_graph)
+    return calls
+
+
+ASK = "chase the overdue invoices for me please"
+
+
+async def test_jev_sends_an_unnamed_message_to_the_agent_it_is_sure_of(_wire, monkeypatch):
+    calls = _jev(monkeypatch)
+    monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="general"))
+    out = await rt.chat(_body(ASK), x_internal_secret="s")
+    assert calls["decide"] == [("owner@example.com", "chat-1", ASK, ["agent-a", "agent-m"])]
+    assert out["turns"][0]["agent"]["name"] == "Mia"
+    assert out["rendered"].startswith("**Mia**")
+    assert calls["reply"] == [(ASK, "hi")]
+    rt._answer_as_io.assert_not_awaited()
+    # And Mia stays awake for the follow up, as a named agent would.
+    assert _wire[rt._pin_key("chat-1", "owner@example.com")] == "agent-m"
+
+
+async def test_the_free_model_gets_the_message_when_jev_picks_for_the_auto_pipe(_wire, monkeypatch):
+    _jev(monkeypatch)
+    b = _body(ASK)
+    b.route_only = True
+    out = await rt.chat(b, x_internal_secret="s")
+    assert out["turns"] and out["turns"][0]["agent"]["id"] == "agent-m"
+
+
+async def test_jev_is_not_asked_about_a_greeting(_wire, monkeypatch):
+    calls = _jev(monkeypatch)
+    monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="hello"))
+    out = await rt.chat(_body("hi there"), x_internal_secret="s")
+    assert calls["decide"] == []
+    assert out["turns"][0]["agent"] is None
+
+
+async def test_jev_is_not_asked_without_a_key(_wire, monkeypatch):
+    calls = _jev(monkeypatch)
+    monkeypatch.setattr(rt.agent_decider, "enabled", lambda: False)
+    monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="general"))
+    out = await rt.chat(_body(ASK), x_internal_secret="s")
+    assert calls["decide"] == []
+    assert out["turns"][0]["answer"] == "general"
+
+
+async def test_a_name_still_wins_over_jev(_wire, monkeypatch):
+    calls = _jev(monkeypatch, agent_id="agent-m")
+    out = await rt.chat(_body("ada, chase the overdue invoices"), x_internal_secret="s")
+    assert calls["decide"] == []
+    assert out["turns"][0]["agent"]["name"] == "Ada"
+
+
+async def test_a_pick_whose_reply_did_not_answer_is_not_shown(_wire, monkeypatch):
+    _jev(monkeypatch, reply_ok=False)
+    monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="general"))
+    out = await rt.chat(_body(ASK), x_internal_secret="s")
+    assert out["turns"][0]["agent"] is None and out["turns"][0]["answer"] == "general"
+    assert rt._pin_key("chat-1", "owner@example.com") not in _wire
+    # The Auto pipe, which answers for itself, is told nobody took it.
+    b = _body(ASK)
+    b.route_only = True
+    assert (await rt.chat(b, x_internal_secret="s"))["turns"] == []
+
+
+async def test_jev_unsure_or_down_leaves_the_chat_as_before(_wire, monkeypatch):
+    monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="general"))
+    _jev(monkeypatch, path="fallback")
+    assert (await rt.chat(_body(ASK), x_internal_secret="s"))["turns"][0]["agent"] is None
+    _jev(monkeypatch, raises=True)
+    assert (await rt.chat(_body(ASK), x_internal_secret="s"))["turns"][0]["agent"] is None
+    rt._run_turn.assert_not_awaited()
+
+
+async def test_an_agent_jev_picked_that_stops_to_ask_is_passed_through(_wire, monkeypatch):
+    calls = _jev(monkeypatch, reply_ok=False)
+    monkeypatch.setattr(rt, "_run_turn", AsyncMock(return_value={
+        "answer": "", "notes": [],
+        "pending": {"ask_id": "q1", "calls": [{"name": "send_email"}]}}))
+    out = await rt.chat(_body(ASK), x_internal_secret="s")
+    assert out["turns"][0]["agent"]["id"] == "agent-m"
+    assert out["turns"][0]["pending"]["ask_id"] == "q1"
+    # A question is not a reply to judge.
+    assert calls["reply"] == []
