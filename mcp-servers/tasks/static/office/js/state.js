@@ -30,6 +30,10 @@ export const S = {
   //: { ms, heard, until }. `until` stays 0 while the robot is still on its
   //: way somewhere, and the mouth's time starts when it arrives.
   SPEAKING: {},
+  //: Whose answer is being read aloud right now by voice.js, by agent id.
+  //: The mouth moves for as long as the sound plays, whatever the
+  //: server's own speaking clock said.
+  VOICING: {},
   //: The round the stream last told us about: { ids, ended }. null until
   //: meeting_started or meeting_ended arrives; from then on it, not each
   //: run's source, says who is in the meeting room.

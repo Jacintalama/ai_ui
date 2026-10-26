@@ -73,6 +73,12 @@ function openOnes() { return WINDOWS.filter(function (w) { return !w.min; }); }
 //: (the server's queued-message fragment and the needs-you tray look for
 //: it) and the team composer's hidden field keeps #ap-agent (the approval
 //: buttons include it).
+var MIC_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v4"/><path d="M8 21h8"/></svg>';
+var SPEAKER_SVG = '<svg class="on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>' +
+  '<svg class="off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/></svg>';
+var AUTO_SVG = '<svg class="on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>' +
+  '<svg class="off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="m4 4 16 16"/></svg>';
+
 function windowHtml(key) {
   var tid = threadId(key), team = key === TEAM, name = nameOf(key);
   var where = team ? "" : "?agent=" + encodeURIComponent(key);
@@ -84,6 +90,12 @@ function windowHtml(key) {
         '<span class="cw-who"><b class="cw-name">' + esc(name) + '</b>' +
           '<small class="cw-state"><i class="dot idle"></i><span></span></small></span>' +
         (team ? '<button class="cw-meet" type="button" title="Every agent answers, and none may pass">Meeting</button>' : "") +
+        // The voice (office/js/voice.js): the speaker mutes the agents'
+        // voices, auto-listen reopens the mic after a spoken question.
+        // voice.js sets their state and hides auto-listen where the
+        // browser cannot hear.
+        '<button class="cw-voice" type="button" aria-pressed="true" aria-label="Agent voice" title="Agent voice: on. Click to mute.">' + SPEAKER_SVG + '</button>' +
+        '<button class="cw-auto" type="button" aria-pressed="true" aria-label="Auto listen" title="Auto listen: the mic reopens after each answer to a spoken question">' + AUTO_SVG + '</button>' +
         '<button class="cw-min" type="button" aria-label="Minimise" title="Minimise">&#8211;</button>' +
         '<button class="cw-close" type="button" aria-label="Close" title="Close">&times;</button>' +
       '</header>' +
@@ -96,6 +108,8 @@ function windowHtml(key) {
       '<form class="ap-composer" hx-post="/tasks/agents/chat/send"' +
         ' hx-target="#' + tid + '" hx-swap="beforeend" hx-on::after-request="this.reset()">' +
         '<input type="hidden" name="agent"' + (team ? ' id="ap-agent"' : "") + ' value="' + esc(key) + '">' +
+        // Hidden by voice.js where the browser has no speech recognition.
+        '<button class="ap-mic" type="button" aria-pressed="false" aria-label="Talk" title="Talk" hidden>' + MIC_SVG + '</button>' +
         '<input type="text" name="message" autocomplete="off"' +
           ' placeholder="' + (team ? "Message everyone" : "Message " + esc(name)) + '"' +
           ' aria-label="' + (team ? "Message everyone" : "Message " + esc(name)) + '">' +

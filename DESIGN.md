@@ -185,6 +185,13 @@ that it always carries meaning.
   "Asleep, last run 2h ago". It wakes with a stretch when a run starts, and
   wakes briefly to wave when clicked. A sleeping robot runs no blink and no
   halo, so a floor of many agents stays cheap to draw.
+- **Dancing** (the office only): a click's hello comes with a small
+  "♪ Dance" button that opens five moves (Bop, Twist, The Robot, Hands up,
+  Spin); the one picked runs on that robot for eight seconds on one beat,
+  with a note over its head, and the button reads Stop meanwhile. A dance
+  is for the person and is never a state: it is not offered to a robot that
+  is working, waiting or failed, it pauses while the robot walks, and a run
+  starting ends it at once. A sleeper dances awake.
 
 ### Agent identity
 Each agent's hue comes from the existing hash of its name (the same hash the
@@ -317,6 +324,18 @@ messenger").
   button only fills the team composer with "everyone answer: " and stops.
 - **Not in the dock on the agents page,** which has the one conversation
   already: there the windows are not drawn and Chat asks the page around it.
+- **Voice (2026-10-23).** A mic at the left of the composer, where the
+  browser can hear (Chrome, Edge, Safari): it turns red and pulses while
+  listening, the words land in the box grey while still being heard and
+  solid once a phrase is final, and a pause after a final phrase sends
+  them through the same form as typing. Answers are read aloud in the
+  agent's own voice (Piper on the server, one of six, picked on the card
+  under Voice, remembered per browser) and the robot's mouth moves for as
+  long as the sound plays; the row being read carries a note after the
+  name. The speaker in the title bar mutes every voice, remembered per
+  browser; auto-listen reopens the mic after an answer to a spoken
+  question, never after a typed one; the mic pressed while a robot talks
+  cuts it off. A browser without recognition shows no mic and still hears.
 
 ### Details panel
 - **Layout:** 320px wide on the Panel layer, separated by a hairline. It is
