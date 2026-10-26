@@ -3234,3 +3234,36 @@ def test_the_card_offers_a_voice_and_the_pick_is_what_is_heard(page):
     page.locator("#side .voice-hear").click()
     page.wait_for_timeout(200)
     assert any(src.endswith("/voices/alba.mp3") for src in page.evaluate("() => window.__played"))
+
+
+# --- the minutes of the newest meeting, from the floor bar (2026-10-26) ----
+
+def test_the_floor_bar_asks_for_the_minutes_and_they_land_in_the_team_chat(page):
+    asked = []
+
+    def minutes(r):
+        asked.append(r.request.method)
+        r.fulfill(status=200, content_type="text/html",
+                  body=render.agent_bubble(
+                      "Ada", "**Minutes, 26 Oct**\n\n**To do**\n- Ada: chase Northwind",
+                      None, label="Minutes"))
+    page.route("**/tasks/agents/chat/minutes", minutes)
+    bar = page.locator("#brain-actions .minutes-open")
+    assert bar.is_visible()
+    # Beside Call a team meeting, which is what it belongs with.
+    meet = page.locator('#brain-actions .chat-open[data-ask]').bounding_box()
+    box = bar.bounding_box()
+    assert abs(box["y"] - meet["y"]) < 4 and box["x"] > meet["x"], (box, meet)
+    # The team window is put away first; asking brings it back.
+    page.locator("#cw-team .cw-head .cw-who").click()
+    page.wait_for_timeout(200)
+    assert page.locator("#cw-team").is_hidden()
+    bar.click()
+    page.locator("#cw-team").wait_for(state="visible", timeout=3000)
+    page.locator("#agent-thread .astep").wait_for(timeout=3000)
+    assert asked == ["POST"]
+    assert page.locator("#agent-thread .astep").inner_text() == "Minutes"
+    # text_content, not inner_text: the answer is still being typed in, and
+    # the words not yet shown are hidden.
+    assert "chase Northwind" in page.locator("#agent-thread .am.agent").last.text_content()
+    assert not bar.is_disabled()

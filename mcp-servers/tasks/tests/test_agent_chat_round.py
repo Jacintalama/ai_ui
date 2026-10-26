@@ -76,6 +76,15 @@ def _app(monkeypatch, turn=None, agents=(ADA, MIA)):
         return None
 
     monkeypatch.setattr(agent_decider, "decide", no_decision)
+    # After a meeting the minutes are taken (agent_minutes), one more model
+    # call and a bubble. These tests measure the round as it was before
+    # minutes; the minutes tests below replace this with real ones.
+    import agent_minutes
+
+    async def no_minutes(email, question, answers, names, when=None):
+        return None
+
+    monkeypatch.setattr(agent_minutes, "take", no_minutes)
 
     app = FastAPI()
     app.include_router(routes_agent_chat.router)
@@ -1251,3 +1260,118 @@ def test_a_thread_without_a_card_does_not_read_the_jobs(monkeypatch):
                                headers=_hdr()).text
     assert "hello" in html
     assert asked == []
+
+
+# --- the minutes a meeting leaves behind (2026-10-26) ----------------------
+
+def _minutes(monkeypatch, text="**Minutes, 26 Oct**\n\n**To do**\n- Ada: chase Northwind"):
+    import agent_minutes
+    calls = []
+
+    async def take(email, question, answers, names, when=None):
+        calls.append({"email": email, "question": question, "answers": answers,
+                      "names": names})
+        return {"text": text, "todo": [{"what": "chase Northwind", "who": "Ada"}],
+                "written": 1}
+
+    monkeypatch.setattr(agent_minutes, "take", take)
+    return calls
+
+
+def test_a_meeting_leaves_its_minutes_under_the_answers(monkeypatch):
+    app, mod, _ = _app(monkeypatch)
+    calls = _minutes(monkeypatch)
+    log = _record(monkeypatch, mod)
+    html = _say(app, "hi team")
+    # Asked once, with the question, every answer in order and the names.
+    assert calls == [{"email": EMAIL, "question": "hi team",
+                      "answers": [("Ada", "Ada here"), ("Mia", "Mia here")],
+                      "names": ["Ada", "Mia"]}]
+    # The bubble is the first speaker's, labelled, after the meeting closed.
+    assert '<div class="astep">Minutes</div>' in html
+    assert "chase Northwind" in html
+    assert log[-2] == ("meeting_ended", "agent-m", None, None)
+    assert log[-1] == ("speaking_started", "agent-a", None,
+                       len("**Minutes, 26 Oct**\n\n**To do**\n- Ada: chase Northwind"))
+    # Stored as the first speaker's, marked, so a reload draws the label and
+    # the Minutes button can find the meeting.
+    s = mod.store.get_session(EMAIL, None)
+    assert s.messages[-1]["minutes"] is True and s.messages[-1]["agent_id"] == "agent-a"
+    assert [m.get("meeting") for m in s.messages if m.get("role") == "assistant"] == [True, True, None]
+
+
+def test_one_answer_is_no_meeting_and_leaves_no_minutes(monkeypatch):
+    app, mod, _ = _app(monkeypatch, agents=(ADA,))
+    calls = _minutes(monkeypatch)
+    html = _say(app, "hi team")
+    assert calls == []
+    assert "Minutes" not in html
+
+
+def test_a_meeting_where_one_passed_has_too_little_to_minute(monkeypatch):
+    def reply(agent):
+        return {"answer": "PASS" if agent["id"] == "agent-m" else "Ada here",
+                "notes": [], "agent": {"id": agent["id"], "name": agent["name"]}}
+    app, mod, _ = _app(monkeypatch)
+    calls = _minutes(monkeypatch)
+    _record(monkeypatch, mod, reply=reply)
+    html = _say(app, "hi team")
+    assert calls == []
+    assert "Minutes" not in html
+
+
+def test_minutes_that_cannot_be_taken_leave_the_meeting_as_it_was(monkeypatch):
+    import agent_minutes
+    app, mod, _ = _app(monkeypatch)
+
+    async def none(email, question, answers, names, when=None):
+        return None
+
+    monkeypatch.setattr(agent_minutes, "take", none)
+    log = _record(monkeypatch, mod)
+    html = _say(app, "hi team")
+    assert "Minutes" not in html
+    assert log[-1] == ("meeting_ended", "agent-m", None, None)
+    assert _speaking(log) == ["agent-a", "agent-m"]
+
+
+def test_the_minutes_button_finds_the_newest_meeting(monkeypatch):
+    app, mod, _ = _app(monkeypatch)
+    calls = _minutes(monkeypatch)
+    log = _record(monkeypatch, mod)
+    s = mod.store.get_session(EMAIL, None)
+    s.chat_id = "chat-1"
+    s.messages.extend([
+        {"role": "user", "content": "old question", "turn_id": "t0"},
+        {"role": "assistant", "agent_id": "agent-a", "agent_name": "Ada", "content": "a", "meeting": True},
+        {"role": "assistant", "agent_id": "agent-m", "agent_name": "Mia", "content": "b", "meeting": True},
+        {"role": "user", "content": "what is due", "turn_id": "t1"},
+        {"role": "assistant", "agent_id": "agent-m", "agent_name": "Mia", "content": "Mia first", "meeting": True},
+        {"role": "assistant", "agent_id": "agent-a", "agent_name": "Ada", "content": "Ada second", "meeting": True},
+        {"role": "user", "content": "thanks", "turn_id": "t2"},
+        {"role": "assistant", "agent_id": "agent-a", "agent_name": "Ada", "content": "welcome"},
+    ])
+    c = TestClient(app)
+    r = c.post("/tasks/agents/chat/minutes", headers=_hdr())
+    assert r.status_code == 200
+    assert calls == [{"email": EMAIL, "question": "what is due",
+                      "answers": [("Mia", "Mia first"), ("Ada", "Ada second")],
+                      "names": ["Mia", "Ada"]}]
+    assert '<div class="astep">Minutes</div>' in r.text and 'data-agent="Mia"' in r.text
+    assert s.messages[-1]["minutes"] is True and s.messages[-1]["agent_id"] == "agent-m"
+    assert log[-1][:2] == ("speaking_started", "agent-m")
+
+
+def test_the_minutes_button_says_so_when_there_was_no_meeting(monkeypatch):
+    app, mod, _ = _app(monkeypatch)
+    calls = _minutes(monkeypatch)
+    s = mod.store.get_session(EMAIL, None)
+    s.chat_id = "chat-1"
+    s.messages.extend([
+        {"role": "user", "content": "hi Ada", "turn_id": "t0"},
+        {"role": "assistant", "agent_id": "agent-a", "agent_name": "Ada", "content": "hello"},
+    ])
+    r = TestClient(app).post("/tasks/agents/chat/minutes", headers=_hdr())
+    assert r.status_code == 200
+    assert "No meeting in this conversation yet" in r.text
+    assert calls == []

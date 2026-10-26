@@ -537,6 +537,12 @@ def step_label(m: dict) -> str:
     return f"Step {step} of {of}" if 0 < step <= of else ""
 
 
+def minutes_label(m: dict) -> str:
+    """ "Minutes" over a meeting's minutes (stored with `minutes` by
+    routes_agent_chat), else ""."""
+    return "Minutes" if m.get("minutes") else ""
+
+
 def thread(messages: list[dict], private: bool = False,
            jobs: dict | None = None) -> str:
     """A saved conversation replayed, grouped into turns.
@@ -617,7 +623,8 @@ def thread(messages: list[dict], private: bool = False,
                 # screen a moment ago.
                 out.append(agent_bubble(name, shown,
                                         m.get("replying_to"),
-                                        label=step_label(m), at=at))
+                                        label=step_label(m) or minutes_label(m),
+                                        at=at))
             awaiting = m.get("awaiting")
             if isinstance(awaiting, dict) and awaiting.get("calls"):
                 out.append(approval_bubble(name,

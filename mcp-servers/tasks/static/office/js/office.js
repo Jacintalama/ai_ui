@@ -1809,6 +1809,9 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       S.MEETING = { ids: (e.participants || []).slice(), ended: null,
                     heard: true };
     } else if (e.event === "meeting_ended") {
+      // The minutes follow a meeting and leave rows on the To do list, a
+      // model call later. One early look, ahead of the 30s poll.
+      setTimeout(function () { loadTodo().then(drawTodo); }, 20000);
       // A page that opened mid-round never heard who was in it: whoever the
       // source rule has in the room is, and they leave together too.
       if (!S.MEETING) {
@@ -2647,6 +2650,25 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   // The mic and the voices in those windows; a change of who is talking
   // redraws the floor so the mouth follows the sound.
   initVoice({ onChange: draw });
+
+  // Minutes of the newest meeting, on request (routes_agent_chat
+  // agent_chat_minutes). The team window opens if it was away, and the
+  // bubble lands in its thread the way an answer does, so agent-chat.js
+  // types it in and the voice reads it.
+  document.addEventListener("click", function (ev) {
+    var b = ev.target.closest(".minutes-open");
+    if (!b) return;
+    ev.preventDefault();
+    openChat(TEAM);
+    if (!window.htmx || typeof window.htmx.ajax !== "function") return;
+    b.disabled = true;
+    var done = function () { b.disabled = false; };
+    try {
+      var p = window.htmx.ajax("POST", "/tasks/agents/chat/minutes",
+                               { target: "#agent-thread", swap: "beforeend" });
+      if (p && p.then) p.then(done, done); else done();
+    } catch (e) { done(); }
+  });
 
   initNewAgent({
     agents: function () { return S.AGENTS; },
