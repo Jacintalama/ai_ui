@@ -9,6 +9,20 @@
   // Auth: HTMX requests carry the Open WebUI login token as a bearer header.
   // The SSE stream cannot, because EventSource cannot set headers, so that one
   // relies on the same-origin cookie instead.
+  // An empty box is not a message. Caught ahead of htmx (capture, on the
+  // document) so nothing is posted and nothing is refused: Send or Enter
+  // on an empty box used to post "message=" and draw "That did not go
+  // through" (seen on the live office, 2026-10-26).
+  document.addEventListener("submit", function (e) {
+    var form = e.target;
+    if (!form || !form.classList || !form.classList.contains("ap-composer")) return;
+    var input = form.querySelector('input[name="message"]');
+    if (!input || input.value.trim()) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    try { input.focus(); } catch (x) { /* fine */ }
+  }, true);
+
   document.body.addEventListener("htmx:configRequest", function (e) {
     if (e.detail.path && e.detail.path.indexOf(PANEL) !== 0) return;
     var token = localStorage.getItem("token");

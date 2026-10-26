@@ -3301,3 +3301,46 @@ def test_a_failed_send_says_the_status_and_the_servers_reason(page):
     note = page.locator("#agent-thread .am.note")
     note.wait_for(timeout=3000)
     assert note.last.inner_text() == "That did not go through (400: empty message). Try again in a moment."
+
+
+def test_an_empty_box_is_not_sent(page):
+    posted = []
+    page.route("**/tasks/agents/chat/send", lambda r: (posted.append(1), r.fulfill(status=400, body="")))
+    page.locator("#cw-team .ap-composer button[type=submit]").click()
+    page.locator("#cw-team .ap-composer input[name=message]").press("Enter")
+    page.wait_for_timeout(400)
+    assert posted == []
+    assert page.locator("#agent-thread .am.note").count() == 0
+
+
+def test_a_press_that_ends_in_silence_says_so_but_auto_listen_stays_quiet(page):
+    _voice(page, audio_ms=200)
+    win = page.locator("#cw-team")
+    # Pressed, nothing heard, the browser ends it on its own.
+    win.locator(".ap-mic").click()
+    page.evaluate("() => window.__recs[0].onend()")
+    assert win.locator(".ap-mic").get_attribute("aria-pressed") == "false"
+    assert win.locator("#agent-thread .am.note").last.inner_text() == "Nothing heard. Press the mic and speak."
+    # Opened by itself after a spoken question's answer: the same silence
+    # passes without a word.
+    win.locator(".ap-mic").click()
+    page.evaluate("() => window.__recs[1].emit([{transcript: 'what is due', isFinal: true}])")
+    page.wait_for_timeout(1500)
+    _answer(page, "Iris", "Two invoices are due Friday.")
+    _said(page, "agent-iris-a103")
+    page.locator('#cw-team .ap-mic[aria-pressed="true"]').wait_for(timeout=3000)
+    page.evaluate("() => window.__recs[2].onerror({error: 'no-speech'})")
+    page.evaluate("() => { const r = window.__recs[2]; if (r.started) r.onend(); }")
+    assert win.locator(".ap-mic").get_attribute("aria-pressed") == "false"
+    assert win.locator("#agent-thread .am.note").count() == 1
+
+
+def test_a_start_the_browser_refuses_once_is_tried_again(page):
+    _voice(page)
+    page.evaluate("() => { const R = window.SpeechRecognition; const orig = R.prototype.start; let n = 0;"
+                  " R.prototype.start = function () { if (n++ === 0) throw new DOMException('already started', 'InvalidStateError'); return orig.call(this); }; }")
+    win = page.locator("#cw-team")
+    win.locator(".ap-mic").click()
+    page.wait_for_timeout(500)
+    assert win.locator(".ap-mic").get_attribute("aria-pressed") == "true"
+    assert page.evaluate("() => window.__recs[0].started")

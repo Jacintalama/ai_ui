@@ -192,7 +192,7 @@ function drained() {
   // Said and done: if the question was spoken, listen for the next one.
   var win = lastSpokenWin;
   lastSpokenWin = null;
-  if (win && autoOn() && document.body.contains(win) && !LISTENING) listen(win);
+  if (win && autoOn() && document.body.contains(win) && !LISTENING) listen(win, { auto: true });
 }
 export function stopSpeaking() {
   QUEUE = [];
@@ -263,9 +263,10 @@ function sendSpoken(win) {
   if (typeof form.requestSubmit === "function") form.requestSubmit();
   else form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
 }
-export function listen(win) {
+export function listen(win, options) {
   var R = Recognizer();
   if (!R || !win) return;
+  var auto = !!(options && options.auto);
   if (LISTENING) stopListening();
   // The mic is also the way to cut a talking robot off.
   if (isSpeaking()) stopSpeaking();
@@ -274,11 +275,15 @@ export function listen(win) {
   rec.continuous = true;
   rec.interimResults = true;
   try { rec.lang = navigator.language || "en-US"; } catch (e) { /* fine */ }
-  var st = { win: win, rec: rec, timer: null, typed: input ? input.value : "" };
+  // `auto`: opened by itself after an answer, not by a press. Quiet when it
+  // hears nothing: a note every time the person did not speak would be
+  // noise, where the same silence after a press is worth a word.
+  var st = { win: win, rec: rec, timer: null, typed: input ? input.value : "", auto: auto, heard: false };
   LISTENING = st;
   rec.onresult = function (ev) {
     if (LISTENING !== st) return;
     var finals = "", interim = "";
+    st.heard = true;
     for (var i = 0; i < ev.results.length; i++) {
       var r = ev.results[i], t = r[0] ? r[0].transcript : "";
       if (r.isFinal) finals += t; else interim += t;
@@ -297,18 +302,28 @@ export function listen(win) {
     // Said in the thread, where the person is looking, in the words of
     // what went wrong: a blocked mic, no mic, the browser's speech service
     // out of reach, or simply nothing heard. "aborted" is our own stop.
-    if (why !== "aborted") tell(win, heardNothing(why));
+    if (why !== "aborted" && !(st.auto && why === "no-speech")) tell(win, heardNothing(why));
     stopListening();
   };
   rec.onend = function () {
     // The browser stops on its own after a while of quiet. Anything final
     // and unsent goes now rather than sitting in the box.
     if (LISTENING !== st) return;
-    if (input && input.value.trim() && !input.getAttribute("data-interim") && input.value !== st.typed) sendSpoken(win);
-    else stopListening();
+    if (input && input.value.trim() && !input.getAttribute("data-interim") && input.value !== st.typed) { sendSpoken(win); return; }
+    // Ended with nothing heard and no error: the browser's own quiet
+    // timeout, or a mic stream that closed. Said once, after a press.
+    if (!st.heard && !st.auto) tell(win, heardNothing("no-speech"));
+    stopListening();
   };
   showListening(win, true);
-  try { rec.start(); } catch (e) { stopListening(); }
+  // Chrome allows one recognition at a time and the one just stopped can
+  // still be winding down: a start that is refused is tried once more.
+  try { rec.start(); } catch (e) {
+    setTimeout(function () {
+      if (LISTENING !== st) return;
+      try { rec.start(); } catch (e2) { tell(win, heardNothing("busy")); stopListening(); }
+    }, 300);
+  }
 }
 //: What a recognition error means to the person.
 export function heardNothing(why) {
@@ -317,6 +332,7 @@ export function heardNothing(why) {
   if (why === "network") return "The browser's speech service could not be reached. Check the connection, or type instead.";
   if (why === "no-speech") return "Nothing heard. Press the mic and speak.";
   if (why === "language-not-supported") return "This language is not supported for speech. Type instead.";
+  if (why === "busy") return "The microphone is still busy from a moment ago. Press the mic again.";
   return "Listening stopped (" + (why || "unknown") + "). Press the mic to try again.";
 }
 //: A note in the window's thread, the way a failed send is told.
