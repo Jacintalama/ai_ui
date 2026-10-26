@@ -3234,3 +3234,113 @@ def test_the_card_offers_a_voice_and_the_pick_is_what_is_heard(page):
     page.locator("#side .voice-hear").click()
     page.wait_for_timeout(200)
     assert any(src.endswith("/voices/alba.mp3") for src in page.evaluate("() => window.__played"))
+
+
+# --- the minutes of the newest meeting, from the floor bar (2026-10-26) ----
+
+def test_the_floor_bar_asks_for_the_minutes_and_they_land_in_the_team_chat(page):
+    asked = []
+
+    def minutes(r):
+        asked.append(r.request.method)
+        r.fulfill(status=200, content_type="text/html",
+                  body=render.agent_bubble(
+                      "Ada", "**Minutes, 26 Oct**\n\n**To do**\n- Ada: chase Northwind",
+                      None, label="Minutes"))
+    page.route("**/tasks/agents/chat/minutes", minutes)
+    bar = page.locator("#brain-actions .minutes-open")
+    assert bar.is_visible()
+    # Beside Call a team meeting, which is what it belongs with.
+    meet = page.locator('#brain-actions .chat-open[data-ask]').bounding_box()
+    box = bar.bounding_box()
+    assert abs(box["y"] - meet["y"]) < 4 and box["x"] > meet["x"], (box, meet)
+    # The team window is put away first; asking brings it back.
+    page.locator("#cw-team .cw-head .cw-who").click()
+    page.wait_for_timeout(200)
+    assert page.locator("#cw-team").is_hidden()
+    bar.click()
+    page.locator("#cw-team").wait_for(state="visible", timeout=3000)
+    page.locator("#agent-thread .astep").wait_for(timeout=3000)
+    assert asked == ["POST"]
+    assert page.locator("#agent-thread .astep").inner_text() == "Minutes"
+    # text_content, not inner_text: the answer is still being typed in, and
+    # the words not yet shown are hidden.
+    assert "chase Northwind" in page.locator("#agent-thread .am.agent").last.text_content()
+    assert not bar.is_disabled()
+
+
+def test_a_mic_that_hears_nothing_says_so_in_the_thread(page):
+    """Reported from the live office 2026-10-26: the mic went red, then
+    nothing, with no word on why. Every recognition error now lands as a
+    note in the window, in the words of what went wrong."""
+    _voice(page)
+    win = page.locator("#cw-team")
+    win.locator(".ap-mic").click()
+    page.evaluate("() => window.__recs[0].onerror({error: 'no-speech'})")
+    assert win.locator(".ap-mic").get_attribute("aria-pressed") == "false"
+    notes = win.locator("#agent-thread .am.note")
+    assert notes.count() == 1
+    assert notes.last.inner_text() == "Nothing heard. Press the mic and speak."
+    win.locator(".ap-mic").click()
+    page.evaluate("() => window.__recs[1].onerror({error: 'network'})")
+    assert "speech service could not be reached" in notes.last.inner_text()
+    win.locator(".ap-mic").click()
+    page.evaluate("() => window.__recs[2].onerror({error: 'not-allowed'})")
+    assert "Microphone blocked" in notes.last.inner_text()
+    # Our own stop is not an error worth a note.
+    win.locator(".ap-mic").click()
+    page.evaluate("() => window.__recs[3].onerror({error: 'aborted'})")
+    assert notes.count() == 3
+
+
+def test_a_failed_send_says_the_status_and_the_servers_reason(page):
+    page.route("**/tasks/agents/chat/send", lambda r: r.fulfill(
+        status=400, content_type="application/json", body='{"detail": "empty message"}'))
+    page.locator("#cw-team .ap-composer input[name=message]").fill("x")
+    page.locator("#cw-team .ap-composer button[type=submit]").click()
+    note = page.locator("#agent-thread .am.note")
+    note.wait_for(timeout=3000)
+    assert note.last.inner_text() == "That did not go through (400: empty message). Try again in a moment."
+
+
+def test_an_empty_box_is_not_sent(page):
+    posted = []
+    page.route("**/tasks/agents/chat/send", lambda r: (posted.append(1), r.fulfill(status=400, body="")))
+    page.locator("#cw-team .ap-composer button[type=submit]").click()
+    page.locator("#cw-team .ap-composer input[name=message]").press("Enter")
+    page.wait_for_timeout(400)
+    assert posted == []
+    assert page.locator("#agent-thread .am.note").count() == 0
+
+
+def test_a_press_that_ends_in_silence_says_so_but_auto_listen_stays_quiet(page):
+    _voice(page, audio_ms=200)
+    win = page.locator("#cw-team")
+    # Pressed, nothing heard, the browser ends it on its own.
+    win.locator(".ap-mic").click()
+    page.evaluate("() => window.__recs[0].onend()")
+    assert win.locator(".ap-mic").get_attribute("aria-pressed") == "false"
+    assert win.locator("#agent-thread .am.note").last.inner_text() == "Nothing heard. Press the mic and speak."
+    # Opened by itself after a spoken question's answer: the same silence
+    # passes without a word.
+    win.locator(".ap-mic").click()
+    page.evaluate("() => window.__recs[1].emit([{transcript: 'what is due', isFinal: true}])")
+    page.wait_for_timeout(1500)
+    _answer(page, "Iris", "Two invoices are due Friday.")
+    _said(page, "agent-iris-a103")
+    page.locator('#cw-team .ap-mic[aria-pressed="true"]').wait_for(timeout=3000)
+    page.evaluate("() => window.__recs[2].onerror({error: 'no-speech'})")
+    page.evaluate("() => { const r = window.__recs[2]; if (r.started) r.onend(); }")
+    assert win.locator(".ap-mic").get_attribute("aria-pressed") == "false"
+    assert win.locator("#agent-thread .am.note").count() == 1
+
+
+def test_a_start_the_browser_refuses_once_is_tried_again(page):
+    _voice(page)
+    page.evaluate("() => { const R = window.SpeechRecognition; const orig = R.prototype.start; let n = 0;"
+                  " R.prototype.start = function () { if (n++ === 0) throw new DOMException('already started', 'InvalidStateError'); return orig.call(this); }; }")
+    win = page.locator("#cw-team")
+    win.locator(".ap-mic").click()
+    page.wait_for_timeout(500)
+    assert win.locator(".ap-mic").get_attribute("aria-pressed") == "true"
+    assert page.evaluate("() => window.__recs[0].started")

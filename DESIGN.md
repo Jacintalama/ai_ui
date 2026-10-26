@@ -336,6 +336,15 @@ messenger").
   browser; auto-listen reopens the mic after an answer to a spoken
   question, never after a typed one; the mic pressed while a robot talks
   cuts it off. A browser without recognition shows no mic and still hears.
+- **Minutes (2026-10-26).** When a meeting ends (two answers or more to
+  one message), the agent that spoke first posts the minutes under the
+  answers, labelled Minutes: Decided, To do (who does what) and Open
+  questions. Each To do line is a real row on the To do list. The bubble
+  is announced like an answer, so the voice reads it. "Minutes" beside
+  "Call a team meeting" on the floor bar asks for the minutes of the
+  newest meeting in the team conversation; a conversation without one
+  gets a note. Minutes that cannot be taken leave the meeting exactly as
+  it was.
 
 ### Details panel
 - **Layout:** 320px wide on the Panel layer, separated by a hairline. It is

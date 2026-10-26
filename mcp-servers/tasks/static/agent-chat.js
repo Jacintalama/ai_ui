@@ -9,6 +9,20 @@
   // Auth: HTMX requests carry the Open WebUI login token as a bearer header.
   // The SSE stream cannot, because EventSource cannot set headers, so that one
   // relies on the same-origin cookie instead.
+  // An empty box is not a message. Caught ahead of htmx (capture, on the
+  // document) so nothing is posted and nothing is refused: Send or Enter
+  // on an empty box used to post "message=" and draw "That did not go
+  // through" (seen on the live office, 2026-10-26).
+  document.addEventListener("submit", function (e) {
+    var form = e.target;
+    if (!form || !form.classList || !form.classList.contains("ap-composer")) return;
+    var input = form.querySelector('input[name="message"]');
+    if (!input || input.value.trim()) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    try { input.focus(); } catch (x) { /* fine */ }
+  }, true);
+
   document.body.addEventListener("htmx:configRequest", function (e) {
     if (e.detail.path && e.detail.path.indexOf(PANEL) !== 0) return;
     var token = localStorage.getItem("token");
@@ -315,9 +329,19 @@
       || (detail.pathInfo && detail.pathInfo.requestPath) || "";
     if (path.indexOf(PANEL) !== 0) return;
     var status = detail.xhr ? detail.xhr.status : 0;
+    // The server's own reason when it gave one ({"detail": "..."}), and the
+    // status always: "did not go through" alone could not be told apart
+    // from a refused message, a backend that is down or a dropped
+    // connection (reported from the live office, 2026-10-26).
+    var why = "";
+    try {
+      var body = JSON.parse(detail.xhr && detail.xhr.responseText || "");
+      if (body && typeof body.detail === "string") why = body.detail;
+    } catch (x) { /* not JSON */ }
+    try { console.warn("[agent-chat] request failed", status, path, detail.xhr && detail.xhr.responseText); } catch (x) { /* fine */ }
     var said = (status === 401 || status === 403)
       ? "Your sign-in has expired. Reload the page and sign in again."
-      : "That did not go through. Try again in a moment.";
+      : "That did not go through" + (status ? " (" + status + (why ? ": " + why : "") + ")" : " (no reply from the server)") + ". Try again in a moment.";
     // The thread the failed send was aimed at, where the person is looking.
     var el = null, elt = detail.elt;
     var form = elt && elt.closest ? elt.closest("form") : null;

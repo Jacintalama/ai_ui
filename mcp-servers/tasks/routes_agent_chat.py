@@ -37,6 +37,7 @@ import agent_job_worker
 import agent_decider
 import agent_jev
 import agent_job_triage
+import agent_minutes
 import agent_routing
 from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS, FREE_POOL_EXHAUSTED,
                           ROUTER_EXHAUSTED, _chat)
@@ -749,6 +750,8 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
     # An agent that heard the message and had nothing to add. Counted so the
     # round can tell "nobody had anything" from "nobody was asked".
     passed = 0
+    # Every answer given, in order, for the minutes a meeting leaves behind.
+    said: list[tuple[str, str]] = []
 
     if met:
         agent_events.publish("meeting_started", agent_id=met[0],
@@ -847,7 +850,8 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
 
             messages.append({"role": "assistant", "at": _now_iso(), "agent_id": agent_id,
                              "agent_name": name, "content": answer,
-                             "replying_to": answering})
+                             "replying_to": answering, "meeting": bool(met)})
+            said.append((name, answer))
             # The round is not streamed, so this is the only moment the
             # office can see a bubble arrive. Its length, never its words.
             agent_events.publish("speaking_started", agent_id=agent_id,
@@ -902,7 +906,8 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
                 messages.append({"role": "assistant", "at": _now_iso(),
                                  "agent_id": str(fallback.get("id") or ""),
                                  "agent_name": name, "content": answer,
-                                 "replying_to": answering})
+                                 "replying_to": answering, "meeting": bool(met)})
+                said.append((name, answer))
                 agent_events.publish(
                     "speaking_started", agent_id=str(fallback.get("id") or ""),
                     user_email=email, chars=len(answer))
@@ -923,6 +928,13 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
             agent_events.publish("meeting_ended", agent_id=met[-1],
                                  user_email=email)
 
+    # The meeting's minutes, once it has closed on the office: Decided, To
+    # do and Open questions, by the agent that spoke first. Only a meeting
+    # that was one (two answers or more) leaves any.
+    if met and len(said) >= agent_minutes.MIN_ANSWERS:
+        async for event in _minutes_events(email, messages, tid, asked, said):
+            yield event
+
     if not agents:
         line = ("You have no agents yet. Make one and it will hear the next "
                 "thing you say.")
@@ -931,6 +943,59 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
                "data": render.into_turn(tid, render.note(line))}
 
     yield {"event": "working", "data": render.turn_status(tid, "")}
+
+
+async def _minutes_events(email: str, messages: list[dict], tid: str,
+                          asked: str, said: list[tuple[str, str]]):
+    """The minutes of the meeting that just ended, as the round's events: a
+    wait line while they are taken, then the bubble, stored and announced
+    like any answer so the office and the voice treat it as one. Nothing
+    at all when there are none (agent_minutes.take fails soft)."""
+    lead_name = said[0][0]
+    lead_id = _agent_id_of(messages, lead_name)
+    yield {"event": "working",
+           "data": render.turn_status(tid, render.working(lead_name))}
+    names = list(dict.fromkeys(n for n, _ in said))
+    got = await agent_minutes.take(email, asked, said, names)
+    if not got:
+        yield {"event": "working", "data": render.turn_status(tid, "")}
+        return
+    at = _now_iso()
+    messages.append({"role": "assistant", "at": at, "agent_id": lead_id,
+                     "agent_name": lead_name, "content": got["text"],
+                     "minutes": True})
+    agent_events.publish("speaking_started", agent_id=lead_id,
+                         user_email=email, chars=len(got["text"]))
+    yield {"event": "message",
+           "data": render.into_turn(tid, render.agent_bubble(
+               lead_name, got["text"], None, label=agent_minutes.LABEL, at=at))}
+
+
+def _agent_id_of(messages: list[dict], name: str) -> str:
+    """The id stored with this agent's newest answer, or ""."""
+    for m in reversed(messages):
+        if m.get("role") == "assistant" and m.get("agent_name") == name and m.get("agent_id"):
+            return str(m["agent_id"])
+    return ""
+
+
+def _last_meeting(messages: list[dict]):
+    """The newest meeting in a conversation: (what was asked, [(name,
+    answer), ...]) or None. A meeting is a user message followed by two or
+    more answers that were given in one (the `meeting` mark the round
+    stores); a turn with fewer is not one, and the search goes on back."""
+    group: list[tuple[str, str]] = []
+    for m in reversed(messages or []):
+        role = m.get("role")
+        if role == "assistant":
+            if m.get("meeting") and not m.get("minutes"):
+                group.append((str(m.get("agent_name") or ""), str(m.get("content") or "")))
+            continue
+        if role == "user":
+            if len(group) >= agent_minutes.MIN_ANSWERS:
+                return str(m.get("content") or ""), list(reversed(group))
+            group = []
+    return None
 
 
 def _take_queued(s: store.RoomSession):
@@ -1075,6 +1140,43 @@ async def agent_chat_send(message: str = Form(...),
                         + render.stream_block(who or ""))
     resp.headers["HX-Trigger"] = "agent-chats-changed"
     return resp
+
+
+@router.post("/tasks/agents/chat/minutes", include_in_schema=False)
+async def agent_chat_minutes(agent: str = Form(""),
+                             user: CurrentUser = Depends(current_user)
+                             ) -> HTMLResponse:
+    """Minutes of the newest meeting in this conversation, on request (the
+    Minutes button beside Call a team meeting). The bubble is appended to
+    the thread, stored, and announced like an answer. A conversation with no
+    meeting, or minutes that cannot be taken, get a note, never an error."""
+    who = _which_chat(agent)
+    s = store.get_session(user.email, who)
+    await _hydrate(user.email, s, who)
+    if s.streaming:
+        return HTMLResponse(render.note("Wait for the agents to finish, then ask again."))
+    found = _last_meeting(s.messages)
+    if not found:
+        return HTMLResponse(render.note(
+            "No meeting in this conversation yet. Press Meeting and ask the team something."))
+    asked, said = found
+    names = list(dict.fromkeys(n for n, _ in said))
+    got = await agent_minutes.take(user.email, asked, said, names)
+    if not got:
+        return HTMLResponse(render.note("The minutes could not be taken just now. Try again in a moment."))
+    lead_name = said[0][0]
+    lead_id = _agent_id_of(s.messages, lead_name)
+    at = _now_iso()
+    s.messages.append({"role": "assistant", "at": at, "agent_id": lead_id,
+                       "agent_name": lead_name, "content": got["text"], "minutes": True})
+    try:
+        await store.save_chat(user.email, s)
+    except Exception:                                       # noqa: BLE001
+        log.exception("agent chat: could not save the minutes")
+    agent_events.publish("speaking_started", agent_id=lead_id,
+                         user_email=user.email, chars=len(got["text"]))
+    return HTMLResponse(render.agent_bubble(lead_name, got["text"], None,
+                                            label=agent_minutes.LABEL, at=at))
 
 
 @router.get("/tasks/agents/chat/stream", include_in_schema=False)
