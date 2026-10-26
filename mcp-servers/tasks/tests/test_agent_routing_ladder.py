@@ -237,3 +237,80 @@ def test_a_calendar_question_about_a_meeting_is_not_a_meeting():
                  "did the meeting notes come through"):
         _who, _may, why = r.choose_speakers(said, ROOM)
         assert why != r.ROUTE_MEETING, said
+
+
+# --- 6. a skill asked for by name (2026-10-26) ------------------------------
+# "run the weekly review" is a job for the one agent that was given the
+# weekly-review skill: its steps are in that agent's brief and in nobody
+# else's. The library is passed in, so the rung is as pure as the others.
+
+SKILLS = {"weekly-review": {"name": "weekly-review"},
+          "catch-me-up": {"name": "catch-me-up"},
+          "spreadsheet": {"name": "spreadsheet"},
+          "build-an-app": {"name": "build-an-app"}}
+KAI = {"id": "agent-k", "name": "Kai", "meta": {"toolIds": [], "skillIds": ["weekly-review", "spreadsheet"]}}
+VERA = {"id": "agent-v", "name": "Vera", "meta": {"toolIds": [], "skillIds": ["catch-me-up"]}}
+
+
+@pytest.mark.parametrize("said", ["run the weekly review", "Weekly review please",
+                                  "can you do my weekly-review now", "time for the weekly review"])
+def test_a_skill_named_in_words_or_hyphens_is_found(said):
+    assert r.named_skill(said, SKILLS) == "weekly-review"
+
+
+def test_a_one_word_skill_needs_a_cue():
+    """"spreadsheet" is a word people use about spreadsheets, not a request
+    for the skill. "run spreadsheet" or "the spreadsheet skill" is."""
+    assert r.named_skill("put this in a spreadsheet for me", SKILLS) is None
+    assert r.named_skill("run spreadsheet on this", SKILLS) == "spreadsheet"
+    assert r.named_skill("use the spreadsheet skill", SKILLS) == "spreadsheet"
+
+
+def test_two_skills_of_the_same_length_is_nobodys():
+    skills = dict(SKILLS, **{"monthly-review": {"name": "monthly-review"}})
+    assert r.named_skill("weekly review then monthly review", skills) is None
+    # Different lengths are not a tie: the longer, more specific name wins.
+    assert r.named_skill("build an app for the weekly review", SKILLS) == "build-an-app"
+
+
+def test_the_longest_name_wins_when_one_contains_another():
+    skills = dict(SKILLS, review={"name": "review"})
+    assert r.named_skill("run the weekly review", skills) == "weekly-review"
+
+
+def test_the_one_agent_with_the_skill_answers_and_may_not_pass():
+    who, may_pass, why = r.choose_speakers("run the weekly review", [KAI, VERA, MIA],
+                                           skills=SKILLS)
+    assert _ids(who) == ["agent-k"] and may_pass is False and why == r.ROUTE_SKILL
+
+
+def test_two_agents_with_the_skill_leave_it_to_the_room():
+    kai2 = dict(KAI, id="agent-k2", name="Kaz")
+    who, may_pass, why = r.choose_speakers("run the weekly review", [KAI, kai2, MIA],
+                                           skills=SKILLS)
+    assert why == r.ROUTE_ROOM and may_pass is True and len(who) == 3
+
+
+def test_nobody_with_the_skill_leaves_it_to_the_room():
+    who, _, why = r.choose_speakers("run the weekly review", [VERA, MIA], skills=SKILLS)
+    assert why == r.ROUTE_ROOM
+
+
+def test_without_the_library_the_rung_is_skipped():
+    who, _, why = r.choose_speakers("run the weekly review", [KAI, MIA])
+    assert why == r.ROUTE_ROOM
+
+
+def test_a_name_still_beats_a_skill():
+    who, _, why = r.choose_speakers("mia, run the weekly review", [KAI, MIA], skills=SKILLS)
+    assert _ids(who) == ["agent-m"] and why == r.ROUTE_NAMED
+
+
+def test_a_skill_named_outright_beats_a_loose_subject_word():
+    """"weekly" is a schedules word too. Ada has the schedules tool, Kai has
+    the weekly-review skill: "run the weekly review" is Kai's, not Ada's."""
+    who, _, why = r.choose_speakers("run the weekly review", [ADA, KAI, MIA], skills=SKILLS)
+    assert _ids(who) == ["agent-k"] and why == r.ROUTE_SKILL
+    # With no skill named, the subject rung works as it always did.
+    who, _, why = r.choose_speakers("anything unread in my inbox", [ADA, KAI, MIA], skills=SKILLS)
+    assert _ids(who) == ["agent-m"] and why == r.ROUTE_OWNER

@@ -790,3 +790,44 @@ async def test_an_agent_jev_picked_that_stops_to_ask_is_passed_through(_wire, mo
     assert out["turns"][0]["pending"]["ask_id"] == "q1"
     # A question is not a reply to judge.
     assert calls["reply"] == []
+
+
+# --- a skill asked for by name goes to the agent that has it (2026-10-26) ---
+
+def _skills(monkeypatch, *names):
+    monkeypatch.setattr(rt.agent_skills, "load_all",
+                        lambda refresh=False: {n: {"name": n, "description": n, "body": "Steps.",
+                                                   "tools": [], "tags": [], "folder": n}
+                                               for n in names})
+
+
+async def test_the_agent_with_the_skill_takes_the_job_and_stays_awake(_wire, monkeypatch):
+    _skills(monkeypatch, "weekly-review")
+    kai = {"id": "agent-k", "name": "Kai", "user_id": "u1",
+           "meta": {"toolIds": [], "skillIds": ["weekly-review"]}}
+    monkeypatch.setattr(rt, "_list_agents", AsyncMock(return_value=([ADA, MIA, kai], False)))
+    monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="general"))
+    out = await rt.chat(_body("run the weekly review for me"), x_internal_secret="s")
+    assert out["turns"][0]["agent"]["name"] == "Kai"
+    assert rt._run_turn.await_args.args[1] == "agent-k"
+    rt._answer_as_io.assert_not_awaited()
+    assert _wire[rt._pin_key("chat-1", "owner@example.com")] == "agent-k"
+
+
+async def test_a_skill_nobody_has_leaves_the_message_to_the_general_model(_wire, monkeypatch):
+    _skills(monkeypatch, "weekly-review")
+    monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="general"))
+    out = await rt.chat(_body("run the weekly review for me"), x_internal_secret="s")
+    assert out["turns"][0]["agent"] is None
+    rt._run_turn.assert_not_awaited()
+
+
+async def test_two_agents_with_the_skill_are_left_to_jev(_wire, monkeypatch):
+    _skills(monkeypatch, "weekly-review")
+    kai = {"id": "agent-k", "name": "Kai", "user_id": "u1", "meta": {"skillIds": ["weekly-review"]}}
+    kaz = {"id": "agent-z", "name": "Kaz", "user_id": "u1", "meta": {"skillIds": ["weekly-review"]}}
+    monkeypatch.setattr(rt, "_list_agents", AsyncMock(return_value=([kai, kaz], False)))
+    calls = _jev(monkeypatch, agent_id="agent-z")
+    out = await rt.chat(_body("run the weekly review for me"), x_internal_secret="s")
+    assert len(calls["decide"]) == 1
+    assert out["turns"][0]["agent"]["name"] == "Kaz"

@@ -33,6 +33,7 @@ import agent_handoff
 import agent_jev
 import agent_memory
 import agent_routing
+import agent_skills
 import routes_prefs
 from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS,
                           CHANNEL_MAX_TOOL_ITERATIONS,
@@ -1028,6 +1029,16 @@ async def chat(body: ChatIn,
         # an accident the person did not cause, so they get a real answer
         # to what they actually typed, not silence.
         await _clear_pin(key)
+
+    if agent is None:
+        # A skill asked for by name ("run the weekly review") is a job for
+        # the one agent that was given it: its steps are in that agent's
+        # brief and in nobody else's. Two agents with the skill leave it to
+        # Jev below. Above the subject rung, as in the ladder:
+        # "weekly" is also a schedules word. Read from disk through a cache, so this costs nothing.
+        skilled = agent_routing.skill_owner(text, agents, agent_skills.load_all())
+        if skilled is not None:
+            agent = skilled
 
     if agent is None:
         # Nobody named and nobody pinned. Before handing this to IO, the same

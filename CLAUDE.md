@@ -180,7 +180,9 @@ through `/agents/make` and `/agents/roster`; it sends only `X-User-Email`, like
 Everyone lands on **Auto (Free)** (`auto_router_pipe.py`, id `auto_router.auto`,
 set as `DEFAULT_MODELS` in compose; an admin's later choice in Admin Settings →
 Models wins). Every message goes to `POST /agents/chat` first (`route_only`):
-a named, pinned or subject-owning agent answers, then **Jev** (`agent_decider`,
+a named, pinned, subject-owning or skill-owning agent answers ("run the weekly
+review" goes to the one agent given `weekly-review`, `agent_routing.skill_owner`),
+then **Jev** (`agent_decider`,
 needs `TYPESAFE_API_KEY`) is asked whether one agent should take it and that
 agent answers if its reply holds up (`agent_jev.reply_answers`); otherwise the
 free model answers. No key means no Jev and the chat behaves as before.

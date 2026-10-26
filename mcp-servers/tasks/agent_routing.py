@@ -179,6 +179,7 @@ ROUTE_NAMED = "named"
 ROUTE_COLLECTIVE = "collective"
 ROUTE_CONTINUATION = "continuation"
 ROUTE_OWNER = "owner"
+ROUTE_SKILL = "skill"
 ROUTE_ROOM = "room"
 
 
@@ -242,6 +243,71 @@ def domain_owner(text, agents):
     return owners[0] if len(owners) == 1 else None
 
 
+#: A skill asked for by name (2026-10-26, "skills from the main chat"):
+#: "run the weekly review" is a job for the one agent that was given the
+#: weekly-review skill, not for a general model that has never seen its
+#: steps. A name of one word ("spreadsheet", "impeccable") is too common a
+#: word to count on its own, so it needs a cue: "run spreadsheet", "the
+#: spreadsheet skill". Longest name wins when two could be meant; two
+#: names of the same length is nobody's, the way two owners are.
+_SKILL_CUES = ("run", "use", "do", "start", "apply", "the", "skill")
+
+
+def _skill_phrases(name) -> list:
+    name = str(name or "").strip().lower()
+    if not name:
+        return []
+    spaced = " ".join(name.replace("-", " ").replace("_", " ").split())
+    return [spaced, name] if spaced != name else [spaced]
+
+
+def named_skill(text, skills):
+    """The one skill this message asks for by name, or None.
+
+    `skills` is agent_skills.load_all(): name -> skill. Pure."""
+    hay = " ".join((text if isinstance(text, str) else "").lower().split())
+    if not hay or not isinstance(skills, dict):
+        return None
+    hits = []
+    for name in skills:
+        phrases = _skill_phrases(name)
+        if not phrases:
+            continue
+        words = len(phrases[0].split())
+        for phrase in phrases:
+            if not _whole_word_hit(hay, phrase):
+                continue
+            if words == 1 and not any(
+                    _whole_word_hit(hay, cue + " " + phrase) or _whole_word_hit(hay, phrase + " " + cue)
+                    for cue in _SKILL_CUES):
+                continue
+            hits.append((words, name))
+            break
+    if not hits:
+        return None
+    hits.sort(key=lambda h: -h[0])
+    if len(hits) > 1 and hits[0][0] == hits[1][0]:
+        return None
+    return hits[0][1]
+
+
+def _own_skill_ids(agent) -> list:
+    meta = agent.get("meta") if isinstance(agent, dict) else None
+    ids = meta.get("skillIds") if isinstance(meta, dict) else None
+    return [i for i in ids if isinstance(i, str)] if isinstance(ids, list) else []
+
+
+def skill_owner(text, agents, skills):
+    """The one agent that has the skill this message names, or None: no
+    skill named, nobody has it, or more than one does (then Jev or the
+    room decides, as with two owners of a tool). Pure."""
+    name = named_skill(text, skills)
+    if name is None or not isinstance(agents, (list, tuple)):
+        return None
+    owners = [a for a in agents if isinstance(a, dict) and name in _own_skill_ids(a)]
+    return owners[0] if len(owners) == 1 else None
+
+
 #: Calling a meeting: every agent answers and none may pass.
 #:
 #: Deliberately NOT a collective word on its own. "hi team" wakes everybody
@@ -273,7 +339,8 @@ def calls_a_meeting(text) -> bool:
     return bool(_MEETING.search(str(text or "")))
 
 
-def choose_speakers(text, agents, last_speaker=None, has_pending=False):
+def choose_speakers(text, agents, last_speaker=None, has_pending=False,
+                    skills=None):
     """Who answers this message, whether they may pass, and why.
 
     One ladder, used by the panel and by the Discord and Telegram gateway, so
@@ -291,9 +358,13 @@ def choose_speakers(text, agents, last_speaker=None, has_pending=False):
        which is what stops seven agents all saying hello.
     4. A short follow on while one agent is mid job. "go ahead", "try again",
        "why" belong to whoever just spoke, not to the room.
-    5. Exactly one agent owns the subject. One agent has the calendar, so
+    5. Exactly one agent has the skill the message names ("run the weekly
+       review"), when the caller passes the skill library in `skills`. Above
+       the subject rung: "weekly" is also a schedules word, and a skill asked
+       for by name is the more exact of the two signals.
+    6. Exactly one agent owns the subject. One agent has the calendar, so
        "when is my next meeting" is not a question for the other six.
-    6. Otherwise the room hears it and the ones with something to say answer.
+    7. Otherwise the room hears it and the ones with something to say answer.
 
     Pure: every input is passed in, so each rung is testable without a
     session, a database or a model.
@@ -320,6 +391,10 @@ def choose_speakers(text, agents, last_speaker=None, has_pending=False):
 
     if isinstance(last_speaker, dict) and _continues(text):
         return [last_speaker], False, ROUTE_CONTINUATION
+
+    skilled = skill_owner(text, every, skills) if skills else None
+    if skilled is not None:
+        return [skilled], False, ROUTE_SKILL
 
     owner = domain_owner(text, every)
     if owner is not None:
