@@ -26,6 +26,16 @@
   border: 2px solid var(--bad); animation: mic-pulse 1.2s ease-out infinite;
 }
 @keyframes mic-pulse { from { transform: scale(1); opacity: .9; } to { transform: scale(1.7); opacity: 0; } }
+/* The level meter (voice.js meterStart): a second ring that grows with
+   the voice, from nothing in silence to well past the button when loud,
+   so a person can see the browser hearing them. --level is 0 to 100. */
+.cw .ap-composer .ap-mic[aria-pressed="true"]::before {
+  content: ""; position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
+  background: color-mix(in srgb, var(--bad) 45%, transparent);
+  transform: scale(calc(1 + var(--level, 0) / 100 * 1.2));
+  opacity: calc(var(--level, 0) / 100 + .1);
+  transition: transform 60ms linear, opacity 60ms linear;
+}
 /* Said while the robot talks, the mic is the way to cut in. */
 .cw.voicing .ap-composer .ap-mic:not([aria-pressed="true"]) { border-color: var(--cyan); color: var(--cyan); }
 

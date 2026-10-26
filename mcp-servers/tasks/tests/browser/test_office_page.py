@@ -3015,6 +3015,23 @@ _FAKE_SPEECH = """
     }
   }
   window.SpeechRecognition = FakeRec; window.webkitSpeechRecognition = FakeRec;
+  // A microphone and an analyser the test drives: window.__level is what
+  // the meter reads (128 = silence, up to 255).
+  window.__level = 128; window.__tracks = [];
+  navigator.mediaDevices.getUserMedia = function () {
+    var t = { stopped: false, stop: function () { this.stopped = true; } };
+    window.__tracks.push(t);
+    return Promise.resolve({ getTracks: function () { return [t]; } });
+  };
+  window.AudioContext = function () {
+    this.closed = false;
+    this.close = function () { this.closed = true; return Promise.resolve(); };
+    this.createMediaStreamSource = function () { return { connect: function () {} }; };
+    this.createAnalyser = function () {
+      return { fftSize: 0, frequencyBinCount: 32, connect: function () {},
+               getByteTimeDomainData: function (a) { a.fill(window.__level); } };
+    };
+  };
 """
 _NO_SPEECH = "window.SpeechRecognition = undefined; window.webkitSpeechRecognition = undefined;"
 _FAKE_AUDIO = """
@@ -3344,3 +3361,53 @@ def test_a_start_the_browser_refuses_once_is_tried_again(page):
     page.wait_for_timeout(500)
     assert win.locator(".ap-mic").get_attribute("aria-pressed") == "true"
     assert page.evaluate("() => window.__recs[0].started")
+
+
+def test_the_mic_shows_what_the_browser_hears(page):
+    """Reported live 2026-10-26: red mic, nothing in the box. The meter on
+    the mic tells the two silences apart: no sound reaching the browser,
+    and sound with no words coming back."""
+    _voice(page)
+    win = page.locator("#cw-team")
+    win.locator(".ap-mic").click()
+    page.wait_for_timeout(300)
+    assert page.evaluate("() => window.__tracks.length") == 1
+    assert win.locator(".ap-mic").get_attribute("data-level") == "0"
+    page.evaluate("() => { window.__level = 200; }")
+    page.wait_for_timeout(200)
+    level = int(win.locator(".ap-mic").get_attribute("data-level"))
+    assert level > 50, level
+    assert page.evaluate("() => getComputedStyle(document.querySelector('#cw-team .ap-mic')).getPropertyValue('--level').trim()") == str(level)
+    # Stopping releases the microphone.
+    win.locator(".ap-mic").click()
+    assert page.evaluate("() => window.__tracks[0].stopped")
+    assert win.locator(".ap-mic").get_attribute("data-level") is None
+
+
+def test_silence_at_the_mic_and_deafness_are_told_apart(page):
+    _voice(page)
+    win = page.locator("#cw-team")
+    # Nothing reaching the browser (QUIET_MS is 4s, DEAF_MS 7s in voice.js).
+    page.evaluate("() => { window.__level = 128; }")
+    win.locator(".ap-mic").click()
+    page.wait_for_timeout(4600)
+    notes = win.locator("#agent-thread .am.note")
+    assert notes.count() == 1 and "No sound is reaching the browser" in notes.last.inner_text()
+    win.locator(".ap-mic").click()
+    # Heard, and nothing comes back.
+    page.evaluate("() => { window.__level = 220; }")
+    win.locator(".ap-mic").click()
+    page.wait_for_timeout(7600)
+    assert notes.count() == 2 and "no words are coming back" in notes.last.inner_text()
+    win.locator(".ap-mic").click()
+    # Heard, and words come: no note at all.
+    win.locator(".ap-mic").click()
+    page.evaluate("() => window.__recs[2].emit([{transcript: 'hello', isFinal: false}])")
+    page.wait_for_timeout(7600)
+    assert notes.count() == 2
+
+
+def test_the_recogniser_listens_in_english(page):
+    _voice(page)
+    page.locator("#cw-team .ap-mic").click()
+    assert page.evaluate("() => window.__recs[0].lang") == "en-US"

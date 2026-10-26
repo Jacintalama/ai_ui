@@ -263,6 +263,66 @@ function sendSpoken(win) {
   if (typeof form.requestSubmit === "function") form.requestSubmit();
   else form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
 }
+export var LANG = "en-US";
+
+// --- the level meter ----------------------------------------------------------
+// What the browser is hearing, live, on the mic itself: a ring that grows
+// with the voice. It is the one thing that tells the two silences apart:
+// no sound reaching the browser (the wrong input device, a muted mic) and
+// sound arriving with no words coming back (the recogniser). Each is said
+// in the thread once, after a few seconds, in its own words.
+var QUIET_MS = 4000, DEAF_MS = 7000, QUIET_LEVEL = 3;
+function meterStart(st) {
+  var md = navigator.mediaDevices, AC = window.AudioContext || window.webkitAudioContext;
+  if (!md || !md.getUserMedia || !AC) return;
+  var m = { stream: null, ctx: null, raf: 0, peak: 0, since: Date.now(), told: false };
+  st.meter = m;
+  md.getUserMedia({ audio: true }).then(function (stream) {
+    if (st.meter !== m || LISTENING !== st) { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
+    m.stream = stream;
+    try {
+      m.ctx = new AC();
+      var src = m.ctx.createMediaStreamSource(stream), an = m.ctx.createAnalyser();
+      an.fftSize = 256;
+      src.connect(an);
+      var buf = new Uint8Array(an.frequencyBinCount), mic = micOf(st.win);
+      (function tick() {
+        if (st.meter !== m || LISTENING !== st) return;
+        an.getByteTimeDomainData(buf);
+        var top = 0;
+        for (var i = 0; i < buf.length; i++) { var d = Math.abs(buf[i] - 128); if (d > top) top = d; }
+        var level = Math.min(100, Math.round(top / 128 * 300));
+        if (level > m.peak) m.peak = level;
+        if (mic) { mic.style.setProperty("--level", String(level)); mic.setAttribute("data-level", String(level)); }
+        var age = Date.now() - m.since;
+        if (!m.told && age > QUIET_MS && m.peak < QUIET_LEVEL) {
+          m.told = true;
+          tell(st.win, "No sound is reaching the browser. Check which microphone it uses (the mic icon at the left of the address bar) and that it is not muted.");
+        } else if (!m.told && age > DEAF_MS && m.peak >= QUIET_LEVEL && !st.heard) {
+          m.told = true;
+          tell(st.win, "You are heard, but no words are coming back from the browser's speech service. Try once more, or type for now.");
+        }
+        m.raf = requestAnimationFrame(tick);
+      })();
+    } catch (e) { /* no meter, the mic still works */ }
+  }).catch(function (e) {
+    if (st.meter !== m || LISTENING !== st) return;
+    var why = e && e.name;
+    if (why === "NotAllowedError" || why === "SecurityError") tell(st.win, heardNothing("not-allowed"));
+    else if (why === "NotFoundError") tell(st.win, heardNothing("audio-capture"));
+  });
+}
+function meterStop(st) {
+  var m = st && st.meter;
+  if (!m) return;
+  st.meter = null;
+  if (m.raf) cancelAnimationFrame(m.raf);
+  if (m.stream) m.stream.getTracks().forEach(function (t) { t.stop(); });
+  if (m.ctx && m.ctx.close) { try { m.ctx.close(); } catch (e) { /* fine */ } }
+  var mic = micOf(st.win);
+  if (mic) { mic.style.removeProperty("--level"); mic.removeAttribute("data-level"); }
+}
+
 export function listen(win, options) {
   var R = Recognizer();
   if (!R || !win) return;
@@ -274,7 +334,10 @@ export function listen(win, options) {
   try { rec = new R(); } catch (e) { return; }
   rec.continuous = true;
   rec.interimResults = true;
-  try { rec.lang = navigator.language || "en-US"; } catch (e) { /* fine */ }
+  // en-US, not the browser's own language: the cloud recogniser answers
+  // every English voice on it, where a less usual locale from the
+  // browser's settings came back with nothing at all (live, 2026-10-26).
+  try { rec.lang = LANG; } catch (e) { /* fine */ }
   // `auto`: opened by itself after an answer, not by a press. Quiet when it
   // hears nothing: a note every time the person did not speak would be
   // noise, where the same silence after a press is worth a word.
@@ -316,6 +379,7 @@ export function listen(win, options) {
     stopListening();
   };
   showListening(win, true);
+  meterStart(st);
   // Chrome allows one recognition at a time and the one just stopped can
   // still be winding down: a start that is refused is tried once more.
   try { rec.start(); } catch (e) {
@@ -350,6 +414,7 @@ export function stopListening() {
   if (!st) return;
   LISTENING = null;
   clearTimeout(st.timer);
+  meterStop(st);
   try { st.rec.onend = null; st.rec.onresult = null; st.rec.onerror = null; st.rec.stop(); } catch (e) { /* fine */ }
   showListening(st.win, false);
 }
