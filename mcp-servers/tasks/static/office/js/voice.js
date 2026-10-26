@@ -294,9 +294,10 @@ export function listen(win) {
   rec.onerror = function (ev) {
     if (LISTENING !== st) return;
     var why = ev && ev.error;
-    if (why === "not-allowed" || why === "service-not-allowed") {
-      if (input) input.placeholder = "Microphone blocked. Allow it in the address bar.";
-    }
+    // Said in the thread, where the person is looking, in the words of
+    // what went wrong: a blocked mic, no mic, the browser's speech service
+    // out of reach, or simply nothing heard. "aborted" is our own stop.
+    if (why !== "aborted") tell(win, heardNothing(why));
     stopListening();
   };
   rec.onend = function () {
@@ -308,6 +309,25 @@ export function listen(win) {
   };
   showListening(win, true);
   try { rec.start(); } catch (e) { stopListening(); }
+}
+//: What a recognition error means to the person.
+export function heardNothing(why) {
+  if (why === "not-allowed" || why === "service-not-allowed") return "Microphone blocked. Allow it for this site in the address bar, then press the mic again.";
+  if (why === "audio-capture") return "No microphone found. Plug one in or check the browser's sound settings.";
+  if (why === "network") return "The browser's speech service could not be reached. Check the connection, or type instead.";
+  if (why === "no-speech") return "Nothing heard. Press the mic and speak.";
+  if (why === "language-not-supported") return "This language is not supported for speech. Type instead.";
+  return "Listening stopped (" + (why || "unknown") + "). Press the mic to try again.";
+}
+//: A note in the window's thread, the way a failed send is told.
+function tell(win, text) {
+  var thread = win.querySelector(".ap-thread");
+  if (!thread) return;
+  var el = document.createElement("div");
+  el.className = "am note";
+  el.textContent = text;
+  thread.appendChild(el);
+  try { thread.scrollTop = thread.scrollHeight; } catch (e) { /* fine */ }
 }
 export function stopListening() {
   var st = LISTENING;

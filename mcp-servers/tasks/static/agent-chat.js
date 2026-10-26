@@ -315,9 +315,19 @@
       || (detail.pathInfo && detail.pathInfo.requestPath) || "";
     if (path.indexOf(PANEL) !== 0) return;
     var status = detail.xhr ? detail.xhr.status : 0;
+    // The server's own reason when it gave one ({"detail": "..."}), and the
+    // status always: "did not go through" alone could not be told apart
+    // from a refused message, a backend that is down or a dropped
+    // connection (reported from the live office, 2026-10-26).
+    var why = "";
+    try {
+      var body = JSON.parse(detail.xhr && detail.xhr.responseText || "");
+      if (body && typeof body.detail === "string") why = body.detail;
+    } catch (x) { /* not JSON */ }
+    try { console.warn("[agent-chat] request failed", status, path, detail.xhr && detail.xhr.responseText); } catch (x) { /* fine */ }
     var said = (status === 401 || status === 403)
       ? "Your sign-in has expired. Reload the page and sign in again."
-      : "That did not go through. Try again in a moment.";
+      : "That did not go through" + (status ? " (" + status + (why ? ": " + why : "") + ")" : " (no reply from the server)") + ". Try again in a moment.";
     // The thread the failed send was aimed at, where the person is looking.
     var el = null, elt = detail.elt;
     var form = elt && elt.closest ? elt.closest("form") : null;

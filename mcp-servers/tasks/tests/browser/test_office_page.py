@@ -3267,3 +3267,37 @@ def test_the_floor_bar_asks_for_the_minutes_and_they_land_in_the_team_chat(page)
     # the words not yet shown are hidden.
     assert "chase Northwind" in page.locator("#agent-thread .am.agent").last.text_content()
     assert not bar.is_disabled()
+
+
+def test_a_mic_that_hears_nothing_says_so_in_the_thread(page):
+    """Reported from the live office 2026-10-26: the mic went red, then
+    nothing, with no word on why. Every recognition error now lands as a
+    note in the window, in the words of what went wrong."""
+    _voice(page)
+    win = page.locator("#cw-team")
+    win.locator(".ap-mic").click()
+    page.evaluate("() => window.__recs[0].onerror({error: 'no-speech'})")
+    assert win.locator(".ap-mic").get_attribute("aria-pressed") == "false"
+    notes = win.locator("#agent-thread .am.note")
+    assert notes.count() == 1
+    assert notes.last.inner_text() == "Nothing heard. Press the mic and speak."
+    win.locator(".ap-mic").click()
+    page.evaluate("() => window.__recs[1].onerror({error: 'network'})")
+    assert "speech service could not be reached" in notes.last.inner_text()
+    win.locator(".ap-mic").click()
+    page.evaluate("() => window.__recs[2].onerror({error: 'not-allowed'})")
+    assert "Microphone blocked" in notes.last.inner_text()
+    # Our own stop is not an error worth a note.
+    win.locator(".ap-mic").click()
+    page.evaluate("() => window.__recs[3].onerror({error: 'aborted'})")
+    assert notes.count() == 3
+
+
+def test_a_failed_send_says_the_status_and_the_servers_reason(page):
+    page.route("**/tasks/agents/chat/send", lambda r: r.fulfill(
+        status=400, content_type="application/json", body='{"detail": "empty message"}'))
+    page.locator("#cw-team .ap-composer input[name=message]").fill("x")
+    page.locator("#cw-team .ap-composer button[type=submit]").click()
+    note = page.locator("#agent-thread .am.note")
+    note.wait_for(timeout=3000)
+    assert note.last.inner_text() == "That did not go through (400: empty message). Try again in a moment."
