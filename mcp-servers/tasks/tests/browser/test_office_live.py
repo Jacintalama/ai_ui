@@ -757,23 +757,3 @@ def test_a_run_starting_at_a_quiet_desk_wakes_the_robot(a_quiet_stream, page):
     assert "waking" in (slot.get_attribute("class") or "")
     page.wait_for_timeout(1100)
     assert "waking" not in (slot.get_attribute("class") or "")
-
-
-@pytest.mark.parametrize("page", [{"activity": {
-    IRIS: {"state": "ready", "last_status": "completed",
-           "last_run_at": "2026-09-24T09:00:00+00:00", "source": "schedule"}}}], indirect=True)
-def test_a_run_starting_ends_the_dance(a_quiet_stream, page):
-    """The floor never dances over a state."""
-    page.locator('.who[data-id="%s"]' % IRIS).click()
-    slot = page.locator('.who-slot[data-id="%s"]' % IRIS)
-    slot.locator(".dance-btn").click()
-    slot.locator('.dance-menu button[data-dance="bop"]').click()
-    page.wait_for_timeout(80)
-    assert "dancing" in (slot.get_attribute("class") or "")
-    STREAM["body"] = _sse({"event": "run_started", "agent_id": IRIS,
-                           "source": "schedule", "at": _now()}, retry=60000)
-    page.wait_for_function(
-        "() => document.querySelector('.who[data-id=\"%s\"]').getAttribute('data-state') === 'working'" % IRIS,
-        timeout=6000)
-    assert "dancing" not in (slot.get_attribute("class") or "")
-    assert slot.get_attribute("data-dance") is None

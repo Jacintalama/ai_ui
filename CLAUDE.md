@@ -169,6 +169,13 @@ ssh root@46.224.193.25 "cd /root/proxy-server && docker compose -f docker-compos
   detached (`systemd-run --unit=NAME --collect /root/script.sh`), never
   interactively.
 
+### Open WebUI tools (open-webui-functions/)
+Files there are Open WebUI "Tools" and "Pipes", installed by pasting them into
+Workspace → Tools in the Open WebUI admin, not by deploy. `agent_builder_tool.py`
+(2026-10-22) lets any chat model create agents for the signed-in person
+through `/agents/make` and `/agents/roster`; it sends only `X-User-Email`, like
+`schedules_tool.py`, and the service scopes every call to that email.
+
 ### Hard rules
 - **NEVER deploy your local `mcp-servers/tasks/templates.py`.** The server's copy is ahead (more App Builder templates). Pull the server's version before editing, or you'll silently drop templates.
 - **NEVER touch, overwrite, or commit `.env`** — the server's `.env` holds the only copy of the real production secrets.

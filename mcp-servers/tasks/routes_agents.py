@@ -18,10 +18,11 @@ stop the Agents page from listing whatever the person already has.
 import json
 import logging
 import os
+import re
 import uuid
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from sqlalchemy import text as sql_text
@@ -32,9 +33,7 @@ import agent_todo
 import agent_events
 import agent_memory
 import agent_skills
-import agent_voice
 import free_pool
-import video_voices
 from agent_runner import _owui_user_id_for
 from agent_templates import TEMPLATES
 from auth import AdminUser, CurrentUser, current_admin, current_user
@@ -845,41 +844,102 @@ async def free_models(user: AdminUser = Depends(current_admin)) -> dict:
     """
     return await free_pool.check()
 
+# --- an agent made for the person by a model in the chat (2026-10-22) ----------
+# "can any models create the agents by itself inside instead of user doing
+# it manually". The Agent Builder tool (open-webui-functions/agent_builder_tool.py) calls
+# these as the signed-in person, so a model in the main chat can make an
+# agent, list them, and put them in rooms. The body is the one the agents
+# page writes (agents.html buildAgentBody), so an agent made this way is an
+# ordinary agent the page can open and edit.
 
-# --- a voice for the office chat (2026-10-23) -------------------------------
-# Hearing is the browser's own; this is the speaking half. See agent_voice.py.
-
-class SayIn(BaseModel):
-    text: str = Field(..., max_length=20000)
-    voice: str = Field("", max_length=40)
-
-
-@router.get("/voice/voices")
-async def voice_voices(user: CurrentUser = Depends(current_user)) -> dict:
-    """The voices an agent may be given: the Piper voices this container
-    carries, with a sample clip each. Ids and labels, never paths."""
-    return {"voices": video_voices.voice_catalog()}
+AGENT_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]{1,23}$")
+MAX_INSTRUCTIONS = 4000
+MAX_AGENTS = 25
+ACCESS_LEVELS = ("read", "ask", "all")
 
 
-@router.post("/voice/say")
-async def voice_say(body: SayIn, user: CurrentUser = Depends(current_user)) -> Response:
-    """One sentence of an answer as a WAV in the agent's voice.
+class MakeAgentIn(BaseModel):
+    name: str
+    instructions: str
+    role: str | None = None
+    #: read (looks things up), ask (acts, asks first), all (acts). Default
+    #: read: a model should not hand out tools nobody chose.
+    access: str = "read"
 
-    400 when there is nothing to say once the markdown is read out, 429 past
-    the person's sentences-per-minute, 503 when the voice cannot be made
-    (no Piper, no model, a job that failed): the client keeps the text."""
-    words = agent_voice.spoken_text(body.text)
-    if not words:
-        raise HTTPException(status_code=400, detail="nothing to say")
-    if body.voice and not video_voices.is_valid_voice(body.voice):
-        raise HTTPException(status_code=400, detail="no such voice")
-    if not agent_voice.LIMIT.allow(user.email):
-        raise HTTPException(status_code=429, detail="too many sentences a minute; the answer stays text")
-    try:
-        wav = await agent_voice.synthesize(words, body.voice or None)
-    except agent_voice.VoiceError as exc:
-        logger.warning("voice: %s", exc)
-        raise HTTPException(status_code=503, detail="the voice is not available right now")
-    return Response(content=wav, media_type="audio/wav",
-                    headers={"Cache-Control": "no-store",
-                             "X-Voice": agent_voice.voice_or_default(body.voice or None)})
+
+def _make_agent_body(agent_id: str, name: str, role: str | None,
+                     instructions: str, access: str) -> dict:
+    meta = {"description": instructions[:120], "toolIds": ["server:mcp-proxy"],
+            "agent_instructions": instructions, "access": access}
+    if role:
+        meta["role"] = role
+    return {"id": agent_id, "name": name, "base_model_id": _default_model(),
+            "meta": meta, "params": {"system": instructions},
+            "access_grants": [], "is_active": True}
+
+
+def _agent_problem(name: str, instructions: str, access: str, mine: int) -> str:
+    if not name:
+        return "Give the agent a name."
+    if not AGENT_NAME_RE.match(name):
+        return ("A name is one word, 2 to 24 characters, starts with a letter "
+                "and uses only letters and numbers: 'Jack' works, 'Research Agent' does not.")
+    if not instructions:
+        return "Tell the agent what to do."
+    if len(instructions) > MAX_INSTRUCTIONS:
+        return f"Instructions are {len(instructions)} characters. The limit is {MAX_INSTRUCTIONS}."
+    if access not in ACCESS_LEVELS:
+        return "Access is one of read, ask or all."
+    if mine >= MAX_AGENTS:
+        return f"You have {MAX_AGENTS} agents, which is the limit. Delete one to make another."
+    return ""
+
+
+async def _roster_for(email: str) -> list[dict]:
+    """This person's agents, as the chat sees them: id, name, role."""
+    from routes_agent_chat import _agents_for
+    agents = await _agents_for(email)
+    out = []
+    for a in agents or []:
+        if not isinstance(a, dict):
+            continue
+        meta = a.get("meta") if isinstance(a.get("meta"), dict) else {}
+        out.append({"id": str(a.get("id") or ""), "name": str(a.get("name") or ""),
+                    "role": str(meta.get("role") or "")})
+    return out
+
+
+@router.get("/roster")
+async def roster(user: CurrentUser = Depends(current_user)) -> dict:
+    return {"agents": await _roster_for(user.email)}
+
+
+@router.post("/make")
+async def make_agent(body: MakeAgentIn, user: CurrentUser = Depends(current_user)) -> dict:
+    name = (body.name or "").strip()
+    instructions = (body.instructions or "").strip()
+    role = (body.role or "").strip() or None
+    access = (body.access or "read").strip().lower()
+    mine = await _roster_for(user.email)
+    problem = _agent_problem(name, instructions, access, len(mine))
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
+    if any(a["name"].lower() == name.lower() for a in mine):
+        raise HTTPException(status_code=400, detail=f"You already have an agent called {name}.")
+    user_id = await _owui_user_id_for(user.email)
+    if not user_id:
+        raise HTTPException(status_code=400, detail="No account was found for you.")
+    token = mint_owui_token(user_id, SEED_TOKEN_TTL_SECONDS,
+                            session_stamp=await session_stamp_for(user_id))
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "agent"
+    status, result = 0, None
+    for _ in range(2):
+        agent_id = _new_agent_id(slug)
+        status, result = await _create_model(
+            token, _make_agent_body(agent_id, name, role, instructions, access))
+        if status == 200:
+            return {"id": agent_id, "name": name, "role": role, "access": access}
+        if not _is_duplicate_id_error(status, result):
+            break
+    logger.warning("could not make an agent for %s: status=%s", user.email, status)
+    raise HTTPException(status_code=502, detail="Could not save that agent. Try again in a moment.")
