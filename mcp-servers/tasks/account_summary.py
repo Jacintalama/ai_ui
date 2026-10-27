@@ -26,6 +26,8 @@ id and secret are actually configured on this box.
 """
 import logging
 
+import agent_llm
+
 from connections import PROVIDERS as CANONICAL_PROVIDERS
 from routes_agents import _connected_providers
 
@@ -174,7 +176,7 @@ async def _own_agents(email: str) -> list:
             # None is not "read only": it means nobody ever chose, which is
             # worth saying plainly so the owner can go and choose.
             "access": _ACCESS_LABEL.get(level, "not set, so it only reads"),
-            "model": str(agent.get("base_model_id") or ""),
+            "model": str(agent_llm.llm_of(agent) or ""),
             "tools": len(tools) if isinstance(tools, list) else 0,
         })
     return out

@@ -30,6 +30,7 @@ from sse_starlette.sse import EventSourceResponse
 
 import agent_activity
 import agent_avatar
+import agent_llm
 import agent_todo
 import agent_events
 import agent_memory
@@ -175,7 +176,9 @@ def _body_for(template: dict, agent_id: str) -> dict:
     return {
         "id": agent_id,
         "name": template["name"],
-        "base_model_id": _default_model(),
+        # The IO pipe, so that @mentioning the agent in the main chat runs
+        # our loop; the language model is meta.llm (agent_llm, 2026-10-27).
+        "base_model_id": agent_llm.base_model(),
         # role rides beside toolIds because that is where the page reads
         # it from. A template with no role writes no key rather than an
         # empty one: an empty string is a role somebody chose to clear,
@@ -183,6 +186,7 @@ def _body_for(template: dict, agent_id: str) -> dict:
         "meta": dict(({"toolIds": template["tool_ids"], "role": template["role"]}
                       if template.get("role")
                       else {"toolIds": template["tool_ids"]}),
+                     llm=_default_model(),
                      # The office robot, so the chat shows the same face.
                      profile_image_url=agent_avatar.data_uri(agent_id, template["name"])),
         "params": {"system": template["instructions"]},
@@ -265,13 +269,13 @@ async def seed(x_cron_secret: str = Header(default=""),
     if not x_user_email:
         raise HTTPException(status_code=400, detail="Missing X-User-Email")
     out = await seed_for_email(x_user_email)
-    # And a face for any agent made before faces existed (2026-10-27):
-    # the agents page calls this once on load, so this is where the
-    # backfill rides. Best effort, like the seeding itself.
+    # And, for any agent made before 2026-10-27, its face and its move to
+    # the IO pipe: the agents page calls this once on load, so this is
+    # where the backfill rides. Best effort, like the seeding itself.
     try:
-        out["faces"] = await give_faces(x_user_email.strip().lower())
+        out["refresh"] = await refresh_agents(x_user_email.strip().lower())
     except Exception:                                       # noqa: BLE001
-        logger.warning("faces: backfill failed for %s", x_user_email, exc_info=True)
+        logger.warning("refresh: backfill failed for %s", x_user_email, exc_info=True)
     return out
 
 
@@ -899,10 +903,11 @@ def _make_agent_body(agent_id: str, name: str, role: str | None,
                      instructions: str, access: str) -> dict:
     meta = {"description": instructions[:120], "toolIds": ["server:mcp-proxy"],
             "agent_instructions": instructions, "access": access,
+            "llm": _default_model(),
             "profile_image_url": agent_avatar.data_uri(agent_id, name)}
     if role:
         meta["role"] = role
-    return {"id": agent_id, "name": name, "base_model_id": _default_model(),
+    return {"id": agent_id, "name": name, "base_model_id": agent_llm.base_model(),
             "meta": meta, "params": {"system": instructions},
             "access_grants": [], "is_active": True}
 
@@ -989,44 +994,73 @@ async def avatar(id: str = "", name: str = "",
     return {"data_uri": agent_avatar.data_uri(id.strip(), name.strip() or id.strip())}
 
 
-async def give_faces(email: str) -> dict:
-    """Give every agent of this person that has no picture its robot.
+def _refreshed(agent: dict) -> dict | None:
+    """The row this agent should have today, or None when it has it.
+
+    Two things an agent made before 2026-10-27 lacks: its face, and the IO
+    pipe as its base with its model kept in meta.llm, so that @mentioning
+    it in the main chat runs our loop (agent_llm). An agent on a pipe with
+    no model at all is given the platform default: it could not run before,
+    and now it can."""
+    agent_id, name = str(agent.get("id") or ""), str(agent.get("name") or "")
+    meta = dict(agent.get("meta") or {}) if isinstance(agent.get("meta"), dict) else {}
+    base = agent.get("base_model_id")
+    changed = False
+    if not meta.get("profile_image_url"):
+        meta["profile_image_url"] = agent_avatar.data_uri(agent_id, name or agent_id)
+        changed = True
+    if not agent_llm.is_callback(base):
+        if isinstance(base, str) and base:
+            meta["llm"] = base
+        base = agent_llm.base_model()
+        changed = True
+    if not agent_llm.llm_of({"base_model_id": base, "meta": meta}):
+        meta["llm"] = _default_model()
+        changed = True
+    if not changed:
+        return None
+    return {"id": agent_id, "name": name, "base_model_id": base,
+            "meta": meta, "params": agent.get("params") or {},
+            "access_grants": agent.get("access_grants") or [],
+            "is_active": agent.get("is_active", True)}
+
+
+async def refresh_agents(email: str) -> dict:
+    """Bring every agent of this person up to date: a face, and the IO
+    pipe as its base with the model in meta.llm. See _refreshed.
 
     Idempotent and best effort: an agent that cannot be updated is counted
     and left as it was. Rides on the seed call the agents page makes."""
     from routes_agent_chat import _agents_for
     agents = await _agents_for(email)
-    todo = [a for a in agents or [] if isinstance(a, dict)
-            and not (isinstance(a.get("meta"), dict) and a["meta"].get("profile_image_url"))]
+    todo = [(a, _refreshed(a)) for a in agents or [] if isinstance(a, dict)]
+    todo = [(a, body) for a, body in todo if body is not None]
     if not todo:
-        return {"given": 0, "failed": 0}
+        return {"updated": 0, "failed": 0}
     user_id = await _owui_user_id_for(email)
     if not user_id:
-        return {"given": 0, "failed": len(todo)}
+        return {"updated": 0, "failed": len(todo)}
     token = mint_owui_token(user_id, SEED_TOKEN_TTL_SECONDS,
                             session_stamp=await session_stamp_for(user_id))
-    given = failed = 0
-    for a in todo:
-        agent_id, name = str(a.get("id") or ""), str(a.get("name") or "")
-        meta = dict(a.get("meta") or {})
-        meta["profile_image_url"] = agent_avatar.data_uri(agent_id, name or agent_id)
-        body = {"id": agent_id, "name": name, "base_model_id": a.get("base_model_id"),
-                "meta": meta, "params": a.get("params") or {},
-                "access_grants": a.get("access_grants") or [],
-                "is_active": a.get("is_active", True)}
+    updated = failed = 0
+    for agent, body in todo:
         try:
-            status, _ = await _update_model(token, agent_id, body)
+            status, _ = await _update_model(token, body["id"], body)
         except Exception:                                   # noqa: BLE001
-            logger.warning("faces: could not update %s", agent_id, exc_info=True)
+            logger.warning("refresh: could not update %s", body["id"], exc_info=True)
             status = 0
         if status == 200:
-            given += 1
+            updated += 1
         else:
             failed += 1
-    return {"given": given, "failed": failed}
+    return {"updated": updated, "failed": failed}
 
 
-@router.post("/faces")
-async def faces(user: CurrentUser = Depends(current_user)) -> dict:
+#: The name the first backfill had (faces alone, 2026-10-27 morning).
+give_faces = refresh_agents
+
+
+@router.post("/refresh")
+async def refresh(user: CurrentUser = Depends(current_user)) -> dict:
     """The backfill on request, for an operator or a script."""
-    return await give_faces(user.email)
+    return await refresh_agents(user.email)

@@ -15,6 +15,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+import agent_llm
 import graph_embeddings
 from auth import current_user, CurrentUser
 
@@ -666,7 +667,8 @@ async def _read_agents(conn, user_email: str, limit: int = 200) -> list:
         skills = meta.get("skillIds")
         out.append(agent_item(r["name"], meta.get("role"),
                               skills if isinstance(skills, list) else [],
-                              r["base_model_id"]))
+                              agent_llm.llm_of({"base_model_id": r["base_model_id"],
+                                                "meta": meta})))
     return out
 
 
