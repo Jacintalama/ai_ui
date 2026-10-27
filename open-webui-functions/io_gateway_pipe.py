@@ -49,6 +49,10 @@ EMPTY = "There was nothing to answer."
 MAX_ARG_CHARS = 120
 MAX_ARGS_SHOWN = 5
 
+#: What this pipe is called as a model. A message sent to one of these is
+#: for whoever the service decides; anything else is an agent's own id.
+OWN_MODEL_IDS = frozenset({"io", "io.io"})
+
 
 class Pipe:
     class Valves(BaseModel):
@@ -70,16 +74,41 @@ class Pipe:
     # --- talking to the tasks service -------------------------------------
 
     async def _ask_tasks(self, user_email: str, chat_id: str,
-                         messages: list) -> dict:
-        """Who should answer, and their answer if it is an agent."""
+                         messages: list, agent_id: str = "") -> dict:
+        """Who should answer, and their answer if it is an agent.
+
+        `agent_id` names the agent the message was sent to, when Open WebUI
+        sent it to an agent's own model (see _agent_addressed); the service
+        then runs that agent and nobody else."""
+        payload = {"user_email": user_email, "chat_id": chat_id,
+                   "messages": messages}
+        if agent_id:
+            payload["agent_id"] = agent_id
         async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
             r = await client.post(
                 self.valves.TASKS_URL.rstrip("/") + "/agents/chat",
                 headers={"X-Internal-Secret": self.valves.INTERNAL_SECRET},
-                json={"user_email": user_email, "chat_id": chat_id,
-                      "messages": messages})
+                json=payload)
             r.raise_for_status()
             return r.json()
+
+    def _agent_addressed(self, metadata: dict = None) -> str:
+        """The agent this message was sent to, or "".
+
+        Since 2026-10-27 every agent's base model is this pipe, so that
+        @Ada in the main chat reaches our loop. Open WebUI then calls this
+        pipe with body["model"] set to the base (this pipe) and the
+        workspace model, Ada, in __metadata__["model"]. Its id is what the
+        service knows the agent by. A message sent to the IO model itself
+        carries this pipe's own id here, and is nobody's in particular."""
+        model = (metadata or {}).get("model") if isinstance(metadata, dict) else None
+        mid = model.get("id") if isinstance(model, dict) else None
+        if not isinstance(mid, str) or not mid.strip():
+            return ""
+        mid = mid.strip()
+        if mid in OWN_MODEL_IDS:
+            return ""
+        return mid
 
     # --- rendering ---------------------------------------------------------
 
@@ -112,10 +141,15 @@ class Pipe:
         lines.append("Reply yes to let it, or no to skip.")
         return "\n".join(lines)
 
-    def _render_turn(self, turn: dict, faces: dict = None) -> str:
+    def _render_turn(self, turn: dict, faces: dict = None,
+                     plain: bool = False) -> str:
         """One turn, on its own. Same rules the single-turn shape always
         used: a pending turn asks its approval question, a turn with no
         agent gets no name prefix, and notes ride along after the answer.
+
+        `plain` leaves the name and face off: the message was sent to the
+        agent's own model, so Open WebUI already shows its face and name
+        on the reply, and a second one would read as a stutter.
         """
         agent = turn.get("agent")
         agent = agent if isinstance(agent, dict) else None
@@ -137,7 +171,7 @@ class Pipe:
             note_text = "\n".join(notes)
             answer = (answer + "\n\n" + note_text) if answer else note_text
         answer = answer or EMPTY
-        if self.valves.SHOW_AGENT_NAME:
+        if self.valves.SHOW_AGENT_NAME and not plain:
             # The office robot before the name, when the service sent it
             # (2026-10-27), so the reply shows who answered at a glance.
             face = (faces or {}).get(str(agent.get("id") or "")) if isinstance(faces, dict) else None
@@ -147,7 +181,7 @@ class Pipe:
             return "**%s**\n\n%s" % (name, answer)
         return answer
 
-    def _render(self, out) -> str:
+    def _render(self, out, plain: bool = False) -> str:
         # Comes over HTTP from another service, so the shape is not ours to
         # trust. _approval_question and _render_turn above are defensive for
         # the same reason.
@@ -158,12 +192,13 @@ class Pipe:
         if not turns:
             return EMPTY
         faces = out.get("faces")
-        return "\n\n".join(self._render_turn(t, faces) for t in turns)
+        return "\n\n".join(self._render_turn(t, faces, plain) for t in turns)
 
     # --- the entry point ---------------------------------------------------
 
     async def pipe(self, body: dict, __user__: dict = None,
-                   __event_emitter__: Optional[Callable[[dict], Any]] = None):
+                   __event_emitter__: Optional[Callable[[dict], Any]] = None,
+                   __metadata__: dict = None):
         """One message in, one answer out.
 
         Every exit returns a sentence. Somebody is watching this chat, so a
@@ -179,16 +214,28 @@ class Pipe:
                    or (body.get("metadata") or {}).get("chat_id")
                    or "web")
 
+        agent_id = self._agent_addressed(__metadata__)
+        messages = body.get("messages") or []
+        if agent_id:
+            # Open WebUI put the agent's own instructions in front as a
+            # system message. The service writes the agent's brief itself,
+            # instructions included, so that copy would say it all twice.
+            messages = [m for m in messages
+                        if not (isinstance(m, dict) and m.get("role") == "system")]
+            if not messages:
+                return EMPTY
+
         try:
-            out = await self._ask_tasks(user_email, chat_id,
-                                        body.get("messages") or [])
+            out = await self._ask_tasks(user_email, chat_id, messages,
+                                        agent_id=agent_id)
         except Exception:                                   # noqa: BLE001
             # Never include the exception text: an httpx error can carry the
             # request URL, and this project has already leaked a token that way.
             return TASKS_DOWN
 
         try:
-            return AIUI_TURNS_STRIP_RE.sub("", self._render(out)).rstrip()
+            return AIUI_TURNS_STRIP_RE.sub(
+                "", self._render(out, plain=bool(agent_id))).rstrip()
         except Exception:                               # noqa: BLE001
             # Never let a shape we did not expect turn into a framework error
             # in somebody's chat window.

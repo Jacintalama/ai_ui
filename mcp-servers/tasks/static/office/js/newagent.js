@@ -21,6 +21,16 @@ var MAX_AGENTS = 25;
 //: Pipes that hand the question back to your agents: an agent set to one
 //: answers itself for ever (agents.html CALLBACK_MODELS).
 var CALLBACK_MODELS = ["auto_router.auto", "io.io"];
+//: Every agent's base model is the IO pipe, so that @mentioning it in the
+//: main chat runs our loop; the language model is meta.llm (agents.html
+//: AGENT_BASE and llmOf, agent_llm.py).
+var AGENT_BASE = "io.io";
+export function llmOf(m) {
+  var base = (m && m.base_model_id) || "";
+  if (CALLBACK_MODELS.indexOf(base) === -1) return base;
+  var llm = m && m.meta && m.meta.llm;
+  return typeof llm === "string" ? llm : "";
+}
 //: Models that cannot answer a chat turn at all (agents.html
 //: NON_CHAT_MODELS, by prefix here rather than the whole list: every id on
 //: that list starts with one of these, and a new image or audio model is
@@ -58,10 +68,11 @@ export function newAgentId(name) {
 export function buildBody(f) {
   var meta = { description: f.instructions.slice(0, 120),
                toolIds: ["server:mcp-proxy"],
-               agent_instructions: f.instructions };
+               agent_instructions: f.instructions,
+               llm: f.baseModel };
   if (f.role) meta.role = f.role;
   if (f.access) meta.access = f.access;
-  return { id: f.id, name: f.name, base_model_id: f.baseModel, meta: meta,
+  return { id: f.id, name: f.name, base_model_id: AGENT_BASE, meta: meta,
            params: { system: f.instructions }, access_grants: [], is_active: true };
 }
 
@@ -133,7 +144,7 @@ export function initNewAgent(opts) {
       if (id && ids.indexOf(id) !== -1 && rec.indexOf(id) === -1) rec.push(id);
     }
     recommend(got.preferred);
-    (agents || []).forEach(function (a) { recommend(a.base_model_id); });
+    (agents || []).forEach(function (a) { recommend(llmOf(a)); });
     function group(label, list) {
       if (!list.length) return;
       var g = document.createElement("optgroup");

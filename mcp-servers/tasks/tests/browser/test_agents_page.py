@@ -567,11 +567,37 @@ def test_editing_then_creating_does_not_overwrite_the_edited_agent(page):
 
 def test_a_save_always_sends_a_base_model(page):
     """A row with no base model is dropped by the list endpoint, so the agent
-    would exist and never be shown again."""
+    would exist and never be shown again. Since 2026-10-27 the base is the
+    IO pipe, so @mentioning the agent in the main chat runs our loop, and
+    the model picked is meta.llm (agent_llm.py)."""
     _fill(page)
     page.locator("#agent-save").click()
     page.wait_for_timeout(300)
-    assert json.loads(page.sent[-1]["body"])["base_model_id"] == "gpt-4o-mini"
+    body = json.loads(page.sent[-1]["body"])
+    assert body["base_model_id"] == "io.io"
+    assert body["meta"]["llm"] == "gpt-4o-mini"
+
+
+def test_an_agent_on_the_pipe_shows_and_keeps_its_language_model(page):
+    """An agent made since 2026-10-27: base io.io, model in meta.llm. The
+    card and the form show the model, not the pipe, and an edit keeps it."""
+    page.evaluate(
+        "() => { const a = window.__aiuiAgents.state.agents"
+        ".find(x => x.id === 'agent-mine-a1b2');"
+        " a.base_model_id = 'io.io'; a.meta = Object.assign({}, a.meta, {llm: 'gpt-4o-mini'});"
+        " window.__aiuiAgents.render(); }")
+    card = page.locator('.card[data-agent-id="agent-mine-a1b2"]')
+    assert "io.io" not in card.inner_text()
+    assert "gpt-4o-mini" in card.inner_text()
+    card.locator('[data-act="edit"]').click()
+    page.wait_for_selector("#agent-form", state="visible")
+    page.wait_for_timeout(150)
+    assert page.locator("#agent-base").input_value() == "gpt-4o-mini"
+    assert not page.locator("#model-warn").is_visible()
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    body = json.loads(page.sent[-1]["body"])
+    assert body["base_model_id"] == "io.io" and body["meta"]["llm"] == "gpt-4o-mini"
 
 
 def test_the_form_refuses_to_save_with_no_model_to_pick(page):
@@ -1520,7 +1546,9 @@ def test_a_new_agent_saves_with_the_platform_default(page):
     _fill(page, name="Startsright", instructions="Something.")
     page.locator("#agent-save").click()
     page.wait_for_timeout(300)
-    assert json.loads(page.sent[-1]["body"])["base_model_id"] == DEFAULT_MODEL
+    body = json.loads(page.sent[-1]["body"])
+    assert body["meta"]["llm"] == DEFAULT_MODEL
+    assert body["base_model_id"] == "io.io"
 
 
 def test_recommended_comes_first_with_the_default_and_your_own_models(page):

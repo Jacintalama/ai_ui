@@ -188,9 +188,22 @@ agent answers if its reply holds up (`agent_jev.reply_answers`); otherwise the
 free model answers. No key means no Jev and the chat behaves as before.
 Agents carry the office robot as their profile picture (`agent_avatar.py`,
 set on create and backfilled on the agents page's seed call,
-`routes_agents.give_faces`), so an agent mentioned with `@` in the main chat answers with its own
+`routes_agents.refresh_agents`), so an agent mentioned with `@` in the main chat answers with its own
 face; a reply Auto routed to an agent opens with the small robot and the name
 (`rendered_web` and `faces` on `/agents/chat`).
+
+**`@Ada` runs our loop (2026-10-27).** Every agent's `base_model_id` is the IO
+pipe (`io.io`) and its language model is `meta.llm` (`agent_llm.py`: `llm_of`,
+`on_pipe`, `base_model`). Open WebUI sends an `@`-mentioned agent's message to
+the pipe with the agent in `__metadata__["model"]`; the pipe posts
+`agent_id` to `/agents/chat`, which runs that agent and nobody else, with the
+brief, skills, memory and access level. The runner posts `meta.llm` directly
+with the instructions in front and **never the agent id** (that is the loop
+behind `CALLBACK_MODEL_IDS`); an agent on a pipe with no `meta.llm` is still
+refused. The same seed call moves older agents over, keeping the model they
+had. The agents page and the office form pick `meta.llm` and always write
+`io.io` as the base. The IO pipe must be installed and enabled in Open WebUI,
+or a mentioned agent answers "Model not found".
 
 ### Hard rules
 - **NEVER deploy your local `mcp-servers/tasks/templates.py`.** The server's copy is ahead (more App Builder templates). Pull the server's version before editing, or you'll silently drop templates.

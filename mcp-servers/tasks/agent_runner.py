@@ -27,6 +27,7 @@ import agent_access
 import agent_activity
 import agent_brief
 import agent_escalation
+import agent_llm
 import agent_graph
 import agent_handoff
 import agent_jev
@@ -445,7 +446,7 @@ async def _available_free_ids() -> set | None:
 async def _fallback_pool(agent: dict | None) -> list[str]:
     """The pool ids to try after the agent's own base, in order, or [] for
     an agent that is not on a pool model (or no agent at all)."""
-    base = (agent or {}).get("base_model_id")
+    base = agent_llm.llm_of(agent)
     if not _in_pool(base):
         return []
     available = await _available_free_ids()
@@ -737,10 +738,18 @@ async def _chat(token: str, model: str, messages: list[dict],
     # something defined to return, instead of an UnboundLocalError.
     content = ""
 
-    base = (agent or {}).get("base_model_id")
+    # The language model, not the base: an agent made since 2026-10-27 has
+    # the IO pipe as its base and its model in meta.llm (agent_llm). Such an
+    # agent is posted by its model id from the first completion, with its
+    # instructions in front, the way a fallback always was. Posting its own
+    # id would reach the pipe, which would ask the service, which would run
+    # this agent again, without end.
+    base = agent_llm.llm_of(agent)
     free = _in_pool(base)
     pool = await _fallback_pool(agent) if free else []
-    active = model            # the model id posted; the agent id until a fallback
+    # The model id posted: the agent id, until a fallback, for an agent whose
+    # base is its model; its language model throughout for one on the pipe.
+    active = base if agent_llm.on_pipe(agent) else model
     instructions = _agent_system(agent)
     usage = usage if usage is not None else agent_escalation.TurnUsage()
     # Only a free agent moves, and only when its caller said who is asking.
