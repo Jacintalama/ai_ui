@@ -1,0 +1,42 @@
+{
+  "name": "IO: run an agent",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "io-run-agent",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook in",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "io-run-agent"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://ai-ui.coolestdomain.win/api/tasks/agents/run",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "Bearer iok_PASTE_YOUR_KEY_HERE"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ agent: $json.body.agent || 'Ada', message: $json.body.message }) }}",
+        "options": {"timeout": 420000}
+      },
+      "name": "Run the agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [260, 0]
+    }
+  ],
+  "connections": {
+    "Webhook in": {"main": [[{"node": "Run the agent", "type": "main", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"}
+}

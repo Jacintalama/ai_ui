@@ -107,6 +107,9 @@ SOURCE_CHANNEL = "channel"
 #: Another agent asked for this run. The office reads it to say who is
 #: helping whom, which is a fact about a row rather than an animation.
 SOURCE_COLLEAGUE = "colleague"
+#: Started from outside through an automation key (routes_automation): an
+#: n8n workflow, a script. The office shows it like a scheduled run.
+SOURCE_AUTOMATION = "automation"
 #: Every agent was asked at once, because the words called a meeting.
 #: agent_routing detects one and makes nobody allowed to pass, but until
 #: this existed the runs it started were indistinguishable from five people

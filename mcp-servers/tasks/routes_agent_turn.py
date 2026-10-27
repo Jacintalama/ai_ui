@@ -338,6 +338,8 @@ async def _run_turn(user_email: str, agent_id: str, messages: list[dict],
         # next: it is why this run exists, more specifically than a meeting.
         (agent_activity.SOURCE_COLLEAGUE
          if surface == agent_access.SURFACE_COLLEAGUE
+         else agent_activity.SOURCE_AUTOMATION
+         if surface == agent_access.SURFACE_AUTOMATION
          else agent_activity.SOURCE_JOB if agent_activity.in_job_step()
          else agent_activity.SOURCE_MEETING if agent_activity.in_meeting()
          else agent_activity.SOURCE_CHANNEL),

@@ -207,6 +207,23 @@ class BotState(Base):
     expires_at = Column(DateTime(timezone=True), nullable=True)
 
 
+class AutomationKey(Base):
+    """A key that lets something off the box, an n8n workflow first of all,
+    run one of this person's agents (routes_automation). Only the hash is
+    stored; the key itself is shown once when made. See migration 059."""
+    __tablename__ = "automation_key"
+    __table_args__ = {"schema": "tasks"}
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_email = Column(Text, nullable=False)
+    label = Column(Text, nullable=False, default="")
+    key_hash = Column(Text, nullable=False, unique=True)
+    prefix = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+
+
 class GatewayLink(Base):
     """A platform account (Telegram, CLI) paired to an IO account.
 

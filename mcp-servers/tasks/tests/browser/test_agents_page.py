@@ -1877,3 +1877,92 @@ def test_a_refused_read_never_tells_an_owner_the_agent_is_not_theirs(page):
     assert (wrap.locator(".memory-note").inner_text().strip()
             == "Could not read the notes.")
     assert "That is not one of your agents." not in page.content()
+
+
+# --- automation keys (2026-10-27) ---------------------------------------------
+
+def _keys_route(page, keys):
+    """Answer the keys endpoints from `keys`, a list the test owns, so a make
+    or a revoke shows up on the next listing the way it does for real."""
+    def route(r):
+        url, method = r.request.url, r.request.method
+        if url.rstrip("/").endswith("/api/tasks/agents/keys") and method == "GET":
+            body = {"keys": list(keys)}
+        elif url.rstrip("/").endswith("/api/tasks/agents/keys") and method == "POST":
+            label = json.loads(r.request.post_data or "{}").get("label", "")
+            keys.append({"id": "k%d" % (len(keys) + 1), "label": label, "prefix": "iok_abcd1234",
+                         "created_at": "2026-10-27T08:00:00+00:00", "last_used_at": None,
+                         "revoked_at": None})
+            body = dict(keys[-1], key="iok_abcd1234efgh5678ijkl9012mnop3456")
+        elif "/api/tasks/agents/keys/" in url and method == "DELETE":
+            kid = url.rsplit("/", 1)[1]
+            for k in keys:
+                if k["id"] == kid:
+                    k["revoked_at"] = "2026-10-27T09:00:00+00:00"
+            body = {"revoked": True}
+        else:
+            r.fallback()
+            return
+        r.fulfill(status=200, content_type="application/json", body=json.dumps(body))
+    page.route("**/api/tasks/agents/keys**", route)
+
+
+def test_the_page_asks_nothing_about_keys_until_the_panel_opens(page):
+    """A request on load is one more thing every visit pays for; the panel
+    reads its keys when it opens. Everything the page sent on load was
+    recorded in `sent`, so a GET of the keys there would show."""
+    assert not any("/agents/keys" in s["url"] for s in page.sent)
+
+
+def test_a_key_is_made_shown_once_listed_and_revoked(page):
+    keys = []
+    _keys_route(page, keys)
+    page.locator("#open-automation").click()
+    page.wait_for_selector("#automation-panel", state="visible")
+    assert "No keys yet" in page.locator("#automation-list").inner_text()
+    assert page.locator("#automation-new").is_hidden()
+
+    page.fill("#automation-label", "n8n inbox")
+    page.locator("#automation-make").click()
+    page.wait_for_selector("#automation-new:not([hidden])")
+    assert page.locator("#automation-key").inner_text() == "iok_abcd1234efgh5678ijkl9012mnop3456"
+    row = page.locator('#automation-list [data-key-id="k1"]')
+    row.wait_for(state="visible")
+    assert "n8n inbox" in row.inner_text() and "iok_abcd1234..." in row.inner_text()
+    assert "never used" in row.inner_text()
+    assert page.locator("#automation-label").input_value() == ""
+
+    row.locator("[data-revoke-key]").click()
+    page.locator('#automation-list [data-key-id="k1"]').wait_for(state="detached")
+    assert "No keys yet" in page.locator("#automation-list").inner_text()
+
+    # Closing and reopening never shows the key again.
+    page.locator("#automation-close").click()
+    assert page.locator("#automation-panel").is_hidden()
+    page.locator("#open-automation").click()
+    page.wait_for_selector("#automation-panel", state="visible")
+    assert page.locator("#automation-new").is_hidden()
+
+
+def test_the_key_limit_is_shown_as_the_servers_sentence(page):
+    def route(r):
+        if r.request.method == "POST":
+            r.fulfill(status=409, content_type="application/json",
+                      body=json.dumps({"detail": "You have 10 keys, which is the limit. Revoke one to make another."}))
+        else:
+            r.fulfill(status=200, content_type="application/json", body=json.dumps({"keys": []}))
+    page.route("**/api/tasks/agents/keys**", route)
+    page.locator("#open-automation").click()
+    page.wait_for_selector("#automation-panel", state="visible")
+    page.locator("#automation-make").click()
+    page.wait_for_timeout(200)
+    assert "Revoke one" in page.locator("#automation-error").inner_text()
+    assert page.locator("#automation-new").is_hidden()
+
+
+def test_escape_closes_the_automation_panel_first(page):
+    _keys_route(page, [])
+    page.locator("#open-automation").click()
+    page.wait_for_selector("#automation-panel", state="visible")
+    page.keyboard.press("Escape")
+    assert page.locator("#automation-panel").is_hidden()

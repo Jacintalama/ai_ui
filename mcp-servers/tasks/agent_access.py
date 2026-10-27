@@ -44,6 +44,11 @@ SURFACE_SCHEDULE = "schedule"
 #: So `ask` narrows here instead of prompting, which makes ApprovalRequired
 #: impossible inside a handoff rather than merely unlikely.
 SURFACE_COLLEAGUE = "colleague"
+#: Something outside ran the agent through an automation key
+#: (routes_automation): an n8n workflow, a script. Nobody is watching, as
+#: on a schedule, and there is no schedule row to read a tool_mode from, so
+#: it behaves exactly like a colleague's turn: only `all` acts.
+SURFACE_AUTOMATION = "automation"
 
 
 class ApprovalRequired(Exception):
@@ -93,7 +98,7 @@ def effective_mode(level: str | None, tool_mode: str | None,
         # read-only for an agent with no opinion cannot regress anything.
         return MODE_READ_ONLY
 
-    if surface == SURFACE_COLLEAGUE:
+    if surface in (SURFACE_COLLEAGUE, SURFACE_AUTOMATION):
         # Only a level the owner set to `all` acts. tool_mode is ignored
         # entirely rather than defaulted: reading it here would give a
         # caller a way to widen a read-only agent, which is the hole this
@@ -131,6 +136,9 @@ def refusal_reason(level: str | None, tool_mode: str | None,
     if surface == SURFACE_COLLEAGUE:
         return ("another agent asked this one, and it is not set to act on "
                 "its own")
+    if surface == SURFACE_AUTOMATION:
+        return ("this run was started by an automation, and the agent is not "
+                "set to act on its own")
     if level == LEVEL_ASK:
         return "a scheduled run has nobody to ask"
     if level == LEVEL_READ:

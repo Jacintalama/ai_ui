@@ -205,6 +205,18 @@ had. The agents page and the office form pick `meta.llm` and always write
 `io.io` as the base. The IO pipe must be installed and enabled in Open WebUI,
 or a mentioned agent answers "Model not found".
 
+### Automation: run an agent from outside (2026-10-27)
+`POST /api/tasks/agents/run` with `Authorization: Bearer iok_...` runs one of
+the key owner's agents on a message and returns the answer
+(`routes_automation.py`, keys in `automation_keys.py`, table
+`tasks.automation_key`, migration 059). Keys are made and revoked on the
+Agents page under **Automation**, shown once, stored as a hash. The run is
+the same `_run_turn` Discord uses, on `SURFACE_AUTOMATION`: only an agent set
+to `all` acts, there is nobody to ask. `callback_url` returns at once and
+POSTs the result later; private and local hosts are refused (resolved, not
+pattern matched). Two runs at a time per process (`AUTOMATION_CONCURRENCY`).
+The n8n side is in `docs/n8n-run-agent.md` and `docs/n8n/run-agent.workflow.json`.
+
 ### Hard rules
 - **NEVER deploy your local `mcp-servers/tasks/templates.py`.** The server's copy is ahead (more App Builder templates). Pull the server's version before editing, or you'll silently drop templates.
 - **NEVER touch, overwrite, or commit `.env`** — the server's `.env` holds the only copy of the real production secrets.
