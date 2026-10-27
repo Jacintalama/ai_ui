@@ -276,3 +276,71 @@ def test_every_pool_entry_is_a_free_id(mod):
         assert m.endswith(":free"), m
     for name in ("MODEL_GENERAL", "MODEL_CODER", "MODEL_REASONING"):
         assert getattr(mod.Pipe.Valves(), name).endswith(":free"), name
+
+
+# --- the pipe says what it is doing while the service decides (2026-10-26) --
+
+async def _with_key(mod, monkeypatch, first):
+    p = mod.Pipe()
+    p.valves.OPENROUTER_API_KEY = "k"
+
+    async def agents_first(body, email):
+        return first
+
+    monkeypatch.setattr(p, "_agents_first", agents_first)
+    return p
+
+
+async def test_the_pipe_says_who_is_being_chosen_and_who_answered(mod, monkeypatch):
+    p = await _with_key(mod, monkeypatch, "**Mia**\n\nOn it.")
+    seen = []
+
+    async def emitter(ev):
+        seen.append((ev["data"]["description"], ev["data"]["done"]))
+
+    out = await p.pipe({"messages": _q("chase the overdue invoices")},
+                       __user__={"email": "o@example.com"}, __event_emitter__=emitter)
+    assert out == "**Mia**\n\nOn it."
+    assert seen == [("Choosing who answers...", False), ("Answered by your agent", True)]
+
+
+async def test_the_status_clears_when_the_free_model_answers_instead(mod, monkeypatch):
+    p = await _with_key(mod, monkeypatch, None)
+    seen = []
+
+    async def emitter(ev):
+        seen.append((ev["data"]["description"], ev["data"]["done"]))
+
+    async def complete(body, headers, category, candidates, emitter):
+        return "free model here"
+
+    monkeypatch.setattr(p, "_complete", complete)
+    monkeypatch.setattr(mod, "_available_models", lambda key: asyncio.sleep(0, result=set()))
+    out = await p.pipe({"messages": _q("chase the overdue invoices")},
+                       __user__={"email": "o@example.com"}, __event_emitter__=emitter)
+    assert out == "free model here"
+    assert seen[0] == ("Choosing who answers...", False)
+    assert seen[-1] == ("", True)
+
+
+async def test_the_web_rendering_with_faces_is_preferred(mod, monkeypatch):
+    p = mod.Pipe()
+
+    class R:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {
+            "turns": [{"agent": {"id": "agent-a", "name": "Ada"}, "answer": "Hello.", "notes": []}],
+            "rendered": "**Ada**\n\nHello.",
+            "rendered_web": "![Ada](data:image/svg+xml;base64,AAAA) **Ada**\n\nHello.",
+            "queue": [], "marker": ""}
+
+    class C:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, json=None, headers=None): return R()
+
+    monkeypatch.setattr(mod.httpx, "AsyncClient", C)
+    out = await p._agents_first({"messages": _q("hi ada")}, "o@example.com")
+    assert out.startswith("![Ada](data:image/svg+xml;base64,AAAA) **Ada**")

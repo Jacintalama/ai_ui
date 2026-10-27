@@ -185,41 +185,6 @@ that it always carries meaning.
   "Asleep, last run 2h ago". It wakes with a stretch when a run starts, and
   wakes briefly to wave when clicked. A sleeping robot runs no blink and no
   halo, so a floor of many agents stays cheap to draw.
-- **Dancing** (the office only): a click's hello comes with a small
-  "♪ Dance" button that opens five moves (Bop, Twist, The Robot, Hands up,
-  Spin); the one picked runs on that robot for eight seconds on one beat,
-  with a note over its head, and the button reads Stop meanwhile. A dance
-  is for the person and is never a state: it is not offered to a robot that
-  is working, waiting or failed, it pauses while the robot walks, and a run
-  starting ends it at once. A sleeper dances awake.
-
-### Agent identity
-Each agent's hue comes from the existing hash of its name (the same hash the
-card and the chat bubble already share). It is drawn as a solid
-`hsl(hue 45% 32%)` avatar square with a white initial. The worst case is
-4.77:1 at hue 60, so every hue passes. The hue appears on the avatar and
-nowhere else: no tinted borders, no tinted cards, no gradients.
-
-### Named Rules
-**The Rationed Accent Rule.** Periwinkle covers 10% or less of any screen. If
-two periwinkle things compete, one of them is wrong.
-
-**The One Hue Per Agent Rule.** An agent is the same colour in the list, in
-the thread, in the details panel and in the Agent Office. A second palette
-for the same agent is a bug.
-
-## 3. Typography
-
-**Body Font:** the system UI stack (-apple-system, Inter, Segoe UI, Roboto,
-system-ui). No webfont is loaded.
-**Label/Mono Font:** the system monospace stack, only for technical ids shown
-in the details panel.
-
-**Character:** one quiet sans in three weights (400, 500, 600). Hierarchy
-comes from size steps and weight, never from a second display family. Buttons
-inherit the family; the old Arial fallback on buttons is a bug.
-
-### Hierarchy
 - **Title** (600, 20px, 1.3): the phone screen title and dialog titles.
 - **Headline** (600, 16px, 1.35): the conversation title ("Mia",
   "Everyone") and section heads in the details panel.
@@ -324,23 +289,11 @@ messenger").
   button only fills the team composer with "everyone answer: " and stops.
 - **Not in the dock on the agents page,** which has the one conversation
   already: there the windows are not drawn and Chat asks the page around it.
-- **Voice (2026-10-23).** A mic at the left of the composer, where the
-  browser can hear (Chrome, Edge, Safari): it turns red and pulses while
-  listening, the words land in the box grey while still being heard and
-  solid once a phrase is final, and a pause after a final phrase sends
-  them through the same form as typing. Answers are read aloud in the
-  agent's own voice (Piper on the server, one of six, picked on the card
-  under Voice, remembered per browser) and the robot's mouth moves for as
-  long as the sound plays; the row being read carries a note after the
-  name. The speaker in the title bar mutes every voice, remembered per
-  browser; auto-listen reopens the mic after an answer to a spoken
-  question, never after a typed one; the mic pressed while a robot talks
-  cuts it off. A browser without recognition shows no mic and still hears.
 - **Minutes (2026-10-26).** When a meeting ends (two answers or more to
   one message), the agent that spoke first posts the minutes under the
   answers, labelled Minutes: Decided, To do (who does what) and Open
   questions. Each To do line is a real row on the To do list. The bubble
-  is announced like an answer, so the voice reads it. "Minutes" beside
+  is announced like an answer. "Minutes" beside
   "Call a team meeting" on the floor bar asks for the minutes of the
   newest meeting in the team conversation; a conversation without one
   gets a note. Minutes that cannot be taken leave the meeting exactly as

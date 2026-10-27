@@ -39,6 +39,7 @@ import agent_jev
 import agent_job_triage
 import agent_minutes
 import agent_routing
+import agent_skills
 from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS, FREE_POOL_EXHAUSTED,
                           ROUTER_EXHAUSTED, _chat)
 from routes_agent_turn import (AGENT_ON_CALLBACK_MODEL, _agents_for,
@@ -339,7 +340,8 @@ def _speakers_for(text: str, agents: list[dict], last_speaker: dict | None = Non
     behaviour so a caller that knows neither still gets named-or-everybody.
     """
     speakers, may_pass, _why = agent_routing.choose_speakers(
-        text, agents, last_speaker=last_speaker, has_pending=has_pending)
+        text, agents, last_speaker=last_speaker, has_pending=has_pending,
+        skills=agent_skills.load_all())
     return speakers, may_pass
 
 
@@ -587,7 +589,8 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
     # was asked instead of being put to seven agents who all pass.
     last = _last_speaker(s.messages, agents)
     speakers, may_pass, why = agent_routing.choose_speakers(
-        asked, agents, last_speaker=last, has_pending=bool(s.pending))
+        asked, agents, last_speaker=last, has_pending=bool(s.pending),
+        skills=agent_skills.load_all())
 
     # A private conversation has already answered the question the ladder
     # exists to answer. The one agent this thread belongs to speaks, and they

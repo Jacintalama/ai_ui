@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 import agent_access
+import agent_avatar
 import agent_activity
 import agent_brief
 import agent_decider
@@ -33,6 +34,7 @@ import agent_handoff
 import agent_jev
 import agent_memory
 import agent_routing
+import agent_skills
 import routes_prefs
 from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS,
                           CHANNEL_MAX_TOOL_ITERATIONS,
@@ -696,7 +698,7 @@ RELEASED = "Back to normal. I will answer from here."
 EMPTY_TURN = "There was nothing to answer."
 
 
-def render_turns(turns) -> str:
+def render_turns(turns, faces: bool = False) -> str:
     """The reply as a person reads it: each agent's answer under its name,
     a blank line between agents, a turn with no agent shown bare.
 
@@ -727,8 +729,33 @@ def render_turns(turns) -> str:
             parts.append(answer)
         else:
             name = agent.get("name") or agent.get("id") or "Agent"
-            parts.append("**%s**\n\n%s" % (name, answer))
+            # With faces, the office robot stands before the name (the web
+            # chat asks for this; Discord and Telegram keep the bold name).
+            head = (agent_avatar.reply_face(str(agent.get("id") or ""), name)
+                    if faces else "**%s**" % name)
+            parts.append("%s\n\n%s" % (head, answer))
     return "\n\n".join(parts)
+
+
+def _faces_of(turns) -> dict:
+    """agent id -> the robot, for every agent that spoke, so a caller that
+    renders turns itself (the IO pipe) can show the face too."""
+    out = {}
+    for turn in turns if isinstance(turns, list) else []:
+        agent = turn.get("agent") if isinstance(turn, dict) else None
+        if isinstance(agent, dict) and agent.get("id"):
+            out[str(agent["id"])] = agent_avatar.data_uri(
+                str(agent["id"]), str(agent.get("name") or agent["id"]), agent_avatar.REPLY_SIZE)
+    return out
+
+
+def _reply(turns, queue=None, marker: str = "") -> dict:
+    """The /chat response: the turns, two renderings of them (plain, and
+    with the agents' faces for the web), the faces by id, and the queue
+    and marker the older shape carried."""
+    return {"turns": turns, "rendered": render_turns(turns),
+            "rendered_web": render_turns(turns, faces=True),
+            "faces": _faces_of(turns), "queue": queue or [], "marker": marker}
 
 
 def turns_marker(ids) -> str:
@@ -912,6 +939,50 @@ async def _jev_release(key: str, email: str, text: str) -> bool:
         return False
 
 
+#: Jev is not asked about a greeting: a message this short has no subject
+#: to hand anyone, and the general model answers it well.
+JEV_MIN_WORDS = 4
+
+
+async def _jev_pick(body: ChatIn, text: str, agents: list[dict]) -> dict | None:
+    """The finished response when Jev is sure one agent should take this
+    message and that agent's reply answers it, else None. Never raises:
+    Jev is a bonus on top of a working chat."""
+    try:
+        if not agent_decider.enabled():
+            return None
+        if len((text or "").split()) < JEV_MIN_WORDS:
+            return None
+        decision = await agent_decider.decide(body.user_email, body.chat_id, text,
+                                              body.messages, agents)
+        if decision is None or decision.path != agent_decider.PATH_ONE_AGENT:
+            return None
+        agent = next((a for a in agents
+                      if str(a.get("id") or "") == decision.agent_id), None)
+        if agent is None:
+            return None
+        names = [a.get("name") for a in agents if a.get("name")]
+        turn = await _turn_for(body.user_email, agent, body.messages, names,
+                               roster=agents,
+                               graph=await agent_graph.graph_block(
+                                   body.user_email, text))
+        # A reply that did not answer is not shown: the general model gets
+        # the message instead, as it would have without Jev. A question the
+        # agent stopped to ask (pending) is an answer in progress and stays.
+        pending = isinstance(turn.get("pending"), dict) and bool(turn["pending"].get("calls"))
+        if not pending:
+            ok = await agent_jev.reply_answers(body.user_email, text,
+                                               str(turn.get("answer") or ""))
+            if ok is False:
+                return None
+        await _write_pin(_pin_key(body.chat_id, body.user_email), agent["id"])
+        return _reply([turn], queue=[], marker="")
+    except Exception:                                       # noqa: BLE001
+        logger.warning("Jev could not pick an agent for the chat; answering as "
+                       "before", exc_info=True)
+        return None
+
+
 @router.post("/chat")
 async def chat(body: ChatIn,
                x_internal_secret: str = Header(default="")) -> dict:
@@ -931,7 +1002,7 @@ async def chat(body: ChatIn,
             or await _jev_release(key, body.user_email, text)):
         await _clear_pin(key)
         turns = [{"agent": None, "answer": RELEASED, "notes": []}]
-        return {"turns": turns, "rendered": render_turns(turns), "queue": [], "marker": ""}
+        return _reply(turns, queue=[], marker="")
 
     agents = await _agents_for(body.user_email)
     named = agent_routing.match_agents(text, agents)
@@ -968,11 +1039,9 @@ async def chat(body: ChatIn,
         ids = [a["id"] for a in named] if queue else []
         if first_pending:
             await _write_pin(key, named[0]["id"])
-            return {"turns": turns, "rendered": render_turns(turns),
-                    "queue": queue, "marker": turns_marker(ids)}
+            return _reply(turns, queue=queue, marker=turns_marker(ids))
         await _write_pin(key, named[-1]["id"])
-        return {"turns": turns, "rendered": render_turns(turns),
-                "queue": queue, "marker": turns_marker(ids)}
+        return _reply(turns, queue=queue, marker=turns_marker(ids))
 
     pinned_id = await _read_pin(key)
     agent = next((a for a in agents if a.get("id") == pinned_id), None)
@@ -985,6 +1054,16 @@ async def chat(body: ChatIn,
         await _clear_pin(key)
 
     if agent is None:
+        # A skill asked for by name ("run the weekly review") is a job for
+        # the one agent that was given it: its steps are in that agent's
+        # brief and in nobody else's. Two agents with the skill leave it to
+        # Jev below. Above the subject rung, as in the ladder:
+        # "weekly" is also a schedules word. Read from disk through a cache, so this costs nothing.
+        skilled = agent_routing.skill_owner(text, agents, agent_skills.load_all())
+        if skilled is not None:
+            agent = skilled
+
+    if agent is None:
         # Nobody named and nobody pinned. Before handing this to IO, the same
         # ladder the panel uses gets a look: if exactly one agent owns the
         # subject, "anything unread in my inbox" is a question for the one
@@ -995,11 +1074,25 @@ async def chat(body: ChatIn,
         if owner is not None:
             agent = owner
 
+    if agent is None:
+        # Nobody named, pinned or obviously owning the subject. Before the
+        # general model answers, Jev (agent_decider) is asked whether this
+        # is one agent's to take, and which: "chase the overdue invoices"
+        # with a Finance agent on the team goes to Finance rather than to a
+        # free model that cannot see the books. Only when Jev is sure, and
+        # only when the reply then answers the message (agent_jev): a pick
+        # that did not pan out costs the person nothing but a moment, and
+        # the message goes on exactly as before. This is what puts Jev in
+        # the main chat (2026-10-26): the Auto pipe asks here first.
+        picked = await _jev_pick(body, text, agents)
+        if picked is not None:
+            return picked
+
     if agent is None and getattr(body, "route_only", False):
         # The caller will answer for itself. Saying so with an empty list
         # rather than an IO answer is what keeps the Auto pipe from asking
         # IO, which would ask Auto, which would ask here again.
-        return {"turns": [], "rendered": "", "queue": [], "marker": ""}
+        return _reply([], queue=[], marker="")
 
     if agent is None:
         # IO speaking for itself. Done here rather than in the pipe because
@@ -1011,7 +1104,7 @@ async def chat(body: ChatIn,
             logger.warning("the base model did not answer", exc_info=True)
             answer = IO_DOWN
         turns = [{"agent": None, "answer": answer, "notes": []}]
-        return {"turns": turns, "rendered": render_turns(turns), "queue": [], "marker": ""}
+        return _reply(turns, queue=[], marker="")
 
     # A follow up keeps the agent awake. Without this the pin would run out
     # five minutes after the agent was last NAMED, mid conversation.
@@ -1021,4 +1114,4 @@ async def chat(body: ChatIn,
                            graph=await agent_graph.graph_block(
                                body.user_email, text))
     await _write_pin(key, agent["id"])
-    return {"turns": [turn], "rendered": render_turns([turn]), "queue": [], "marker": ""}
+    return _reply([turn], queue=[], marker="")

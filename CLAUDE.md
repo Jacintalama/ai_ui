@@ -169,6 +169,29 @@ ssh root@46.224.193.25 "cd /root/proxy-server && docker compose -f docker-compos
   detached (`systemd-run --unit=NAME --collect /root/script.sh`), never
   interactively.
 
+### Open WebUI tools (open-webui-functions/)
+Files there are Open WebUI "Tools" and "Pipes", installed by pasting them into
+Workspace → Tools in the Open WebUI admin, not by deploy. `agent_builder_tool.py`
+(2026-10-22) lets any chat model create agents for the signed-in person
+through `/agents/make` and `/agents/roster`; it sends only `X-User-Email`, like
+`schedules_tool.py`, and the service scopes every call to that email.
+
+### The main chat (2026-10-26)
+Everyone lands on **Auto (Free)** (`auto_router_pipe.py`, id `auto_router.auto`,
+set as `DEFAULT_MODELS` in compose; an admin's later choice in Admin Settings →
+Models wins). Every message goes to `POST /agents/chat` first (`route_only`):
+a named, pinned, subject-owning or skill-owning agent answers ("run the weekly
+review" goes to the one agent given `weekly-review`, `agent_routing.skill_owner`),
+then **Jev** (`agent_decider`,
+needs `TYPESAFE_API_KEY`) is asked whether one agent should take it and that
+agent answers if its reply holds up (`agent_jev.reply_answers`); otherwise the
+free model answers. No key means no Jev and the chat behaves as before.
+Agents carry the office robot as their profile picture (`agent_avatar.py`,
+set on create and backfilled on the agents page's seed call,
+`routes_agents.give_faces`), so an agent mentioned with `@` in the main chat answers with its own
+face; a reply Auto routed to an agent opens with the small robot and the name
+(`rendered_web` and `faces` on `/agents/chat`).
+
 ### Hard rules
 - **NEVER deploy your local `mcp-servers/tasks/templates.py`.** The server's copy is ahead (more App Builder templates). Pull the server's version before editing, or you'll silently drop templates.
 - **NEVER touch, overwrite, or commit `.env`** — the server's `.env` holds the only copy of the real production secrets.
