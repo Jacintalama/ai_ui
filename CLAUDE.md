@@ -217,6 +217,19 @@ POSTs the result later; private and local hosts are refused (resolved, not
 pattern matched). Two runs at a time per process (`AUTOMATION_CONCURRENCY`).
 The n8n side is in `docs/n8n-run-agent.md` and `docs/n8n/run-agent.workflow.json`.
 
+**Automations (2026-10-27)** are rules a person sets up in the platform:
+when this happens, this agent does this, the answer goes there
+(`automations.py` the row, `automation_runner.py` the firing,
+`routes_automations.py` the routes, tables `tasks.automation` and
+`tasks.automation_run`, migration 060). The first trigger is a webhook:
+`POST /api/tasks/hooks/<hk_token>`, public, the token is the secret;
+`?wait=1` waits for the answer. The body is handed to the agent as data under
+a line saying so (`automations.message_for`). Delivery: `chat` appends to the
+agent's private office conversation, `discord` posts to the person's
+schedules thread through `scheduler._deliver_result`, `none` only replies.
+Same surface and semaphore as the key route. Made and managed on the Agents
+page under **Automation**; twenty per person. See `docs/automations.md`.
+
 ### Hard rules
 - **NEVER deploy your local `mcp-servers/tasks/templates.py`.** The server's copy is ahead (more App Builder templates). Pull the server's version before editing, or you'll silently drop templates.
 - **NEVER touch, overwrite, or commit `.env`** — the server's `.env` holds the only copy of the real production secrets.

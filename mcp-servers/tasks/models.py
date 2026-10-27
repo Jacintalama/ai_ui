@@ -224,6 +224,44 @@ class AutomationKey(Base):
     revoked_at = Column(DateTime(timezone=True), nullable=True)
 
 
+class Automation(Base):
+    """One rule a person set up: when this happens, this agent does this,
+    and the result goes there (automations.py). See migration 060."""
+    __tablename__ = "automation"
+    __table_args__ = {"schema": "tasks"}
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_email = Column(Text, nullable=False)
+    name = Column(Text, nullable=False)
+    agent_id = Column(Text, nullable=False)
+    instructions = Column(Text, nullable=False)
+    trigger = Column(Text, nullable=False, default="webhook")
+    hook_token = Column(Text, nullable=False, unique=True)
+    deliver_to = Column(Text, nullable=False, default="chat")
+    enabled = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_run_at = Column(DateTime(timezone=True), nullable=True)
+    last_status = Column(Text, nullable=True)
+    run_count = Column(Integer, nullable=False, default=0)
+
+
+class AutomationRun(Base):
+    """One firing of an automation: what set it off and what came out."""
+    __tablename__ = "automation_run"
+    __table_args__ = {"schema": "tasks"}
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    automation_id = Column(UUID(as_uuid=True), nullable=False)
+    user_email = Column(Text, nullable=False)
+    started_at = Column(DateTime(timezone=True), server_default=func.now())
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    status = Column(Text, nullable=False)
+    trigger_text = Column(Text, nullable=False, default="")
+    result = Column(Text, nullable=False, default="")
+    delivered = Column(Text, nullable=False, default="")
+
+
 class GatewayLink(Base):
     """A platform account (Telegram, CLI) paired to an IO account.
 

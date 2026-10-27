@@ -1966,3 +1966,116 @@ def test_escape_closes_the_automation_panel_first(page):
     page.wait_for_selector("#automation-panel", state="visible")
     page.keyboard.press("Escape")
     assert page.locator("#automation-panel").is_hidden()
+
+
+# --- automations (2026-10-27) ---------------------------------------------------
+
+def _autos_route(page, autos):
+    """Answer the automation endpoints from `autos`, a list the test owns."""
+    def route(r):
+        url, method = r.request.url, r.request.method
+        path = url.split("?")[0].rstrip("/")
+        if path.endswith("/api/tasks/automations") and method == "GET":
+            body = {"automations": list(autos)}
+        elif path.endswith("/api/tasks/automations") and method == "POST":
+            sent = json.loads(r.request.post_data or "{}")
+            autos.append({"id": "a%d" % (len(autos) + 1), "name": sent["name"],
+                          "agent_id": sent["agent"], "agent_name": "Researcher", "agent_missing": False,
+                          "instructions": sent["instructions"], "deliver_to": sent["deliver_to"],
+                          "hook_token": "hk_tok", "hook_url": "https://io.example.com/api/tasks/hooks/hk_tok",
+                          "enabled": True, "run_count": 0, "runs": [], "sent": sent})
+            body = autos[-1]
+        elif "/api/tasks/automations/" in path and path.endswith("/run") and method == "POST":
+            aid = path.rsplit("/", 2)[1]
+            for a in autos:
+                if a["id"] == aid:
+                    a["run_count"] = 1
+                    a["runs"] = [{"status": "done", "delivered": "chat", "result": "Replied to the lead."}]
+            body = {"status": "done", "answer": "Replied to the lead.", "notes": [], "delivered": "chat"}
+        elif "/api/tasks/automations/" in path and method == "PATCH":
+            aid = path.rsplit("/", 1)[1]
+            sent = json.loads(r.request.post_data or "{}")
+            for a in autos:
+                if a["id"] == aid:
+                    if "enabled" in sent:
+                        a["enabled"] = sent["enabled"]
+                    if sent.get("new_token"):
+                        a["hook_url"] = "https://io.example.com/api/tasks/hooks/hk_new"
+                    a["patched"] = sent
+            body = next((a for a in autos if a["id"] == aid), {})
+        elif "/api/tasks/automations/" in path and method == "DELETE":
+            aid = path.rsplit("/", 1)[1]
+            autos[:] = [a for a in autos if a["id"] != aid]
+            body = {"deleted": True}
+        else:
+            r.fallback()
+            return
+        r.fulfill(status=200, content_type="application/json", body=json.dumps(body))
+    page.route("**/api/tasks/automations**", route)
+
+
+def test_an_automation_is_added_with_its_url_then_run_paused_and_deleted(page):
+    autos = []
+    _autos_route(page, autos)
+    _keys_route(page, [])
+    page.locator("#open-automation").click()
+    page.wait_for_selector("#automation-panel", state="visible")
+    assert "No automations yet" in page.locator("#automations-list").inner_text()
+    # The agent picker holds your own agents only.
+    options = page.locator("#auto-agent option").evaluate_all("els => els.map(e => e.value)")
+    assert "agent-mine-a1b2" in options and all(o.startswith("agent-") for o in options)
+    assert "agent-shared-c3d4" not in options
+
+    page.fill("#auto-name", "New website lead")
+    page.select_option("#auto-agent", "agent-mine-a1b2")
+    page.fill("#auto-instructions", "Write a first reply and add a to-do.")
+    page.select_option("#auto-deliver", "discord")
+    page.locator("#auto-create").click()
+    row = page.locator('[data-auto-id="a1"]')
+    row.wait_for(state="visible")
+    assert autos[0]["sent"] == {"name": "New website lead", "agent": "agent-mine-a1b2",
+                                "instructions": "Write a first reply and add a to-do.",
+                                "deliver_to": "discord"}
+    assert "https://io.example.com/api/tasks/hooks/hk_tok" in row.inner_text()
+    assert "Researcher" in row.inner_text() and "in Discord" in row.inner_text()
+    assert page.locator("#auto-name").input_value() == ""
+
+    row.locator("[data-auto-run]").click()
+    page.wait_for_function(
+        "() => ((document.querySelector('[data-auto-id=\"a1\"] .auto-rule-last') || {}).textContent || '')"
+        ".includes('Replied to the lead.')")
+
+    row.locator("[data-auto-toggle]").click()
+    page.wait_for_selector('[data-auto-id="a1"].paused')
+    assert autos[0]["patched"] == {"enabled": False}
+    assert "(paused)" in page.locator('[data-auto-id="a1"]').inner_text()
+    page.locator('[data-auto-id="a1"] [data-auto-toggle]').click()
+    page.wait_for_selector('[data-auto-id="a1"]:not(.paused)')
+    assert autos[0]["patched"] == {"enabled": True}
+
+    page.locator('[data-auto-id="a1"] [data-auto-newurl]').click()
+    page.wait_for_function(
+        "() => document.querySelector('[data-auto-id=\"a1\"]').textContent.includes('hk_new')")
+
+    page.on("dialog", lambda d: d.accept())
+    page.locator('[data-auto-id="a1"] [data-auto-delete]').click()
+    page.locator('[data-auto-id="a1"]').wait_for(state="detached")
+    assert "No automations yet" in page.locator("#automations-list").inner_text()
+
+
+def test_a_refused_automation_shows_the_servers_sentence(page):
+    def route(r):
+        if r.request.method == "POST":
+            r.fulfill(status=422, content_type="application/json",
+                      body=json.dumps({"detail": "Tell the agent what to do when this happens."}))
+        else:
+            r.fulfill(status=200, content_type="application/json",
+                      body=json.dumps({"automations": []}))
+    page.route("**/api/tasks/automations**", route)
+    _keys_route(page, [])
+    page.locator("#open-automation").click()
+    page.wait_for_selector("#automation-panel", state="visible")
+    page.fill("#auto-name", "Lead")
+    page.locator("#auto-create").click()
+    page.wait_for_function(
+        "() => document.getElementById('automations-error').textContent.includes('Tell the agent')")

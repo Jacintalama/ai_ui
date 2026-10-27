@@ -15,6 +15,7 @@ from routes_agent_debug import router as agent_debug_router
 from routes_agent_turn import router as agent_turn_router
 from routes_agents import router as agents_router
 from routes_automation import router as automation_router
+from routes_automations import router as automations_router
 from routes_aiuibuilder import router as aiuibuilder_router
 from routes_chat_history import router as chat_history_router
 from routes_code import router as code_router
@@ -162,6 +163,7 @@ app.include_router(schedules_router, prefix="/api/tasks")
 app.include_router(agents_router)  # /agents, operator path
 app.include_router(agents_router, prefix="/api/tasks")  # /api/tasks/agents, web path
 app.include_router(automation_router, prefix="/api/tasks")  # /api/tasks/agents/run (automation key), /api/tasks/agents/keys (signed in)
+app.include_router(automations_router, prefix="/api/tasks")  # /api/tasks/automations (signed in), /api/tasks/hooks/<token> (public trigger)
 app.include_router(agent_turn_router)  # /agents/turn — internal only (X-Internal-Secret)
 app.include_router(agent_chat_router)  # /tasks/agents/chat, the panel
 app.include_router(agent_jobs_router)  # /tasks/agents/jobs, a team job's plan card
