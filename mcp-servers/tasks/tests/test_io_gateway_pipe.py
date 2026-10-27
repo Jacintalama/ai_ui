@@ -366,3 +366,14 @@ async def test_a_marker_an_agent_wrote_is_stripped(mod, monkeypatch):
                        __user__={"email": "o@example.com"})
     assert "aiui:turns" not in out
     assert "agent-a,agent-m" not in out, "the pipe appended a marker of its own"
+
+
+def test_a_face_the_service_sent_stands_before_the_name():
+    p = _pipe() if "_pipe" in globals() else _load().Pipe()
+    out = p._render({"turns": [{"agent": {"id": "agent-a", "name": "Ada"}, "answer": "Hello.", "notes": []}],
+                     "faces": {"agent-a": "data:image/svg+xml;base64,AAAA"}})
+    assert out == "![Ada](data:image/svg+xml;base64,AAAA) **Ada**\n\nHello."
+    # Not a picture: the name alone, as before.
+    out = p._render({"turns": [{"agent": {"id": "agent-a", "name": "Ada"}, "answer": "Hello.", "notes": []}],
+                     "faces": {"agent-a": "javascript:alert(1)"}})
+    assert out == "**Ada**\n\nHello."

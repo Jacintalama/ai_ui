@@ -1154,6 +1154,8 @@
     // rather than surfaced: it must never block or error the page.
     async function seed() {
       try {
+        // The same call also gives a face to any agent made before faces
+        // existed (routes_agents seed, agent_avatar).
         await fetch("/api/tasks/agents/seed",
           { method: "POST", headers: authHeaders(), credentials: "include" });
       } catch (e) {
@@ -2472,6 +2474,19 @@
     // The exact ModelForm the API expects. Instructions live in params.system
     // and tools in meta.toolIds, which is where Open WebUI's own builder puts
     // them.
+    // The robot the office draws for this agent, from the tasks service, or
+    // the picture the agent already has. Never blocks a save: a face is a
+    // bonus on top of a working agent.
+    async function faceFor(id, name, existing) {
+      var had = existing && existing.meta && existing.meta.profile_image_url;
+      try {
+        var r = await fetch("/api/tasks/agents/avatar?id=" + encodeURIComponent(id) +
+                            "&name=" + encodeURIComponent(name), { headers: authHeaders() });
+        if (r.ok) { var d = await r.json(); if (d && d.data_uri) return d.data_uri; }
+      } catch (e) { /* kept below */ }
+      return had || null;
+    }
+
     function buildAgentBody(f) {
       var meta = { description: f.instructions.slice(0, 120),
                    toolIds: f.toolIds,
@@ -2491,6 +2506,9 @@
       // with no level behaves exactly as it did before this setting existed,
       // and an unrelated edit must not quietly give it one.
       if (f.access) meta.access = f.access;
+      // The office robot as the profile picture (2026-10-27), fetched by
+      // the caller; kept from the existing agent when it cannot be.
+      if (f.profileImage) meta.profile_image_url = f.profileImage;
       return {
         id: f.id, name: f.name, base_model_id: f.baseModel,
         // agent_instructions is a second copy of the same text. The list
@@ -2748,8 +2766,10 @@
         ? state.agents.filter(function (m) { return m.id === editingId; })[0]
         : null;
 
+      var agentId = editingId || newAgentId(name);
       var body = buildAgentBody({
-        id: editingId || newAgentId(name), name: name,
+        id: agentId, name: name,
+        profileImage: await faceFor(agentId, name, existing),
         baseModel: baseModel, role: role, skillIds: chosenSkills(),
         toolScope: toolsAreEverything() ? null : "picked",
         instructions: instructions, toolIds: chosenTools(),

@@ -831,3 +831,20 @@ async def test_two_agents_with_the_skill_are_left_to_jev(_wire, monkeypatch):
     out = await rt.chat(_body("run the weekly review for me"), x_internal_secret="s")
     assert len(calls["decide"]) == 1
     assert out["turns"][0]["agent"]["name"] == "Kaz"
+
+
+# --- the agents' faces on a reply (2026-10-27) ------------------------------
+
+async def test_a_reply_carries_the_faces_and_a_web_rendering(_wire):
+    out = await rt.chat(_body("hi mia how are you"), x_internal_secret="s")
+    assert out["rendered"] == "**Mia**\n\nhi"
+    assert out["rendered_web"].startswith("![Mia](data:image/svg+xml;base64,")
+    assert out["rendered_web"].endswith(") **Mia**\n\nhi")
+    assert set(out["faces"]) == {"agent-m"}
+    assert out["faces"]["agent-m"].startswith("data:image/svg+xml;base64,")
+
+
+async def test_ios_own_answer_has_no_face(_wire, monkeypatch):
+    monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="general"))
+    out = await rt.chat(_body("what is the weather"), x_internal_secret="s")
+    assert out["rendered_web"] == "general" and out["faces"] == {}

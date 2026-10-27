@@ -5,6 +5,8 @@ The route, with Open WebUI replaced by a record of what it was asked.
 import importlib.util
 import pathlib
 
+from unittest.mock import AsyncMock
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -58,9 +60,12 @@ def test_an_agent_is_made_with_the_agents_pages_own_body(client, owui):
     assert r.json()["name"] == "Jack" and r.json()["id"].startswith("agent-jack-")
     body = owui["created"][0]
     assert body["base_model_id"] == "gpt-5"
-    assert body["meta"] == {"description": "Keep the books straight.", "toolIds": ["server:mcp-proxy"],
-                            "agent_instructions": "Keep the books straight.", "access": "ask",
-                            "role": "Bookkeeper"}
+    meta = dict(body["meta"])
+    # The office robot as the profile picture (agent_avatar), by name.
+    assert meta.pop("profile_image_url").startswith("data:image/svg+xml;base64,")
+    assert meta == {"description": "Keep the books straight.", "toolIds": ["server:mcp-proxy"],
+                    "agent_instructions": "Keep the books straight.", "access": "ask",
+                    "role": "Bookkeeper"}
     assert body["params"] == {"system": "Keep the books straight."}
     assert body["access_grants"] == [] and body["is_active"] is True
 
@@ -111,3 +116,39 @@ async def test_the_chat_tool_makes_an_agent_as_the_person_asking():
     assert said == "Your agents: Mia (Receptionist)."
     assert await tool.create_agent("Jack", "x", __user__={}) == "I do not know who is asking, so I cannot make an agent."
 
+
+
+# --- faces for the agents that predate them (2026-10-27) -------------------
+
+async def test_the_backfill_gives_a_face_to_every_agent_without_one(monkeypatch):
+    import routes_agent_chat
+    import routes_agents
+
+    rows = [
+        {"id": "agent-a", "name": "Ada", "base_model_id": "gpt-5", "meta": {"toolIds": ["gmail"]},
+         "params": {"system": "Be Ada."}, "access_grants": [], "is_active": True},
+        {"id": "agent-m", "name": "Mia", "base_model_id": "gpt-5",
+         "meta": {"toolIds": [], "profile_image_url": "data:image/png;base64,xx"},
+         "params": {}, "access_grants": [], "is_active": True},
+    ]
+    updated = []
+
+    async def agents_for(email):
+        return rows
+
+    async def update(token, model_id, body):
+        updated.append((model_id, body))
+        return 200, {}
+
+    monkeypatch.setattr(routes_agent_chat, "_agents_for", agents_for)
+    monkeypatch.setattr(routes_agents, "_update_model", update)
+    monkeypatch.setattr(routes_agents, "_owui_user_id_for", AsyncMock(return_value="u1"))
+    monkeypatch.setattr(routes_agents, "mint_owui_token", lambda *a, **k: "tok")
+    monkeypatch.setattr(routes_agents, "session_stamp_for", AsyncMock(return_value="s"))
+    out = await routes_agents.give_faces(OWNER)
+    assert out == {"given": 1, "failed": 0}
+    assert [m for m, _ in updated] == ["agent-a"]
+    body = updated[0][1]
+    assert body["meta"]["profile_image_url"].startswith("data:image/svg+xml;base64,")
+    assert body["meta"]["toolIds"] == ["gmail"] and body["params"] == {"system": "Be Ada."}
+    assert body["base_model_id"] == "gpt-5" and body["access_grants"] == []

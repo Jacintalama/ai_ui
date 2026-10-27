@@ -112,7 +112,7 @@ class Pipe:
         lines.append("Reply yes to let it, or no to skip.")
         return "\n".join(lines)
 
-    def _render_turn(self, turn: dict) -> str:
+    def _render_turn(self, turn: dict, faces: dict = None) -> str:
         """One turn, on its own. Same rules the single-turn shape always
         used: a pending turn asks its approval question, a turn with no
         agent gets no name prefix, and notes ride along after the answer.
@@ -138,6 +138,12 @@ class Pipe:
             answer = (answer + "\n\n" + note_text) if answer else note_text
         answer = answer or EMPTY
         if self.valves.SHOW_AGENT_NAME:
+            # The office robot before the name, when the service sent it
+            # (2026-10-27), so the reply shows who answered at a glance.
+            face = (faces or {}).get(str(agent.get("id") or "")) if isinstance(faces, dict) else None
+            if isinstance(face, str) and face.startswith("data:image/"):
+                safe = name.replace("[", "").replace("]", "")
+                return "![%s](%s) **%s**\n\n%s" % (safe, face, name, answer)
             return "**%s**\n\n%s" % (name, answer)
         return answer
 
@@ -151,7 +157,8 @@ class Pipe:
         turns = [t for t in turns if isinstance(t, dict)]
         if not turns:
             return EMPTY
-        return "\n\n".join(self._render_turn(t) for t in turns)
+        faces = out.get("faces")
+        return "\n\n".join(self._render_turn(t, faces) for t in turns)
 
     # --- the entry point ---------------------------------------------------
 

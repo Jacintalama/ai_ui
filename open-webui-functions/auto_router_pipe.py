@@ -254,7 +254,8 @@ class Pipe:
         turns = data.get("turns")
         if not isinstance(turns, list) or not turns:
             return None
-        rendered = data.get("rendered")
+        # With the agents' faces where the service offers them (2026-10-27).
+        rendered = data.get("rendered_web") or data.get("rendered")
         if not (isinstance(rendered, str) and rendered.strip()):
             return None
         return AIUI_TURNS_STRIP_RE.sub("", rendered).rstrip()

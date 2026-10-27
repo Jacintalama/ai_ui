@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 import agent_access
+import agent_avatar
 import agent_activity
 import agent_brief
 import agent_decider
@@ -697,7 +698,7 @@ RELEASED = "Back to normal. I will answer from here."
 EMPTY_TURN = "There was nothing to answer."
 
 
-def render_turns(turns) -> str:
+def render_turns(turns, faces: bool = False) -> str:
     """The reply as a person reads it: each agent's answer under its name,
     a blank line between agents, a turn with no agent shown bare.
 
@@ -728,8 +729,33 @@ def render_turns(turns) -> str:
             parts.append(answer)
         else:
             name = agent.get("name") or agent.get("id") or "Agent"
-            parts.append("**%s**\n\n%s" % (name, answer))
+            # With faces, the office robot stands before the name (the web
+            # chat asks for this; Discord and Telegram keep the bold name).
+            head = (agent_avatar.reply_face(str(agent.get("id") or ""), name)
+                    if faces else "**%s**" % name)
+            parts.append("%s\n\n%s" % (head, answer))
     return "\n\n".join(parts)
+
+
+def _faces_of(turns) -> dict:
+    """agent id -> the robot, for every agent that spoke, so a caller that
+    renders turns itself (the IO pipe) can show the face too."""
+    out = {}
+    for turn in turns if isinstance(turns, list) else []:
+        agent = turn.get("agent") if isinstance(turn, dict) else None
+        if isinstance(agent, dict) and agent.get("id"):
+            out[str(agent["id"])] = agent_avatar.data_uri(
+                str(agent["id"]), str(agent.get("name") or agent["id"]), agent_avatar.REPLY_SIZE)
+    return out
+
+
+def _reply(turns, queue=None, marker: str = "") -> dict:
+    """The /chat response: the turns, two renderings of them (plain, and
+    with the agents' faces for the web), the faces by id, and the queue
+    and marker the older shape carried."""
+    return {"turns": turns, "rendered": render_turns(turns),
+            "rendered_web": render_turns(turns, faces=True),
+            "faces": _faces_of(turns), "queue": queue or [], "marker": marker}
 
 
 def turns_marker(ids) -> str:
@@ -950,8 +976,7 @@ async def _jev_pick(body: ChatIn, text: str, agents: list[dict]) -> dict | None:
             if ok is False:
                 return None
         await _write_pin(_pin_key(body.chat_id, body.user_email), agent["id"])
-        return {"turns": [turn], "rendered": render_turns([turn]),
-                "queue": [], "marker": ""}
+        return _reply([turn], queue=[], marker="")
     except Exception:                                       # noqa: BLE001
         logger.warning("Jev could not pick an agent for the chat; answering as "
                        "before", exc_info=True)
@@ -977,7 +1002,7 @@ async def chat(body: ChatIn,
             or await _jev_release(key, body.user_email, text)):
         await _clear_pin(key)
         turns = [{"agent": None, "answer": RELEASED, "notes": []}]
-        return {"turns": turns, "rendered": render_turns(turns), "queue": [], "marker": ""}
+        return _reply(turns, queue=[], marker="")
 
     agents = await _agents_for(body.user_email)
     named = agent_routing.match_agents(text, agents)
@@ -1014,11 +1039,9 @@ async def chat(body: ChatIn,
         ids = [a["id"] for a in named] if queue else []
         if first_pending:
             await _write_pin(key, named[0]["id"])
-            return {"turns": turns, "rendered": render_turns(turns),
-                    "queue": queue, "marker": turns_marker(ids)}
+            return _reply(turns, queue=queue, marker=turns_marker(ids))
         await _write_pin(key, named[-1]["id"])
-        return {"turns": turns, "rendered": render_turns(turns),
-                "queue": queue, "marker": turns_marker(ids)}
+        return _reply(turns, queue=queue, marker=turns_marker(ids))
 
     pinned_id = await _read_pin(key)
     agent = next((a for a in agents if a.get("id") == pinned_id), None)
@@ -1069,7 +1092,7 @@ async def chat(body: ChatIn,
         # The caller will answer for itself. Saying so with an empty list
         # rather than an IO answer is what keeps the Auto pipe from asking
         # IO, which would ask Auto, which would ask here again.
-        return {"turns": [], "rendered": "", "queue": [], "marker": ""}
+        return _reply([], queue=[], marker="")
 
     if agent is None:
         # IO speaking for itself. Done here rather than in the pipe because
@@ -1081,7 +1104,7 @@ async def chat(body: ChatIn,
             logger.warning("the base model did not answer", exc_info=True)
             answer = IO_DOWN
         turns = [{"agent": None, "answer": answer, "notes": []}]
-        return {"turns": turns, "rendered": render_turns(turns), "queue": [], "marker": ""}
+        return _reply(turns, queue=[], marker="")
 
     # A follow up keeps the agent awake. Without this the pin would run out
     # five minutes after the agent was last NAMED, mid conversation.
@@ -1091,4 +1114,4 @@ async def chat(body: ChatIn,
                            graph=await agent_graph.graph_block(
                                body.user_email, text))
     await _write_pin(key, agent["id"])
-    return {"turns": [turn], "rendered": render_turns([turn]), "queue": [], "marker": ""}
+    return _reply([turn], queue=[], marker="")

@@ -29,6 +29,7 @@ from sqlalchemy import text as sql_text
 from sse_starlette.sse import EventSourceResponse
 
 import agent_activity
+import agent_avatar
 import agent_todo
 import agent_events
 import agent_memory
@@ -144,6 +145,23 @@ async def _create_model(token: str, body: dict) -> tuple[int, object]:
     return r.status_code, parsed
 
 
+async def _update_model(token: str, model_id: str, body: dict) -> tuple[int, object]:
+    """One call to Open WebUI's /api/v1/models/model/update, as the given
+    user. The body is the whole ModelForm: the endpoint revalidates it all."""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.post(
+            f"{_base_url()}/api/v1/models/model/update",
+            params={"id": model_id},
+            headers={"Authorization": f"Bearer {token}",
+                     "Content-Type": "application/json"},
+            json=body)
+    try:
+        parsed = r.json()
+    except ValueError:
+        parsed = r.text
+    return r.status_code, parsed
+
+
 def _new_agent_id(slug: str) -> str:
     return f"agent-{slug}-{uuid.uuid4().hex[:4]}"
 
@@ -162,9 +180,11 @@ def _body_for(template: dict, agent_id: str) -> dict:
         # it from. A template with no role writes no key rather than an
         # empty one: an empty string is a role somebody chose to clear,
         # and the card and the brief both read it as "none" anyway.
-        "meta": ({"toolIds": template["tool_ids"], "role": template["role"]}
-                 if template.get("role")
-                 else {"toolIds": template["tool_ids"]}),
+        "meta": dict(({"toolIds": template["tool_ids"], "role": template["role"]}
+                      if template.get("role")
+                      else {"toolIds": template["tool_ids"]}),
+                     # The office robot, so the chat shows the same face.
+                     profile_image_url=agent_avatar.data_uri(agent_id, template["name"])),
         "params": {"system": template["instructions"]},
         "access_grants": [],
         "is_active": True,
@@ -244,7 +264,15 @@ async def seed(x_cron_secret: str = Header(default=""),
     """
     if not x_user_email:
         raise HTTPException(status_code=400, detail="Missing X-User-Email")
-    return await seed_for_email(x_user_email)
+    out = await seed_for_email(x_user_email)
+    # And a face for any agent made before faces existed (2026-10-27):
+    # the agents page calls this once on load, so this is where the
+    # backfill rides. Best effort, like the seeding itself.
+    try:
+        out["faces"] = await give_faces(x_user_email.strip().lower())
+    except Exception:                                       # noqa: BLE001
+        logger.warning("faces: backfill failed for %s", x_user_email, exc_info=True)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -870,7 +898,8 @@ class MakeAgentIn(BaseModel):
 def _make_agent_body(agent_id: str, name: str, role: str | None,
                      instructions: str, access: str) -> dict:
     meta = {"description": instructions[:120], "toolIds": ["server:mcp-proxy"],
-            "agent_instructions": instructions, "access": access}
+            "agent_instructions": instructions, "access": access,
+            "profile_image_url": agent_avatar.data_uri(agent_id, name)}
     if role:
         meta["role"] = role
     return {"id": agent_id, "name": name, "base_model_id": _default_model(),
@@ -943,3 +972,61 @@ async def make_agent(body: MakeAgentIn, user: CurrentUser = Depends(current_user
             break
     logger.warning("could not make an agent for %s: status=%s", user.email, status)
     raise HTTPException(status_code=502, detail="Could not save that agent. Try again in a moment.")
+
+
+# --- faces (2026-10-27) ---------------------------------------------------------
+# The office robot as the agent's profile picture, so the main chat shows
+# who answered. Set when an agent is made (above); these give the agents
+# page the picture for its own saves and put one on every agent that
+# predates this.
+
+@router.get("/avatar")
+async def avatar(id: str = "", name: str = "",
+                 user: CurrentUser = Depends(current_user)) -> dict:
+    """The robot for this id and name, as a data: URL."""
+    if not id.strip():
+        raise HTTPException(status_code=400, detail="which agent?")
+    return {"data_uri": agent_avatar.data_uri(id.strip(), name.strip() or id.strip())}
+
+
+async def give_faces(email: str) -> dict:
+    """Give every agent of this person that has no picture its robot.
+
+    Idempotent and best effort: an agent that cannot be updated is counted
+    and left as it was. Rides on the seed call the agents page makes."""
+    from routes_agent_chat import _agents_for
+    agents = await _agents_for(email)
+    todo = [a for a in agents or [] if isinstance(a, dict)
+            and not (isinstance(a.get("meta"), dict) and a["meta"].get("profile_image_url"))]
+    if not todo:
+        return {"given": 0, "failed": 0}
+    user_id = await _owui_user_id_for(email)
+    if not user_id:
+        return {"given": 0, "failed": len(todo)}
+    token = mint_owui_token(user_id, SEED_TOKEN_TTL_SECONDS,
+                            session_stamp=await session_stamp_for(user_id))
+    given = failed = 0
+    for a in todo:
+        agent_id, name = str(a.get("id") or ""), str(a.get("name") or "")
+        meta = dict(a.get("meta") or {})
+        meta["profile_image_url"] = agent_avatar.data_uri(agent_id, name or agent_id)
+        body = {"id": agent_id, "name": name, "base_model_id": a.get("base_model_id"),
+                "meta": meta, "params": a.get("params") or {},
+                "access_grants": a.get("access_grants") or [],
+                "is_active": a.get("is_active", True)}
+        try:
+            status, _ = await _update_model(token, agent_id, body)
+        except Exception:                                   # noqa: BLE001
+            logger.warning("faces: could not update %s", agent_id, exc_info=True)
+            status = 0
+        if status == 200:
+            given += 1
+        else:
+            failed += 1
+    return {"given": given, "failed": failed}
+
+
+@router.post("/faces")
+async def faces(user: CurrentUser = Depends(current_user)) -> dict:
+    """The backfill on request, for an operator or a script."""
+    return await give_faces(user.email)

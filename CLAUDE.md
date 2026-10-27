@@ -186,6 +186,11 @@ then **Jev** (`agent_decider`,
 needs `TYPESAFE_API_KEY`) is asked whether one agent should take it and that
 agent answers if its reply holds up (`agent_jev.reply_answers`); otherwise the
 free model answers. No key means no Jev and the chat behaves as before.
+Agents carry the office robot as their profile picture (`agent_avatar.py`,
+set on create and backfilled on the agents page's seed call,
+`routes_agents.give_faces`), so an agent mentioned with `@` in the main chat answers with its own
+face; a reply Auto routed to an agent opens with the small robot and the name
+(`rendered_web` and `faces` on `/agents/chat`).
 
 ### Hard rules
 - **NEVER deploy your local `mcp-servers/tasks/templates.py`.** The server's copy is ahead (more App Builder templates). Pull the server's version before editing, or you'll silently drop templates.
