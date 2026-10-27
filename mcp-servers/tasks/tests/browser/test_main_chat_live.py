@@ -54,6 +54,12 @@ async def site():
     token = mint_owui_token(uid, ttl_seconds=1800,
                             session_stamp=await session_stamp_for(uid))
     chats = []
+    # An agent on "All" may build agents without asking (its owner's choice),
+    # and on 2026-10-27 one did, in this test. Whatever this run creates,
+    # it removes, even when an assertion fails.
+    agents_before = {r[0] for r in await _rows(
+        "select id from public.model where user_id = :u "
+        "and base_model_id is not null", u=uid)}
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
         ctx = await browser.new_context(viewport={"width": 1400, "height": 900})
@@ -66,10 +72,18 @@ async def site():
             yield {"page": page, "token": token, "uid": uid, "chats": chats}
         finally:
             await browser.close()
+            made = {r[0] for r in await _rows(
+                "select id from public.model where user_id = :u "
+                "and base_model_id is not null", u=uid)} - agents_before
+            auth = {"Authorization": "Bearer " + token}
             async with httpx.AsyncClient(timeout=60) as c:
                 for chat_id in chats:
-                    await c.delete(OWUI + "/api/v1/chats/" + chat_id,
-                                   headers={"Authorization": "Bearer " + token})
+                    await c.delete(OWUI + "/api/v1/chats/" + chat_id, headers=auth)
+                for agent_id in made:
+                    await c.post(OWUI + "/api/v1/models/model/delete",
+                                 params={"id": agent_id}, json={"id": agent_id},
+                                 headers=auth)
+            assert not made, "this run created agents (removed): %s" % sorted(made)
 
 
 async def _open(site, model):
