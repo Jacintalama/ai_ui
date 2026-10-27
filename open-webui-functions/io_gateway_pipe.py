@@ -198,19 +198,33 @@ class Pipe:
 
     async def pipe(self, body: dict, __user__: dict = None,
                    __event_emitter__: Optional[Callable[[dict], Any]] = None,
-                   __metadata__: dict = None):
+                   __metadata__: dict = None, __chat_id__: Optional[str] = None,
+                   __task__: Optional[str] = None):
         """One message in, one answer out.
 
         Every exit returns a sentence. Somebody is watching this chat, so a
         silent failure is the one outcome that is never acceptable.
         """
+        if __task__:
+            # Open WebUI's own background job (a title, tags, follow ups),
+            # not a message from anybody. With an agent picked it is sent
+            # here, and running it ran the agent's whole loop, tools
+            # included: three runs for one message on 2026-10-27. Nothing
+            # here can answer it without an agent, so it gets nothing and
+            # Open WebUI keeps its default. The task model points jobs at
+            # Auto, so this only matters if that setting is cleared.
+            return ""
         user_email = (__user__ or {}).get("email") or ""
         if not user_email:
             return NO_USER
         if not (body.get("messages") or []):
             return EMPTY
 
-        chat_id = (body.get("chat_id")
+        # Open WebUI pops `metadata` off the body before a pipe sees it and
+        # passes the chat as __chat_id__; without it every chat was "web".
+        chat_id = (__chat_id__
+                   or (__metadata__ or {}).get("chat_id")
+                   or body.get("chat_id")
                    or (body.get("metadata") or {}).get("chat_id")
                    or "web")
 
