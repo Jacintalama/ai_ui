@@ -59,13 +59,15 @@ def test_an_agent_is_made_with_the_agents_pages_own_body(client, owui):
     assert r.status_code == 200, r.text
     assert r.json()["name"] == "Jack" and r.json()["id"].startswith("agent-jack-")
     body = owui["created"][0]
-    assert body["base_model_id"] == "gpt-5"
+    # The IO pipe as the base, so @Jack in the main chat runs our loop,
+    # and the platform default as the language model (agent_llm).
+    assert body["base_model_id"] == "io.io"
     meta = dict(body["meta"])
     # The office robot as the profile picture (agent_avatar), by name.
     assert meta.pop("profile_image_url").startswith("data:image/svg+xml;base64,")
     assert meta == {"description": "Keep the books straight.", "toolIds": ["server:mcp-proxy"],
                     "agent_instructions": "Keep the books straight.", "access": "ask",
-                    "role": "Bookkeeper"}
+                    "role": "Bookkeeper", "llm": "gpt-5"}
     assert body["params"] == {"system": "Keep the books straight."}
     assert body["access_grants"] == [] and body["is_active"] is True
 
@@ -118,19 +120,11 @@ async def test_the_chat_tool_makes_an_agent_as_the_person_asking():
 
 
 
-# --- faces for the agents that predate them (2026-10-27) -------------------
+# --- bringing older agents up to date (2026-10-27) --------------------------
 
-async def test_the_backfill_gives_a_face_to_every_agent_without_one(monkeypatch):
+def _wire_refresh(monkeypatch, rows):
     import routes_agent_chat
     import routes_agents
-
-    rows = [
-        {"id": "agent-a", "name": "Ada", "base_model_id": "gpt-5", "meta": {"toolIds": ["gmail"]},
-         "params": {"system": "Be Ada."}, "access_grants": [], "is_active": True},
-        {"id": "agent-m", "name": "Mia", "base_model_id": "gpt-5",
-         "meta": {"toolIds": [], "profile_image_url": "data:image/png;base64,xx"},
-         "params": {}, "access_grants": [], "is_active": True},
-    ]
     updated = []
 
     async def agents_for(email):
@@ -145,10 +139,56 @@ async def test_the_backfill_gives_a_face_to_every_agent_without_one(monkeypatch)
     monkeypatch.setattr(routes_agents, "_owui_user_id_for", AsyncMock(return_value="u1"))
     monkeypatch.setattr(routes_agents, "mint_owui_token", lambda *a, **k: "tok")
     monkeypatch.setattr(routes_agents, "session_stamp_for", AsyncMock(return_value="s"))
-    out = await routes_agents.give_faces(OWNER)
-    assert out == {"given": 1, "failed": 0}
+    monkeypatch.setattr(routes_agents, "_default_model", lambda: "gpt-5")
+    return updated
+
+
+async def test_the_backfill_gives_a_face_and_moves_the_model_into_meta(monkeypatch):
+    import routes_agents
+    rows = [
+        {"id": "agent-a", "name": "Ada", "base_model_id": "gpt-5", "meta": {"toolIds": ["gmail"]},
+         "params": {"system": "Be Ada."}, "access_grants": [], "is_active": True},
+        # Up to date already: on the pipe, with a model and a face.
+        {"id": "agent-m", "name": "Mia", "base_model_id": "io.io",
+         "meta": {"toolIds": [], "llm": "gpt-5", "profile_image_url": "data:image/png;base64,xx"},
+         "params": {}, "access_grants": [], "is_active": True},
+    ]
+    updated = _wire_refresh(monkeypatch, rows)
+    out = await routes_agents.refresh_agents(OWNER)
+    assert out == {"updated": 1, "failed": 0}
     assert [m for m, _ in updated] == ["agent-a"]
     body = updated[0][1]
+    assert body["base_model_id"] == "io.io"
+    assert body["meta"]["llm"] == "gpt-5", "the model the owner chose was lost"
     assert body["meta"]["profile_image_url"].startswith("data:image/svg+xml;base64,")
     assert body["meta"]["toolIds"] == ["gmail"] and body["params"] == {"system": "Be Ada."}
-    assert body["base_model_id"] == "gpt-5" and body["access_grants"] == []
+    assert body["access_grants"] == []
+
+
+async def test_an_agent_stuck_on_a_pipe_with_no_model_is_given_the_default(monkeypatch):
+    import routes_agents
+    rows = [{"id": "agent-s", "name": "Sam", "base_model_id": "auto_router.auto",
+             "meta": {"profile_image_url": "data:image/png;base64,xx"},
+             "params": {}, "access_grants": [], "is_active": True}]
+    updated = _wire_refresh(monkeypatch, rows)
+    assert await routes_agents.refresh_agents(OWNER) == {"updated": 1, "failed": 0}
+    body = updated[0][1]
+    assert body["base_model_id"] == "auto_router.auto" and body["meta"]["llm"] == "gpt-5"
+
+
+async def test_a_failed_update_is_counted_and_the_rest_still_done(monkeypatch):
+    import routes_agents
+    rows = [
+        {"id": "agent-a", "name": "Ada", "base_model_id": "gpt-5", "meta": {},
+         "params": {}, "access_grants": [], "is_active": True},
+        {"id": "agent-b", "name": "Bo", "base_model_id": "gpt-5", "meta": {},
+         "params": {}, "access_grants": [], "is_active": True},
+    ]
+    _wire_refresh(monkeypatch, rows)
+
+    async def flaky(token, model_id, body):
+        if model_id == "agent-a":
+            raise RuntimeError("down")
+        return 200, {}
+    monkeypatch.setattr(routes_agents, "_update_model", flaky)
+    assert await routes_agents.refresh_agents(OWNER) == {"updated": 1, "failed": 1}

@@ -32,6 +32,7 @@ import agent_escalation
 import agent_graph
 import agent_handoff
 import agent_jev
+import agent_llm
 import agent_memory
 import agent_routing
 import agent_skills
@@ -139,12 +140,19 @@ async def _every_tool_for(user_email: str) -> list[str]:
 #:   select id from public.function
 #:    where type='pipe' and content like '%/agents/chat%';
 #: then map each pipe to its model id: pipe "io" registers model "io.io".
-CALLBACK_MODEL_IDS = frozenset({"auto_router.auto", "io.io"})
+#: Kept in agent_llm since 2026-10-27, when an agent on a pipe became
+#: able to run through meta.llm; this name stays for its readers.
+CALLBACK_MODEL_IDS = agent_llm.CALLBACK_IDS
 
 #: Said in place of an answer, and recognised in routes_agent_chat so it draws
 #: as a failure carrying the fix rather than as something the agent said.
 AGENT_ON_CALLBACK_MODEL = (
     "This agent is set to a model that cannot run an agent.")
+
+#: Said when a message arrives for an agent id that is not one of this
+#: person's agents: deleted since the chat was opened, or somebody else's.
+NOT_YOUR_AGENT = ("That agent is not one of yours any more. Pick another "
+                  "model, or make the agent again on the Agents page.")
 
 
 async def _resolve_agent_row(user_email: str, agent_id: str
@@ -185,8 +193,11 @@ async def _resolve_agent_row(user_email: str, agent_id: str
         raise HTTPException(status_code=404, detail="no such agent")
     # Before anything is spent on the turn. Running it would not merely fail,
     # it would recurse until something upstream fell over.
-    base = agent.get("base_model_id")
-    if isinstance(base, str) and base in CALLBACK_MODEL_IDS:
+    # Since 2026-10-27 an agent on a pipe runs when meta.llm names its
+    # model (agent_llm): the runner posts that model, never the pipe. One
+    # on a pipe with no model is the old loop, and is still refused here.
+    if (agent_llm.is_callback(agent.get("base_model_id"))
+            and not agent_llm.can_run(agent)):
         raise HTTPException(status_code=409,
                             detail=AGENT_ON_CALLBACK_MODEL)
     meta = agent.get("meta") if isinstance(agent.get("meta"), dict) else {}
@@ -540,6 +551,12 @@ class ChatIn(BaseModel):
     #: agent runs here and the rest come back as `queue`. Discord and
     #: Telegram send one message per turn already and never set it.
     first_only: bool = False
+    #: The agent this message is for, decided by the caller: the IO pipe
+    #: sets it when Open WebUI sent the message to an agent's own model
+    #: (@Ada in the main chat, 2026-10-27). That agent answers, whatever
+    #: the words say: no name matching, no release, no Jev. An id that is
+    #: not one of this person's agents is answered with a sentence saying so.
+    agent_id: str | None = None
 
 
 def _pin_key(chat_id: str, user_email: str) -> str:
@@ -997,15 +1014,24 @@ async def chat(body: ChatIn,
     _require_internal(x_internal_secret)
     key = _pin_key(body.chat_id, body.user_email)
     text = agent_routing.last_user_text(body.messages)
+    forced = str(getattr(body, "agent_id", None) or "").strip()
 
-    if (agent_routing.wants_release(text)
-            or await _jev_release(key, body.user_email, text)):
+    if not forced and (agent_routing.wants_release(text)
+                       or await _jev_release(key, body.user_email, text)):
         await _clear_pin(key)
         turns = [{"agent": None, "answer": RELEASED, "notes": []}]
         return _reply(turns, queue=[], marker="")
 
     agents = await _agents_for(body.user_email)
-    named = agent_routing.match_agents(text, agents)
+    if forced:
+        # The message was sent to this agent's own model: it is the one
+        # addressed, as surely as a name at the start of the sentence.
+        named = [a for a in agents if str(a.get("id") or "") == forced]
+        if not named:
+            turns = [{"agent": None, "answer": NOT_YOUR_AGENT, "notes": []}]
+            return _reply(turns, queue=[], marker="")
+    else:
+        named = agent_routing.match_agents(text, agents)
 
     if named:
         # Naming agents switches rather than stacking: the LAST one named is

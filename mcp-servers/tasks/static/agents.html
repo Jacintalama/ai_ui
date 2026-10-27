@@ -1325,7 +1325,7 @@
       var sys = instructionsOf(m);
       var shared = isShared(m);
       var hue = avatarHue(m.name);
-      var model = m.base_model_id || "";
+      var model = llmOf(m);
       // What this agent is for, in the owner's own words. Optional, and most
       // agents predate the field, so the model id keeps the subtitle line
       // whenever there is no role rather than leaving a gap.
@@ -2391,6 +2391,20 @@
     // and the two get read together whenever a model misbehaves.
     var CALLBACK_MODELS = ["auto_router.auto", "io.io"];
 
+    // Since 2026-10-27 every agent's base model is the IO pipe, so that
+    // @mentioning the agent in the main chat runs our own loop (brief,
+    // skills, memory, access level), and the language model it answers
+    // with is meta.llm. The dropdown picks and shows that model; the body
+    // writes both. An agent somebody put on a plain model directly still
+    // has it as its base, and llmOf reads that. See agent_llm.py.
+    var AGENT_BASE = "io.io";
+    function llmOf(m) {
+      var base = (m && m.base_model_id) || "";
+      if (CALLBACK_MODELS.indexOf(base) === -1) return base;
+      var llm = m && m.meta && m.meta.llm;
+      return typeof llm === "string" ? llm : "";
+    }
+
     // Models that cannot answer a chat turn at all, so an agent on one can
     // never run. Exact ids, never a name pattern: a pattern is how Auto
     // (Smart) nearly went missing once. Every id here was on GET /api/models
@@ -2490,7 +2504,9 @@
     function buildAgentBody(f) {
       var meta = { description: f.instructions.slice(0, 120),
                    toolIds: f.toolIds,
-                   agent_instructions: f.instructions };
+                   agent_instructions: f.instructions,
+                   // The language model; the base below is the IO pipe.
+                   llm: f.baseModel };
       // Only when there is one. Clearing the field has to REMOVE the role,
       // not store an empty one: meta is rewritten whole on every save, so
       // omitting the key is what makes "cleared" stick.
@@ -2510,7 +2526,7 @@
       // the caller; kept from the existing agent when it cannot be.
       if (f.profileImage) meta.profile_image_url = f.profileImage;
       return {
-        id: f.id, name: f.name, base_model_id: f.baseModel,
+        id: f.id, name: f.name, base_model_id: AGENT_BASE,
         // agent_instructions is a second copy of the same text. The list
         // endpoint blanks params for anyone without write access, so for a
         // ready-made agent this is the only copy any other user can read, and
@@ -2588,7 +2604,7 @@
       }
       recommend(state.defaultModel);
       state.agents.forEach(function (a) {
-        if (a.user_id === state.me) recommend(a.base_model_id);
+        if (a.user_id === state.me) recommend(llmOf(a));
       });
       function addGroup(label, models) {
         if (!models.length) return;
@@ -2612,22 +2628,26 @@
       // It used to start on whatever /api/models listed first, which on
       // production is the Webhook Automation pipe.
       if (!agent && recommended.length) base.value = recommended[0];
-      if (agent && agent.base_model_id) {
-        base.value = agent.base_model_id;
+      // The agent's own language model; for one on a pipe with no model
+      // (put there by hand, before meta.llm existed), the pipe itself, so
+      // it is shown marked rather than silently replaced.
+      var own = agent ? (llmOf(agent) || agent.base_model_id || "") : "";
+      if (own) {
+        base.value = own;
         // The dropdown no longer offers callback pipes, so an agent already
         // on one would land on whatever option happens to be first and be
         // silently moved by the next save. Show it, marked, and make them
         // choose: quietly rewriting somebody's model is worse than the
         // problem this is trying to fix.
-        if (base.value !== agent.base_model_id) {
+        if (base.value !== own) {
           var o = document.createElement("option");
-          o.value = agent.base_model_id;
-          o.textContent = agent.base_model_id
-            + (CALLBACK_MODELS.indexOf(agent.base_model_id) !== -1
-               || NON_CHAT_MODELS.indexOf(agent.base_model_id) !== -1
+          o.value = own;
+          o.textContent = own
+            + (CALLBACK_MODELS.indexOf(own) !== -1
+               || NON_CHAT_MODELS.indexOf(own) !== -1
                  ? " (cannot run an agent)" : " (not available)");
           base.insertBefore(o, base.firstChild);
-          base.value = agent.base_model_id;
+          base.value = own;
         }
       }
       showModelWarning();
@@ -2895,8 +2915,8 @@
       // whichever model happens to be first, which on this platform can be a
       // pipe that is not tool capable, so a duplicated Inbox Triage would
       // quietly run on the wrong thing.
-      if (agent.base_model_id) {
-        document.getElementById("agent-base").value = agent.base_model_id;
+      if (llmOf(agent)) {
+        document.getElementById("agent-base").value = llmOf(agent);
       }
       updateChars();
     }

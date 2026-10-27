@@ -2782,7 +2782,9 @@ def test_a_new_agent_made_from_the_bar_stands_up_on_the_floor(browser):
         frame.locator('.who-slot[data-id^="agent-jack-"]').wait_for(state="attached")
         assert len(created) == 1
         body = created[0]
-        assert body["name"] == "Jack" and body["base_model_id"] == "gpt-5"
+        assert body["name"] == "Jack"
+        # The IO pipe as the base, the chosen model in meta.llm (agent_llm).
+        assert body["base_model_id"] == "io.io" and body["meta"]["llm"] == "gpt-5"
         assert body["meta"]["role"] == "Bookkeeper" and body["meta"]["access"] == "ask"
         assert body["meta"]["toolIds"] == ["server:mcp-proxy"]
         assert body["params"]["system"].startswith("Keep the books")
