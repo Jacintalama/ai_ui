@@ -184,6 +184,100 @@ def requests() -> list[tuple[str, object, tuple[str, dict]]]:
     return out
 
 
+
+# --- the main chat's tool pick (2026-10-27) ---------------------------------
+
+#: Every tool the pick may offer, in the order production would list them.
+TOOLS = list(agent_jev.TOOL_NOTES)
+
+#: (message, tools it needs, tools that are fine to have as well).
+TOOL_CASES = [
+    ("what is on my calendar tomorrow", {"calendar"}, set()),
+    ("find the budget spreadsheet in my drive", {"gdrive"}, {"documents"}),
+    ("any unread emails from Ana this week?", {"gmail"}, set()),
+    ("draft an email to Ana saying the invoice is paid", {"gmail"}, set()),
+    ("make me three agents for my coffee shop", {"agent_builder"},
+     {"colleague", "agents"}),
+    ("change the header colour of my portfolio app to blue", {"code"},
+     {"account"}),
+    ("every Monday at 9 send me a summary of my week", {"schedules"},
+     {"calendar", "gmail"}),
+    ("search the web for the cheapest flights to Tokyo in December",
+     {"server:mcp-proxy"}, set()),
+    ("remember that my accountant is called Ana", {"remember"}, set()),
+    ("what apps have I built so far", {"account"}, {"code"}),
+    ("make a spreadsheet of my monthly expenses", {"excel_creator"},
+     {"documents"}),
+    ("make a short video about our bakery", {"video"}, set()),
+    ("tell me a joke about coffee please", set(), set()),
+    ("what is the capital of Australia again", set(), {"server:mcp-proxy"}),
+]
+
+
+def tool_score(values: dict, needed: set, ok: set, cut: float) -> tuple:
+    """(missed, extra) at this cut: needed tools left out, and picked tools
+    that were neither needed nor fine to have."""
+    picked = {t for t, v in values.items() if v >= cut}
+    return len(needed - picked), len(picked - needed - ok)
+
+
+def choose_tool_cut(misses_per_run: list) -> float:
+    """The rule fixed before the run: the highest cut with no missed tool in
+    every run, then one step lower, never below the lowest cut. None clean:
+    the pick is off and every tool is offered, as before."""
+    clean = [c for c in UP if all(m[c] == 0 for m in misses_per_run)]
+    if not clean:
+        return OFF["down"]
+    i = UP.index(max(clean))
+    return UP[max(i - 1, 0)]
+
+
+async def run_tools(key: str, cap_usd: float):
+    """[(case, {tool: value})] for every tool case, and dollars spent."""
+    rows, spent, last = [], 0.0, 0.0
+    for case in TOOL_CASES:
+        if spent + last > cap_usd:
+            print(f"stopped at the ${cap_usd} cap")
+            break
+        state, questions = agent_jev.tools_request(case[0], TOOLS)
+        data = await agent_decider._post(
+            {"model": agent_decider.model(), "state": state,
+             "questions": questions}, key)
+        values = {}
+        for qid in questions:
+            a = agent_jev.read(data, qid)
+            if a is not None:
+                values[TOOLS[int(qid[1:])]] = a.value
+        tokens = (data.get("usage") or {}).get("input_tokens")
+        last = agent_decider.cost_usd(tokens) or 0.0
+        spent += last
+        rows.append((case, values))
+    return rows, spent
+
+
+def report_tools(runs: list) -> float:
+    print(f"\n== {agent_jev.PURPOSE_TOOLS} on {agent_decider.model()}")
+    for i, (case, values) in enumerate(runs[0]):
+        top = sorted(values.items(), key=lambda kv: -kv[1])[:4]
+        print(f"{case[0][:52]:52} need {sorted(case[1]) or '-'} | "
+              + " ".join(f"{t} {v:.2f}" for t, v in top))
+    misses_per_run, extras_per_run = [], []
+    for rows in runs:
+        misses_per_run.append({c: sum(tool_score(v, set(k[1]), set(k[2]), c)[0]
+                                      for k, v in rows) for c in UP})
+        extras_per_run.append({c: sum(tool_score(v, set(k[1]), set(k[2]), c)[1]
+                                      for k, v in rows) for c in UP})
+    print("cut  | " + " | ".join(f"run {n + 1} missed extra"
+                                 for n in range(len(runs))))
+    for c in UP:
+        print(f"{c:.2f} | " + " | ".join(
+            f"{m[c]:12} {e[c]:5}" for m, e in zip(misses_per_run,
+                                                  extras_per_run)))
+    chosen = choose_tool_cut(misses_per_run)
+    print(f"chosen cut: {chosen}")
+    return chosen
+
+
 # --- scoring ----------------------------------------------------------------
 
 def outcome(shape: str, label, choice, value: float, cut: float) -> str:
@@ -280,6 +374,13 @@ def main() -> None:
             print(f"{c:.2f} | " + " | ".join(
                 f"{t[c]['right']:9} {t[c]['wrong']:5}" for t in tables))
         print(f"chosen cut: {choose(shape, tables)}")
+    tool_runs = []
+    for n in range(runs):
+        rows, spent = asyncio.run(run_tools(key, CAP_USD / runs))
+        tool_runs.append(rows)
+        total += spent
+        print(f"tool run {n + 1}: {len(rows)} calls, ${spent:.6f}")
+    report_tools(tool_runs)
     print(f"\ntotal ${total:.6f}")
 
 

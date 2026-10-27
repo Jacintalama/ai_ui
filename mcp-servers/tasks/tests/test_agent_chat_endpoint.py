@@ -405,6 +405,9 @@ async def test_route_only_returns_nothing_when_nobody_is_up(_wire, monkeypatch):
     """The Auto (Free) pipe answers for itself when no agent is involved,
     and IO answers for itself THROUGH that pipe. Without this flag Auto
     asking here would get IO's answer, which asks Auto, which asks here."""
+    # The assistant off: this pins what Auto is told when nobody answers
+    # at all (main_assistant answers unclaimed messages since 2026-10-27).
+    monkeypatch.setenv("MAIN_ASSISTANT", "0")
     monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="IO spoke"))
     b = _body("what is the weather")
     b.route_only = True
@@ -494,6 +497,9 @@ def test_the_marker_refuses_an_id_that_could_break_out_of_the_comment(bad):
 async def test_first_only_is_inert_when_nobody_is_named(_wire, monkeypatch):
     """The flag is read only on the named branch. Every other return must
     still carry an empty queue and marker, or a pipe reading them raises."""
+    # The assistant off: this pins what Auto is told when nobody answers
+    # at all (main_assistant answers unclaimed messages since 2026-10-27).
+    monkeypatch.setenv("MAIN_ASSISTANT", "0")
     monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="io"))
     b = _body("what is the weather")
     b.first_only = True
@@ -760,6 +766,9 @@ async def test_a_name_still_wins_over_jev(_wire, monkeypatch):
 
 
 async def test_a_pick_whose_reply_did_not_answer_is_not_shown(_wire, monkeypatch):
+    # The assistant off: this pins what Auto is told when nobody answers
+    # at all (main_assistant answers unclaimed messages since 2026-10-27).
+    monkeypatch.setenv("MAIN_ASSISTANT", "0")
     _jev(monkeypatch, reply_ok=False)
     monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="general"))
     out = await rt.chat(_body(ASK), x_internal_secret="s")
@@ -848,3 +857,185 @@ async def test_ios_own_answer_has_no_face(_wire, monkeypatch):
     monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="general"))
     out = await rt.chat(_body("what is the weather"), x_internal_secret="s")
     assert out["rendered_web"] == "general" and out["faces"] == {}
+
+
+# --- the main chat's assistant (main_assistant, 2026-10-27) -----------------
+# On Auto (route_only), a message nobody takes is answered by the assistant
+# with the tools Jev picked, instead of handing the pipe an empty list.
+
+@pytest.fixture
+def assistant(_wire, monkeypatch):
+    import agent_graph
+    import agent_jev
+    import agent_memory
+    import agent_runner
+    import main_assistant
+    calls = {"pick": []}
+    state = {"pick": ["calendar"]}
+
+    async def pick_tools(email, text, tools):
+        calls["pick"].append((email, text, list(tools)))
+        return state["pick"]
+
+    monkeypatch.setattr(agent_jev, "pick_tools", pick_tools)
+    monkeypatch.setattr(rt, "_every_tool_for",
+                        AsyncMock(return_value=["gmail", "calendar"]))
+    monkeypatch.setattr(agent_graph, "graph_block", AsyncMock(return_value=""))
+    monkeypatch.setattr(agent_memory, "recall_block", AsyncMock(return_value=""))
+    monkeypatch.setattr(rt, "clock_for", AsyncMock(
+        return_value=__import__("datetime").datetime(2026, 10, 27)))
+    monkeypatch.setattr(agent_runner, "FREE_MODELS", ["z-ai/glm-5.3-flash"])
+    monkeypatch.delenv("MAIN_ASSISTANT", raising=False)
+    rt._run_turn.return_value = {"answer": "You have the dentist at 10.",
+                                 "notes": []}
+    return calls, state, main_assistant
+
+
+def _auto(text):
+    b = _body(text)
+    b.route_only = True
+    return b
+
+
+async def test_an_unclaimed_message_is_answered_with_the_tools_jev_picked(
+        assistant):
+    calls, _, ma = assistant
+    out = await rt.chat(_auto("what is on my calendar tomorrow"),
+                        x_internal_secret="s")
+    assert calls["pick"] == [("owner@example.com",
+                              "what is on my calendar tomorrow",
+                              ["gmail", "calendar"])]
+    args, kwargs = rt._run_turn.await_args
+    assert args[1] == ma.ASSISTANT_ID
+    assert kwargs["tool_ids"] == ["calendar"]
+    assert out["turns"][0]["answer"] == "You have the dentist at 10."
+    # IO speaking for itself: no name or face over the answer.
+    assert out["rendered_web"] == "You have the dentist at 10."
+
+
+async def test_jev_unable_to_pick_offers_every_tool(assistant):
+    _, state, _ = assistant
+    state["pick"] = None
+    await rt.chat(_auto("what is on my calendar tomorrow"),
+                  x_internal_secret="s")
+    assert rt._run_turn.await_args.kwargs["tool_ids"] == ["gmail", "calendar"]
+
+
+async def test_a_failed_assistant_turn_hands_back_to_the_free_model(assistant):
+    rt._run_turn.side_effect = RuntimeError("model down")
+    out = await rt.chat(_auto("what is on my calendar tomorrow"),
+                        x_internal_secret="s")
+    assert out["turns"] == []
+
+
+async def test_a_greeting_goes_to_the_free_model_as_before(assistant):
+    calls, _, _ = assistant
+    out = await rt.chat(_auto("hi there"), x_internal_secret="s")
+    assert out["turns"] == [] and calls["pick"] == []
+    rt._run_turn.assert_not_awaited()
+
+
+async def test_only_the_auto_pipe_gets_the_assistant(assistant, monkeypatch):
+    calls, _, _ = assistant
+    monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="io"))
+    out = await rt.chat(_body("what is on my calendar tomorrow"),
+                        x_internal_secret="s")
+    assert out["turns"][0]["answer"] == "io" and calls["pick"] == []
+
+
+async def test_the_assistant_can_be_switched_off(assistant, monkeypatch):
+    calls, _, _ = assistant
+    monkeypatch.setenv("MAIN_ASSISTANT", "0")
+    out = await rt.chat(_auto("what is on my calendar tomorrow"),
+                        x_internal_secret="s")
+    assert out["turns"] == [] and calls["pick"] == []
+
+
+# --- Yes/No in the main chat (2026-10-27) -----------------------------------
+# A turn that stops to ask shows the question; the next message, if it is a
+# bare yes or no, resumes exactly the held call. Only on Auto: the bots have
+# their own buttons and their own resume, and two resumes would run it twice.
+
+CALL = {"id": "c1", "type": "function",
+        "function": {"name": "create_agent",
+                     "arguments": '{"name": "Barista", "instructions": "x"}'}}
+
+
+@pytest.fixture
+def held(assistant, monkeypatch):
+    store = {}
+    monkeypatch.setattr(rt, "_read_pending",
+                        AsyncMock(side_effect=lambda k: store.get(k)))
+    monkeypatch.setattr(rt, "_write_pending",
+                        AsyncMock(side_effect=lambda k, v: store.__setitem__(k, v)))
+    monkeypatch.setattr(rt, "_clear_pending",
+                        AsyncMock(side_effect=lambda k: store.pop(k, None)))
+    monkeypatch.setattr(rt, "_resume_turn",
+                        AsyncMock(return_value={"answer": "Made Barista.",
+                                                "notes": []}))
+    _, _, ma = assistant
+    rt._run_turn.return_value = {"pending": {
+        "agent_id": ma.ASSISTANT_ID, "user_email": "owner@example.com",
+        "calls": [CALL], "conversation": [{"role": "user", "content": "x"}]}}
+    return store
+
+
+async def test_a_turn_that_asks_shows_the_question_and_holds_the_call(held):
+    out = await rt.chat(_auto("create three assistants for my coffee shop"),
+                        x_internal_secret="s")
+    shown = out["rendered_web"]
+    assert "IO wants to run" in shown and "create_agent" in shown
+    assert "Barista" in shown and "Reply yes" in shown
+    assert list(held.values())[0]["calls"] == [CALL]
+
+
+@pytest.mark.parametrize("word,approved", [("yes", True), ("no", False)])
+async def test_a_bare_yes_or_no_resumes_the_held_call(held, word, approved):
+    await rt.chat(_auto("create three assistants for my coffee shop"),
+                  x_internal_secret="s")
+    rt._run_turn.reset_mock()
+    out = await rt.chat(_auto(word), x_internal_secret="s")
+    kw = rt._resume_turn.await_args.kwargs
+    assert kw["agent_id"] == "io-assistant" and kw["calls"] == [CALL]
+    assert kw["approved"] is approved
+    assert out["turns"][0]["answer"] == "Made Barista."
+    rt._run_turn.assert_not_awaited()
+    assert held == {}
+
+
+async def test_moving_on_drops_the_held_call(held):
+    await rt.chat(_auto("create three assistants for my coffee shop"),
+                  x_internal_secret="s")
+    await rt.chat(_auto("actually what is on my calendar tomorrow"),
+                  x_internal_secret="s")
+    rt._resume_turn.assert_not_awaited()
+    # The new message asked again and is the one held now, not the old one.
+    assert all(v["conversation"] for v in held.values())
+
+
+async def test_someone_else_cannot_answer_the_question(held):
+    await rt.chat(_auto("create three assistants for my coffee shop"),
+                  x_internal_secret="s")
+    key = list(held)[0]
+    held[key] = dict(held[key], user_email="other@example.com")
+    await rt.chat(_auto("yes"), x_internal_secret="s")
+    rt._resume_turn.assert_not_awaited()
+
+
+async def test_a_yes_with_nothing_held_is_an_ordinary_message(held):
+    await rt.chat(_auto("yes"), x_internal_secret="s")
+    rt._resume_turn.assert_not_awaited()
+
+
+async def test_the_bots_keep_their_own_resume(held, monkeypatch):
+    monkeypatch.setattr(rt, "_answer_as_io", AsyncMock(return_value="io"))
+    await rt.chat(_body("hi mia"), x_internal_secret="s")
+    assert held == {}
+
+
+def test_a_held_turn_renders_as_the_question():
+    turn = {"agent": {"id": "agent-mia", "name": "Mia"},
+            "pending": {"calls": [CALL]}}
+    text = rt.render_turns([turn])
+    assert text.startswith("**Mia**")
+    assert "Mia wants to run" in text and "Reply yes to let it" in text

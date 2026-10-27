@@ -140,3 +140,37 @@ def test_the_run_stops_at_the_cap(monkeypatch):
     # The third call would make $0.126, past the cap: two are made.
     rows, spent = asyncio.run(cal.run(cal.requests(), "k", cap_usd=0.09))
     assert len(calls) == 2 and spent == pytest.approx(0.084)
+
+
+# --- the main chat's tool pick (2026-10-27) ---------------------------------
+# A missed tool breaks the answer; an extra one costs a few tokens. So the
+# cut is the highest with no misses, one step lower, never below 0.5.
+
+def test_every_tool_case_names_tools_the_pick_offers():
+    for text, needed, ok in cal.TOOL_CASES:
+        assert set(needed) <= set(cal.TOOLS) and set(ok) <= set(cal.TOOLS), text
+        assert not set(needed) & set(ok), text
+
+
+def test_every_tool_case_reaches_the_assistant():
+    """Not a greeting, and no agent's name: those never get a tool pick."""
+    for text, _, _ in cal.TOOL_CASES:
+        assert len(text.split()) >= routes_agent_turn.JEV_MIN_WORDS, text
+
+
+def test_tool_scores_count_misses_and_extras():
+    values = {"calendar": 0.9, "gmail": 0.7, "code": 0.4}
+    assert cal.tool_score(values, {"calendar"}, {"code"}, 0.6) == (0, 1)
+    assert cal.tool_score(values, {"calendar", "code"}, set(), 0.6) == (1, 1)
+    assert cal.tool_score(values, set(), set(), 0.95) == (0, 0)
+
+
+def test_the_tool_cut_is_the_highest_with_no_misses_one_step_down():
+    misses = [{0.5: 0, 0.6: 0, 0.7: 0, 0.75: 0, 0.8: 1, 0.85: 2, 0.9: 3},
+              {0.5: 0, 0.6: 0, 0.7: 1, 0.75: 1, 0.8: 1, 0.85: 2, 0.9: 3}]
+    assert cal.choose_tool_cut(misses) == 0.5           # clean to 0.6, -1
+
+
+def test_no_clean_tool_cut_switches_the_pick_off():
+    misses = [{c: 1 for c in cal.UP}]
+    assert cal.choose_tool_cut(misses) < 0

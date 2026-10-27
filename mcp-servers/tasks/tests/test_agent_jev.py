@@ -312,3 +312,79 @@ async def test_release_with_no_answer_keeps_the_agent(seams):
     _, state = seams
     state["error"] = RuntimeError("down")
     assert await j.wants_release("p@example.com", "ok I'm done") is None
+
+
+# --- the main chat's tools: which does this message need --------------------
+
+def _many(values: dict) -> dict:
+    """A response with one Noul per question id."""
+    return {"model": "jev-1.13.0",
+            "answers": {q: {"type": "noul", "noul": v}
+                        for q, v in values.items()},
+            "usage": {"input_tokens": 900, "output_tokens": 80}}
+
+
+async def test_pick_tools_asks_one_yes_or_no_per_tool_in_one_call(seams):
+    calls, state = seams
+    state["reply"] = _many({"t0": 0.95, "t1": 0.1, "t2": 0.8})
+    got = await j.pick_tools("p@example.com", "what is on my calendar tomorrow",
+                             ["calendar", "gmail", "server:mcp-proxy"])
+    assert len(calls["post"]) == 1
+    qs = calls["post"][0][0]["questions"]
+    assert set(qs) == {"t0", "t1", "t2"}
+    assert all(q["type"] == "noul" for q in qs.values())
+    assert "calendar" in qs["t0"]["instructions"].lower()
+    assert "what is on my calendar tomorrow" in calls["post"][0][0]["state"]
+    assert got == ["calendar", "server:mcp-proxy"]
+
+
+async def test_an_unknown_tool_is_described_by_its_id(seams):
+    calls, state = seams
+    state["reply"] = _many({"t0": 0.9})
+    await j.pick_tools("p@example.com", "do the thing", ["weather_station"])
+    assert "weather_station" in calls["post"][0][0]["questions"]["t0"][
+        "instructions"]
+
+
+async def test_one_row_says_what_was_picked_and_holds_no_message(seams):
+    calls, state = seams
+    state["reply"] = _many({"t0": 0.9, "t1": 0.2})
+    await j.pick_tools("p@example.com", "my secret plan for gmail",
+                       ["gmail", "calendar"])
+    assert len(calls["record"]) == 1
+    row = calls["record"][0]
+    assert row["purpose"] == j.PURPOSE_TOOLS
+    assert row["outcome"] == "gmail"
+    assert row["value"] == 0.9
+    assert "secret" not in json.dumps(row, default=str)
+
+
+async def test_nothing_picked_is_an_empty_list_not_none(seams):
+    _, state = seams
+    state["reply"] = _many({"t0": 0.05, "t1": 0.1})
+    assert await j.pick_tools("p@example.com", "tell me a joke",
+                              ["gmail", "calendar"]) == []
+
+
+@pytest.mark.parametrize("reply", [None, {}, _many({"t0": 0.9}),
+                                   _many({"t0": "x", "t1": 0.2})])
+async def test_a_short_or_unreadable_answer_is_none(seams, reply):
+    _, state = seams
+    state["reply"] = reply
+    assert await j.pick_tools("p@example.com", "what is new",
+                              ["gmail", "calendar"]) is None
+
+
+async def test_no_key_or_no_tools_means_no_call(seams, monkeypatch):
+    calls, _ = seams
+    assert await j.pick_tools("p@example.com", "hello", []) == []
+    monkeypatch.setenv("TYPESAFE_API_KEY", "")
+    assert await j.pick_tools("p@example.com", "hello", ["gmail"]) is None
+    assert calls["post"] == []
+
+
+async def test_a_failing_jev_is_none(seams):
+    _, state = seams
+    state["error"] = RuntimeError("down")
+    assert await j.pick_tools("p@example.com", "what is new",
+                              ["gmail"]) is None
