@@ -40,6 +40,7 @@ PURPOSE_REFLECT = "worth_remembering"
 PURPOSE_ROLLBACK = "rollback_version"
 PURPOSE_REPLY = "reply_answers"
 PURPOSE_RELEASE = "release"
+PURPOSE_TOOLS = "tool_pick"
 
 #: Where each check acts. A Choice (plain question, rollback version) and the
 #: release yes act at or above their cut; the reflection and reply checks act
@@ -50,7 +51,11 @@ PURPOSE_RELEASE = "release"
 #: the edge of the measured range. JEV_CUT_<PURPOSE> overrides one; a cut out
 #: of reach (above 1, below 0) switches it off.
 CUTS = {PURPOSE_PLAIN: 0.6, PURPOSE_ROLLBACK: 0.6, PURPOSE_RELEASE: 0.6,
-        PURPOSE_REFLECT: 0.3, PURPOSE_REPLY: 0.3}
+        PURPOSE_REFLECT: 0.3, PURPOSE_REPLY: 0.3,
+        # Measured 2026-10-27, 14 labelled messages x 2 runs: no needed tool
+        # missed at 0.8 or below; one step of margin. A missed tool breaks
+        # the answer, an extra one costs a few tokens (9 extras at 0.75).
+        PURPOSE_TOOLS: 0.75}
 
 
 def cut(purpose: str) -> float:
@@ -99,10 +104,10 @@ def _number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def read(data) -> Answer | None:
-    """The answer under id q, or None when it is not one Jev would send."""
+def read(data, qid: str = "q") -> Answer | None:
+    """The answer under `qid`, or None when it is not one Jev would send."""
     try:
-        a = data["answers"]["q"]
+        a = data["answers"][qid]
         if a.get("type") == "noul":
             choice, value = None, a["noul"]
         else:
@@ -144,6 +149,48 @@ async def record(row: dict) -> None:
         logger.warning("jev check: could not record a check", exc_info=True)
 
 
+async def _call(state, questions: dict) -> tuple[dict | None, str, str]:
+    """One request to Jev: (reply, reason it failed, key). Never raises."""
+    key = agent_decider._key()
+    if not key:
+        return None, "no key", ""
+    if not _take_call():
+        return None, "daily cap", key
+    body = {"model": agent_decider.model(), "state": state,
+            "questions": questions}
+    try:
+        return await _post(body, key), "", key
+    except (httpx.TimeoutException, asyncio.TimeoutError):
+        return None, "timeout", key
+    except Exception as e:                                  # noqa: BLE001
+        # The class name only: an HTTP error's text can carry the request.
+        logger.warning("jev check: call failed (%s)", type(e).__name__)
+        return None, f"error: {type(e).__name__}", key
+
+
+async def _note(email: str, purpose: str, ms: int, reason: str,
+                got: Answer | None = None, outcome: str = "fallback",
+                choice: str | None = None, value: float | None = None,
+                model: str | None = None,
+                input_tokens: int | None = None) -> None:
+    """Record one call. Bounded, as the decider's record is: somebody may be
+    waiting."""
+    row = {"user_email": email, "purpose": purpose,
+           "model": got.model if got else model,
+           "choice": got.choice if got else choice,
+           "value": got.value if got else value,
+           "outcome": outcome, "reason": reason or None, "ms": ms,
+           "input_tokens": got.input_tokens if got else input_tokens,
+           "cost_usd": agent_decider.cost_usd(
+               got.input_tokens if got else input_tokens)}
+    try:
+        await asyncio.wait_for(record(row),
+                               agent_decider.RECORD_TIMEOUT_SECONDS)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("jev check: recording failed or was slow",
+                       exc_info=True)
+
+
 async def ask(email: str, purpose: str, state, question: dict,
               outcome: Callable[[Answer], str] | None = None
               ) -> Answer | None:
@@ -151,52 +198,56 @@ async def ask(email: str, purpose: str, state, question: dict,
 
     `outcome` names what the caller will do with the answer, for the row.
     """
-    key = agent_decider._key()
-    if not key:
+    if not agent_decider._key():
         return None
     started = time.monotonic()
-    answer, reason = None, ""
-    if not _take_call():
-        reason = "daily cap"
-    else:
-        body = {"model": agent_decider.model(), "state": state,
-                "questions": {"q": question}}
-        try:
-            answer = read(await _post(body, key))
-            if answer is None:
-                reason = "unreadable answer"
-        except (httpx.TimeoutException, asyncio.TimeoutError):
-            reason = "timeout"
-        except Exception as e:                              # noqa: BLE001
-            # The class name only: an HTTP error's text can carry the request.
-            logger.warning("jev check: call failed (%s)", type(e).__name__)
-            reason = f"error: {type(e).__name__}"
+    data, reason, _ = await _call(state, {"q": question})
+    answer = read(data) if data is not None else None
+    if answer is None and not reason:
+        reason = "unreadable answer"
     ms = int((time.monotonic() - started) * 1000)
+    done = "fallback"
     if answer is not None:
         answer.ms = ms
-    done = "fallback"
-    if answer is not None and outcome is not None:
-        try:
-            done = outcome(answer)
-        except Exception:                                   # noqa: BLE001
-            done = "fallback"
-    row = {"user_email": email, "purpose": purpose,
-           "model": answer.model if answer else None,
-           "choice": answer.choice if answer else None,
-           "value": answer.value if answer else None,
-           "outcome": done if answer else "fallback",
-           "reason": reason or None, "ms": ms,
-           "input_tokens": answer.input_tokens if answer else None,
-           "cost_usd": agent_decider.cost_usd(
-               answer.input_tokens if answer else None)}
-    # Bounded, as the decider's record is: somebody may be waiting.
-    try:
-        await asyncio.wait_for(record(row),
-                               agent_decider.RECORD_TIMEOUT_SECONDS)
-    except Exception:                                       # noqa: BLE001
-        logger.warning("jev check: recording failed or was slow",
-                       exc_info=True)
+        if outcome is not None:
+            try:
+                done = outcome(answer)
+            except Exception:                               # noqa: BLE001
+                done = "fallback"
+    await _note(email, purpose, ms, reason, answer, done)
     return answer
+
+
+async def ask_many(email: str, purpose: str, state, questions: dict,
+                   outcome: Callable[[dict], tuple[str, float | None]]
+                   | None = None) -> dict | None:
+    """Several questions about one state in one call, as Jev's fan-out
+    pattern intends: {question id: Answer}, or None unless every one of them
+    came back readable. One row: `outcome` turns the answers into what the
+    caller did and the number worth keeping. Never raises."""
+    if not agent_decider._key():
+        return None
+    started = time.monotonic()
+    data, reason, _ = await _call(state, questions)
+    answers = None
+    got = {qid: read(data, qid) for qid in questions}
+    if all(a is not None for a in got.values()):
+        answers = got
+    elif not reason:
+        reason = "unreadable answer"
+    ms = int((time.monotonic() - started) * 1000)
+    done, value, model, tokens = "fallback", None, None, None
+    if answers:
+        first = next(iter(answers.values()))
+        model, tokens = first.model, first.input_tokens
+        if outcome is not None:
+            try:
+                done, value = outcome(answers)
+            except Exception:                               # noqa: BLE001
+                done, value = "fallback", None
+    await _note(email, purpose, ms, reason, None, done, None, value, model,
+                tokens)
+    return answers
 
 
 def _sure_choice(answer: Answer | None, purpose: str,
@@ -398,3 +449,80 @@ async def wants_release(email: str, text: str) -> bool | None:
         outcome=lambda a: ("released" if a.value >= cut(PURPOSE_RELEASE)
                            else "kept"))
     return None if got is None else got.value >= cut(PURPOSE_RELEASE)
+
+
+# --- the main chat's tools (main_assistant, routes_agent_turn.chat) --------
+
+#: What each tool is for, in the words a person would use. A tool not listed
+#: here is described by its id, which is better than leaving it out.
+TOOL_NOTES = {
+    "gmail": "reading, searching, drafting or sending the person's email",
+    "calendar": "the person's calendar: events, meetings, appointments, free "
+                "time, scheduling",
+    "gdrive": "finding or reading files, documents and spreadsheets in the "
+              "person's Google Drive",
+    "documents": "reading or writing documents the person uploaded or wants "
+                 "made",
+    "excel_creator": "making a spreadsheet or Excel file",
+    "executive_dashboard": "a summary dashboard of the person's business "
+                           "numbers",
+    "code": "the person's built apps and their code: reading, changing or "
+            "building an app",
+    "account": "the person's own account: their apps, connected services, "
+               "usage and settings",
+    "schedules": "scheduled or recurring jobs: making, listing or changing "
+                 "something that runs on a timer",
+    "remember": "saving or recalling a fact the person asked to remember",
+    "skills": "looking up a skill or procedure the person set up",
+    "video": "making a video",
+    "colleague": "asking one of the person's agents for help",
+    "agents": "asking the person's agents a question",
+    "agent_builder": "making new AI agents or a team of agents for the "
+                     "person, or listing their agents",
+    "server:mcp-proxy": "outside services and the web: web search, flights, "
+                        "GitHub, Notion, ClickUp, n8n workflows, the "
+                        "knowledge graph of past chats and meetings",
+}
+
+
+def tools_request(text: str, tools: list[str]) -> tuple[str, dict]:
+    """One Noul per tool, ids t0, t1, ... in the order given."""
+    questions = {}
+    for i, tool in enumerate(tools):
+        note = TOOL_NOTES.get(tool) or f"the tool called {tool}"
+        questions[f"t{i}"] = {
+            "type": "noul",
+            "instructions": f"To answer or do what the message asks, is a "
+                            f"tool for {note} needed?",
+            "criteria": {
+                "true": "the message asks for something this tool reads, "
+                        "finds or does",
+                "false": "the message can be answered without it, or is "
+                         "about something else",
+            }}
+    return "The person wrote:\n" + _clip(text), questions
+
+
+async def pick_tools(email: str, text: str,
+                     tools: list[str]) -> list[str] | None:
+    """The tools Jev is sure this message needs, in the order given: [] when
+    it needs none, None when Jev could not be asked or answered unreadably
+    (the caller then offers every tool, as before). Never raises."""
+    tools = [t for t in tools or [] if isinstance(t, str) and t]
+    if not tools:
+        return []
+    state, questions = tools_request(text, tools)
+    least = cut(PURPOSE_TOOLS)
+
+    def picked(answers: dict) -> list[str]:
+        return [tools[int(q[1:])] for q, a in answers.items()
+                if a.value >= least]
+
+    def outcome(answers: dict) -> tuple[str, float | None]:
+        chosen = picked(answers)
+        top = max((a.value for a in answers.values()), default=None)
+        return (",".join(chosen) or "none"), top
+
+    answers = await ask_many(email, PURPOSE_TOOLS, state, questions,
+                             outcome=outcome)
+    return None if answers is None else picked(answers)

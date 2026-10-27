@@ -15,6 +15,7 @@ here rather than accepting it is the difference between a permission and a
 suggestion.
 """
 import logging
+import json
 import os
 import re
 from datetime import datetime, timedelta, timezone
@@ -35,11 +36,13 @@ import agent_jev
 import agent_llm
 import agent_memory
 import agent_routing
+import main_assistant
 import agent_skills
 import routes_prefs
 from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS,
                           CHANNEL_MAX_TOOL_ITERATIONS,
-                          CHAT_TOKEN_TTL_SECONDS, _chat, _list_agents,
+                          CHAT_TOKEN_TTL_SECONDS, FREE_POOL_EXHAUSTED,
+                          ROUTER_EXHAUSTED, _chat, _list_agents,
                           _owui_user_id_for, _post_chat)
 from agent_tools import execute_tool_call
 from db import session
@@ -181,6 +184,12 @@ async def _resolve_agent_row(user_email: str, agent_id: str
     token = mint_owui_token(owner, ttl_seconds=CHAT_TOKEN_TTL_SECONDS,
                             session_stamp=await session_stamp_for(owner))
     agents, truncated = await _list_agents(token)
+    if main_assistant.is_assistant(agent_id):
+        # The main chat's own assistant is not a row in Open WebUI. It may
+        # reach everything this person can, and asks before it changes
+        # anything; a turn narrows the tools to what Jev picked.
+        return (token, await _every_tool_for(user_email),
+                agent_access.MODE_ASK, main_assistant.agent(), agents)
     agent = next((a for a in agents
                   if isinstance(a, dict) and a.get("id") == agent_id), None)
     if agent is None:
@@ -303,7 +312,8 @@ def _pending_payload(user_email: str, agent_id: str,
 async def _run_turn(user_email: str, agent_id: str, messages: list[dict],
                     brief: bool = False,
                     surface: str = agent_access.SURFACE_CHANNEL,
-                    parent_run_id: str | None = None) -> dict:
+                    parent_run_id: str | None = None,
+                    tool_ids: list[str] | None = None) -> dict:
     """Run one turn as this user's agent, tools and all.
 
     Split out of the endpoint so /agents/chat can reuse it without going back
@@ -323,9 +333,15 @@ async def _run_turn(user_email: str, agent_id: str, messages: list[dict],
 
     `parent_run_id` is the run that asked for this one, so the office can
     say who is helping whom as a fact rather than an animation.
+
+    `tool_ids` replaces the resolved tools for this turn: the main chat's
+    assistant gets only what Jev picked for the message (main_assistant).
+    An empty list is no tools at all; None keeps the resolved list.
     """
     token, tools, level, agent, roster = await _resolve_agent_row(
         user_email, agent_id)
+    if tool_ids is not None:
+        tools = list(tool_ids)
     if brief:
         made = await _brief_for(user_email, agent, roster, messages)
         messages = [made] + messages
@@ -643,6 +659,69 @@ async def _clear_pin(key: str) -> None:
 AGENT_PREFIX = "agent-"
 
 
+#: How long a question the main chat asked stays answerable. Longer than a
+#: pin: somebody may read the question, check something and come back.
+PENDING_TTL_SECONDS = 60 * 30
+
+
+def _pending_key(pin_key: str) -> str:
+    """The held call for one chat sits beside its pin, per person too."""
+    return pin_key.replace("agentpin:", "agentpending:", 1)
+
+
+async def _read_pending(key: str) -> dict | None:
+    """The call this chat is waiting on a yes or no for, or None. Never
+    raises: a state outage costs the person one re-ask, nothing more."""
+    try:
+        async with session() as s:
+            row = (await s.execute(
+                select(BotState).where(BotState.state_key == key)
+            )).scalar_one_or_none()
+        if row is None:
+            return None
+        if row.expires_at is not None and row.expires_at < datetime.now(timezone.utc):
+            return None
+        return row.value if isinstance(row.value, dict) else None
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not read the held approval", exc_info=True)
+        return None
+
+
+async def _write_pending(key: str, pending: dict) -> None:
+    """Hold a turn's question until the next message. Never raises."""
+    expires = datetime.now(timezone.utc) + timedelta(seconds=PENDING_TTL_SECONDS)
+    try:
+        async with session() as s:
+            row = (await s.execute(
+                select(BotState).where(BotState.state_key == key)
+            )).scalar_one_or_none()
+            if row:
+                row.value = pending
+                row.updated_at = datetime.now(timezone.utc)
+                row.expires_at = expires
+            else:
+                s.add(BotState(state_key=key, value=pending,
+                               updated_at=datetime.now(timezone.utc),
+                               expires_at=expires))
+            await s.commit()
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not hold the approval", exc_info=True)
+
+
+async def _clear_pending(key: str) -> None:
+    """Forget a held question. Never raises."""
+    try:
+        async with session() as s:
+            row = (await s.execute(
+                select(BotState).where(BotState.state_key == key)
+            )).scalar_one_or_none()
+            if row:
+                await s.delete(row)
+                await s.commit()
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not clear the held approval", exc_info=True)
+
+
 def own_agents(rows: "list | None", owner_id: str) -> list[dict]:
     """The rows of an Open WebUI model listing that are this person's agents.
 
@@ -717,6 +796,45 @@ RELEASED = "Back to normal. I will answer from here."
 EMPTY_TURN = "There was nothing to answer."
 
 
+#: One argument value in an approval question: enough to recognise a
+#: recipient or a subject, not enough for a message body to bury the question.
+MAX_ARG_CHARS = 120
+MAX_ARGS_SHOWN = 5
+
+
+def approval_question(agent_name: str, calls) -> str:
+    """What the agent wants to do, in its own terms: the tool's name and
+    arguments, not a phrase written per tool, which would be wrong somewhere
+    and be wrong exactly where somebody approves the wrong thing. The IO
+    pipe's wording, here since Auto renders what this service sends."""
+    lines = ["%s wants to run:" % (agent_name or "This agent")]
+    for call in calls if isinstance(calls, list) else []:
+        call = call if isinstance(call, dict) else {}
+        fn = call.get("function")
+        fn = fn if isinstance(fn, dict) else {}
+        name = fn.get("name")
+        name = name.strip() if isinstance(name, str) and name.strip() else "an unnamed tool"
+        lines.append("  " + name)
+        raw = fn.get("arguments")
+        try:
+            args = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
+        except (ValueError, TypeError):
+            args = {}
+        if isinstance(args, dict):
+            for k, v in list(args.items())[:MAX_ARGS_SHOWN]:
+                lines.append("     %s: %s" % (k, str(v)[:MAX_ARG_CHARS]))
+    if len(lines) == 1:
+        lines.append("  something it did not name")
+    lines.append("")
+    lines.append("Reply yes to let it, or no to skip.")
+    return "\n".join(lines)
+
+
+def _held(turn) -> bool:
+    return (isinstance(turn, dict) and isinstance(turn.get("pending"), dict)
+            and bool(turn["pending"].get("calls")))
+
+
 def render_turns(turns, faces: bool = False) -> str:
     """The reply as a person reads it: each agent's answer under its name,
     a blank line between agents, a turn with no agent shown bare.
@@ -743,6 +861,10 @@ def render_turns(turns, faces: bool = False) -> str:
         if notes:
             joined = "\n".join(notes)
             answer = (answer + "\n\n" + joined) if answer else joined
+        if _held(turn):
+            answer = approval_question(
+                (agent or {}).get("name") or (agent or {}).get("id"),
+                turn["pending"]["calls"])
         answer = answer or EMPTY_TURN
         if agent is None:
             parts.append(answer)
@@ -881,7 +1003,8 @@ async def _brief_for(user_email: str, agent: dict, roster: list[dict],
 
 async def _turn_for(user_email: str, agent: dict, messages: list[dict],
                     names=(), roster=(), graph: str = "",
-                    now: datetime | None = None) -> dict:
+                    now: datetime | None = None,
+                    tool_ids: list[str] | None = None) -> dict:
     """One rendered turn for a single named agent. Never raises.
 
     Wraps _run_turn so a blown-up tool call in one agent's turn cannot take
@@ -915,7 +1038,10 @@ async def _turn_for(user_email: str, agent: dict, messages: list[dict],
         history = ([_identity_line(agent, names, memory=memory,
                                    roster=roster, graph=graph, now=now)]
                    + agent_routing.clean_history_for_agent(messages, names))
-        out = await _run_turn(user_email, agent["id"], history)
+        out = (await _run_turn(user_email, agent["id"], history,
+                               tool_ids=tool_ids)
+               if tool_ids is not None
+               else await _run_turn(user_email, agent["id"], history))
     except Exception as exc:                                # noqa: BLE001
         # One failure is worth naming rather than generalising: an agent on a
         # callback pipe cannot run at all, and the person fixes it in one
@@ -1002,9 +1128,120 @@ async def _jev_pick(body: ChatIn, text: str, agents: list[dict]) -> dict | None:
         return None
 
 
+def _assistant_on() -> bool:
+    """MAIN_ASSISTANT=0 switches the assistant off; anything else is on."""
+    return os.environ.get("MAIN_ASSISTANT", "1").strip() != "0"
+
+
+#: Answers that mean the assistant's turn did not work. The pipe's own free
+#: model answers instead, which is what happened before the assistant.
+def _assistant_failed(answer: str) -> bool:
+    answer = (answer or "").strip()
+    return (not answer
+            or answer == _turn_failed_sentence(main_assistant.NAME)
+            or answer in (FREE_POOL_EXHAUSTED, ROUTER_EXHAUSTED,
+                          AGENT_ON_CALLBACK_MODEL))
+
+
+async def _assistant_reply(body: ChatIn, text: str,
+                           agents: list[dict]) -> dict | None:
+    """The main chat's assistant answering a message nobody took, with the
+    tools Jev picked for it, or None to leave it to the caller's own model.
+    Never raises.
+
+    A greeting is not worth a tool pick or a tool loop: the free model
+    answers it as before. Jev unable to pick offers every tool, as an agent
+    gets them; Jev sure that none is needed runs the turn with none.
+    """
+    try:
+        if not _assistant_on():
+            return None
+        if len((text or "").split()) < JEV_MIN_WORDS:
+            return None
+        assistant = main_assistant.agent()
+        if not agent_llm.can_run(assistant):
+            return None
+        tools = await _every_tool_for(body.user_email)
+        picked = await agent_jev.pick_tools(body.user_email, text, tools)
+        names = [a.get("name") for a in agents if a.get("name")]
+        turn = await _turn_for(
+            body.user_email, assistant, body.messages, names, roster=agents,
+            graph=await agent_graph.graph_block(body.user_email, text),
+            tool_ids=picked if picked is not None else tools)
+        pending = (isinstance(turn.get("pending"), dict)
+                   and bool(turn["pending"].get("calls")))
+        if not pending and _assistant_failed(str(turn.get("answer") or "")):
+            return None
+        if not pending:
+            # IO speaking for itself: no name or face over the answer.
+            turn = dict(turn, agent=None)
+        return _reply([turn], queue=[], marker="")
+    except Exception:                                       # noqa: BLE001
+        logger.warning("the main chat's assistant could not answer; the free "
+                       "model answers instead", exc_info=True)
+        return None
+
+
 @router.post("/chat")
 async def chat(body: ChatIn,
                x_internal_secret: str = Header(default="")) -> dict:
+    """Who should answer this message (_route_chat), plus Yes/No in the
+    main chat: on Auto (route_only), a turn that stops to ask is held, and
+    the next message, if it is a bare yes or no from the same person,
+    resumes exactly that call (2026-10-27). Anything else drops it.
+
+    Only on Auto. Discord, Slack and Telegram hold their own questions and
+    resume them from their own buttons; holding it here as well could run
+    one approved call twice.
+    """
+    _require_internal(x_internal_secret)
+    if not getattr(body, "route_only", False):
+        return await _route_chat(body, x_internal_secret)
+    key = _pending_key(_pin_key(body.chat_id, body.user_email))
+    held = await _read_pending(key)
+    if held is not None:
+        await _clear_pending(key)
+        text = agent_routing.last_user_text(body.messages)
+        answer = agent_routing.answers_yes_or_no(text)
+        same_person = (str(held.get("user_email") or "").lower()
+                       == (body.user_email or "").lower())
+        if answer is not None and same_person and held.get("agent_id"):
+            out = await _resume_held(body, held, answer)
+            if out is not None:
+                return out
+    out = await _route_chat(body, x_internal_secret)
+    for turn in out.get("turns") or []:
+        if _held(turn):
+            await _write_pending(key, turn["pending"])
+            break
+    return out
+
+
+async def _resume_held(body: ChatIn, held: dict, approved: bool) -> dict | None:
+    """The held call, run or refused as the person said, as a reply. None
+    when it could not be resumed, and the message is routed as usual."""
+    agent_id = str(held.get("agent_id"))
+    try:
+        result = await _resume_turn(
+            user_email=body.user_email, agent_id=agent_id,
+            conversation=held.get("conversation") or [],
+            calls=held.get("calls") or [], approved=approved)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not resume the held approval", exc_info=True)
+        return None
+    if main_assistant.is_assistant(agent_id):
+        who = {"id": agent_id, "name": main_assistant.NAME}
+    else:
+        agents = await _agents_for(body.user_email)
+        row = next((a for a in agents if str(a.get("id") or "") == agent_id), {})
+        who = {"id": agent_id, "name": row.get("name") or agent_id}
+    turn = dict(result, agent=who)
+    if not _held(turn) and main_assistant.is_assistant(agent_id):
+        turn["agent"] = None
+    return _reply([turn], queue=[], marker="")
+
+
+async def _route_chat(body: ChatIn, x_internal_secret: str = "") -> dict:
     """Who should answer this message, one turn each.
 
     Returns {"turns": [...]}. A turn with agent=None is the caller's cue that
@@ -1116,6 +1353,14 @@ async def chat(body: ChatIn,
         if picked is not None:
             return picked
 
+    if agent is None and getattr(body, "route_only", False):
+        # Nobody took it. The main chat's assistant answers with the tools
+        # Jev picked for it, so a calendar or a mailbox question on Auto
+        # reaches the calendar or the mailbox (main_assistant). Anything
+        # short of an answer falls through to the empty list below.
+        helped = await _assistant_reply(body, text, agents)
+        if helped is not None:
+            return helped
     if agent is None and getattr(body, "route_only", False):
         # The caller will answer for itself. Saying so with an empty list
         # rather than an IO answer is what keeps the Auto pipe from asking
