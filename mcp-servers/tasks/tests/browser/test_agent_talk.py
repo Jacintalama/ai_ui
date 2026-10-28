@@ -325,16 +325,20 @@ def test_a_long_answer_is_read_up_to_a_sentence_end(office):
     assert said.endswith("answer."), said[-40:]
 
 
-def test_talk_stops_the_reading(office):
+def test_talking_over_the_reading_stops_it_and_listens(office):
+    """Found live, 2026-10-28: a press while an answer was still being read
+    only silenced it, and the next sentence was never heard or sent. In a
+    spoken conversation you interrupt, so Talk stops the reading and
+    listens in one press."""
     office.evaluate("() => { window.__hold = true; }")
     _talk(office, "read me something")
     _answer(office, "Ada", "A long story.")
     office.wait_for_function("() => window.__played.length === 1")
     mic = office.locator("#cw-team .ap-mic")
-    assert mic.inner_text() == "Stop"
-    mic.click()
+    assert mic.get_attribute("aria-label") == "Stop the reading and talk"
+    _talk(office, "and the next thing")
     assert office.evaluate("() => window.__paused") is True
-    assert mic.inner_text() == "Talk"
+    assert office.sent[-1] == "and the next thing"
 
 
 def test_a_blocked_microphone_says_how_to_fix_it(office):

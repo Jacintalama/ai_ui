@@ -367,9 +367,12 @@
     // Short labels: the office's chat window is 300px wide, and "Done
     // talking" squeezed the message box to a third of it. The full
     // meaning is in the accessible name.
-    b.textContent = listening ? "Done" : talking ? "Stop" : "Talk";
+    // While an answer is being read, Talk still talks: it cuts the reading
+    // off and listens, the way you interrupt somebody. A press that only
+    // silenced it left the next sentence unheard (live, 2026-10-28).
+    b.textContent = listening ? "Done" : "Talk";
     b.setAttribute("aria-label", listening ? "Stop listening and send"
-      : talking ? "Stop reading the answers out loud" : "Talk instead of typing");
+      : talking ? "Stop the reading and talk" : "Talk instead of typing");
     b.setAttribute("aria-pressed", listening ? "true" : "false");
     b.classList.toggle("on", listening);
   }
@@ -466,13 +469,6 @@
     if (LISTENING && LISTENING.form === form) {
       try { LISTENING.rec.stop(); } catch (x) { /* ended already */ }
       return;
-    }
-    if (PLAYING || SAYING.length) {
-      var reading = threadOf(form);
-      if (reading && reading.getAttribute("data-voice") === "1") {
-        stopReading();
-        return;
-      }
     }
     if (LISTENING) { try { LISTENING.rec.abort(); } catch (x) { /* fine */ } }
     listen(form);
