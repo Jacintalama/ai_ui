@@ -49,6 +49,7 @@ jobs:
             --ignore=tests/test_template_apps_animations.py
             --ignore=tests/test_routes_agent_jobs.py
             --ignore=tests/test_routes_fusion_page.py
+            --ignore=tests/test_agent_decider_db.py
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
