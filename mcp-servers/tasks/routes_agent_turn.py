@@ -1174,10 +1174,9 @@ async def _jev_release(key: str, email: str, text: str) -> bool:
 JEV_MIN_WORDS = 4
 
 
-async def _jev_pick(body: ChatIn, text: str, agents: list[dict]) -> dict | None:
-    """The finished response when Jev is sure one agent should take this
-    message and that agent's reply answers it, else None. Never raises:
-    Jev is a bonus on top of a working chat."""
+async def _jev_decision(body: ChatIn, text: str, agents: list[dict]) -> dict | None:
+    """The agent Jev is sure should take this message, or None. Never
+    raises: Jev is a bonus on top of a working chat."""
     try:
         if not agent_decider.enabled():
             return None
@@ -1187,10 +1186,28 @@ async def _jev_pick(body: ChatIn, text: str, agents: list[dict]) -> dict | None:
                                               body.messages, agents)
         if decision is None or decision.path != agent_decider.PATH_ONE_AGENT:
             return None
-        agent = next((a for a in agents
-                      if str(a.get("id") or "") == decision.agent_id), None)
-        if agent is None:
-            return None
+        return next((a for a in agents
+                     if str(a.get("id") or "") == decision.agent_id), None)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("Jev could not pick an agent for the chat; answering as "
+                       "before", exc_info=True)
+        return None
+
+
+async def _jev_pick(body: ChatIn, text: str, agents: list[dict]) -> dict | None:
+    """The finished response when Jev is sure one agent should take this
+    message and that agent's reply answers it, else None."""
+    agent = await _jev_decision(body, text, agents)
+    if agent is None:
+        return None
+    return await _jev_answer(body, text, agents, agent)
+
+
+async def _jev_answer(body: ChatIn, text: str, agents: list[dict],
+                      agent: dict) -> dict | None:
+    """The agent Jev chose answering, when its reply holds up, else None.
+    Never raises."""
+    try:
         names = [a.get("name") for a in agents if a.get("name")]
         turn = await _turn_for(body.user_email, agent, body.messages, names,
                                roster=agents,
@@ -1228,31 +1245,51 @@ def _assistant_failed(answer: str) -> bool:
                           AGENT_ON_CALLBACK_MODEL))
 
 
-async def _assistant_reply(body: ChatIn, text: str,
-                           agents: list[dict]) -> dict | None:
-    """The main chat's assistant answering a message nobody took, with the
-    tools Jev picked for it, or None to leave it to the caller's own model.
-    Never raises.
-
-    A greeting is not worth a tool pick or a tool loop: the free model
-    answers it as before. Jev unable to pick offers every tool, as an agent
-    gets them; Jev sure that none is needed runs the turn with none.
-    """
+async def _tool_pick(body: ChatIn, text: str) -> list[str] | None:
+    """The tools Jev is sure this message needs for the assistant: a list
+    (maybe empty) or None when the assistant is off, the message is a
+    greeting, the assistant cannot run, or Jev could not be asked. Never
+    raises."""
     try:
         if not _assistant_on():
             return None
         if len((text or "").split()) < JEV_MIN_WORDS:
             return None
-        assistant = main_assistant.agent()
-        if not agent_llm.can_run(assistant):
+        if not agent_llm.can_run(main_assistant.agent()):
             return None
         tools = await _every_tool_for(body.user_email)
-        picked = await agent_jev.pick_tools(body.user_email, text, tools)
+        if not tools:
+            return None
+        return await agent_jev.pick_tools(body.user_email, text, tools)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("the main chat's tool pick failed; the free model "
+                       "answers instead", exc_info=True)
+        return None
+
+
+async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
+                           picked: list[str] | None = None) -> dict | None:
+    """The main chat's assistant answering a message nobody took, with the
+    tools Jev picked for it, or None to leave it to the caller's own model.
+    Never raises.
+
+    Only with a tool to use (2026-10-28, "if nothing is mentioned, just
+    answer"): an ordinary question is the free model's, at once, with no
+    brief, no graph read and no tool loop in front of it. Jev sure that no
+    tool is needed, or Jev unavailable, both mean the free model answers;
+    an agent named by the person still has everything it has.
+    """
+    try:
+        if picked is None:
+            picked = await _tool_pick(body, text)
+        if not picked:
+            return None
+        assistant = main_assistant.agent()
         names = [a.get("name") for a in agents if a.get("name")]
         turn = await _turn_for(
             body.user_email, assistant, body.messages, names, roster=agents,
             graph=await agent_graph.graph_block(body.user_email, text),
-            tool_ids=picked if picked is not None else tools)
+            tool_ids=list(picked))
         pending = (isinstance(turn.get("pending"), dict)
                    and bool(turn["pending"].get("calls")))
         if not pending and _assistant_failed(str(turn.get("answer") or "")):
@@ -1435,18 +1472,26 @@ async def _route_chat(body: ChatIn, x_internal_secret: str = "") -> dict:
         # that did not pan out costs the person nothing but a moment, and
         # the message goes on exactly as before. This is what puts Jev in
         # the main chat (2026-10-26): the Auto pipe asks here first.
-        picked = await _jev_pick(body, text, agents)
-        if picked is not None:
-            return picked
+        if getattr(body, "route_only", False):
+            # On Auto the two questions Jev is asked, "is this one agent's"
+            # and "which tools would the assistant need", do not depend on
+            # each other, so they are asked side by side (2026-10-28): one
+            # wait, not two. Nothing picked either way means the free model
+            # answers at once, which is what an ordinary question deserves.
+            chosen, picked = await asyncio.gather(
+                _jev_decision(body, text, agents), _tool_pick(body, text))
+            if chosen is not None:
+                answered = await _jev_answer(body, text, agents, chosen)
+                if answered is not None:
+                    return answered
+            helped = await _assistant_reply(body, text, agents, picked=picked)
+            if helped is not None:
+                return helped
+        else:
+            picked = await _jev_pick(body, text, agents)
+            if picked is not None:
+                return picked
 
-    if agent is None and getattr(body, "route_only", False):
-        # Nobody took it. The main chat's assistant answers with the tools
-        # Jev picked for it, so a calendar or a mailbox question on Auto
-        # reaches the calendar or the mailbox (main_assistant). Anything
-        # short of an answer falls through to the empty list below.
-        helped = await _assistant_reply(body, text, agents)
-        if helped is not None:
-            return helped
     if agent is None and getattr(body, "route_only", False):
         # The caller will answer for itself. Saying so with an empty list
         # rather than an IO answer is what keeps the Auto pipe from asking

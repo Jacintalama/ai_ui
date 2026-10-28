@@ -186,6 +186,12 @@ then **Jev** (`agent_decider`,
 needs `TYPESAFE_API_KEY`) is asked whether one agent should take it and that
 agent answers if its reply holds up (`agent_jev.reply_answers`); otherwise the
 free model answers. No key means no Jev and the chat behaves as before.
+On Auto, Jev's two questions ("is this one agent's", "which tools would the
+assistant need") are asked side by side (`_jev_decision` and `_tool_pick`,
+2026-10-28), and **an ordinary question goes straight to the free model**: the
+assistant (`main_assistant`) runs only when Jev picked at least one tool. Jev
+sure of none, or Jev unavailable, both mean no assistant turn, no brief, no
+graph read; an agent named by the person still has everything.
 Agents carry the office robot as their profile picture (`agent_avatar.py`,
 set on create and backfilled on the agents page's seed call,
 `routes_agents.refresh_agents`), so an agent mentioned with `@` in the main chat answers with its own

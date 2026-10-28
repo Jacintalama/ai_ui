@@ -913,12 +913,54 @@ async def test_an_unclaimed_message_is_answered_with_the_tools_jev_picked(
     assert out["rendered_web"] == "You have the dentist at 10."
 
 
-async def test_jev_unable_to_pick_offers_every_tool(assistant):
+async def test_jev_unable_to_pick_means_the_free_model_answers(assistant):
+    """It used to offer every tool and run a whole turn. An ordinary
+    question then waited on a brief, a graph read and a tool loop before a
+    free model could have answered it (2026-10-28)."""
     _, state, _ = assistant
     state["pick"] = None
-    await rt.chat(_auto("what is on my calendar tomorrow"),
-                  x_internal_secret="s")
-    assert rt._run_turn.await_args.kwargs["tool_ids"] == ["gmail", "calendar"]
+    out = await rt.chat(_auto("what is on my calendar tomorrow"),
+                        x_internal_secret="s")
+    assert out["turns"] == []
+    rt._run_turn.assert_not_awaited()
+
+
+async def test_jev_sure_no_tool_is_needed_means_the_free_model_answers(assistant):
+    """"hi what is the current news" picked nothing and still ran the
+    assistant with no tools, which is what made Auto sit on "Choosing who
+    answers" for an ordinary question."""
+    calls, state, _ = assistant
+    state["pick"] = []
+    out = await rt.chat(_auto("hi what is the current news today"),
+                        x_internal_secret="s")
+    assert out["turns"] == [] and len(calls["pick"]) == 1
+    rt._run_turn.assert_not_awaited()
+
+
+async def test_the_agent_decision_and_the_tool_pick_are_asked_side_by_side(
+        assistant, monkeypatch):
+    import asyncio
+    import agent_decider
+    import agent_jev
+    order = []
+
+    async def decide(email, chat_id, message, history, agents):
+        order.append("decide start")
+        await asyncio.sleep(0.05)
+        order.append("decide end")
+        return agent_decider.Decision(path=agent_decider.PATH_FALLBACK, reason="unsure")
+
+    async def pick_tools(email, text, tools):
+        order.append("pick start")
+        await asyncio.sleep(0.05)
+        order.append("pick end")
+        return []
+
+    monkeypatch.setattr(agent_decider, "enabled", lambda: True)
+    monkeypatch.setattr(agent_decider, "decide", decide)
+    monkeypatch.setattr(agent_jev, "pick_tools", pick_tools)
+    await rt.chat(_auto("hi what is the current news today"), x_internal_secret="s")
+    assert order[:2] == ["decide start", "pick start"], order
 
 
 async def test_a_failed_assistant_turn_hands_back_to_the_free_model(assistant):
