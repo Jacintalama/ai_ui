@@ -245,6 +245,12 @@
     if (!words.length) { el.classList.remove("typing"); if (done) done(); return; }
     var ms = speakMs(chars), start = performance.now(), shown = 0, over = false;
     var box = el.closest(".ap-thread");
+    //: Followed to the bottom only while the reader is there. Following on
+    //: every frame held the thread at the bottom, and nobody could scroll
+    //: up while an answer typed in (live, 2026-10-28).
+    function follow() {
+      if (box && box.scrollHeight - box.scrollTop - box.clientHeight < 150) toBottom(box);
+    }
     function end() {
       if (over) return;
       over = true;
@@ -258,14 +264,14 @@
       var want = (gone >= ms || unseen(box) || document.hidden) ? words.length
                : Math.floor(words.length * gone / ms);
       while (shown < want) { words[shown].classList.remove("aw-wait"); shown++; }
-      toBottom(box);
+      follow();
       if (shown < words.length) requestAnimationFrame(frame);
       else end();
     }
     // A clock that does not stop with the tab: rAF pauses in a background
     // tab, and this keeps the reveal moving (slowly) and ends it on time.
     var ticker = setInterval(function () { frame(); }, 250);
-    REVEALING = { finish: function () {
+    REVEALING = { el: el, finish: function () {
       while (shown < words.length) { words[shown].classList.remove("aw-wait"); shown++; }
       end();
     } };
@@ -678,6 +684,13 @@
     if (!el) return;
     el.removeAttribute("data-voice");
     el.removeAttribute("data-voice-since");
+    // And drawn as a first draw: what it holds is history, shown whole.
+    // Kept as drawn, the whole conversation was typed in again answer by
+    // answer, the rest hidden until their turn: back from Agent Office the
+    // thread showed none of the answers (screenshot, 2026-10-28).
+    el.removeAttribute("data-settled");
+    TYPING_QUEUE = TYPING_QUEUE.filter(function (t) { return !el.contains(t); });
+    if (REVEALING && el.contains(REVEALING.el)) finishReveal();
   });
 
   function sayable(row) {

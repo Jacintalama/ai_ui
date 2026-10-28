@@ -414,6 +414,62 @@ def test_switching_conversation_on_the_agents_page_reads_nothing_old(browser):
         pg.srv.shutdown()
 
 
+def _agents_page(browser):
+    pg = _open(browser, "agents.html")
+    pg.wait_for_selector("#agent-thread .am.agent", state="attached")
+    pg.wait_for_function("() => document.querySelector('#agent-thread').getAttribute('data-settled')")
+    pg.wait_for_timeout(300)
+    return pg
+
+
+def test_coming_back_to_a_conversation_shows_it_whole_at_once(browser):
+    """Live, 2026-10-28 (screenshot): back from Agent Office to Everyone,
+    the thread showed the person's messages and none of the answers. The
+    conversation is loaded again into a thread already drawn once, and
+    every answer in it was typed in again, one by one, the rest hidden
+    until their turn."""
+    pg = _agents_page(browser)
+    try:
+        pg.evaluate("() => window.aiuiTalkTo('', '')")
+        pg.wait_for_function(
+            "() => document.querySelectorAll('#agent-thread .am.agent').length === 2")
+        pg.wait_for_timeout(150)
+        got = pg.evaluate(
+            "() => [...document.querySelectorAll('#agent-thread .am.agent')].map(r =>"
+            " ({ hidden: r.hidden, typing: !!r.querySelector('.typing, .aw-wait') }))")
+        assert got == [{"hidden": False, "typing": False}] * 2, got
+    finally:
+        pg.close()
+        pg.srv.shutdown()
+
+
+def test_scrolling_up_while_an_answer_types_in_stays_up(browser):
+    """While an answer is typed in, the thread followed it to the bottom on
+    every frame, so the person could not scroll up to read."""
+    pg = _agents_page(browser)
+    try:
+        # Enough history to scroll, already drawn (as the first draw marks it).
+        history = "".join(
+            render.agent_bubble("Ada", "Earlier answer number %d." % i)
+            .replace('class="am agent"', 'class="am agent" data-typed="1" data-heard="1"', 1)
+            for i in range(30))
+        pg.evaluate(
+            "h => { document.querySelector('#agent-thread').insertAdjacentHTML('beforeend', h);"
+            " window.aiuiSettleChat(); }", history)
+        long = " ".join("Word%d" % i for i in range(120))
+        pg.evaluate(
+            "h => { const t = document.querySelector('#agent-thread');"
+            " t.insertAdjacentHTML('beforeend', h); window.aiuiSettleChat(t); }",
+            render.agent_bubble("Ada", long, at=_now()))
+        pg.wait_for_selector("#agent-thread .typing")
+        pg.evaluate("() => { document.querySelector('#agent-thread').scrollTop = 0; }")
+        pg.wait_for_timeout(800)
+        assert pg.evaluate("() => document.querySelector('#agent-thread').scrollTop") < 50
+    finally:
+        pg.close()
+        pg.srv.shutdown()
+
+
 def test_an_answer_drawn_twice_is_read_once(office):
     _talk(office, "status please")
     html = _answer(office, "Ada", "Building.")
