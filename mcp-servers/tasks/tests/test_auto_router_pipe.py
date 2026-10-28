@@ -344,3 +344,85 @@ async def test_the_web_rendering_with_faces_is_preferred(mod, monkeypatch):
     monkeypatch.setattr(mod.httpx, "AsyncClient", C)
     out = await p._agents_first({"messages": _q("hi ada")}, "o@example.com")
     assert out.startswith("![Ada](data:image/svg+xml;base64,AAAA) **Ada**")
+
+
+# --- the chat and Open WebUI's background jobs (2026-10-27) ------------------
+# Measured on the live site: Open WebUI pops `metadata` off the body before a
+# pipe sees it and passes the chat as __chat_id__, so the pipe sent "web" for
+# every chat and one person's pin and held question followed them into every
+# other chat. And with no task model set, the title, tags and follow-up jobs
+# are sent to the chat's own model, here, marked with __task__: they reached
+# the agents, so one message ran an agent three times.
+
+def _service(mod, monkeypatch, seen):
+    class R:
+        status_code = 200
+        def json(self): return {
+            "turns": [{"agent": {"id": "agent-a", "name": "Ada"}, "answer": "Hi.", "notes": []}],
+            "rendered": "**Ada**\n\nHi.", "queue": [], "marker": ""}
+
+    class C:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, json=None, headers=None):
+            seen.append(json or {}); return R()
+
+    monkeypatch.setattr(mod.httpx, "AsyncClient", C)
+
+
+async def test_the_chat_open_webui_names_is_the_chat_the_service_hears(mod, monkeypatch):
+    p = mod.Pipe()
+    p.valves.OPENROUTER_API_KEY = "k"
+    seen = []
+    _service(mod, monkeypatch, seen)
+    out = await p.pipe({"messages": _q("hi ada")}, __user__={"email": "o@example.com"},
+                       __chat_id__="chat-123", __metadata__={"chat_id": "chat-123"})
+    assert out == "**Ada**\n\nHi."
+    assert seen[0]["chat_id"] == "chat-123"
+
+
+async def test_the_metadata_chat_is_used_when_only_it_is_given(mod, monkeypatch):
+    p = mod.Pipe()
+    p.valves.OPENROUTER_API_KEY = "k"
+    seen = []
+    _service(mod, monkeypatch, seen)
+    await p.pipe({"messages": _q("hi ada")}, __user__={"email": "o@example.com"},
+                 __metadata__={"chat_id": "chat-9"})
+    assert seen[0]["chat_id"] == "chat-9"
+
+
+@pytest.mark.parametrize("task", ["title_generation", "tags_generation",
+                                  "follow_up_generation", "query_generation"])
+async def test_a_background_job_is_never_sent_to_the_agents(mod, monkeypatch, task):
+    p = mod.Pipe()
+    p.valves.OPENROUTER_API_KEY = "k"
+    seen = []
+    _service(mod, monkeypatch, seen)
+
+    async def complete(body, headers, category, candidates, emitter):
+        return '{"title": "Coffee shop helpers"}'
+
+    monkeypatch.setattr(p, "_complete", complete)
+    monkeypatch.setattr(mod, "_available_models", lambda key: asyncio.sleep(0, result=set()))
+    out = await p.pipe({"messages": _q("### Task: make a title\ncreate three assistants")},
+                       __user__={"email": "o@example.com"}, __task__=task,
+                       __chat_id__="chat-123")
+    assert seen == []
+    assert out == '{"title": "Coffee shop helpers"}'
+
+
+async def test_a_background_job_carries_no_route_footer(mod, monkeypatch):
+    """The footer is for a person reading a reply. On a title it would be
+    part of the title."""
+    p = mod.Pipe()
+    p.valves.OPENROUTER_API_KEY = "k"
+
+    async def complete(body, headers, category, candidates, emitter):
+        return '{"tags": ["coffee"]}' + p._footer("general", "m:free")
+
+    monkeypatch.setattr(p, "_complete", complete)
+    monkeypatch.setattr(mod, "_available_models", lambda key: asyncio.sleep(0, result=set()))
+    out = await p.pipe({"messages": _q("tags please"), "stream": True},
+                       __user__={"email": "o@example.com"}, __task__="tags_generation")
+    assert out == '{"tags": ["coffee"]}'

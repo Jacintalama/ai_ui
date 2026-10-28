@@ -1167,13 +1167,19 @@
         <div class="hint" id="access-hint">Applies in your chat channels and
           scheduled runs. Web chat here always has full access.</div>
 
-        <label class="switch">
+        <!-- Tools are not picked by hand any more (2026-10-28): every agent
+             reaches everything connected, and each message carries what
+             Jev picked for it (routes_agent_turn._auto_tools). The switch
+             stays in the page, hidden and on, because the save code and
+             the template loader still read it. -->
+        <label class="switch" hidden>
           <input type="checkbox" id="use-my-apps" checked>
           <span>Let this agent use everything I have connected</span>
         </label>
-        <div class="hint" id="tools-hint">Every tool you have, including
-          anything you connect later. Turn this off to pick a few, and it will
-          say it cannot do the rest rather than quietly doing it.</div>
+        <label>Tools</label>
+        <div class="hint" id="tools-hint">Picked automatically for each
+          message, from everything you have connected, including anything you
+          connect later. Access above still decides what it may change.</div>
 
         <div class="tools" id="native-tools" hidden></div>
         </div>
@@ -1372,33 +1378,10 @@
 
 
     function toolChips(m) {
-      var ids = (m.meta && m.meta.toolIds) || [];
-      var narrowed = !!(m.meta && m.meta.toolScope === "picked");
-      // The scope was only ever visible inside the form, which meant the one
-      // way to check what an agent was set to was to open the thing that sets
-      // it. Three rounds of "did that save?" came out of exactly that.
-      var scope = narrowed
-        ? '<span class="chip scope narrow">Only what is picked</span>'
-        : '<span class="chip scope">Every tool you have</span>';
-      // Narrowed to nothing is a real state and a surprising one: the agent
-      // can reach no tool at all. It reads as an empty card otherwise.
-      if (narrowed && !ids.length) {
-        return scope + '<span class="chip none">Nothing picked yet</span>';
-      }
-      if (!ids.length) return scope + '<span class="chip none">No tools</span>';
-      ids = ids.filter(function (id) { return id !== "server:mcp-proxy"; });
-      if (!ids.length) return scope;
-      // Glyph AND name. An icon on its own looks tidier, but this card exists
-      // to say what the agent can reach, and a bare envelope does not say it.
-      var out = "";
-      for (var i = 0; i < ids.length && i < 2; i++) {
-        out += '<span class="chip">' + toolIcon(ids[i])
-             + "<span>" + esc(TOOL_LABELS[ids[i]] || ids[i]) + "</span></span>";
-      }
-      if (ids.length > 2) {
-        out += '<span class="chip more">+' + (ids.length - 2) + "</span>";
-      }
-      return scope + out;
+      // One chip for every agent since 2026-10-28: nobody ticks tools, each
+      // message gets what Jev picks for it, so a per-agent list would
+      // describe a limit that no longer exists.
+      return '<span class="chip scope">Tools: automatic</span>';
     }
 
     function card(m, mine) {
@@ -2245,11 +2228,12 @@
     // On means everything, so the list underneath is beside the point and is
     // hidden. Off means a deliberate few, which the server now honours.
     function toolsAreEverything() {
-      return document.getElementById("use-my-apps").checked;
+      // Always, since tools are picked per message (see the form).
+      return true;
     }
 
     function showToolPicker() {
-      document.getElementById("native-tools").hidden = toolsAreEverything();
+      document.getElementById("native-tools").hidden = true;
     }
 
     // Never ticks a box the person cannot untick. applyUmbrellaState disables

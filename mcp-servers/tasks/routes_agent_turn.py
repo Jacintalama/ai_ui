@@ -20,6 +20,7 @@ import logging
 import json
 import os
 import re
+import time
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Header, HTTPException
@@ -268,16 +269,10 @@ async def tools_for_agent(user_email: str, meta: dict) -> list[str]:
     own = [t for t in own if isinstance(t, str)] if isinstance(own, list) else []
     own = [t for t in own if t not in _TOOLS_AN_AGENT_MAY_NOT_HAVE]
 
-    # Narrowed on purpose, and only then. Everything else, including anything
-    # unrecognised, means the behaviour this has always had: an agent that
-    # cannot look up its owner's own account guesses, and a guess about
-    # somebody's own things reads as a lie.
-    #
-    # Picking nothing is not a request for nothing. Somebody who chose the
-    # narrow option and then unticked every box has not finished choosing,
-    # and an agent with no tools at all would simply look broken.
-    if meta.get("toolScope") == TOOL_SCOPE_PICKED and own:
-        return own
+    # A "picked" scope is no longer a limit (2026-10-28). Nobody ticks tools
+    # now: each message carries what Jev picked for it (_auto_tools), and
+    # a hand-ticked list saved before then would quietly keep an agent from
+    # tools nobody can see it lacks any more.
 
     # Everything this person can reach, not only what this agent was ticked
     # for. Its own list stays in front so an explicitly granted tool is never
@@ -287,6 +282,47 @@ async def tools_for_agent(user_email: str, meta: dict) -> list[str]:
         if tool_id not in tools:
             tools.append(tool_id)
     return tools
+
+
+#: Kept on every agent turn whatever Jev picks: looking up its own skills,
+#: saving a note, asking a colleague. A pick of "none" for "run the weekly
+#: review" would otherwise leave an agent unable to read its own procedure.
+AGENT_CORE_TOOLS = frozenset({"skills", "remember", "colleague"})
+
+#: One pick per message. A room round runs every agent over the same words,
+#: and each asking Jev again would pay for the same answer once per agent.
+PICK_TTL_SECONDS = 120.0
+_PICKS: dict[tuple, tuple[float, list[str] | None]] = {}
+
+
+async def _auto_tools(user_email: str, text: str,
+                      tools: list[str]) -> list[str]:
+    """The tools an agent gets for this message: what Jev is sure it needs,
+    plus AGENT_CORE_TOOLS, in the order given. Every tool when Jev could
+    not be asked, so an agent never does worse than before there was a pick.
+    Never raises."""
+    text = (text or "").strip()
+    if not tools or not text:
+        return list(tools)
+    key = (user_email, text, tuple(tools))
+    now = time.monotonic()
+    hit = _PICKS.get(key)
+    if hit is not None and now - hit[0] < PICK_TTL_SECONDS:
+        picked = hit[1]
+    else:
+        try:
+            picked = await agent_jev.pick_tools(user_email, text, tools)
+        except Exception:                                   # noqa: BLE001
+            logger.warning("tool pick failed", exc_info=True)
+            picked = None
+        for k in [k for k, v in _PICKS.items()
+                  if now - v[0] >= PICK_TTL_SECONDS]:
+            _PICKS.pop(k, None)
+        _PICKS[key] = (now, picked)
+    if picked is None:
+        return list(tools)
+    keep = set(picked) | AGENT_CORE_TOOLS
+    return [t for t in tools if t in keep]
 
 
 def _last_user_text(messages: list[dict]) -> str:
@@ -367,8 +403,24 @@ async def _run_turn(user_email: str, agent_id: str, messages: list[dict],
     """
     token, tools, level, agent, roster = await _resolve_agent_row(
         user_email, agent_id)
+    # Who is asking. The room says so through agent_escalation.asking,
+    # because only it can tell the person's words from its own PASS
+    # instruction; every other chat surface hands this the person's own
+    # messages, so the last user message is what they typed.
+    intent = (agent_escalation.current_intent()
+              or agent_escalation.Intent(person_text=_last_user_text(messages)))
     if tool_ids is not None:
         tools = list(tool_ids)
+    else:
+        # Nobody picks an agent's tools: Jev does, per message (2026-10-28).
+        # A colleague is picked for the question it was asked, not for the
+        # person's words to the agent that asked it.
+        tools = await _auto_tools(
+            user_email,
+            (_last_user_text(messages)
+             if surface == agent_access.SURFACE_COLLEAGUE
+             else intent.person_text),
+            tools)
     if brief:
         made = await _brief_for(user_email, agent, roster, messages)
         messages = [made] + messages
@@ -387,12 +439,6 @@ async def _run_turn(user_email: str, agent_id: str, messages: list[dict],
          else agent_activity.SOURCE_MEETING if agent_activity.in_meeting()
          else agent_activity.SOURCE_CHANNEL),
         parent_run_id=parent_run_id)
-    # Who is asking. The room says so through agent_escalation.asking,
-    # because only it can tell the person's words from its own PASS
-    # instruction; every other chat surface hands this the person's own
-    # messages, so the last user message is what they typed.
-    intent = (agent_escalation.current_intent()
-              or agent_escalation.Intent(person_text=_last_user_text(messages)))
     usage = agent_escalation.TurnUsage(run_id=run_id)
     outcome = "failed"
     # Sets this turn's run on every turn, nested included, and opens the

@@ -297,11 +297,286 @@
     if (!settled(el)) {
       el.querySelectorAll(".am.agent").forEach(function (r) {
         r.setAttribute("data-typed", "1");
+        r.setAttribute("data-heard", "1");
       });
     }
+    sayNewAnswers(el);
     typeNewAnswers(el);
     toBottom(el);
   }
+  // --- Talking to the agents (2026-10-28) ------------------------------
+  //: Talk, and the agents answer out loud. The words come from the
+  //: browser's own speech recognition: Open WebUI's is Whisper inside its
+  //: container, which already sits at 615 MB of its 1 GB, and loading a
+  //: model there per message risked the whole site. A browser without it
+  //: (Firefox) gets no Talk button rather than one that fails. The answers
+  //: are read by the same ElevenLabs voice as Read Aloud in the main chat,
+  //: through Open WebUI's /api/v1/audio/speech, so the key never reaches
+  //: the page. Only answers to a message that was SPOKEN are read; typing
+  //: again turns it off, so nobody is talked at who did not ask.
+  var Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  //: About 600 ElevenLabs credits at most per answer (0.5 a character on
+  //: eleven_flash_v2_5); a longer answer is read up to a sentence end.
+  var SPEAK_MAX_CHARS = 1200;
+  var LISTENING = null;        // { form, rec, said } while the mic is open
+  var VOICE_SEND = null;       // the form being sent by voice right now
+  var SAYING = [];             // answers still to read, in order
+  var PLAYING = null;          // the Audio being read now
+  var VOICE_ID = null;         // a promise of the site's read-aloud voice
+  var MIC_SVG = '<svg class="ap-mic-icon" viewBox="0 0 24 24" width="14" height="14" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true" focusable="false">' +
+    '<rect x="9" y="3" width="6" height="11" rx="3"/>' +
+    '<path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/></svg>';
+
+  function authHeaders() {
+    var h = { "Content-Type": "application/json" };
+    var token = null;
+    try { token = localStorage.getItem("token"); } catch (e) { /* none */ }
+    if (token) h["Authorization"] = "Bearer " + token;
+    return h;
+  }
+
+  //: The voice Read Aloud uses, from the site's own config. Open WebUI's
+  //: speech endpoint needs it named; its own page sends it the same way.
+  function voiceId() {
+    if (!VOICE_ID) {
+      VOICE_ID = fetch("/api/config", { headers: authHeaders() })
+        .then(function (r) { return r.ok ? r.json() : {}; })
+        .then(function (c) {
+          return (c && c.audio && c.audio.tts && c.audio.tts.voice) || "";
+        })
+        .catch(function () { return ""; });
+    }
+    return VOICE_ID;
+  }
+
+  function threadOf(form) {
+    var sel = form && form.getAttribute("hx-target"), el = null;
+    if (sel) { try { el = document.querySelector(sel); } catch (x) { el = null; } }
+    if (!el && form) {
+      var box = form.closest(".cw, .agent-panel, aside, section");
+      el = box ? box.querySelector(".ap-thread") : null;
+    }
+    return el || thread();
+  }
+
+  function micOf(form) { return form ? form.querySelector(".ap-mic") : null; }
+
+  function showMic(form) {
+    var b = micOf(form);
+    if (!b) return;
+    var listening = !!(LISTENING && LISTENING.form === form);
+    var talking = !listening && !!(PLAYING || SAYING.length) &&
+      threadOf(form) && threadOf(form).getAttribute("data-voice") === "1";
+    // Short labels: the office's chat window is 300px wide, and "Done
+    // talking" squeezed the message box to a third of it. The full
+    // meaning is in the accessible name.
+    // While an answer is being read, Talk still talks: it cuts the reading
+    // off and listens, the way you interrupt somebody. A press that only
+    // silenced it left the next sentence unheard (live, 2026-10-28).
+    var label = b.querySelector(".ap-mic-label");
+    if (label) label.textContent = listening ? "Done" : "Talk";
+    b.setAttribute("aria-label", listening ? "Stop listening and send"
+      : talking ? "Stop the reading and talk" : "Talk instead of typing");
+    b.setAttribute("aria-pressed", listening ? "true" : "false");
+    b.classList.toggle("on", listening);
+  }
+  function showMics() {
+    document.querySelectorAll("form.ap-composer").forEach(showMic);
+  }
+
+  function addMic(form) {
+    if (!Recognition || !form || micOf(form)) return;
+    var b = document.createElement("button");
+    b.type = "button";
+    // ghost: the office's plain .btn is filled cyan, which made Talk look
+    // like a second Send.
+    b.className = "btn ghost ap-mic";
+    // A microphone in front of the word, so it reads as voice at a glance
+    // (asked for 2026-10-28). Drawn inline, in the button's own colour.
+    b.innerHTML = MIC_SVG + '<span class="ap-mic-label">Talk</span>';
+    b.setAttribute("aria-label", "Talk instead of typing");
+    b.setAttribute("aria-pressed", "false");
+    b.title = "Say it instead of typing. The answers are read out loud.";
+    // After Send, so Send stays the composer's first button and the one
+    // Enter presses.
+    form.appendChild(b);
+  }
+  function addMics(root) {
+    (root || document).querySelectorAll("form.ap-composer").forEach(addMic);
+  }
+
+  function stopReading() {
+    SAYING = [];
+    if (PLAYING) {
+      try { PLAYING.pause(); } catch (e) { /* gone */ }
+      PLAYING = null;
+    }
+    showMics();
+  }
+
+  function note(el, words) {
+    if (!el) return;
+    el.insertAdjacentHTML("beforeend", '<div class="am note"></div>');
+    el.lastElementChild.textContent = words;
+    toBottom(el);
+  }
+
+  function listen(form) {
+    var input = form.querySelector('input[name="message"]');
+    if (!input) return;
+    stopReading();
+    var rec;
+    try { rec = new Recognition(); } catch (e) { return; }
+    rec.lang = navigator.language || "en-US";
+    rec.interimResults = true;
+    rec.continuous = false;
+    LISTENING = { form: form, rec: rec, said: "" };
+    rec.onresult = function (ev) {
+      var words = "";
+      for (var i = 0; i < ev.results.length; i++) {
+        words += ev.results[i][0].transcript;
+      }
+      if (LISTENING && LISTENING.rec === rec) LISTENING.said = words.trim();
+      input.value = words.trim();
+    };
+    rec.onerror = function (ev) {
+      var why = ev && ev.error;
+      if (why === "not-allowed" || why === "service-not-allowed") {
+        note(threadOf(form), "The microphone is blocked. Allow it for this " +
+          "site in the browser's settings, then press Talk again.");
+      } else if (why && why !== "no-speech" && why !== "aborted") {
+        note(threadOf(form), "Could not hear that (" + why + "). Try again, " +
+          "or type it.");
+      }
+    };
+    rec.onend = function () {
+      var was = LISTENING && LISTENING.rec === rec ? LISTENING : null;
+      if (was) LISTENING = null;
+      showMic(form);
+      var said = was ? was.said : "";
+      if (!said) return;
+      input.value = said;
+      VOICE_SEND = form;
+      try {
+        if (typeof form.requestSubmit === "function") form.requestSubmit();
+        else form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+      } finally { VOICE_SEND = null; }
+    };
+    try { rec.start(); } catch (e) { LISTENING = null; }
+    showMic(form);
+    try { input.focus(); } catch (e) { /* fine */ }
+  }
+
+  document.addEventListener("click", function (e) {
+    var b = e.target && e.target.closest ? e.target.closest(".ap-mic") : null;
+    if (!b) return;
+    e.preventDefault();
+    var form = b.closest("form");
+    if (LISTENING && LISTENING.form === form) {
+      try { LISTENING.rec.stop(); } catch (x) { /* ended already */ }
+      return;
+    }
+    if (LISTENING) { try { LISTENING.rec.abort(); } catch (x) { /* fine */ } }
+    listen(form);
+  });
+
+  //: A spoken message turns reading on for its thread; a typed one turns
+  //: it off. Capture, so it is decided before htmx sends anything.
+  document.addEventListener("submit", function (e) {
+    var form = e.target;
+    if (!form || !form.classList || !form.classList.contains("ap-composer")) return;
+    var el = threadOf(form);
+    if (!el) return;
+    if (VOICE_SEND === form) el.setAttribute("data-voice", "1");
+    else { el.removeAttribute("data-voice"); stopReading(); }
+  }, true);
+
+  function sayable(row) {
+    var text = row.querySelector(".atext");
+    if (!text) return "";
+    var words = (text.textContent || "").replace(/\s+/g, " ").trim();
+    if (words.length > SPEAK_MAX_CHARS) {
+      var cut = words.slice(0, SPEAK_MAX_CHARS);
+      var end = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("? "),
+                         cut.lastIndexOf("! "));
+      words = end > SPEAK_MAX_CHARS / 2 ? cut.slice(0, end + 1) : cut;
+    }
+    return words;
+  }
+
+  function fetchSpeech(text) {
+    return voiceId().then(function (voice) {
+      return fetch("/api/v1/audio/speech", {
+        method: "POST", headers: authHeaders(),
+        body: JSON.stringify({ input: text, voice: voice })
+      });
+    }).then(function (r) {
+      if (!r.ok) throw new Error("speech " + r.status);
+      return r.blob();
+    }).then(function (blob) { return URL.createObjectURL(blob); });
+  }
+
+  function playNext() {
+    if (PLAYING || !SAYING.length) { showMics(); return; }
+    var next = SAYING.shift();
+    PLAYING = { pause: function () { next.cancelled = true; } };
+    showMics();
+    next.audio.then(function (url) {
+      if (next.cancelled) return;
+      var a = new Audio(url);
+      PLAYING = a;
+      function done() {
+        try { URL.revokeObjectURL(url); } catch (e) { /* fine */ }
+        if (PLAYING === a) PLAYING = null;
+        playNext();
+      }
+      a.onended = done;
+      a.onerror = done;
+      var p = a.play();
+      if (p && p.catch) p.catch(done);
+    }).catch(function (err) {
+      try { console.warn("[agent-chat] could not read the answer out", err); } catch (x) { /* fine */ }
+      if (!next.cancelled) { PLAYING = null; playNext(); }
+    });
+  }
+
+  //: Every answer that landed since the last look, read out in order when
+  //: the thread was spoken to. Fetched as they land, played one by one.
+  function sayNewAnswers(el) {
+    if (!el) return;
+    var rows = el.querySelectorAll(".am.agent:not([data-heard])");
+    if (!rows.length) return;
+    var on = el.getAttribute("data-voice") === "1";
+    var speakers = {};
+    el.querySelectorAll(".am.agent[data-agent]").forEach(function (r) {
+      speakers[r.getAttribute("data-agent")] = 1;
+    });
+    var room = Object.keys(speakers).length > 1;
+    rows.forEach(function (row) {
+      row.setAttribute("data-heard", "1");
+      if (!on || row.classList.contains("ajob")) return;
+      var words = sayable(row);
+      if (!words) return;
+      var who = row.getAttribute("data-agent");
+      if (room && who) words = who + ". " + words;
+      SAYING.push({ audio: fetchSpeech(words) });
+    });
+    playNext();
+  }
+
+  addMics(document);
+  if (window.MutationObserver) {
+    // The office opens a chat window per conversation (office/js/dock.js),
+    // each with its own composer, long after this ran.
+    new MutationObserver(function (changes) {
+      for (var i = 0; i < changes.length; i++) {
+        if (changes[i].addedNodes && changes[i].addedNodes.length) { addMics(document); return; }
+      }
+    }).observe(document.body, { childList: true, subtree: true });
+  }
+
   //: Settle the thread an event landed in, or every thread when the event
   //: cannot say (an out-of-band swap names its own target, not the thread).
   function settle(ev) {

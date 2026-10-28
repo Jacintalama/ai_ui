@@ -861,9 +861,10 @@ async def test_an_unnarrowed_agent_gets_everything_the_owner_can_reach(monkeypat
     assert tools[0] == "server:mcp-proxy", tools
 
 
-async def test_a_narrowed_agent_keeps_only_what_was_picked(monkeypatch):
-    """The narrowing must survive the extraction, or picking a few tools
-    would silently become picking all of them."""
+async def test_a_once_narrowed_agent_reaches_everything(monkeypatch):
+    """A hand-picked list was a limit until 2026-10-28. Lukas: nobody should
+    have to pick tools. Every agent now reaches everything, and each message
+    carries what Jev picked for it (test_agent_auto_tools)."""
     import routes_agent_turn as rt
 
     async def every(email):
@@ -872,7 +873,7 @@ async def test_a_narrowed_agent_keeps_only_what_was_picked(monkeypatch):
     monkeypatch.setattr(rt, "_every_tool_for", every)
     tools = await rt.tools_for_agent(
         "me@example.com", {"toolIds": ["gmail"], "toolScope": "picked"})
-    assert tools == ["gmail"], tools
+    assert tools == ["gmail", "calendar", "remember", "skills"], tools
 
 
 async def test_narrowed_to_nothing_still_gets_everything(monkeypatch):
