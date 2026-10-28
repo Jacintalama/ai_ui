@@ -262,6 +262,44 @@ class AutomationRun(Base):
     delivered = Column(Text, nullable=False, default="")
 
 
+class Approval(Base):
+    """A question an agent stopped to ask, with an id, so it can be answered
+    from anywhere (agent_approvals.py). See migration 061."""
+    __tablename__ = "approval"
+    __table_args__ = {"schema": "tasks"}
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_email = Column(Text, nullable=False)
+    agent_id = Column(Text, nullable=False)
+    agent_name = Column(Text, nullable=False, default="")
+    origin = Column(Text, nullable=False)
+    origin_ref = Column(Text, nullable=False, default="")
+    calls = Column(JSONB, nullable=False)
+    conversation = Column(JSONB, nullable=False)
+    question = Column(Text, nullable=False, default="")
+    status = Column(Text, nullable=False, default="pending")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    decided_at = Column(DateTime(timezone=True), nullable=True)
+    decided_via = Column(Text, nullable=True)
+    result = Column(Text, nullable=False, default="")
+
+
+class ApprovalRule(Base):
+    """A standing answer: allow or deny a tool, always or when its
+    arguments contain some text, so the usual questions are never asked."""
+    __tablename__ = "approval_rule"
+    __table_args__ = {"schema": "tasks"}
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_email = Column(Text, nullable=False)
+    tool = Column(Text, nullable=False)
+    decision = Column(Text, nullable=False)
+    when_contains = Column(Text, nullable=False, default="")
+    label = Column(Text, nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class GatewayLink(Base):
     """A platform account (Telegram, CLI) paired to an IO account.
 

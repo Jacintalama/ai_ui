@@ -18,6 +18,7 @@ import logging
 from datetime import datetime, timezone
 
 import agent_access
+import agent_approvals
 import agent_events
 import automations
 from routes_agent_turn import _run_turn
@@ -28,6 +29,8 @@ logger = logging.getLogger("automation_runner")
 STATUS_DONE = "done"
 STATUS_FAILED = "failed"
 STATUS_SKIPPED = "skipped"
+#: The agent stopped to ask; the answer comes when somebody says yes.
+STATUS_WAITING = "waiting"
 
 TURN_FAILED = "The agent could not finish this run."
 NO_DISCORD = ("not delivered: no Discord thread is linked to this account; "
@@ -120,6 +123,23 @@ async def fire(automation: dict, payload, agent_name: str = "") -> dict:
         answer = str(out.get("answer") or "")
         notes = [n for n in (out.get("notes") or []) if isinstance(n, str)]
         status = STATUS_DONE
+        held = out.get("pending") if isinstance(out.get("pending"), dict) else None
+        if held and held.get("calls"):
+            # The agent stopped to ask. Written down with an id so it can
+            # be answered from the Agents page or the main chat
+            # (agent_approvals, 2026-10-28); what is delivered now is the
+            # question, and the answer follows when somebody says yes.
+            import routes_approvals
+            row = await routes_approvals.hold_and_tell(
+                email, automation["agent_id"], agent_name or automation["agent_id"],
+                held, agent_approvals.ORIGIN_AUTOMATION, str(automation["id"]))
+            status = STATUS_WAITING
+            answer = (routes_approvals.question_for(agent_name or automation["agent_id"],
+                                                    held["calls"])
+                      + "\n\n" + routes_approvals.HOW_TO_ANSWER)
+            if row is None:
+                notes.append("The question could not be written down, so it "
+                             "cannot be answered later.")
     except Exception as exc:                                # noqa: BLE001
         detail = getattr(exc, "detail", None)
         logger.warning("automation %s: the turn failed", automation.get("id"),

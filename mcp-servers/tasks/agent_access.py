@@ -98,7 +98,18 @@ def effective_mode(level: str | None, tool_mode: str | None,
         # read-only for an agent with no opinion cannot regress anything.
         return MODE_READ_ONLY
 
-    if surface in (SURFACE_COLLEAGUE, SURFACE_AUTOMATION):
+    if surface == SURFACE_AUTOMATION:
+        # Since approvals have an id (agent_approvals, 2026-10-28) an
+        # automation's agent on Ask asks like a channel's: the question is
+        # written down, delivered, and answered from the Agents page, the
+        # main chat or a standing rule. Before that it could only read.
+        if level == LEVEL_ALL:
+            return MODE_FULL
+        if level == LEVEL_ASK:
+            return MODE_ASK
+        return MODE_READ_ONLY
+
+    if surface == SURFACE_COLLEAGUE:
         # Only a level the owner set to `all` acts. tool_mode is ignored
         # entirely rather than defaulted: reading it here would give a
         # caller a way to widen a read-only agent, which is the hole this
@@ -137,8 +148,9 @@ def refusal_reason(level: str | None, tool_mode: str | None,
         return ("another agent asked this one, and it is not set to act on "
                 "its own")
     if surface == SURFACE_AUTOMATION:
-        return ("this run was started by an automation, and the agent is not "
-                "set to act on its own")
+        if level is None:
+            return "this agent has not been given access to change things"
+        return "this agent is set to read only"
     if level == LEVEL_ASK:
         return "a scheduled run has nobody to ask"
     if level == LEVEL_READ:

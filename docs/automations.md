@@ -55,9 +55,30 @@ unknown URL answers the same 404, so a URL tells nobody which it is.
 
 ## What the agent may do
 
-Nobody watches an automated run, so there is nobody to ask. An agent set
-to **All** acts; one set to **Ask** or **Read** reads and answers, and says
-in the result what it did not do.
+An agent set to **All** acts. One set to **Read** reads and answers, and
+says in the result what it did not do. One set to **Ask** asks, and the
+question is written down so it can be answered from anywhere.
+
+## Approvals from anywhere
+
+When an agent on Ask stops before sending, creating or changing
+something, the question gets an id and waits up to a day. Answer it:
+
+- On the Agents page under **Automation**, at the top, with Yes or No.
+- In the main chat, with a bare "yes" or "no" when nothing else is
+  waiting in that chat. If more than one question waits, the chat lists
+  them and you answer on the page.
+
+Whoever answers first, the agent carries on exactly where it stopped,
+and the result goes where the question came from: the automation's own
+delivery, or the agent's conversation in the office for a question born
+in the main chat.
+
+**Standing rules** answer the usual questions before they are asked. On
+the same panel: allow or deny a tool, always or only when the call
+mentions some text. "Allow send_email when it contains @yourcompany.com",
+"deny delete_*". Deny wins over allow. A matching rule answers inside the
+run, and the result notes what a denying rule stopped.
 
 ## Limits
 

@@ -71,14 +71,15 @@ async def test_creating_returns_the_key_once_and_stores_the_hash(monkeypatch):
 
 @pytest.mark.parametrize("level,expected", [
     (None, agent_access.MODE_READ_ONLY), ("read", agent_access.MODE_READ_ONLY),
-    ("ask", agent_access.MODE_READ_ONLY), ("all", agent_access.MODE_FULL)])
-def test_an_automation_acts_only_for_an_agent_set_to_all(level, expected):
+    ("ask", agent_access.MODE_ASK), ("all", agent_access.MODE_FULL)])
+def test_an_automation_acts_for_all_asks_for_ask_and_reads_otherwise(level, expected):
     assert agent_access.effective_mode(level, "full", agent_access.SURFACE_AUTOMATION) == expected
 
 
 def test_the_automation_refusal_reads_as_a_clause():
-    reason = agent_access.refusal_reason("ask", None, agent_access.SURFACE_AUTOMATION)
-    assert "automation" in reason and reason[0].islower() and not reason.endswith(".")
+    for level in (None, "read"):
+        reason = agent_access.refusal_reason(level, None, agent_access.SURFACE_AUTOMATION)
+        assert reason[0].islower() and not reason.endswith(".")
 
 
 async def test_the_run_is_recorded_as_an_automation(monkeypatch):
