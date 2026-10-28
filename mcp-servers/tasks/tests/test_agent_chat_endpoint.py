@@ -733,8 +733,27 @@ async def test_jev_sends_an_unnamed_message_to_the_agent_it_is_sure_of(_wire, mo
     assert _wire[rt._pin_key("chat-1", "owner@example.com")] == "agent-m"
 
 
-async def test_the_free_model_gets_the_message_when_jev_picks_for_the_auto_pipe(_wire, monkeypatch):
+async def test_jev_does_not_hand_an_unnamed_message_to_an_agent_in_the_main_chat(
+        _wire, monkeypatch):
+    """Changed 2026-10-28. This used to assert the opposite: that Jev's pick
+    answered on the Auto pipe. The owner saw it happen to "what is the richest
+    man in the world" and asked for the rule to be the other way round, so in
+    the main chat an agent answers only when it is named."""
+    calls = _jev(monkeypatch)
+    monkeypatch.delenv("AGENTS_ANSWER_UNNAMED", raising=False)
+    b = _body(ASK)
+    b.route_only = True
+    out = await rt.chat(b, x_internal_secret="s")
+    assert calls["decide"] == [], "Jev was asked to pick an agent"
+    # route_only with nobody named answers with an empty list: the Auto pipe
+    # takes that as its cue to answer for itself.
+    assert out["turns"] == []
+
+
+async def test_the_switch_gives_jev_its_pick_back(_wire, monkeypatch):
+    """The behaviour above is a decision, not a deletion."""
     _jev(monkeypatch)
+    monkeypatch.setenv("AGENTS_ANSWER_UNNAMED", "1")
     b = _body(ASK)
     b.route_only = True
     out = await rt.chat(b, x_internal_secret="s")
@@ -959,8 +978,36 @@ async def test_the_agent_decision_and_the_tool_pick_are_asked_side_by_side(
     monkeypatch.setattr(agent_decider, "enabled", lambda: True)
     monkeypatch.setattr(agent_decider, "decide", decide)
     monkeypatch.setattr(agent_jev, "pick_tools", pick_tools)
+    # Side by side is what this test is for, so it needs both questions to be
+    # asked at all. By default the main chat no longer asks the first one
+    # (2026-10-28), and the switch is what puts it back.
+    monkeypatch.setenv("AGENTS_ANSWER_UNNAMED", "1")
     await rt.chat(_auto("hi what is the current news today"), x_internal_secret="s")
     assert order[:2] == ["decide start", "pick start"], order
+
+
+async def test_only_the_tool_pick_is_asked_when_nobody_is_named(
+        assistant, monkeypatch):
+    """The default. One question, not two, because the other one could only
+    end in an agent taking a message nobody addressed to it."""
+    import agent_decider
+    import agent_jev
+    order = []
+
+    async def decide(email, chat_id, message, history, agents):
+        order.append("decide")
+        return agent_decider.Decision(path=agent_decider.PATH_FALLBACK, reason="x")
+
+    async def pick_tools(email, text, tools):
+        order.append("pick")
+        return []
+
+    monkeypatch.delenv("AGENTS_ANSWER_UNNAMED", raising=False)
+    monkeypatch.setattr(agent_decider, "enabled", lambda: True)
+    monkeypatch.setattr(agent_decider, "decide", decide)
+    monkeypatch.setattr(agent_jev, "pick_tools", pick_tools)
+    await rt.chat(_auto("hi what is the current news today"), x_internal_secret="s")
+    assert order == ["pick"], order
 
 
 async def test_a_failed_assistant_turn_hands_back_to_the_free_model(assistant):
