@@ -20,6 +20,19 @@ automation**. The rule gets its own URL.
 - **Answer only to whoever called**: nothing is posted; the caller reads
   the reply.
 
+## From the main chat
+
+Type it: "when a new lead comes in from my website form, have Ada write a
+first reply and add a to-do, and post it to my Discord". The main chat's
+assistant picks the Automations tool, asks you to confirm, makes the rule
+and hands back its URL. "List my automations", "pause the lead rule",
+"run the invoice rule now" work the same way. Anything on a timer
+("every Monday at nine") is a schedule, and the chat makes those too.
+
+The tool is `open-webui-functions/automations_tool.py`, installed by
+pasting into Workspace → Tools and enabling it on Auto, like the Agent
+Builder.
+
 ## The URL
 
 ```

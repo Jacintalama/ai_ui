@@ -202,6 +202,8 @@ TOOL_CASES = [
      {"account"}),
     ("every Monday at 9 send me a summary of my week", {"schedules"},
      {"calendar", "gmail"}),
+    ("when a new lead comes in from my website form, have Ada write a first "
+     "reply and add a to-do", {"automations"}, {"agents", "colleague", "gmail"}),
     ("search the web for the cheapest flights to Tokyo in December",
      {"server:mcp-proxy"}, set()),
     ("remember that my accountant is called Ana", {"remember"}, set()),

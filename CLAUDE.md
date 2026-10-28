@@ -228,7 +228,10 @@ a line saying so (`automations.message_for`). Delivery: `chat` appends to the
 agent's private office conversation, `discord` posts to the person's
 schedules thread through `scheduler._deliver_result`, `none` only replies.
 Same surface and semaphore as the key route. Made and managed on the Agents
-page under **Automation**; twenty per person. See `docs/automations.md`.
+page under **Automation**, or from the main chat through
+`open-webui-functions/automations_tool.py` (installed by pasting, Jev picks it
+through `agent_jev.TOOL_NOTES["automations"]`, the writes ask first); twenty
+per person. See `docs/automations.md`.
 
 ### Hard rules
 - **NEVER deploy your local `mcp-servers/tasks/templates.py`.** The server's copy is ahead (more App Builder templates). Pull the server's version before editing, or you'll silently drop templates.
