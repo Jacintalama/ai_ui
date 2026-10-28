@@ -205,6 +205,34 @@ had. The agents page and the office form pick `meta.llm` and always write
 `io.io` as the base. The IO pipe must be installed and enabled in Open WebUI,
 or a mentioned agent answers "Model not found".
 
+### Automation: run an agent from outside (2026-10-27)
+`POST /api/tasks/agents/run` with `Authorization: Bearer iok_...` runs one of
+the key owner's agents on a message and returns the answer
+(`routes_automation.py`, keys in `automation_keys.py`, table
+`tasks.automation_key`, migration 059). Keys are made and revoked on the
+Agents page under **Automation**, shown once, stored as a hash. The run is
+the same `_run_turn` Discord uses, on `SURFACE_AUTOMATION`: only an agent set
+to `all` acts, there is nobody to ask. `callback_url` returns at once and
+POSTs the result later; private and local hosts are refused (resolved, not
+pattern matched). Two runs at a time per process (`AUTOMATION_CONCURRENCY`).
+The n8n side is in `docs/n8n-run-agent.md` and `docs/n8n/run-agent.workflow.json`.
+
+**Automations (2026-10-27)** are rules a person sets up in the platform:
+when this happens, this agent does this, the answer goes there
+(`automations.py` the row, `automation_runner.py` the firing,
+`routes_automations.py` the routes, tables `tasks.automation` and
+`tasks.automation_run`, migration 060). The first trigger is a webhook:
+`POST /api/tasks/hooks/<hk_token>`, public, the token is the secret;
+`?wait=1` waits for the answer. The body is handed to the agent as data under
+a line saying so (`automations.message_for`). Delivery: `chat` appends to the
+agent's private office conversation, `discord` posts to the person's
+schedules thread through `scheduler._deliver_result`, `none` only replies.
+Same surface and semaphore as the key route. Made and managed on the Agents
+page under **Automation**, or from the main chat through
+`open-webui-functions/automations_tool.py` (installed by pasting, Jev picks it
+through `agent_jev.TOOL_NOTES["automations"]`, the writes ask first); twenty
+per person. See `docs/automations.md`.
+
 ### Hard rules
 - **NEVER deploy your local `mcp-servers/tasks/templates.py`.** The server's copy is ahead (more App Builder templates). Pull the server's version before editing, or you'll silently drop templates.
 - **NEVER touch, overwrite, or commit `.env`** — the server's `.env` holds the only copy of the real production secrets.

@@ -479,6 +479,9 @@ TOOL_NOTES = {
     "agents": "asking the person's agents a question",
     "agent_builder": "making new AI agents or a team of agents for the "
                      "person, or listing their agents",
+    "automations": "rules that run one of the person's agents when something "
+                   "happens or arrives (a lead, a form, a webhook, an event), "
+                   "not on a timer: making, listing, pausing or deleting them",
     "server:mcp-proxy": "outside services and the web: web search, flights, "
                         "GitHub, Notion, ClickUp, n8n workflows, the "
                         "knowledge graph of past chats and meetings",

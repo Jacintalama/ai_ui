@@ -683,6 +683,28 @@
   .conn-form input { width: 100%; margin-bottom: 8px; }
   .conn-where { color: var(--muted); font-size: 12px; margin-bottom: 9px; }
   .conn-err { color: #f87171; font-size: 12px; min-height: 0; margin-bottom: 8px; }
+  .auto-h3 { font-size: 13px; font-weight: 600; margin: 0 0 6px; }
+  .auto-form { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+  .auto-form textarea { width: 100%; resize: vertical; }
+  .auto-form-row { display: flex; gap: 8px; align-items: center; }
+  .auto-form-row select { flex: 1; }
+  .auto-rule { padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .auto-rule:last-of-type { border-bottom: 0; }
+  .auto-rule-head { display: flex; align-items: center; gap: 8px; }
+  .auto-rule-name { flex: 1; font-size: 13px; }
+  .auto-rule-name small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .auto-rule.paused .auto-rule-name { color: var(--muted); }
+  .auto-rule-url { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+  .auto-rule-url code { flex: 1; font-size: 11px; word-break: break-all; user-select: all; }
+  .auto-rule-acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .auto-rule-last { color: var(--muted); font-size: 12px; margin-top: 6px; white-space: pre-wrap; }
+  .auto-new { padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--border);
+              border-radius: 8px; }
+  .auto-key-row { display: flex; gap: 8px; align-items: center; }
+  .auto-key { flex: 1; font-size: 12px; word-break: break-all; user-select: all; }
+  .auto-make { display: flex; gap: 8px; margin-top: 12px; }
+  .auto-make input { flex: 1; }
+  .auto-row .conn-state { white-space: nowrap; }
   .form-error { color: #f87171; font-size: 13px; min-height: 0; margin-top: 16px; }
   .form-error:empty { margin-top: 0; }
   .ap-title { min-width: 0; }
@@ -822,6 +844,7 @@
                  placeholder="Search your agents" aria-label="Search agents">
         </div>
         <button class="btn" type="button" id="open-connections">Connections</button>
+        <button class="btn" type="button" id="open-automation">Automation</button>
         <button class="btn primary" type="button" id="new-agent">+ New agent</button>
       </div>
     </div>
@@ -1025,6 +1048,69 @@
         <div id="connections-list"></div>
         <div class="form-actions" style="margin-top:18px">
           <button class="btn" type="button" id="connections-close">Done</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Automation keys (2026-10-27): what lets n8n, or a script, run one
+         of your agents from outside through POST /api/tasks/agents/run. The
+         key is shown once, when made. -->
+    <div class="modal-overlay" id="automation-overlay" hidden>
+      <div class="modal" id="automation-panel" role="dialog" aria-modal="true"
+           aria-labelledby="automation-title" tabindex="-1">
+        <h2 id="automation-title">Automation</h2>
+        <!-- Automations (2026-10-27): rules of your own. When something
+             POSTs to the rule's URL, the agent does what the rule says and
+             the answer goes where you chose. -->
+        <h3 class="auto-h3">Automations</h3>
+        <div class="hint" style="margin-bottom:10px">A rule has its own URL.
+          Anything that POSTs to it, a form, Zapier, n8n, a script, starts
+          the agent on what was posted, and the answer goes where you say.
+          Only an agent set to <b>All</b> changes things on such a run; the
+          others read and answer.</div>
+        <div id="automations-list"></div>
+        <div class="auto-form">
+          <input id="auto-name" type="text" maxlength="80"
+                 placeholder="Name (New website lead)" aria-label="Automation name">
+          <select id="auto-agent" aria-label="Which agent"></select>
+          <textarea id="auto-instructions" rows="3" maxlength="4000"
+                    placeholder="What should the agent do when this happens? (Write a first reply to this lead and add a to-do for me.)"
+                    aria-label="What to do"></textarea>
+          <div class="auto-form-row">
+            <select id="auto-deliver" aria-label="Where the answer goes">
+              <option value="chat">Answer in the agent's chat</option>
+              <option value="discord">Answer in my Discord thread</option>
+              <option value="none">Answer only to whoever called</option>
+            </select>
+            <button class="btn primary" type="button" id="auto-create">Add automation</button>
+          </div>
+        </div>
+        <div class="form-error" id="automations-error"></div>
+
+        <h3 class="auto-h3" style="margin-top:22px">Keys</h3>
+        <div class="hint" style="margin-bottom:14px">A key lets n8n, or any
+          script, run one of your agents from outside: send it as
+          <code>Authorization: Bearer</code> to
+          <code>POST /api/tasks/agents/run</code> with the agent's name and
+          a message.</div>
+        <div id="automation-new" class="auto-new" hidden>
+          <div class="hint" style="margin-bottom:6px">Your new key. Copy it
+            now: it is not shown again.</div>
+          <div class="auto-key-row">
+            <code id="automation-key" class="auto-key"></code>
+            <button class="btn" type="button" id="automation-copy">Copy</button>
+          </div>
+        </div>
+        <div id="automation-list"></div>
+        <div class="auto-make">
+          <input id="automation-label" type="text" maxlength="60"
+                 placeholder="What is this key for? (n8n inbox)"
+                 aria-label="Key label">
+          <button class="btn primary" type="button" id="automation-make">New key</button>
+        </div>
+        <div class="form-error" id="automation-error"></div>
+        <div class="form-actions" style="margin-top:18px">
+          <button class="btn" type="button" id="automation-close">Done</button>
         </div>
       </div>
     </div>
@@ -2982,6 +3068,269 @@
 
       document.getElementById("open-connections").addEventListener(
         "click", openConnections);
+
+      // --- automation keys (2026-10-27) --------------------------------
+      // Read only when the panel opens: nothing about keys is needed to
+      // draw the page, and a request on load would be one more thing every
+      // visit pays for.
+      var KEYS_URL = "/api/tasks/agents/keys";
+      function autoError(msg) {
+        document.getElementById("automation-error").textContent = msg || "";
+      }
+      function whenText(iso) {
+        if (!iso) return "";
+        var d = new Date(iso);
+        return isNaN(d) ? "" : d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+      }
+      function drawKeys(keys) {
+        var list = document.getElementById("automation-list");
+        list.innerHTML = "";
+        var live = keys.filter(function (k) { return !k.revoked_at; });
+        if (!live.length) {
+          list.innerHTML = '<div class="hint">No keys yet. Make one and put it in n8n.</div>';
+          return;
+        }
+        live.forEach(function (k) {
+          var row = document.createElement("div");
+          row.className = "conn-row auto-row";
+          row.setAttribute("data-key-id", k.id);
+          var name = document.createElement("div");
+          name.className = "conn-name";
+          name.textContent = k.label || "Untitled key";
+          var small = document.createElement("small");
+          small.textContent = k.prefix + "...  made " + whenText(k.created_at)
+            + (k.last_used_at ? ", last used " + whenText(k.last_used_at) : ", never used");
+          name.appendChild(small);
+          var revoke = document.createElement("button");
+          revoke.className = "btn";
+          revoke.type = "button";
+          revoke.textContent = "Revoke";
+          revoke.setAttribute("data-revoke-key", k.id);
+          row.appendChild(name);
+          row.appendChild(revoke);
+          list.appendChild(row);
+        });
+      }
+      async function loadKeys() {
+        autoError("");
+        try {
+          var body = await getJson(KEYS_URL);
+          drawKeys(body.keys || []);
+        } catch (e) {
+          autoError(e && e.message === "signed out"
+            ? "Your session expired. Sign in again."
+            : "Could not load your keys. Try again.");
+        }
+      }
+      // --- the rules --------------------------------------------------
+      var AUTOS_URL = "/api/tasks/automations";
+      function autosError(msg) {
+        document.getElementById("automations-error").textContent = msg || "";
+      }
+      function fillAutoAgents() {
+        var sel = document.getElementById("auto-agent");
+        var was = sel.value;
+        sel.innerHTML = "";
+        state.agents.filter(function (a) { return a.user_id === state.me; })
+          .forEach(function (a) {
+            var o = document.createElement("option");
+            o.value = a.id; o.textContent = a.name || a.id;
+            sel.appendChild(o);
+          });
+        if (was) sel.value = was;
+      }
+      function drawAutomations(list) {
+        var host = document.getElementById("automations-list");
+        host.innerHTML = "";
+        if (!list.length) {
+          host.innerHTML = '<div class="hint">No automations yet. Add one below.</div>';
+          return;
+        }
+        list.forEach(function (a) {
+          var row = document.createElement("div");
+          row.className = "auto-rule" + (a.enabled ? "" : " paused");
+          row.setAttribute("data-auto-id", a.id);
+          var head = document.createElement("div");
+          head.className = "auto-rule-head";
+          var name = document.createElement("div");
+          name.className = "auto-rule-name";
+          name.textContent = a.name + (a.enabled ? "" : " (paused)");
+          var small = document.createElement("small");
+          small.textContent = (a.agent_missing ? "agent missing" : a.agent_name)
+            + ", answers " + ({ chat: "in the agent's chat", discord: "in Discord",
+                                none: "only to the caller" }[a.deliver_to] || a.deliver_to)
+            + ", run " + (a.run_count || 0) + (a.run_count === 1 ? " time" : " times");
+          name.appendChild(small);
+          head.appendChild(name);
+          row.appendChild(head);
+          var url = document.createElement("div");
+          url.className = "auto-rule-url";
+          var code = document.createElement("code");
+          code.textContent = a.hook_url;
+          var copy = document.createElement("button");
+          copy.className = "btn"; copy.type = "button"; copy.textContent = "Copy URL";
+          copy.setAttribute("data-auto-copy", a.hook_url);
+          url.appendChild(code); url.appendChild(copy);
+          row.appendChild(url);
+          var acts = document.createElement("div");
+          acts.className = "auto-rule-acts";
+          [["data-auto-run", "Run now"],
+           ["data-auto-toggle", a.enabled ? "Pause" : "Resume"],
+           ["data-auto-newurl", "New URL"],
+           ["data-auto-delete", "Delete"]].forEach(function (pair) {
+            var b = document.createElement("button");
+            b.className = "btn"; b.type = "button"; b.textContent = pair[1];
+            b.setAttribute(pair[0], a.id);
+            acts.appendChild(b);
+          });
+          row.appendChild(acts);
+          var last = (a.runs || [])[0];
+          if (last) {
+            var line = document.createElement("div");
+            line.className = "auto-rule-last";
+            line.textContent = "Last run " + (last.status || "") + ", " + (last.delivered || "")
+              + (last.result ? ": " + last.result.slice(0, 240) : "");
+            row.appendChild(line);
+          }
+          host.appendChild(row);
+        });
+      }
+      async function loadAutomations() {
+        autosError("");
+        fillAutoAgents();
+        try {
+          var body = await getJson(AUTOS_URL);
+          drawAutomations(body.automations || []);
+        } catch (e) {
+          autosError(e && e.message === "signed out"
+            ? "Your session expired. Sign in again."
+            : "Could not load your automations. Try again.");
+        }
+      }
+      async function sendAuto(method, url, body) {
+        var r = await fetch(url, { method: method, headers: authHeaders(),
+                                   body: body === undefined ? undefined : JSON.stringify(body) });
+        var data = await r.json().catch(function () { return {}; });
+        if (!r.ok) throw new Error(data.detail || ("http " + r.status));
+        return data;
+      }
+      async function createAutomation() {
+        autosError("");
+        var btn = document.getElementById("auto-create");
+        btn.disabled = true;
+        try {
+          await sendAuto("POST", AUTOS_URL, {
+            name: document.getElementById("auto-name").value.trim(),
+            agent: document.getElementById("auto-agent").value,
+            instructions: document.getElementById("auto-instructions").value.trim(),
+            deliver_to: document.getElementById("auto-deliver").value
+          });
+          document.getElementById("auto-name").value = "";
+          document.getElementById("auto-instructions").value = "";
+          await loadAutomations();
+        } catch (e) {
+          autosError((e && e.message) || "Could not add the automation. Try again.");
+        } finally {
+          btn.disabled = false;
+        }
+      }
+      async function autoAction(btn) {
+        autosError("");
+        var id = btn.getAttribute("data-auto-id-value");
+        try {
+          if (btn.hasAttribute("data-auto-toggle")) {
+            var row = btn.closest("[data-auto-id]");
+            await sendAuto("PATCH", AUTOS_URL + "/" + encodeURIComponent(btn.getAttribute("data-auto-toggle")),
+                           { enabled: row.classList.contains("paused") });
+          } else if (btn.hasAttribute("data-auto-newurl")) {
+            await sendAuto("PATCH", AUTOS_URL + "/" + encodeURIComponent(btn.getAttribute("data-auto-newurl")),
+                           { new_token: true });
+          } else if (btn.hasAttribute("data-auto-delete")) {
+            if (!window.confirm("Delete this automation? Its URL stops working at once.")) return;
+            await sendAuto("DELETE", AUTOS_URL + "/" + encodeURIComponent(btn.getAttribute("data-auto-delete")));
+          } else if (btn.hasAttribute("data-auto-run")) {
+            btn.disabled = true;
+            btn.textContent = "Running...";
+            await sendAuto("POST", AUTOS_URL + "/" + encodeURIComponent(btn.getAttribute("data-auto-run")) + "/run",
+                           { payload: { test: true, note: "Run by hand from the Agents page." } });
+          } else if (btn.hasAttribute("data-auto-copy")) {
+            var text = btn.getAttribute("data-auto-copy");
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(text).catch(function () {});
+            }
+            return;
+          } else {
+            return;
+          }
+          await loadAutomations();
+        } catch (e) {
+          autosError((e && e.message) || "That did not work. Try again.");
+          await loadAutomations();
+        }
+      }
+      document.getElementById("auto-create").addEventListener("click", createAutomation);
+
+      function openAutomation() {
+        document.getElementById("automation-new").hidden = true;
+        document.getElementById("automation-key").textContent = "";
+        openDialog("automation-overlay");
+        loadAutomations();
+        loadKeys();
+      }
+      async function makeKey() {
+        autoError("");
+        var btn = document.getElementById("automation-make");
+        btn.disabled = true;
+        try {
+          var r = await fetch(KEYS_URL, {
+            method: "POST", headers: authHeaders(),
+            body: JSON.stringify({ label: document.getElementById("automation-label").value.trim() })
+          });
+          var body = await r.json().catch(function () { return {}; });
+          if (!r.ok) {
+            autoError(body.detail || "Could not make a key. Try again.");
+            return;
+          }
+          document.getElementById("automation-key").textContent = body.key || "";
+          document.getElementById("automation-new").hidden = false;
+          document.getElementById("automation-label").value = "";
+          await loadKeys();
+        } catch (e) {
+          autoError("Could not make a key. Try again.");
+        } finally {
+          btn.disabled = false;
+        }
+      }
+      async function revokeKey(id) {
+        autoError("");
+        try {
+          var r = await fetch(KEYS_URL + "/" + encodeURIComponent(id),
+                              { method: "DELETE", headers: authHeaders() });
+          if (!r.ok) throw new Error("http " + r.status);
+          await loadKeys();
+        } catch (e) {
+          autoError("Could not revoke that key. Try again.");
+        }
+      }
+      document.getElementById("open-automation").addEventListener("click", openAutomation);
+      document.getElementById("automation-make").addEventListener("click", makeKey);
+      document.getElementById("automation-close").addEventListener("click", function () {
+        closeDialog("automation-overlay");
+      });
+      document.getElementById("automation-copy").addEventListener("click", function () {
+        var key = document.getElementById("automation-key").textContent;
+        if (key && navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(key).catch(function () {});
+        }
+      });
+      var autoOverlay = document.getElementById("automation-overlay");
+      autoOverlay.addEventListener("click", function (ev) {
+        if (ev.target === autoOverlay) closeDialog("automation-overlay");
+        var rv = ev.target.closest("[data-revoke-key]");
+        if (rv) revokeKey(rv.getAttribute("data-revoke-key"));
+        var act = ev.target.closest(".auto-rule button");
+        if (act) autoAction(act);
+      });
       document.getElementById("connections-close").addEventListener(
         "click", closeConnections);
       connOverlay.addEventListener("click", function (ev) {
@@ -3116,7 +3465,8 @@
           ev.preventDefault();
           return;
         }
-        if (closeConnections() || closeDialog("agent-overlay")) {
+        if (closeDialog("automation-overlay") || closeConnections()
+            || closeDialog("agent-overlay")) {
           ev.preventDefault();
           return;
         }
