@@ -318,11 +318,21 @@
   //: About 600 ElevenLabs credits at most per answer (0.5 a character on
   //: eleven_flash_v2_5); a longer answer is read up to a sentence end.
   var SPEAK_MAX_CHARS = 1200;
-  var LISTENING = null;        // { form, rec, said } while the mic is open
+  //: How long a quiet mic waits before it sends. The recogniser on its own
+  //: stopped at the first pause: "hey ada what is the weather today" went
+  //: out as "hey ada" (live, 2026-10-28). Done still sends at once.
+  var SILENCE_MS = 2500;
+  var LISTENING = null;        // { form, rec, said, quiet } while the mic is open
   var VOICE_SEND = null;       // the form being sent by voice right now
   var SAYING = [];             // answers still to read, in order
   var PLAYING = null;          // the Audio being read now
   var VOICE_ID = null;         // a promise of the site's read-aloud voice
+  var AGENT_VOICES = null;     // a promise of { agent name: its own voice }
+  //: Every answer already read, by thread, agent and the instant it was
+  //: said. Kept here rather than on the row: a thread drawn again has new
+  //: rows, and with the mark on the old ones it read every answer in the
+  //: conversation again (fifteen at once, live, 2026-10-28 12:47:47).
+  var SAID = {};
   var MIC_SVG = '<svg class="ap-mic-icon" viewBox="0 0 24 24" width="14" height="14" ' +
     'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
     'stroke-linejoin="round" aria-hidden="true" focusable="false">' +
@@ -349,6 +359,48 @@
         .catch(function () { return ""; });
     }
     return VOICE_ID;
+  }
+
+  //: An agent's own voice, set in Open WebUI's model editor (TTS voice,
+  //: meta.tts.voice), the same field its Read Aloud uses. Every agent was
+  //: read by the one site voice, a man's, Ada included. Read from the
+  //: models list the office draws its agents from; the bubbles name the
+  //: agent, so the map is by name.
+  function agentVoices() {
+    if (!AGENT_VOICES) {
+      // Paged at 30, like the office's loadAgents.
+      AGENT_VOICES = (function more(page, seen, got) {
+        return fetch("/api/v1/models/list?page=" + page, { headers: authHeaders() })
+          .then(function (r) { return r.ok ? r.json() : {}; })
+          .then(function (body) {
+            var items = (body && Array.isArray(body.items)) ? body.items : [];
+            items.forEach(function (m) {
+              var v = m && m.meta && m.meta.tts && m.meta.tts.voice;
+              if (v && m.name && String(m.id || "").indexOf("agent-") === 0) got[m.name] = v;
+            });
+            seen += items.length;
+            var total = body && typeof body.total === "number" ? body.total : seen;
+            return items.length && seen < total && page < 25
+              ? more(page + 1, seen, got) : got;
+          });
+      })(1, 0, {}).catch(function () { return {}; });
+    }
+    return AGENT_VOICES;
+  }
+
+  //: Both looked up for every answer, own voice or not, so the readings
+  //: are asked for in the order the answers came.
+  function voiceFor(who) {
+    return Promise.all([agentVoices(), voiceId()]).then(function (got) {
+      return (who && got[0][who]) || got[1];
+    });
+  }
+
+  //: The server's instant ("2026-10-28T12:47:40.649986+00:00") as a number.
+  //: Six digits of a second are trimmed to three, which every engine reads.
+  function instant(at) {
+    var t = Date.parse(String(at || "").replace(/(\.\d{3})\d+/, "$1"));
+    return isNaN(t) ? null : t;
   }
 
   function threadOf(form) {
@@ -431,15 +483,27 @@
     try { rec = new Recognition(); } catch (e) { return; }
     rec.lang = navigator.language || "en-US";
     rec.interimResults = true;
-    rec.continuous = false;
-    LISTENING = { form: form, rec: rec, said: "" };
+    // Through pauses: a breath between "hey ada" and "what is the weather"
+    // is not the end of the message. SILENCE_MS of quiet after the last
+    // words is, and so is Done.
+    rec.continuous = true;
+    LISTENING = { form: form, rec: rec, said: "", quiet: null };
     rec.onresult = function (ev) {
-      var words = "";
+      var words = [];
       for (var i = 0; i < ev.results.length; i++) {
-        words += ev.results[i][0].transcript;
+        var part = String(ev.results[i][0].transcript || "").trim();
+        if (part) words.push(part);
       }
-      if (LISTENING && LISTENING.rec === rec) LISTENING.said = words.trim();
-      input.value = words.trim();
+      var said = words.join(" ");
+      var mine = LISTENING && LISTENING.rec === rec ? LISTENING : null;
+      if (mine) {
+        mine.said = said;
+        clearTimeout(mine.quiet);
+        mine.quiet = setTimeout(function () {
+          try { rec.stop(); } catch (x) { /* ended already */ }
+        }, SILENCE_MS);
+      }
+      input.value = said;
     };
     rec.onerror = function (ev) {
       var why = ev && ev.error;
@@ -453,7 +517,7 @@
     };
     rec.onend = function () {
       var was = LISTENING && LISTENING.rec === rec ? LISTENING : null;
-      if (was) LISTENING = null;
+      if (was) { clearTimeout(was.quiet); LISTENING = null; }
       showMic(form);
       var said = was ? was.said : "";
       if (!said) return;
@@ -489,9 +553,37 @@
     if (!form || !form.classList || !form.classList.contains("ap-composer")) return;
     var el = threadOf(form);
     if (!el) return;
+    // From when: the send's answer carries the instant the server stamped
+    // on the message (htmx:afterRequest below), and only answers said
+    // after it are read.
+    el.removeAttribute("data-voice-since");
     if (VOICE_SEND === form) el.setAttribute("data-voice", "1");
     else { el.removeAttribute("data-voice"); stopReading(); }
   }, true);
+
+  //: The instant the server stamped on the spoken message, out of the turn
+  //: the send returned (agent_chat_render.turn_open, data-at).
+  document.body.addEventListener("htmx:afterRequest", function (e) {
+    var form = e.detail && e.detail.elt;
+    if (!form || !form.classList || !form.classList.contains("ap-composer")) return;
+    var el = threadOf(form);
+    if (!el || el.getAttribute("data-voice") !== "1" || !e.detail.successful) return;
+    var got = /data-at="([^"]+)"/.exec((e.detail.xhr && e.detail.xhr.responseText) || "");
+    if (got) el.setAttribute("data-voice-since", got[1]);
+  });
+
+  //: A conversation loaded into a thread (the agents page swaps the one
+  //: thread between conversations, the office loads each window) is read
+  //: from, not spoken to: reading stays off until the next spoken message.
+  document.body.addEventListener("htmx:beforeSwap", function (e) {
+    var d = e.detail || {};
+    var path = (d.requestConfig && d.requestConfig.path) || (d.pathInfo && d.pathInfo.requestPath) || "";
+    if (path.indexOf(PANEL + "/thread") !== 0) return;
+    var el = d.target && d.target.closest ? d.target.closest(".ap-thread") : null;
+    if (!el) return;
+    el.removeAttribute("data-voice");
+    el.removeAttribute("data-voice-since");
+  });
 
   function sayable(row) {
     var text = row.querySelector(".atext");
@@ -506,8 +598,8 @@
     return words;
   }
 
-  function fetchSpeech(text) {
-    return voiceId().then(function (voice) {
+  function fetchSpeech(text, who) {
+    return voiceFor(who).then(function (voice) {
       return fetch("/api/v1/audio/speech", {
         method: "POST", headers: authHeaders(),
         body: JSON.stringify({ input: text, voice: voice })
@@ -549,6 +641,14 @@
     var rows = el.querySelectorAll(".am.agent:not([data-heard])");
     if (!rows.length) return;
     var on = el.getAttribute("data-voice") === "1";
+    // Only what was said after the spoken message. Until the send's answer
+    // names its instant, the newest message of the person's on screen.
+    var since = el.getAttribute("data-voice-since");
+    if (on && !since) {
+      var mine = el.querySelectorAll(".am.user[data-at]");
+      since = mine.length ? mine[mine.length - 1].getAttribute("data-at") : "";
+    }
+    var from = instant(since);
     var speakers = {};
     el.querySelectorAll(".am.agent[data-agent]").forEach(function (r) {
       speakers[r.getAttribute("data-agent")] = 1;
@@ -556,12 +656,18 @@
     var room = Object.keys(speakers).length > 1;
     rows.forEach(function (row) {
       row.setAttribute("data-heard", "1");
-      if (!on || row.classList.contains("ajob")) return;
+      if (!on || from === null || row.classList.contains("ajob")) return;
+      var at = row.getAttribute("data-at");
+      var when = instant(at);
+      if (when === null || when < from) return;
+      var who = row.getAttribute("data-agent");
+      var key = (el.id || "") + "|" + (who || "") + "|" + at;
+      if (SAID[key]) return;
       var words = sayable(row);
       if (!words) return;
-      var who = row.getAttribute("data-agent");
+      SAID[key] = 1;
       if (room && who) words = who + ". " + words;
-      SAYING.push({ audio: fetchSpeech(words) });
+      SAYING.push({ audio: fetchSpeech(words, who) });
     });
     playNext();
   }

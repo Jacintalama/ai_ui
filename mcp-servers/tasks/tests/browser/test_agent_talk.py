@@ -17,6 +17,7 @@ import pathlib
 import sys
 import threading
 import urllib.parse
+from datetime import datetime, timezone
 
 import pytest
 
@@ -31,8 +32,10 @@ AGENTS = [
     {"id": "agent-ada-0001", "name": "Ada",
      "meta": {"role": "Project manager", "toolIds": [], "skillIds": []},
      "params": {}, "user_id": "me", "created_at": 1, "updated_at": 1},
+    # Her own voice, where Open WebUI's model editor keeps it (TTS voice).
     {"id": "agent-mia-77", "name": "Mia",
-     "meta": {"role": "Receptionist", "toolIds": [], "skillIds": []},
+     "meta": {"role": "Receptionist", "toolIds": [], "skillIds": [],
+              "tts": {"voice": "voice-matilda"}},
      "params": {}, "user_id": "me", "created_at": 2, "updated_at": 2},
 ]
 
@@ -40,11 +43,18 @@ AGENTS = [
 THREAD = render.thread([
     {"role": "user", "content": "What did we decide?", "turn_id": "t1",
      "at": "2026-10-27T09:15:00+00:00"},
-    {"role": "assistant", "agent_name": "Ada", "content": "Thursday."},
-    {"role": "assistant", "agent_name": "Mia", "content": "Inbox is clear."},
+    {"role": "assistant", "agent_name": "Ada", "content": "Thursday.",
+     "at": "2026-10-27T09:15:04.123456+00:00"},
+    {"role": "assistant", "agent_name": "Mia", "content": "Inbox is clear.",
+     "at": "2026-10-27T09:15:06.654321+00:00"},
 ])
 
 VOICE = "voice-george"
+
+
+def _now():
+    """The instant the server stamps on a message, as routes_agent_chat does."""
+    return datetime.now(timezone.utc).isoformat()
 
 #: Speech recognition and playback, as a page sees them. __say() is the
 #: person finishing a sentence; play() records and ends after a beat.
@@ -151,7 +161,7 @@ def _open(browser, page_file, init=FAKE_SPEECH):
             text = (form.get("message") or [""])[0]
             pg.sent.append(text)
             r.fulfill(status=200, content_type="text/html",
-                      body=render.turn_open(text, "t9") + render.turn_close())
+                      body=render.turn_open(text, "t9", at=_now()) + render.turn_close())
             return
         if url.endswith("/api/config"):
             body = {"audio": {"tts": {"engine": "elevenlabs", "voice": VOICE}}}
@@ -189,12 +199,15 @@ def office(browser):
     pg.srv.shutdown()
 
 
-def _answer(pg, name, text):
-    """An answer landing in the team thread, the way the stream adds one."""
+def _answer(pg, name, text, at=None):
+    """An answer landing in the team thread, the way the stream adds one:
+    stamped with the instant it was said (routes_agent_chat, at=_now_iso())."""
+    html = render.agent_bubble(name, text, at=at or _now())
     pg.evaluate(
         "h => { document.querySelector('#agent-thread').insertAdjacentHTML('beforeend', h);"
         " document.body.dispatchEvent(new CustomEvent('htmx:sseMessage')); }",
-        render.agent_bubble(name, text))
+        html)
+    return html
 
 
 def _talk(pg, words, where="#cw-team"):
@@ -351,6 +364,96 @@ def test_talking_over_the_reading_stops_it_and_listens(office):
     _talk(office, "and the next thing")
     assert office.evaluate("() => window.__paused") is True
     assert office.sent[-1] == "and the next thing"
+
+
+def test_a_thread_drawn_again_is_not_read_again(office):
+    """Live, 2026-10-28 12:47:47: one spoken "hey ada" and the page asked
+    for fifteen readings at once, Ada's answers from hours before among them
+    (the read-aloud cache holds her 10:33 "BLUE HERON" answer, written
+    then). Whether an answer had been read lived only on its row, so a
+    thread drawn again had no answer marked and read them all."""
+    _talk(office, "hey ada")
+    office.evaluate("() => htmx.ajax('GET', '/tasks/agents/chat/thread', '#agent-thread')")
+    office.wait_for_function(
+        "() => document.querySelectorAll('#agent-thread .am.user').length === 1")
+    office.wait_for_timeout(600)
+    assert office.spoken == []
+
+
+def test_switching_conversation_on_the_agents_page_reads_nothing_old(browser):
+    """The agents page has one thread and swaps conversations into it
+    (aiuiTalkTo). Speaking to the room and then opening Ada read every
+    answer in Ada's history."""
+    pg = _open(browser, "agents.html")
+    try:
+        pg.wait_for_selector("#agent-thread .am.agent", state="attached")
+        pg.wait_for_timeout(300)
+        pg.locator(".ap-composer .ap-mic").click()
+        pg.wait_for_function("() => window.__recs.length && window.__recs.at(-1).started")
+        pg.evaluate("() => window.__say('hey')")
+        pg.wait_for_function("() => document.querySelectorAll('#agent-thread .aturn').length > 0")
+        pg.evaluate("() => window.aiuiTalkTo('agent-ada-0001', 'Ada')")
+        pg.wait_for_function(
+            "() => { const t = document.querySelector('#agent-thread');"
+            " return !t.textContent.includes('hey') &&"
+            " t.querySelectorAll('.am.agent').length === 2; }")
+        pg.wait_for_timeout(600)
+        assert pg.spoken == []
+    finally:
+        pg.close()
+        pg.srv.shutdown()
+
+
+def test_an_answer_drawn_twice_is_read_once(office):
+    _talk(office, "status please")
+    html = _answer(office, "Ada", "Building.")
+    office.wait_for_function("() => window.__played.length === 1")
+    office.evaluate(
+        "h => { document.querySelector('#agent-thread').insertAdjacentHTML('beforeend', h);"
+        " document.body.dispatchEvent(new CustomEvent('htmx:sseMessage')); }", html)
+    office.wait_for_timeout(500)
+    assert [s["input"] for s in office.spoken] == ["Ada. Building."]
+
+
+def test_a_pause_while_talking_does_not_send(office):
+    """Live, 2026-10-28: "hey ada what is the weather today" arrived as
+    "hey ada". The recogniser stopped at the first pause and sent."""
+    turns = office.locator("#agent-thread .aturn").count()
+    office.locator("#cw-team .ap-mic").click()
+    office.wait_for_function("() => window.__recs.length && window.__recs.at(-1).started")
+    assert office.evaluate("() => window.__recs.at(-1).continuous") is True
+    office.evaluate("() => window.__recs.at(-1).onresult("
+                    "{ results: [[{ transcript: 'hey ada' }]] })")
+    office.wait_for_timeout(1200)
+    assert office.sent == []
+    office.evaluate("() => window.__recs.at(-1).onresult({ results: ["
+                    "[{ transcript: 'hey ada' }], [{ transcript: ' what is the weather today' }]] })")
+    office.wait_for_function("n => document.querySelectorAll('#agent-thread .aturn').length > n",
+                             arg=turns, timeout=6000)
+    assert office.sent == ["hey ada what is the weather today"]
+
+
+def test_done_sends_at_once(office):
+    mic = office.locator("#cw-team .ap-mic")
+    mic.click()
+    office.wait_for_function("() => window.__recs.length && window.__recs.at(-1).started")
+    office.evaluate("() => window.__recs.at(-1).onresult("
+                    "{ results: [[{ transcript: 'short one' }]] })")
+    mic.click()
+    office.wait_for_timeout(300)
+    assert office.sent == ["short one"]
+
+
+def test_each_agent_is_read_in_its_own_voice(office):
+    """Ada was read by George, a man's voice, the one site voice. An agent
+    with a TTS voice set (Open WebUI's model editor, meta.tts.voice) is read
+    in it; one without keeps the site's."""
+    _talk(office, "both of you")
+    _answer(office, "Mia", "Inbox is clear.")
+    _answer(office, "Ada", "Thursday.")
+    office.wait_for_function("() => window.__played.length === 2")
+    assert [(s["input"], s["voice"]) for s in office.spoken] == [
+        ("Mia. Inbox is clear.", "voice-matilda"), ("Ada. Thursday.", VOICE)]
 
 
 def test_a_blocked_microphone_says_how_to_fix_it(office):
