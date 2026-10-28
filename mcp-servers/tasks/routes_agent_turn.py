@@ -1174,6 +1174,33 @@ async def _jev_release(key: str, email: str, text: str) -> bool:
 #: to hand anyone, and the general model answers it well.
 JEV_MIN_WORDS = 4
 
+#: In the MAIN CHAT, an agent answers only when the person named it.
+#:
+#: Asked for on 2026-10-28, with a screenshot: "what is the richest man in the
+#: world" was handed to Vera. That was not a bug in the routing, it was the
+#: routing working as built. The row is in tasks.agent_decision: Jev read it as
+#: a research question and picked Vera (the Researcher) at 0.92 confidence,
+#: path=one_agent. Reasonable from Jev's side; wrong from the person's, who had
+#: named nobody and wanted the free model.
+#:
+#: So in the main chat the three rungs that reach an agent WITHOUT a mention
+#: are off: Jev's pick, the skill owner, and the subject owner. Naming an agent
+#: still does everything it did, and so does a follow-up to one just named
+#: (the pin), because "yes, do that" has to reach whoever was asked.
+#:
+#: The PANEL and the office are untouched. Asking the room is what that surface
+#: is for, and nobody there is surprised to hear from an agent.
+#:
+#: One switch, so it is one line to put back: AGENTS_ANSWER_UNNAMED=1.
+def _agents_may_take_unnamed() -> bool:
+    return os.environ.get("AGENTS_ANSWER_UNNAMED", "0").strip().lower() in (
+        "1", "true", "yes", "on")
+
+
+async def _none():
+    """Nothing, as an awaitable, so the gather above keeps one shape."""
+    return None
+
 
 async def _jev_decision(body: ChatIn, text: str, agents: list[dict]) -> dict | None:
     """The agent Jev is sure should take this message, or None. Never
@@ -1502,9 +1529,14 @@ async def _route_chat(body: ChatIn, x_internal_secret: str = "") -> dict:
         # brief and in nobody else's. Two agents with the skill leave it to
         # Jev below. Above the subject rung, as in the ladder:
         # "weekly" is also a schedules word. Read from disk through a cache, so this costs nothing.
-        skilled = agent_routing.skill_owner(text, agents, agent_skills.load_all())
-        if skilled is not None:
-            agent = skilled
+        # Not in the main chat unless the owner turned it back on: a skill
+        # name is still not a mention.
+        if not (getattr(body, "route_only", False)
+                and not _agents_may_take_unnamed()):
+            skilled = agent_routing.skill_owner(text, agents,
+                                                agent_skills.load_all())
+            if skilled is not None:
+                agent = skilled
 
     if agent is None:
         # Nobody named and nobody pinned. Before handing this to IO, the same
@@ -1513,9 +1545,14 @@ async def _route_chat(body: ChatIn, x_internal_secret: str = "") -> dict:
         # agent with the mailbox, not a question for a general model that
         # cannot see it. Only when it is unambiguous, so a room where two
         # agents read email still falls through.
-        owner = agent_routing.domain_owner(text, agents)
-        if owner is not None:
-            agent = owner
+        # Same in the main chat. This is the rung with a real cost: "anything
+        # unread in my inbox" now goes to a model that cannot read the inbox.
+        # Naming the agent still works, and so does AGENTS_ANSWER_UNNAMED=1.
+        if not (getattr(body, "route_only", False)
+                and not _agents_may_take_unnamed()):
+            owner = agent_routing.domain_owner(text, agents)
+            if owner is not None:
+                agent = owner
 
     if agent is None:
         # Nobody named, pinned or obviously owning the subject. Before the
@@ -1533,8 +1570,12 @@ async def _route_chat(body: ChatIn, x_internal_secret: str = "") -> dict:
             # each other, so they are asked side by side (2026-10-28): one
             # wait, not two. Nothing picked either way means the free model
             # answers at once, which is what an ordinary question deserves.
+            # _tool_pick still runs: it picks TOOLS for the assistant, which
+            # is the free model with hands, not an agent speaking as itself.
             chosen, picked = await asyncio.gather(
-                _jev_decision(body, text, agents), _tool_pick(body, text))
+                (_jev_decision(body, text, agents) if _agents_may_take_unnamed()
+                 else _none()),
+                _tool_pick(body, text))
             if chosen is not None:
                 answered = await _jev_answer(body, text, agents, chosen)
                 if answered is not None:
