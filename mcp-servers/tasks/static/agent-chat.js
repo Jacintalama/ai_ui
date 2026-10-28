@@ -318,11 +318,34 @@
   //: About 600 ElevenLabs credits at most per answer (0.5 a character on
   //: eleven_flash_v2_5); a longer answer is read up to a sentence end.
   var SPEAK_MAX_CHARS = 1200;
-  //: How long a quiet mic waits before it sends. The recogniser on its own
-  //: stopped at the first pause: "hey ada what is the weather today" went
-  //: out as "hey ada" (live, 2026-10-28). Done still sends at once.
-  var SILENCE_MS = 2500;
-  var LISTENING = null;        // { form, rec, said, quiet } while the mic is open
+  //: Talk is a conversation (asked for 2026-10-28: "like normal conversation,
+  //: let the user finish talking before it sends"). The mic waits for the
+  //: person to finish, the answer is read, and then it listens again by
+  //: itself. The recogniser on its own stopped at the first pause: "hey ada
+  //: what is the weather today" went out as "hey ada". Now, in ms:
+  //:   quiet       quiet after the last words that ends a finished sentence
+  //:   unfinished  the same after "hey ada", or words that end on "and",
+  //:               "the", "what", "um": somebody still talking
+  //:   idle        nothing said at all: the conversation is over
+  //:   again       after the reading ends, before it listens again, so the
+  //:               tail of the voice is not heard as the person
+  //: window.AIUI_TALK_MS changes them (the tests use it to run in seconds).
+  var TALK_MS = (function (o) {
+    o = o || {};
+    return { quiet: o.quiet || 3000, unfinished: o.unfinished || 6000,
+             idle: o.idle || 8000, again: o.again || 400 };
+  })(window.AIUI_TALK_MS);
+  var UNFINISHED = /\b(and|or|but|so|because|then|if|that|the|a|an|to|of|for|with|in|on|at|about|from|by|is|are|was|what|how|why|when|where|who|which|my|your|our|um|uh|er|like|can|could|would|should|will|do|does|did|i|we|you|hey|hi|hello|ok|okay)$/i;
+  //: A browser stops listening by itself now and then (Chrome on a phone
+  //: after every phrase); it is started again with the words kept, this
+  //: many times at most in one turn.
+  var RESTARTS_MAX = 20;
+  var LISTENING = null;        // the turn being heard: see listen()
+  var CONVO = null;            // the composer a spoken conversation is in
+  //: True from a spoken message until its answer is being read or its
+  //: round is over: the mic must not open with an answer still to come,
+  //: or the reading would land in the person's next turn.
+  var CONVO_WAITING = false;
   var VOICE_SEND = null;       // the form being sent by voice right now
   var SAYING = [];             // answers still to read, in order
   var PLAYING = null;          // the Audio being read now
@@ -450,7 +473,8 @@
     b.innerHTML = MIC_SVG + '<span class="ap-mic-label">Talk</span>';
     b.setAttribute("aria-label", "Talk instead of typing");
     b.setAttribute("aria-pressed", "false");
-    b.title = "Say it instead of typing. The answers are read out loud.";
+    b.title = "Talk instead of typing. It waits until you finish, reads the answer " +
+      "out loud, then listens again. Stay quiet, or press Done before a word, to stop.";
     // After Send, so Send stays the composer's first button and the one
     // Enter presses.
     form.appendChild(b);
@@ -475,7 +499,26 @@
     toBottom(el);
   }
 
-  function listen(form) {
+  //: How long a pause has to be before the words so far are the message.
+  function quietFor(said) {
+    var words = said.split(/\s+/).filter(Boolean);
+    return words.length < 3 || UNFINISHED.test(said.trim()) ? TALK_MS.unfinished : TALK_MS.quiet;
+  }
+
+  //: The turn ends: "send" what was said, or "drop" it and end the
+  //: conversation. stop() lets the recogniser hand over its last words.
+  function finish(turn, how) {
+    if (!turn || turn.ending) return;
+    turn.ending = how;
+    clearTimeout(turn.quiet);
+    clearTimeout(turn.idle);
+    try { if (how === "send") turn.rec.stop(); else turn.rec.abort(); }
+    catch (x) { /* ended already */ }
+  }
+
+  //: One turn of the person's, heard until they finish. `keep` carries the
+  //: words of a turn the browser cut off, so the restart goes on from them.
+  function listen(form, keep) {
     var input = form.querySelector('input[name="message"]');
     if (!input) return;
     stopReading();
@@ -484,30 +527,38 @@
     rec.lang = navigator.language || "en-US";
     rec.interimResults = true;
     // Through pauses: a breath between "hey ada" and "what is the weather"
-    // is not the end of the message. SILENCE_MS of quiet after the last
-    // words is, and so is Done.
+    // is not the end of the message.
     rec.continuous = true;
-    LISTENING = { form: form, rec: rec, said: "", quiet: null };
+    var turn = { form: form, rec: rec, kept: keep ? keep.said : "", said: keep ? keep.said : "",
+                 restarts: keep ? keep.restarts : 0, ending: "", quiet: null, idle: null,
+                 until: keep ? keep.until : Date.now() + TALK_MS.idle,
+                 placeholder: keep ? keep.placeholder : input.placeholder };
+    LISTENING = turn;
+    if (!turn.said) {
+      turn.idle = setTimeout(function () { finish(turn, "drop"); },
+                             Math.max(0, turn.until - Date.now()));
+    } else {
+      turn.quiet = setTimeout(function () { finish(turn, "send"); }, quietFor(turn.said));
+    }
     rec.onresult = function (ev) {
+      if (LISTENING !== turn || turn.ending) return;
       var words = [];
       for (var i = 0; i < ev.results.length; i++) {
         var part = String(ev.results[i][0].transcript || "").trim();
         if (part) words.push(part);
       }
-      var said = words.join(" ");
-      var mine = LISTENING && LISTENING.rec === rec ? LISTENING : null;
-      if (mine) {
-        mine.said = said;
-        clearTimeout(mine.quiet);
-        mine.quiet = setTimeout(function () {
-          try { rec.stop(); } catch (x) { /* ended already */ }
-        }, SILENCE_MS);
+      turn.said = [turn.kept].concat(words).filter(Boolean).join(" ");
+      clearTimeout(turn.idle);
+      clearTimeout(turn.quiet);
+      if (turn.said) {
+        turn.quiet = setTimeout(function () { finish(turn, "send"); }, quietFor(turn.said));
       }
-      input.value = said;
+      input.value = turn.said;
     };
     rec.onerror = function (ev) {
       var why = ev && ev.error;
       if (why === "not-allowed" || why === "service-not-allowed") {
+        finish(turn, "drop");
         note(threadOf(form), "The microphone is blocked. Allow it for this " +
           "site in the browser's settings, then press Talk again.");
       } else if (why && why !== "no-speech" && why !== "aborted") {
@@ -516,11 +567,31 @@
       }
     };
     rec.onend = function () {
-      var was = LISTENING && LISTENING.rec === rec ? LISTENING : null;
-      if (was) { clearTimeout(was.quiet); LISTENING = null; }
+      if (LISTENING !== turn) {
+        // Put away for another window's turn.
+        if (!LISTENING || LISTENING.form !== form) input.placeholder = turn.placeholder;
+        return;
+      }
+      clearTimeout(turn.quiet);
+      clearTimeout(turn.idle);
+      if (!turn.ending && turn.restarts < RESTARTS_MAX) {
+        // The browser stopped, not the person: go on listening.
+        LISTENING = null;
+        listen(form, { said: turn.said, restarts: turn.restarts + 1,
+                       until: turn.until, placeholder: turn.placeholder });
+        return;
+      }
+      LISTENING = null;
+      input.placeholder = turn.placeholder;
+      var said = turn.ending === "drop" ? "" : turn.said;
+      if (!said) {
+        // Nothing said, or Done before a word: the conversation is over.
+        if (CONVO === form) CONVO = null;
+        input.value = "";
+        showMic(form);
+        return;
+      }
       showMic(form);
-      var said = was ? was.said : "";
-      if (!said) return;
       input.value = said;
       VOICE_SEND = form;
       try {
@@ -528,9 +599,23 @@
         else form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
       } finally { VOICE_SEND = null; }
     };
-    try { rec.start(); } catch (e) { LISTENING = null; }
+    if (!keep) input.placeholder = "Listening. It sends when you finish.";
+    try { rec.start(); } catch (e) { LISTENING = null; input.placeholder = turn.placeholder; }
     showMic(form);
     try { input.focus(); } catch (e) { /* fine */ }
+  }
+
+  //: The conversation goes on: once every answer has been read and the
+  //: round is over, the mic opens again for the person's next turn.
+  function listenAgainSoon() {
+    setTimeout(function () {
+      var form = CONVO;
+      if (!form || CONVO_WAITING || LISTENING || PLAYING || SAYING.length) return;
+      var el = form.isConnected ? threadOf(form) : null;
+      if (!el || el.getAttribute("data-voice") !== "1") { CONVO = null; return; }
+      if (el.querySelector(".astream[sse-connect]")) return;   // still answering
+      listen(form);
+    }, TALK_MS.again);
   }
 
   document.addEventListener("click", function (e) {
@@ -539,10 +624,13 @@
     e.preventDefault();
     var form = b.closest("form");
     if (LISTENING && LISTENING.form === form) {
-      try { LISTENING.rec.stop(); } catch (x) { /* ended already */ }
+      // Done: send what was said, or, before a word, end the conversation.
+      finish(LISTENING, LISTENING.said ? "send" : "drop");
       return;
     }
-    if (LISTENING) { try { LISTENING.rec.abort(); } catch (x) { /* fine */ } }
+    if (LISTENING) finish(LISTENING, "drop");
+    CONVO = form;
+    CONVO_WAITING = false;
     listen(form);
   });
 
@@ -557,8 +645,15 @@
     // on the message (htmx:afterRequest below), and only answers said
     // after it are read.
     el.removeAttribute("data-voice-since");
-    if (VOICE_SEND === form) el.setAttribute("data-voice", "1");
-    else { el.removeAttribute("data-voice"); stopReading(); }
+    if (VOICE_SEND === form) {
+      el.setAttribute("data-voice", "1");
+      if (CONVO === form) CONVO_WAITING = true;
+    } else {
+      // Typing ends a spoken conversation, and its reading.
+      el.removeAttribute("data-voice");
+      if (CONVO === form) CONVO = null;
+      stopReading();
+    }
   }, true);
 
   //: The instant the server stamped on the spoken message, out of the turn
@@ -611,7 +706,11 @@
   }
 
   function playNext() {
-    if (PLAYING || !SAYING.length) { showMics(); return; }
+    if (PLAYING || !SAYING.length) {
+      showMics();
+      if (!PLAYING) listenAgainSoon();
+      return;
+    }
     var next = SAYING.shift();
     PLAYING = { pause: function () { next.cancelled = true; } };
     showMics();
@@ -666,6 +765,7 @@
       var words = sayable(row);
       if (!words) return;
       SAID[key] = 1;
+      if (CONVO && el === threadOf(CONVO)) CONVO_WAITING = false;
       if (room && who) words = who + ". " + words;
       SAYING.push({ audio: fetchSpeech(words, who) });
     });
@@ -948,7 +1048,7 @@
   // When the round closes, stop the element listening. The SSE extension leaves
   // sse-connect in place after closing, and a live attribute is an invitation
   // for a later pass to reconnect and re-run a round we have already paid for.
-  document.body.addEventListener("htmx:sseClose", function () {
+  document.body.addEventListener("htmx:sseClose", function (e) {
     var open = document.querySelectorAll(".astream[sse-connect]");
     for (var i = 0; i < open.length; i++) {
       open[i].removeAttribute("sse-connect");
@@ -966,6 +1066,10 @@
     document.querySelectorAll("#agent-thread .aturn-status, .ap-thread .aturn-status")
       .forEach(function (el) { el.innerHTML = ""; });
     threads().forEach(settleOne);
+    // The spoken conversation's round is over: its next turn can start.
+    var closed = e && e.target && e.target.closest ? e.target.closest(".ap-thread") : null;
+    if (CONVO && closed && closed === threadOf(CONVO)) CONVO_WAITING = false;
+    listenAgainSoon();
   });
 
   // Clearing is the only destructive thing in the panel, so it is the only

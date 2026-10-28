@@ -57,23 +57,33 @@ def _now():
     return datetime.now(timezone.utc).isoformat()
 
 #: Speech recognition and playback, as a page sees them. __say() is the
-#: person finishing a sentence; play() records and ends after a beat.
+#: person saying a sentence and then going quiet: the page decides when
+#: they have finished. __cut() is the browser ending recognition by itself.
+#: play() records and ends after a beat. The waits are the page's own,
+#: shortened (window.AIUI_TALK_MS): finished 300 ms, unfinished 900 ms,
+#: nothing said 1500 ms.
+QUIET, UNFINISHED, IDLE = 300, 900, 1500
 FAKE_SPEECH = """
+window.AIUI_TALK_MS = { quiet: %d, unfinished: %d, idle: %d, again: 50 };
 window.__recs = [];
 window.__played = [];
 class FakeRecognition {
-  constructor() { window.__recs.push(this); this.started = false; }
+  constructor() { window.__recs.push(this); this.started = false; this.ended = false; }
   start() { this.started = true; }
-  stop() { if (this.onend) this.onend(); }
-  abort() { if (this.onend) this.onend(); }
+  stop() { this.ended = true; if (this.onend) this.onend(); }
+  abort() { this.ended = true; if (this.onend) this.onend(); }
 }
 window.SpeechRecognition = FakeRecognition;
 window.webkitSpeechRecognition = FakeRecognition;
 window.__say = function (words) {
   const r = window.__recs[window.__recs.length - 1];
   r.onresult({ results: [[{ transcript: words }]] });
-  r.onend();
 };
+window.__cut = function () {
+  const r = window.__recs[window.__recs.length - 1];
+  r.ended = true;
+  r.onend();
+};""" % (QUIET, UNFINISHED, IDLE) + """
 window.__refuse = function () {
   const r = window.__recs[window.__recs.length - 1];
   r.onerror({ error: "not-allowed" });
@@ -305,8 +315,8 @@ def test_the_button_says_it_is_listening(office):
     assert mic.get_attribute("aria-label") == "Stop listening and send"
     assert mic.get_attribute("aria-pressed") == "true"
     office.evaluate("() => window.__say('hello')")
-    office.wait_for_timeout(100)
-    assert mic.inner_text() == "Talk"
+    office.wait_for_function(
+        "() => document.querySelector('#cw-team .ap-mic').innerText.trim() === 'Talk'")
 
 
 def test_an_answer_to_a_spoken_message_is_read_with_the_site_voice(office):
@@ -415,22 +425,120 @@ def test_an_answer_drawn_twice_is_read_once(office):
     assert [s["input"] for s in office.spoken] == ["Ada. Building."]
 
 
+def _mic(pg, where="#cw-team"):
+    pg.locator(where + " .ap-composer .ap-mic").click()
+    pg.wait_for_function("() => window.__recs.length && window.__recs.at(-1).started")
+
+
+def _hear(pg, *parts):
+    """The recogniser's results so far, one entry per phrase."""
+    pg.evaluate("p => window.__recs.at(-1).onresult({ results: p.map(t => [{ transcript: t }]) })",
+                list(parts))
+
+
+def _sent(pg, n=1, timeout=6000):
+    pg.wait_for_function("n => document.querySelectorAll('#agent-thread .am.user').length > n",
+                         arg=n, timeout=timeout)
+
+
 def test_a_pause_while_talking_does_not_send(office):
     """Live, 2026-10-28: "hey ada what is the weather today" arrived as
     "hey ada". The recogniser stopped at the first pause and sent."""
-    turns = office.locator("#agent-thread .aturn").count()
-    office.locator("#cw-team .ap-mic").click()
-    office.wait_for_function("() => window.__recs.length && window.__recs.at(-1).started")
+    _mic(office)
     assert office.evaluate("() => window.__recs.at(-1).continuous") is True
-    office.evaluate("() => window.__recs.at(-1).onresult("
-                    "{ results: [[{ transcript: 'hey ada' }]] })")
-    office.wait_for_timeout(1200)
+    _hear(office, "hey ada")
+    # Longer than a finished sentence waits: "hey ada" is somebody starting.
+    office.wait_for_timeout(QUIET + 400)
     assert office.sent == []
-    office.evaluate("() => window.__recs.at(-1).onresult({ results: ["
-                    "[{ transcript: 'hey ada' }], [{ transcript: ' what is the weather today' }]] })")
-    office.wait_for_function("n => document.querySelectorAll('#agent-thread .aturn').length > n",
-                             arg=turns, timeout=6000)
+    _hear(office, "hey ada", " what is the weather today")
+    _sent(office)
     assert office.sent == ["hey ada what is the weather today"]
+
+
+def test_words_that_trail_off_are_waited_for(office):
+    """'...and' is somebody still talking; a finished sentence goes sooner."""
+    _mic(office)
+    _hear(office, "tell me the weather and")
+    office.wait_for_timeout(QUIET + 400)
+    assert office.sent == []
+    _hear(office, "tell me the weather and", "the news for today")
+    _sent(office)
+    assert office.sent == ["tell me the weather and the news for today"]
+
+
+def test_the_browser_stopping_by_itself_keeps_listening(office):
+    """Chrome ends recognition by itself now and then (on a phone, after
+    every phrase). That is not the person finishing: it listens on, and the
+    words already heard are kept."""
+    _mic(office)
+    _hear(office, "hey ada")
+    office.evaluate("() => window.__cut()")
+    office.wait_for_function("() => window.__recs.length === 2 && window.__recs[1].started")
+    assert office.sent == []
+    _hear(office, "what is on my calendar tomorrow")
+    _sent(office)
+    assert office.sent == ["hey ada what is on my calendar tomorrow"]
+
+
+def test_after_the_answer_is_read_it_listens_again(office):
+    """A conversation: the person talks, the agent answers out loud, and
+    the mic opens again for the next thing without a press."""
+    _talk(office, "status please")
+    heard = office.evaluate("() => window.__recs.length")
+    _answer(office, "Ada", "Building.")
+    office.wait_for_function("() => window.__played.length === 1")
+    office.wait_for_function("n => window.__recs.length > n && window.__recs.at(-1).started &&"
+                             " !window.__recs.at(-1).ended", arg=heard)
+    assert office.locator("#cw-team .ap-mic").inner_text() == "Done"
+    _hear(office, "and how long will it take")
+    _sent(office, 2)
+    assert office.sent == ["status please", "and how long will it take"]
+
+
+def test_it_does_not_listen_while_an_answer_is_still_coming(office):
+    """Between the spoken message and its answer the mic stays shut, or the
+    answer would be read into the person's next turn."""
+    _talk(office, "status please")
+    heard = office.evaluate("() => window.__recs.length")
+    office.wait_for_timeout(600)
+    assert office.evaluate("() => window.__recs.length") == heard
+
+
+def test_saying_nothing_ends_the_conversation(office):
+    _talk(office, "status please")
+    _answer(office, "Ada", "Building.")
+    office.wait_for_function("() => window.__played.length === 1")
+    office.wait_for_function("() => window.__recs.at(-1).started && !window.__recs.at(-1).ended")
+    office.wait_for_function("() => window.__recs.at(-1).ended", timeout=IDLE + 3000)
+    heard = office.evaluate("() => window.__recs.length")
+    office.wait_for_timeout(800)
+    assert office.evaluate("() => window.__recs.length") == heard
+    assert office.locator("#cw-team .ap-mic").inner_text() == "Talk"
+    assert office.sent == ["status please"]
+
+
+def test_done_before_a_word_ends_the_conversation(office):
+    _talk(office, "status please")
+    _answer(office, "Ada", "Building.")
+    office.wait_for_function("() => window.__played.length === 1")
+    office.wait_for_function("() => window.__recs.at(-1).started && !window.__recs.at(-1).ended")
+    office.locator("#cw-team .ap-mic").click()
+    heard = office.evaluate("() => window.__recs.length")
+    _answer(office, "Mia", "One more thing.")
+    office.wait_for_timeout(600)
+    assert office.evaluate("() => window.__recs.length") == heard
+    assert office.sent == ["status please"]
+
+
+def test_typing_ends_the_conversation(office):
+    _talk(office, "first by voice")
+    box = office.locator("#cw-team .ap-composer input[name=message]")
+    box.fill("now typed")
+    office.locator("#cw-team .ap-composer button[type=submit]").click()
+    heard = office.evaluate("() => window.__recs.length")
+    _answer(office, "Ada", "A typed answer.")
+    office.wait_for_timeout(600)
+    assert office.evaluate("() => window.__recs.length") == heard
 
 
 def test_done_sends_at_once(office):
