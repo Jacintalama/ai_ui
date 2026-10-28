@@ -533,6 +533,10 @@
 }
 /* Talk (agent-chat.js). Lit while the mic is open, so it is plain that the
    page is listening; the label says what a press does next. */
+.ap-composer .ap-mic {
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.ap-composer .ap-mic-icon { flex: 0 0 auto; }
 .ap-composer .ap-mic.on {
   background: var(--accent); border-color: var(--accent); color: #fff;
 }

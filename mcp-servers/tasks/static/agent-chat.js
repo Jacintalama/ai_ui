@@ -323,6 +323,11 @@
   var SAYING = [];             // answers still to read, in order
   var PLAYING = null;          // the Audio being read now
   var VOICE_ID = null;         // a promise of the site's read-aloud voice
+  var MIC_SVG = '<svg class="ap-mic-icon" viewBox="0 0 24 24" width="14" height="14" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true" focusable="false">' +
+    '<rect x="9" y="3" width="6" height="11" rx="3"/>' +
+    '<path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/></svg>';
 
   function authHeaders() {
     var h = { "Content-Type": "application/json" };
@@ -370,7 +375,8 @@
     // While an answer is being read, Talk still talks: it cuts the reading
     // off and listens, the way you interrupt somebody. A press that only
     // silenced it left the next sentence unheard (live, 2026-10-28).
-    b.textContent = listening ? "Done" : "Talk";
+    var label = b.querySelector(".ap-mic-label");
+    if (label) label.textContent = listening ? "Done" : "Talk";
     b.setAttribute("aria-label", listening ? "Stop listening and send"
       : talking ? "Stop the reading and talk" : "Talk instead of typing");
     b.setAttribute("aria-pressed", listening ? "true" : "false");
@@ -387,7 +393,9 @@
     // ghost: the office's plain .btn is filled cyan, which made Talk look
     // like a second Send.
     b.className = "btn ghost ap-mic";
-    b.textContent = "Talk";
+    // A microphone in front of the word, so it reads as voice at a glance
+    // (asked for 2026-10-28). Drawn inline, in the button's own colour.
+    b.innerHTML = MIC_SVG + '<span class="ap-mic-label">Talk</span>';
     b.setAttribute("aria-label", "Talk instead of typing");
     b.setAttribute("aria-pressed", "false");
     b.title = "Say it instead of typing. The answers are read out loud.";

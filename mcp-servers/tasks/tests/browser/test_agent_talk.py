@@ -215,6 +215,17 @@ def test_the_office_team_chat_has_a_talk_button_after_send(office):
     assert office.errors == [], office.errors
 
 
+def test_talk_shows_a_microphone_so_it_reads_as_voice(office):
+    """Asked for 2026-10-28: a mic, then the word."""
+    mic = office.locator("#cw-team .ap-mic")
+    icon = mic.locator("svg.ap-mic-icon")
+    assert icon.count() == 1
+    assert icon.get_attribute("aria-hidden") == "true"
+    assert icon.bounding_box()["x"] < mic.locator(".ap-mic-label").bounding_box()["x"]
+    mic.click()
+    assert mic.locator("svg.ap-mic-icon").count() == 1, "the label change lost the icon"
+
+
 def test_talk_does_not_look_like_a_second_send(office):
     """The office's plain .btn is filled cyan; Talk is the outline one."""
     look = office.evaluate(
