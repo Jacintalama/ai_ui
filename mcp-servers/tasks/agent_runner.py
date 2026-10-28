@@ -34,7 +34,8 @@ import agent_jev
 import agent_memory
 import agent_routing
 from agent_tools import (ToolOutcome, arguments_of, execute_tool_call,
-                         is_write_call, is_write_tool)
+                         is_write_call, is_write_tool,
+                         METHODS_NO_AGENT_MAY_CALL)
 from owui_token import mint_owui_token, session_stamp_for
 
 logger = logging.getLogger(__name__)
@@ -945,7 +946,14 @@ async def _chat(token: str, model: str, messages: list[dict],
                 # handed to _record_step as the record of what happened. The
                 # status is never read back off the sentence: see ToolOutcome.
                 outcome = ToolOutcome()
-                if is_write_call(name, probe) and not write_allowed:
+                if name in METHODS_NO_AGENT_MAY_CALL:
+                    # Not a write to hold for approval: a loop. Fed back as
+                    # a refusal so the model answers some other way, and
+                    # never shown to the owner as a question (Mia asked to
+                    # run ask_agents on "hi team", 2026-10-28).
+                    result = await execute_tool_call(call, user_email, tool_ids,
+                                                     model, outcome=outcome)
+                elif is_write_call(name, probe) and not write_allowed:
                     if mode == agent_access.MODE_ASK:
                         # Held back, not refused. The turn ends below and picks
                         # up again once the owner answers.
