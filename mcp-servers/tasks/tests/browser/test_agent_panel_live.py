@@ -77,7 +77,7 @@ async def test_two_agents_answer_in_two_separate_bubbles():
         first, second = await _set_room_to_two(page)
 
         await page.fill(".ap-composer input", "say hello in one short line")
-        await page.click(".ap-composer button")
+        await page.click(".ap-composer button[type=submit]")
 
         # A round can hold the page for minutes, so it must read as slow
         # rather than as broken while it runs. This line is the only thing

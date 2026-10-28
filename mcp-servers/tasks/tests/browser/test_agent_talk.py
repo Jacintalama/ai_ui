@@ -210,7 +210,8 @@ def _talk(pg, words, where="#cw-team"):
 
 def test_the_office_team_chat_has_a_talk_button_after_send(office):
     form = office.locator("#cw-team .ap-composer")
-    labels = form.locator("button").all_inner_texts()
+    # The buttons on the message row; Attach has a row of its own above it.
+    labels = form.locator(":scope > button").all_inner_texts()
     assert labels == ["Send", "Talk"], labels
     assert office.errors == [], office.errors
 
@@ -243,7 +244,7 @@ def test_listening_leaves_the_message_box_room(office):
         "() => { const f = document.querySelector('#cw-team .ap-composer');"
         " const w = e => e.getBoundingClientRect().width;"
         " return { box: w(f.querySelector('input[name=message]')),"
-        "          buttons: [...f.querySelectorAll('button')].reduce((n, b) => n + w(b), 0) }; }")
+        "          buttons: [...f.querySelectorAll(':scope > button')].reduce((n, b) => n + w(b), 0) }; }")
     assert got["box"] > got["buttons"], got
 
 
@@ -259,7 +260,7 @@ def test_the_agents_page_composer_has_a_talk_button(browser):
     pg = _open(browser, "agents.html")
     try:
         pg.wait_for_selector(".ap-composer .ap-mic", state="attached")
-        assert pg.locator(".ap-composer button").all_inner_texts() == ["Send", "Talk"]
+        assert pg.locator(".ap-composer > button").all_inner_texts() == ["Send", "Talk"]
     finally:
         pg.close()
         pg.srv.shutdown()

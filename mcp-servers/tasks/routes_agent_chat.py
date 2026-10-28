@@ -12,11 +12,13 @@ end to end, so nothing outside this service changes.
 """
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import uuid
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import (APIRouter, Depends, File, Form, HTTPException, Request,
+                     UploadFile)
 from fastapi.responses import HTMLResponse
 from sse_starlette.sse import EventSourceResponse
 
@@ -25,6 +27,7 @@ import agent_chat_store as store
 from auth import CurrentUser, current_user
 import agent_access
 import agent_activity
+import agent_attach
 import agent_escalation
 import agent_events
 import agent_graph
@@ -1097,14 +1100,57 @@ async def _hydrate(email: str, s: store.RoomSession,
     s.summary = str(row.get("summary") or "")
 
 
+async def _attachments(files, thumbs) -> list[tuple[str, str, bytes]]:
+    """The files that came with a send, each (name, content type, bytes).
+
+    A file input left empty still arrives as a part with no name, and a
+    test calling the endpoint as a function passes the File default itself,
+    so anything that is not a named upload is not a file.
+    """
+    out = []
+    for f in files if isinstance(files, list) else []:
+        name = getattr(f, "filename", "") or ""
+        if not name or not hasattr(f, "read"):
+            continue
+        # One byte past the cap is enough to know it is too big.
+        data = await f.read(agent_attach.MAX_BYTES + 1)
+        out.append((name, getattr(f, "content_type", "") or "", data))
+    return out
+
+
+def _thumbs(raw) -> dict:
+    """The browser's previews of the attached pictures, by file name."""
+    if not isinstance(raw, str) or not raw:
+        return {}
+    try:
+        got = json.loads(raw)
+    except ValueError:
+        return {}
+    return got if isinstance(got, dict) else {}
+
+
 @router.post("/tasks/agents/chat/send", include_in_schema=False)
-async def agent_chat_send(message: str = Form(...),
+async def agent_chat_send(message: str = Form(""),
                           agent: str = Form(""),
+                          files: list[UploadFile] | None = File(None),
+                          thumbs: str = Form(""),
                           user: CurrentUser = Depends(current_user)
                           ) -> HTMLResponse:
-    body = (message or "").strip()
-    if not body:
+    typed = (message or "").strip() if isinstance(message, str) else ""
+    uploads = await _attachments(files, thumbs)
+    if not typed and not uploads:
         raise HTTPException(status_code=400, detail="empty message")
+    shown: list[dict] = []
+    body = typed
+    if uploads:
+        # Read before anything is queued or drawn: a message goes with all
+        # of its files or not at all (agent_attach.prepare).
+        try:
+            prepared = await agent_attach.prepare(user.email, uploads, _thumbs(thumbs))
+        except agent_attach.Refused as r:
+            raise HTTPException(status_code=400, detail=str(r)) from r
+        body = agent_attach.message_for(typed, prepared)
+        shown = prepared.shown
     who = _which_chat(agent)
     s = store.get_session(user.email, who)
     await _hydrate(user.email, s, who)
@@ -1126,11 +1172,14 @@ async def agent_chat_send(message: str = Form(...),
         # the running turn rather than inside it.
         return HTMLResponse(
             f'<div hx-swap-oob="beforeend:{render.thread_selector(who)}">'
-            f'{render.turn_open(body, tid, at=_now_iso())}{render.turn_close()}</div>')
+            f'{render.turn_open(body, tid, at=_now_iso(), attached=shown)}{render.turn_close()}</div>')
 
     tid = render.new_turn_id()
     s.turn_id = tid
-    s.messages.append({"role": "user", "at": _now_iso(), "content": body, "turn_id": tid})
+    said = {"role": "user", "at": _now_iso(), "content": body, "turn_id": tid}
+    if shown:
+        said["attached"] = shown
+    s.messages.append(said)
     s.streaming = True
     # First message ever: write the row now rather than at the end of the
     # round, so a browser that closes mid-answer still has the question.
@@ -1139,12 +1188,12 @@ async def agent_chat_send(message: str = Form(...),
     if s.chat_id is None:
         try:
             s.chat_id = await store.create_chat(
-                user.email, store.title_from(body), s, who)
+                user.email, store.title_from(typed or shown[0]["name"]), s, who)
         except Exception:                                   # noqa: BLE001
             log.exception("agent chat: could not create the conversation row; "
                           "continuing unsaved")
 
-    resp = HTMLResponse(render.turn_open(body, tid, at=_now_iso()) + render.turn_close()
+    resp = HTMLResponse(render.turn_open(body, tid, at=_now_iso(), attached=shown) + render.turn_close()
                         + render.stream_block(who or ""))
     resp.headers["HX-Trigger"] = "agent-chats-changed"
     return resp

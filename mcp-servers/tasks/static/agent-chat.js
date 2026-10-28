@@ -566,13 +566,222 @@
     playNext();
   }
 
+  // --- Attach (2026-10-28) ---------------------------------------------------
+  // A file or a picture goes with the message. The server turns it into text
+  // the agents read (agent_attach.py); here it is chosen, shown as a chip that
+  // can be taken off again, and a picture is shrunk first, so a phone photo is
+  // not five megabytes of upload and of vision tokens. The row sits above the
+  // message box rather than beside Send and Talk: in the office's chat window
+  // a third button left the box too narrow to type in.
+  var ATTACH_MAX = 3;
+  var ATTACH_BYTES = 5 * 1024 * 1024;
+  var PIC_EDGE = 1600;
+  var THUMB_EDGE = 160;
+  //: The same list as agent_attach.ACCEPT (a test keeps them equal).
+  var ATTACH_ACCEPT = "image/png,image/jpeg,image/webp,image/gif,.pdf,.c,.cfg,.cpp,.cs,.css,.csv,.env.example,.go,.h,.htm,.html,.ini,.java,.js,.json,.jsx,.kt,.log,.markdown,.md,.php,.py,.rb,.rs,.sh,.sql,.svelte,.swift,.toml,.ts,.tsv,.tsx,.txt,.vue,.xml,.yaml,.yml";
+  var CHOSEN = typeof WeakMap === "function" ? new WeakMap() : null;
+
+  function chosen(form) {
+    if (!CHOSEN) return [];
+    if (!CHOSEN.has(form)) CHOSEN.set(form, []);
+    return CHOSEN.get(form);
+  }
+
+  function shrink(file, edge) {
+    return new Promise(function (resolve) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () {
+        var w = img.naturalWidth, h = img.naturalHeight;
+        var k = Math.min(1, edge / Math.max(w, h, 1));
+        var c = document.createElement("canvas");
+        c.width = Math.max(1, Math.round(w * k));
+        c.height = Math.max(1, Math.round(h * k));
+        var g = c.getContext("2d");
+        g.fillStyle = "#fff";
+        g.fillRect(0, 0, c.width, c.height);
+        g.drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url);
+        resolve(c);
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); resolve(null); };
+      img.src = url;
+    });
+  }
+
+  //: A picture as it is sent: at most PIC_EDGE on its long side, as a JPEG,
+  //: with a small preview for the chip and the bubble.
+  function asPicture(file) {
+    return shrink(file, PIC_EDGE).then(function (big) {
+      if (!big) return { file: file, thumb: "" };
+      return new Promise(function (resolve) {
+        big.toBlob(function (blob) {
+          var name = file.name.replace(/\.[^.]+$/, "") + ".jpg";
+          var out = blob ? new File([blob], name, { type: "image/jpeg" }) : file;
+          shrink(out, THUMB_EDGE).then(function (small) {
+            resolve({ file: out, thumb: small ? small.toDataURL("image/jpeg", 0.7) : "" });
+          });
+        }, "image/jpeg", 0.85);
+      });
+    });
+  }
+
+  //: The file input carries exactly the chips, so htmx posts what is shown.
+  function syncFiles(form) {
+    var input = form.querySelector("input.ap-files");
+    var thumbs = form.querySelector('input[name="thumbs"]');
+    var list = chosen(form), map = {};
+    try {
+      var dt = new DataTransfer();
+      list.forEach(function (c) { dt.items.add(c.file); if (c.thumb) map[c.file.name] = c.thumb; });
+      if (input) input.files = dt.files;
+    } catch (e) { /* an old browser keeps whatever it picked itself */ }
+    if (thumbs) thumbs.value = list.length ? JSON.stringify(map) : "";
+    // Multipart only while there is a file to carry; a plain message still
+    // posts the way it always has.
+    if (list.length) form.setAttribute("hx-encoding", "multipart/form-data");
+    else form.removeAttribute("hx-encoding");
+    var chips = form.querySelector(".ap-chips");
+    if (!chips) return;
+    chips.innerHTML = "";
+    list.forEach(function (c, i) {
+      var chip = document.createElement("span");
+      chip.className = "ap-chip";
+      if (c.thumb) {
+        var img = document.createElement("img");
+        img.src = c.thumb;
+        img.alt = "";
+        chip.appendChild(img);
+      }
+      var name = document.createElement("span");
+      name.className = "ap-chip-name";
+      name.textContent = c.file.name;
+      chip.appendChild(name);
+      var x = document.createElement("button");
+      x.type = "button";
+      x.className = "ap-chip-x";
+      x.setAttribute("data-i", String(i));
+      x.setAttribute("aria-label", "Remove " + c.file.name);
+      x.title = "Remove";
+      x.innerHTML = "&times;";
+      chip.appendChild(x);
+      chips.appendChild(chip);
+    });
+  }
+
+  function addFiles(form, files) {
+    var list = chosen(form);
+    var waits = [];
+    Array.prototype.forEach.call(files || [], function (f) {
+      if (list.length + waits.length >= ATTACH_MAX) {
+        note(threadOf(form), "At most " + ATTACH_MAX + " files on one message.");
+        return;
+      }
+      if (/^image\//.test(f.type)) {
+        waits.push(asPicture(f));
+      } else if (f.size > ATTACH_BYTES) {
+        note(threadOf(form), f.name + " is larger than 5 MB.");
+      } else {
+        waits.push(Promise.resolve({ file: f, thumb: "" }));
+      }
+    });
+    return Promise.all(waits).then(function (got) {
+      got.forEach(function (c) { if (c && c.file) list.push(c); });
+      syncFiles(form);
+    });
+  }
+
+  function addAttach(form) {
+    if (!form || form.querySelector(".ap-attach")) return;
+    var tray = document.createElement("div");
+    tray.className = "ap-tray";
+    tray.innerHTML =
+      '<button type="button" class="btn ghost ap-attach">Attach</button>' +
+      '<span class="ap-chips"></span>' +
+      '<span class="ap-tray-status" aria-live="polite"></span>' +
+      '<input type="file" class="ap-files" name="files" multiple hidden>' +
+      '<input type="hidden" name="thumbs" value="">';
+    tray.querySelector(".ap-files").setAttribute("accept", ATTACH_ACCEPT);
+    var b = tray.querySelector(".ap-attach");
+    b.setAttribute("aria-label", "Attach a file or a picture");
+    b.title = "Attach a picture, a PDF or a text file";
+    form.insertBefore(tray, form.firstChild);
+  }
+  function addAttaches(root) {
+    (root || document).querySelectorAll("form.ap-composer").forEach(addAttach);
+  }
+
+  document.addEventListener("click", function (e) {
+    var t = e.target;
+    var pick = t && t.closest ? t.closest(".ap-attach") : null;
+    if (pick) {
+      e.preventDefault();
+      var input = pick.closest("form").querySelector("input.ap-files");
+      // The chips already hold what was chosen before, so the picker starts
+      // empty and what it adds joins them (change, below).
+      if (input) { input.value = ""; input.click(); }
+      return;
+    }
+    var x = t && t.closest ? t.closest(".ap-chip-x") : null;
+    if (x) {
+      e.preventDefault();
+      var form = x.closest("form");
+      chosen(form).splice(parseInt(x.getAttribute("data-i"), 10), 1);
+      syncFiles(form);
+    }
+  });
+  document.addEventListener("change", function (e) {
+    var input = e.target;
+    if (!input || !input.classList || !input.classList.contains("ap-files")) return;
+    addFiles(input.closest("form"), Array.prototype.slice.call(input.files || []));
+  });
+  // A picture pasted into the message box, or a file dropped on the composer.
+  function composerOf(e) {
+    return e.target && e.target.closest ? e.target.closest("form.ap-composer") : null;
+  }
+  document.addEventListener("paste", function (e) {
+    var form = composerOf(e);
+    var files = e.clipboardData && e.clipboardData.files;
+    if (!form || !files || !files.length) return;
+    e.preventDefault();
+    addFiles(form, files);
+  });
+  document.addEventListener("dragover", function (e) {
+    if (composerOf(e)) e.preventDefault();
+  });
+  document.addEventListener("drop", function (e) {
+    var form = composerOf(e);
+    if (!form || !e.dataTransfer || !e.dataTransfer.files.length) return;
+    e.preventDefault();
+    addFiles(form, e.dataTransfer.files);
+  });
+  // A picture is looked at by a model before the message is posted, which
+  // takes a few seconds; say so, rather than a Send that seems to do nothing.
+  document.body.addEventListener("htmx:beforeRequest", function (e) {
+    var form = e.detail && e.detail.elt;
+    if (!form || !form.classList || !form.classList.contains("ap-composer")) return;
+    var status = form.querySelector(".ap-tray-status");
+    if (status && chosen(form).length) status.textContent = "Reading the attachment...";
+  });
+  document.body.addEventListener("htmx:afterRequest", function (e) {
+    var form = e.detail && e.detail.elt;
+    if (!form || !form.classList || !form.classList.contains("ap-composer")) return;
+    var status = form.querySelector(".ap-tray-status");
+    if (status) status.textContent = "";
+    // Sent: the files went with it. Refused: reset() emptied the input, and
+    // the chips put the files back for another try.
+    if (e.detail.successful) chosen(form).length = 0;
+    syncFiles(form);
+  });
+
   addMics(document);
+  addAttaches(document);
   if (window.MutationObserver) {
     // The office opens a chat window per conversation (office/js/dock.js),
     // each with its own composer, long after this ran.
     new MutationObserver(function (changes) {
       for (var i = 0; i < changes.length; i++) {
-        if (changes[i].addedNodes && changes[i].addedNodes.length) { addMics(document); return; }
+        if (changes[i].addedNodes && changes[i].addedNodes.length) { addMics(document); addAttaches(document); return; }
       }
     }).observe(document.body, { childList: true, subtree: true });
   }

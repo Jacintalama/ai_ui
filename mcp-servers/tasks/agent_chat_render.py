@@ -13,6 +13,7 @@ import re
 import uuid
 from urllib.parse import quote
 
+import agent_attach
 import agent_routing
 
 
@@ -108,7 +109,26 @@ def day_line(day: str) -> str:
     return f'<div class="aday"><time datetime="{esc(day)}">{esc(day)}</time></div>'
 
 
-def turn_open(text: str, turn_id: str, at=None) -> str:
+def attachments(files, below: bool = False) -> str:
+    """The files under the person's words: a picture as its preview, any
+    other file by its name. Never the file's contents, which are for the
+    agents (agent_attach.split)."""
+    out = []
+    for f in files or []:
+        if not isinstance(f, dict) or not f.get("name"):
+            continue
+        name = esc(str(f["name"]))
+        thumb = f.get("thumb") if f.get("kind") == "image" else ""
+        if isinstance(thumb, str) and thumb.startswith("data:image/"):
+            out.append(f'<span class="afile pic"><img src="{esc(thumb)}" alt="{name}">'
+                       f'<span>{name}</span></span>')
+        else:
+            out.append(f'<span class="afile">{name}</span>')
+    cls = "afiles below" if below else "afiles"
+    return f'<span class="{cls}">{"".join(out)}</span>' if out else ""
+
+
+def turn_open(text: str, turn_id: str, at=None, attached=None) -> str:
     """One turn: the person's message, a status row, and room for answers.
 
     Carries its own id because more than one turn can be open on screen at
@@ -116,10 +136,16 @@ def turn_open(text: str, turn_id: str, at=None) -> str:
     being answered), and one SSE connection answers both, one after another,
     on its way through a drain. Only an id lets a streamed fragment say which
     turn it belongs to regardless of what has been appended after it since.
+
+    A message that carried files shows what was typed and the files by name
+    (or preview); `attached` is what the send kept of them, and without it
+    the names are read back out of the message itself.
     """
+    typed, named = agent_attach.split(text)
+    files = attached if attached else named
     return (f'<div class="aturn" id="aturn-{esc(turn_id)}">'
             f'<div class="am user"{_when(at)}><div class="ab">'
-            f'{esc(text)}</div></div>'
+            f'{esc(typed)}{attachments(files, below=bool(typed))}</div></div>'
             '<div class="aturn-status"></div>'
             '<div class="aturn-body"></div>')
 
@@ -593,7 +619,7 @@ def thread(messages: list[dict], private: bool = False,
             if open_turn:
                 out.append(turn_close())
             turn_id = str(m.get("turn_id") or new_turn_id())
-            out.append(turn_open(content, turn_id, at=at))
+            out.append(turn_open(content, turn_id, at=at, attached=m.get("attached")))
             open_turn = True
             continue
         if role == "note":
