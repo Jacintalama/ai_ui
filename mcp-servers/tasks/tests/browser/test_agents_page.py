@@ -341,32 +341,6 @@ def test_the_connected_apps_switch_adds_the_proxy_tool(page):
     assert json.loads(page.sent[-1]["body"])["meta"]["toolIds"] == ["server:mcp-proxy"]
 
 
-def test_turning_everything_off_and_picking_nothing_sends_no_tools(page):
-    """The switch defaults to on now, so this has to turn it off first. An
-    agent narrowed to nothing is somebody who has not finished choosing, and
-    the server treats it as everything rather than as an agent that can do
-    nothing at all."""
-    _fill(page)
-    page.uncheck("#use-my-apps")
-    page.wait_for_timeout(100)
-    page.locator("#agent-save").click()
-    page.wait_for_timeout(300)
-    assert json.loads(page.sent[-1]["body"])["meta"]["toolIds"] == []
-
-
-@pytest.mark.parametrize("tool_id", [
-    "gmail", "calendar", "gdrive", "documents", "excel_creator",
-    "executive_dashboard", "remember"])
-def test_each_native_tool_adds_only_itself(page, tool_id):
-    _fill(page)
-    page.uncheck("#use-my-apps")
-    page.wait_for_timeout(100)
-    page.check("#tool-" + tool_id)
-    page.locator("#agent-save").click()
-    page.wait_for_timeout(300)
-    assert json.loads(page.sent[-1]["body"])["meta"]["toolIds"] == [tool_id]
-
-
 def test_an_id_collision_is_retried_once_with_a_new_suffix(page):
     """The id is a primary key across every model on the platform, and four hex
     characters can collide. The server reports the collision as a 401 carrying
@@ -663,7 +637,9 @@ def test_the_card_says_what_the_agent_can_reach(page):
     """
     chips = page.locator(
         '#my-agents [data-agent-id="agent-mine-a1b2"] .chip').all_inner_texts()
-    assert "Every tool you have" in chips, chips
+    # Since 2026-10-28 every agent's tools are picked per message, so the
+    # card says that rather than listing a limit that no longer exists.
+    assert "Tools: automatic" in chips, chips
     assert "Your connected apps" not in chips, chips
 
 
@@ -672,10 +648,9 @@ def test_an_agent_with_no_tools_says_so(page):
     # agent, and nothing shared is listed any more.
     chips = page.locator(
         '[data-agent-id="agent-mine-second-c5d6"] .chip').all_inner_texts()
-    # The scope comes first, then the emptiness. An agent set to everything
-    # with no tools of its own is a different thing from one narrowed to
-    # nothing, and the card has to be able to say which.
-    assert chips == ["Every tool you have", "No tools"], chips
+    # Since 2026-10-28 no agent has a list of its own to be empty: its
+    # tools are picked for each message from everything connected.
+    assert chips == ["Tools: automatic"], chips
 
 
 def test_search_narrows_the_list(page):
@@ -1648,11 +1623,14 @@ def test_the_master_switch_is_on_and_the_list_is_hidden(page):
         "the list is showing while the switch says everything")
 
 
-def test_turning_it_off_shows_the_list(page):
+def test_there_is_no_tool_picker_any_more(page):
+    """Lukas, 2026-10-27: nobody should have to pick an agent's tools. Each
+    message gets what Jev picks for it, so the form says so and offers no
+    switch and no list."""
     _open_form(page)
-    page.uncheck("#use-my-apps")
-    page.wait_for_timeout(120)
-    assert page.locator("#native-tools").is_visible()
+    assert not page.locator("#use-my-apps").is_visible()
+    assert not page.locator("#native-tools").is_visible()
+    assert "Picked automatically" in page.locator("#tools-hint").inner_text()
 
 
 def test_everything_writes_no_scope(page):
@@ -1664,20 +1642,9 @@ def test_everything_writes_no_scope(page):
     assert "toolScope" not in json.loads(page.sent[-1]["body"])["meta"]
 
 
-def test_picking_writes_the_scope_and_the_tools(page):
-    _fill(page, name="Researcher", instructions="Research carefully.")
-    page.uncheck("#use-my-apps")
-    page.wait_for_timeout(100)
-    page.check("#tool-gmail")
-    page.locator("#agent-save").click()
-    page.wait_for_timeout(300)
-    meta = json.loads(page.sent[-1]["body"])["meta"]
-    assert meta["toolScope"] == "picked"
-    assert "gmail" in meta["toolIds"]
-    assert "server:mcp-proxy" not in meta["toolIds"]
-
-
-def test_edit_shows_the_scope_the_agent_has(page):
+def test_saving_a_once_narrowed_agent_takes_the_limit_off(page):
+    """An agent narrowed before 2026-10-28 has no switch to undo it now, so
+    any save writes it back to everything."""
     page.evaluate(
         "() => { const a = window.__aiuiAgents.state.agents"
         ".find(x => x.id === 'agent-mine-a1b2');"
@@ -1685,36 +1652,14 @@ def test_edit_shows_the_scope_the_agent_has(page):
         " window.__aiuiAgents.openForm(a); }")
     page.wait_for_selector("#agent-form", state="visible")
     page.wait_for_timeout(120)
-    assert not page.is_checked("#use-my-apps")
-    assert page.locator("#native-tools").is_visible()
+    assert not page.locator("#native-tools").is_visible()
+    page.locator("#agent-save").click()
+    page.wait_for_timeout(300)
+    assert "toolScope" not in json.loads(page.sent[-1]["body"])["meta"]
 
 
-def test_a_new_form_goes_back_to_everything(page):
-    page.evaluate(
-        "() => { const a = window.__aiuiAgents.state.agents"
-        ".find(x => x.id === 'agent-mine-a1b2');"
-        " a.meta.toolScope = 'picked';"
-        " window.__aiuiAgents.openForm(a); }")
-    page.wait_for_selector("#agent-form", state="visible")
-    page.locator("#agent-cancel").click()
+def test_save_is_on_screen_with_the_form_open(page):
     _open_form(page)
-    assert page.is_checked("#use-my-apps")
-
-
-def test_the_tool_list_never_pushes_save_off_screen(page):
-    """Ralph asked for this directly: the list gets longer as tools are added
-    and must not keep pushing the rest of the form down.
-
-    It used to be delivered by giving the list its own scroll box, which is
-    what made the wheel unpredictable inside an already scrolling modal. The
-    requirement was never "this list scrolls", it was "the form stays usable
-    as the list grows", so that is what is asserted now: Save is on screen
-    with the whole tool list open.
-    """
-    _open_form(page)
-    page.uncheck("#use-my-apps")
-    page.wait_for_timeout(150)
-    assert page.locator("#native-tools").is_visible()
     btn = page.locator("#agent-save")
     assert btn.is_visible()
     box = btn.bounding_box()

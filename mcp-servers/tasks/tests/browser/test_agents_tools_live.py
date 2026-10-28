@@ -224,22 +224,6 @@ def test_the_switch_is_never_ticked_and_unusable_at_once(page_with_tools):
     assert not (box.is_checked() and box.is_disabled())
 
 
-def test_the_switch_can_actually_be_turned_off(page_with_tools):
-    """The literal complaint: it could not be unticked. Clicking has to change
-    it, and the tool list it was hiding has to appear."""
-    page = page_with_tools
-    page.locator("#new-agent").click()
-    page.wait_for_timeout(200)
-    box = page.locator("#use-my-apps")
-    assert box.is_checked(), "everything is still the default for a new agent"
-    assert page.locator("#native-tools").is_hidden()
-
-    box.uncheck()
-    assert not box.is_checked(), "it could not be turned off"
-    assert page.locator("#native-tools").is_visible(), (
-        "turning it off has to reveal the tools it was standing in for")
-
-
 def test_the_switch_says_where_to_connect_an_app(page_with_tools):
     """Shown whether or not the switch is usable. It points at the apps that
     are not linked yet, which is still true and still worth saying."""
@@ -346,20 +330,15 @@ def _open_saved_agent(page, agent):
     page.wait_for_timeout(300)
 
 
-def test_a_narrowed_agent_reopens_narrowed(page_with_tools):
-    """Reported from production: unticking the switch and saving worked, the
-    database really did record toolScope "picked", and reopening the agent
-    showed it ticked again. Ticked means everything, so the next save would
-    have silently widened the agent back to every tool the owner can reach,
-    undoing the choice without saying so."""
+def test_a_once_narrowed_agent_reopens_with_no_picker(page_with_tools):
+    """Until 2026-10-28 this agent was narrowed to what was ticked. Lukas:
+    nobody should have to pick tools, so each message now gets what Jev
+    picks (routes_agent_turn._auto_tools) and a saved list limits nothing."""
     page = page_with_tools
     _open_saved_agent(page, PICKED_AGENT)
-    box = page.locator("#use-my-apps")
-    assert not box.is_checked(), (
-        "a narrowed agent came back claiming every connected app")
-    assert page.locator("#native-tools").is_visible(), (
-        "the tools it is narrowed to have to be on screen")
-    assert page.locator("#tool-gmail").is_checked() or True
+    assert not page.locator("#use-my-apps").is_visible()
+    assert not page.locator("#native-tools").is_visible()
+    assert "Picked automatically" in page.locator("#tools-hint").inner_text()
 
 
 def test_an_everything_agent_reopens_ticked(page_with_tools):
@@ -483,7 +462,9 @@ def test_the_card_says_what_the_agent_may_reach(page_with_tools):
     page.locator("#agent-cancel").click()
     page.wait_for_timeout(200)
     chips = page.locator('.card[data-agent-id="agent-mia-ab12"] .card-chips')
-    assert "Only what is picked" in chips.inner_text(), chips.inner_text()
+    # A once-narrowed agent included: see test_a_once_narrowed_agent_...
+    assert "Tools: automatic" in chips.inner_text(), chips.inner_text()
+    assert "Only what is picked" not in chips.inner_text()
 
 
 def test_the_card_says_when_an_agent_reaches_everything(page_with_tools):
@@ -495,21 +476,7 @@ def test_the_card_says_when_an_agent_reaches_everything(page_with_tools):
     page.locator("#agent-cancel").click()
     page.wait_for_timeout(200)
     chips = page.locator('.card[data-agent-id="agent-mia-ab12"] .card-chips')
-    assert "Every tool you have" in chips.inner_text(), chips.inner_text()
-
-
-def test_narrowed_to_nothing_says_so(page_with_tools):
-    """A real state, and a surprising one: the agent can reach no tool at all.
-    It read as an ordinary empty card before."""
-    page = page_with_tools
-    empty = dict(PICKED_AGENT)
-    empty["meta"] = dict(PICKED_AGENT["meta"])
-    empty["meta"]["toolIds"] = []
-    _open_saved_agent(page, empty)
-    page.locator("#agent-cancel").click()
-    page.wait_for_timeout(200)
-    chips = page.locator('.card[data-agent-id="agent-mia-ab12"] .card-chips')
-    assert "Nothing picked yet" in chips.inner_text(), chips.inner_text()
+    assert "Tools: automatic" in chips.inner_text(), chips.inner_text()
 
 
 def test_the_agent_list_is_never_read_from_cache(page_with_tools):
@@ -552,24 +519,6 @@ def test_saving_says_it_saved(page_with_tools):
     assert "Saved Scout" in note.inner_text()
 
 
-def test_the_save_note_says_what_the_agent_may_touch(page_with_tools):
-    """The scope is the part people get wrong, so the confirmation spells it
-    out rather than leaving it to be discovered on the next edit."""
-    page = page_with_tools
-    page.locator("#new-agent").click()
-    page.wait_for_timeout(200)
-    page.fill("#agent-name", "Scout")
-    page.fill("#agent-instructions", "You look things up and report back.")
-    page.locator("#use-my-apps").uncheck()
-    page.check("#tool-documents")
-    page.locator("#agent-save").click()
-    note = page.locator("#saved-note")
-    note.wait_for(state="visible", timeout=4000)
-    text = note.inner_text()
-    assert "1 tool you picked" in text, text
-    assert "nothing else" in text, text
-
-
 def test_the_save_note_says_when_it_kept_everything(page_with_tools):
     page = page_with_tools
     page.locator("#new-agent").click()
@@ -600,21 +549,3 @@ def test_a_failed_save_does_not_claim_it_saved(page_with_tools):
     assert page.locator("#form-error").inner_text().strip()
 
 
-def test_refreshing_the_tools_keeps_what_was_already_ticked(page_with_tools):
-    """Reloading the tiles rebuilds them. Without carrying the ticks across,
-    connecting an app would silently clear the tools already chosen."""
-    page = page_with_tools
-    page.locator("#new-agent").click()
-    page.wait_for_timeout(200)
-    # The tiles live behind the umbrella now: on means everything, so the list
-    # is hidden and there is nothing to pick from until it is turned off.
-    page.locator("#use-my-apps").uncheck()
-    page.check("#tool-documents")
-    page.check("#tool-remember")
-
-    page.evaluate(
-        "() => window.postMessage({ type: 'aiui:connections-changed' }, '*')")
-    page.wait_for_timeout(700)
-
-    assert page.locator("#tool-documents").is_checked(), "it cleared a chosen tool"
-    assert page.locator("#tool-remember").is_checked(), "it cleared a chosen tool"

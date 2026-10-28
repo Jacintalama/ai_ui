@@ -405,13 +405,14 @@ def _picked(name, tools):
             "meta": {"toolIds": tools, "toolScope": "picked"}}
 
 
-def test_an_agent_that_can_ask_a_colleague_is_told_to():
-    """Otherwise it has to infer the whole behaviour from a tool spec, while
-    the sentence beside it tells it to pass instead."""
+def test_a_once_narrowed_agent_is_told_it_reaches_the_account():
+    """A hand-picked list was a limit until 2026-10-28. Lukas: nobody should
+    have to pick tools. Every agent now reaches everything, and each message
+    carries what Jev picked for it (test_agent_auto_tools)."""
     said = agent_brief.build(_picked("Iris", ["gdrive", "colleague"]),
                              ["Iris", "Kai"], now=WHEN)["content"]
-    assert "ask the assistant who does" in said, said
-    assert "use their answer in your own reply" in said, said
+    assert "real account" in said, said
+    assert "and nothing else" not in said, said
 
 
 def test_an_agent_that_can_ask_is_not_told_to_pass_instead():
@@ -421,12 +422,13 @@ def test_an_agent_that_can_ask_is_not_told_to_pass_instead():
     assert "say so or pass" not in said, said
 
 
-def test_an_agent_without_the_tool_is_still_told_to_pass():
-    """For that one it remains true: there is nobody it can ask."""
+def test_no_agent_is_told_to_pass_for_want_of_a_tool():
+    """A hand-picked list was a limit until 2026-10-28. Lukas: nobody should
+    have to pick tools. Every agent now reaches everything, and each message
+    carries what Jev picked for it (test_agent_auto_tools)."""
     said = agent_brief.build(_picked("Mia", ["gmail"]),
                              ["Mia", "Kai"], now=WHEN)["content"]
-    assert "say so or pass" in said, said
-    assert "never offer to do it" in said, said
+    assert "say so or pass" not in said, said
 
 
 def test_the_tool_is_never_named_as_a_bare_word_in_the_reach_list():

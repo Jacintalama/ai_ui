@@ -330,25 +330,18 @@ def test_the_brief_does_not_itself_contain_a_stray_long_dash():
 # ---------------------------------------------------------------------------
 
 
-def test_a_narrowed_agent_is_told_only_the_tools_it_has():
+def test_a_once_narrowed_agent_keeps_the_general_lines():
+    """A hand-picked list was a limit until 2026-10-28. Lukas: nobody should
+    have to pick tools. Every agent now reaches everything, and each message
+    carries what Jev picked for it (test_agent_auto_tools)."""
     from routes_agent_turn import _identity_line
     mia = {"id": "m", "name": "Mia",
            "meta": {"toolIds": ["gmail"], "toolScope": "picked"}}
     said = _identity_line(mia, ["Mia", "Kai"])["content"]
-    assert "Your tools reach email, and nothing else" in said, said
-    assert "files, apps, connections" not in said
-    assert "never offer to do it" in said
-    assert "find_skills" not in said, "told to call a tool it does not have"
-    assert "tool for remembering" not in said, "told to use memory it lacks"
-
-
-def test_a_narrowed_agent_names_each_of_its_tools():
-    from routes_agent_turn import _identity_line
-    nora = {"id": "n", "name": "Nora",
-            "meta": {"toolIds": ["calendar", "remember"], "toolScope": "picked"}}
-    said = _identity_line(nora, ["Nora"])["content"]
-    assert "Your tools reach the calendar and saved notes" in said, said
-    assert "tool for remembering" in said, "it does hold memory"
+    assert "real account" in said, said
+    assert "and nothing else" not in said
+    assert "find_skills" in said
+    assert "tool for remembering" in said
 
 
 def test_an_unnarrowed_agent_keeps_the_general_lines():
