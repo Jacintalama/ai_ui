@@ -221,9 +221,17 @@ class Pipe:
     def __init__(self):
         self.valves = self.Valves()
 
-    async def _agents_first(self, body: dict, user_email: str) -> Optional[str]:
-        """The rendered reply of whichever agents were named or awake, or
-        None when nobody was and this pipe should answer as usual.
+    async def _agents_first(self, body: dict, user_email: str):
+        """(reply, who) from whichever agents were named or awake, or None
+        when nobody was and this pipe should answer as usual.
+
+        `who` is the agent's name, or "" when the answer came from the
+        assistant: the free model with the tools Jev picked, which carries
+        agent=None on its turn. The difference matters to the person. Said
+        plainly 2026-10-28, after a general-knowledge question came back
+        under "Answered by your agent" with no agent involved at all:
+        "instead of answered by your agent just make it answer directly
+        ... since no mention of his agents".
 
         route_only is what makes this safe to call from here: IO answers
         for itself THROUGH this pipe, so without it the service would ask
@@ -260,7 +268,16 @@ class Pipe:
         rendered = data.get("rendered_web") or data.get("rendered")
         if not (isinstance(rendered, str) and rendered.strip()):
             return None
-        return AIUI_TURNS_STRIP_RE.sub("", rendered).rstrip()
+        # The assistant sets agent=None on its turn. A name here means a real
+        # agent of this person's spoke, and only then is there anybody to
+        # name in the status line.
+        who = ""
+        for t in turns:
+            a = t.get("agent") if isinstance(t, dict) else None
+            if isinstance(a, dict) and a.get("name"):
+                who = str(a["name"])
+                break
+        return AIUI_TURNS_STRIP_RE.sub("", rendered).rstrip(), who
 
     def pipes(self) -> list[dict]:
         return [{"id": "auto", "name": "Auto (Free)"}]
@@ -338,11 +355,18 @@ class Pipe:
         # same as it does on IO, and "chase the overdue invoices" reaches
         # whoever keeps the books. The tasks service decides; this pipe
         # only asks, and says so while the person waits.
-        await self._emit(__event_emitter__, "Choosing who answers...")
-        agents = await self._agents_first(body, (__user__ or {}).get("email") or "")
-        if agents is not None:
-            await self._emit(__event_emitter__, "Answered by your agent", done=True)
-            return agents
+        # No "Choosing who answers..." any more. Nothing is being chosen in
+        # the ordinary case: the person named nobody, so the free model
+        # answers and the line only made the wait look like a decision.
+        answered = await self._agents_first(body, (__user__ or {}).get("email") or "")
+        if answered is not None:
+            reply, who = answered
+            # Named only. The assistant answering is the free model with
+            # hands, and calling that "your agent" is how a question nobody
+            # addressed came back looking as though an agent had taken it.
+            await self._emit(__event_emitter__,
+                             ("Answered by %s" % who) if who else "", done=True)
+            return reply
         await self._emit(__event_emitter__, "", done=True)
 
         candidates = self._candidates(category)

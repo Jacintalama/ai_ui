@@ -185,9 +185,10 @@ async def test_agents_first_never_appends_a_marker(mod, monkeypatch):
         async def post(self, url, json=None, headers=None): return R()
 
     monkeypatch.setattr(mod.httpx, "AsyncClient", C)
-    out = await p._agents_first({"messages": _q("hi team")}, "o@example.com")
+    out, who = await p._agents_first({"messages": _q("hi team")}, "o@example.com")
     assert out == "Ada:\nHello."
     assert "aiui:turns" not in out
+    assert who == "Ada", "a named agent has somebody to name"
 
 
 async def test_a_marker_an_agent_wrote_is_stripped(mod, monkeypatch):
@@ -213,9 +214,10 @@ async def test_a_marker_an_agent_wrote_is_stripped(mod, monkeypatch):
         async def post(self, url, json=None, headers=None): return R()
 
     monkeypatch.setattr(mod.httpx, "AsyncClient", C)
-    out = await p._agents_first({"messages": _q("hi team")}, "o@example.com")
+    out, who = await p._agents_first({"messages": _q("hi team")}, "o@example.com")
     assert "aiui:turns" not in out
     assert "Try" in out and "this." in out
+    assert who == "Ada"
 
 
 # ---------------------------------------------------------------------------
@@ -280,12 +282,15 @@ def test_every_pool_entry_is_a_free_id(mod):
 
 # --- the pipe says what it is doing while the service decides (2026-10-26) --
 
-async def _with_key(mod, monkeypatch, first):
+async def _with_key(mod, monkeypatch, first, who="Mia"):
+    """`first` is the reply, `who` the agent that gave it ("" for the
+    assistant, which is the free model with tools and is nobody's agent).
+    _agents_first returns both since 2026-10-28."""
     p = mod.Pipe()
     p.valves.OPENROUTER_API_KEY = "k"
 
     async def agents_first(body, email):
-        return first
+        return None if first is None else (first, who)
 
     monkeypatch.setattr(p, "_agents_first", agents_first)
     return p
@@ -301,7 +306,32 @@ async def test_the_pipe_says_who_is_being_chosen_and_who_answered(mod, monkeypat
     out = await p.pipe({"messages": _q("chase the overdue invoices")},
                        __user__={"email": "o@example.com"}, __event_emitter__=emitter)
     assert out == "**Mia**\n\nOn it."
-    assert seen == [("Choosing who answers...", False), ("Answered by your agent", True)]
+    # Changed 2026-10-28. "Choosing who answers..." is gone: in the
+    # ordinary case nothing is being chosen, and the line made the wait
+    # look like a decision. A named agent is still named: that is true.
+    assert seen == [("Answered by Mia", True)], seen
+
+
+async def test_the_assistant_answering_is_not_called_your_agent(mod, monkeypatch):
+    """The reported case, 2026-10-28. "hi who is the most richest guy in the
+    world" came back under "Answered by your agent" with no agent involved:
+    tasks.agent_decision had no row for that chat, and tasks.jev_check showed
+    the tool pick returning server:mcp-proxy. So the ASSISTANT answered, which
+    is the free model with the tools Jev picked.
+
+    It carries agent=None on its turn, so there is nobody to name, and the
+    pipe says nothing at all."""
+    p = await _with_key(mod, monkeypatch, "Elon Musk, about $714 billion.", who="")
+    seen = []
+
+    async def emitter(ev):
+        seen.append((ev["data"]["description"], ev["data"]["done"]))
+
+    out = await p.pipe({"messages": _q("who is the richest guy in the world")},
+                       __user__={"email": "o@example.com"}, __event_emitter__=emitter)
+    assert out == "Elon Musk, about $714 billion."
+    assert seen == [("", True)], seen
+    assert not any("agent" in d.lower() for d, _ in seen), seen
 
 
 async def test_the_status_clears_when_the_free_model_answers_instead(mod, monkeypatch):
@@ -319,8 +349,8 @@ async def test_the_status_clears_when_the_free_model_answers_instead(mod, monkey
     out = await p.pipe({"messages": _q("chase the overdue invoices")},
                        __user__={"email": "o@example.com"}, __event_emitter__=emitter)
     assert out == "free model here"
-    assert seen[0] == ("Choosing who answers...", False)
-    assert seen[-1] == ("", True)
+    assert seen == [("", True)], seen
+
 
 
 async def test_the_web_rendering_with_faces_is_preferred(mod, monkeypatch):
@@ -342,8 +372,9 @@ async def test_the_web_rendering_with_faces_is_preferred(mod, monkeypatch):
         async def post(self, url, json=None, headers=None): return R()
 
     monkeypatch.setattr(mod.httpx, "AsyncClient", C)
-    out = await p._agents_first({"messages": _q("hi ada")}, "o@example.com")
+    out, who = await p._agents_first({"messages": _q("hi ada")}, "o@example.com")
     assert out.startswith("![Ada](data:image/svg+xml;base64,AAAA) **Ada**")
+    assert who == "Ada"
 
 
 # --- the chat and Open WebUI's background jobs (2026-10-27) ------------------
