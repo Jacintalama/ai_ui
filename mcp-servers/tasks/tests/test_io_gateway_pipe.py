@@ -377,3 +377,42 @@ def test_a_face_the_service_sent_stands_before_the_name():
     out = p._render({"turns": [{"agent": {"id": "agent-a", "name": "Ada"}, "answer": "Hello.", "notes": []}],
                      "faces": {"agent-a": "javascript:alert(1)"}})
     assert out == "**Ada**\n\nHello."
+
+
+# --- the chat and Open WebUI's background jobs (2026-10-27) ------------------
+# Open WebUI passes the chat as __chat_id__ (metadata is popped off the body),
+# and sends its title, tags and follow-up jobs to the chat's model, marked
+# __task__. With an agent picked that model is this pipe, so every job ran
+# the agent's whole loop, tools included: Ada ran three times for one
+# message on the live site.
+
+async def test_the_chat_open_webui_names_is_the_chat_the_service_hears(mod, monkeypatch):
+    p = mod.Pipe()
+    ask = AsyncMock(return_value={"turns": [{"agent": None, "answer": "Hi.", "notes": []}]})
+    monkeypatch.setattr(p, "_ask_tasks", ask)
+    await p.pipe({"messages": [{"role": "user", "content": "hi"}]},
+                 __user__={"email": "o@example.com"},
+                 __chat_id__="chat-123", __metadata__={"chat_id": "chat-123"})
+    assert ask.await_args.args[1] == "chat-123"
+
+
+async def test_the_metadata_chat_is_used_when_only_it_is_given(mod, monkeypatch):
+    p = mod.Pipe()
+    ask = AsyncMock(return_value={"turns": [{"agent": None, "answer": "Hi.", "notes": []}]})
+    monkeypatch.setattr(p, "_ask_tasks", ask)
+    await p.pipe({"messages": [{"role": "user", "content": "hi"}]},
+                 __user__={"email": "o@example.com"}, __metadata__={"chat_id": "chat-9"})
+    assert ask.await_args.args[1] == "chat-9"
+
+
+@pytest.mark.parametrize("task", ["title_generation", "tags_generation",
+                                  "follow_up_generation"])
+async def test_a_background_job_never_runs_an_agent(mod, monkeypatch, task):
+    p = mod.Pipe()
+    ask = AsyncMock()
+    monkeypatch.setattr(p, "_ask_tasks", ask)
+    out = await p.pipe({"messages": [{"role": "user", "content": "### Task: title"}]},
+                       __user__={"email": "o@example.com"}, __task__=task,
+                       __metadata__={"model": {"id": "agent-ada"}, "task": task})
+    ask.assert_not_awaited()
+    assert out == ""

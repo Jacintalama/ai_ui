@@ -77,6 +77,9 @@
 }
 .cw .ap-composer input[type="text"]:focus { outline: none; border-color: var(--cyan); }
 .cw .ap-composer .btn { flex: 0 0 auto; width: auto; padding: 7px 13px; font-size: 12.5px; border-radius: 999px; }
+/* Talk carries a mic as well as the word; in a 300px window it gives
+   the padding back so the message box keeps the larger share. */
+.cw .ap-composer .ap-mic { padding: 7px 10px; gap: 4px; }
 .cw .aempty { color: var(--muted); font-size: 12.5px; padding: 8px 4px; }
 /* When a message was said: beside the bubble on the agents page, where
    the thread is wide. In a 300px window that same <time>, invisible until

@@ -30,6 +30,8 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 #: accident or because somebody told it to, which makes it text from a model
 #: and not ours to trust. Strip on the way out, append never.
 AIUI_TURNS_STRIP_RE = re.compile(r"<!--\s*aiui:turns\b[^>]*-->")
+# The line _footer appends, so a background job's answer can drop it.
+FOOTER_RE = re.compile(r"\n\n\*Auto-routed to the free \w+ model `[^`]*`\.\*\s*$")
 
 # ---------------------------------------------------------------------------
 # Routing rules (pure, no I/O, unit tested). pick_category returns one of
@@ -298,6 +300,9 @@ class Pipe:
         body: dict,
         __user__: dict = None,
         __event_emitter__: Callable[[dict], Any] = None,
+        __chat_id__: Optional[str] = None,
+        __metadata__: Optional[dict] = None,
+        __task__: Optional[str] = None,
     ) -> Union[str, AsyncIterator[str]]:
         category = pick_category(body.get("messages") or [])
         key = self.valves.OPENROUTER_API_KEY or os.environ.get("OPENROUTER_API_KEY", "")
@@ -306,6 +311,27 @@ class Pipe:
                     "Add it to the environment or this function's valves.")
         if not body.get("messages"):
             return "No message to answer."
+
+        if __task__:
+            # Open WebUI's own background job (a title, tags, follow ups),
+            # sent here because no task model is set. It is not a message
+            # from the person, so it never reaches the agents: on 2026-10-27
+            # these ran an agent three times for one message. The free model
+            # answers it as it always did, whole, with no footer, which would
+            # otherwise end up inside the title.
+            candidates = _keep_available(self._candidates(category),
+                                         await _available_models(key))
+            out = await self._complete({**body, "stream": False},
+                                       self._headers(key), category, candidates, None)
+            return FOOTER_RE.sub("", out) if isinstance(out, str) else out
+
+        # Open WebUI pops `metadata` off the body before a pipe sees it and
+        # hands the chat over as __chat_id__. Without it every chat was
+        # "web", so a pin or a held question followed the person into every
+        # other chat.
+        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
+        if chat_id:
+            body = {**body, "chat_id": chat_id}
 
         # An agent named, awake, or the one Jev is sure should take this
         # answers instead of a free model, so "hi mia" reaches Mia here the
@@ -324,15 +350,18 @@ class Pipe:
         # fail identically from here, so without this the pool gets burned on
         # models that could not have answered whatever was asked.
         candidates = _keep_available(candidates, await _available_models(key))
-        headers = {
+        headers = self._headers(key)
+        if body.get("stream"):
+            return self._stream(body, headers, category, candidates, __event_emitter__)
+        return await self._complete(body, headers, category, candidates, __event_emitter__)
+
+    def _headers(self, key: str) -> dict:
+        return {
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
             "HTTP-Referer": "https://ai-ui.coolestdomain.win",
             "X-Title": "AIUI Auto Router",
         }
-        if body.get("stream"):
-            return self._stream(body, headers, category, candidates, __event_emitter__)
-        return await self._complete(body, headers, category, candidates, __event_emitter__)
 
     def _footer(self, category: str, model: str) -> str:
         return (f"\n\n*Auto-routed to the free {category} model `{model}`.*"

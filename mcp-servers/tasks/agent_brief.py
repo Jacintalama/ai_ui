@@ -77,11 +77,12 @@ _TOOL_WORDS = {
 def _own_tools(agent: dict):
     """This agent's own tools when it is narrowed, or None when it reaches
     everything. The same rule tools_for_agent applies, so the brief and the
-    tools actually attached can never describe different agents."""
-    meta = agent.get("meta") if isinstance(agent.get("meta"), dict) else {}
-    own = [t for t in (meta.get("toolIds") or []) if isinstance(t, str)]
-    if meta.get("toolScope") == TOOL_SCOPE_PICKED and own:
-        return own
+    tools actually attached can never describe different agents.
+
+    Always None since 2026-10-28: nobody ticks tools any more, every agent
+    reaches everything and each message carries what Jev picked for it
+    (routes_agent_turn._auto_tools). A "picked" scope saved before then is
+    no longer a limit, here or there."""
     return None
 
 

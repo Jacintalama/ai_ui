@@ -55,19 +55,14 @@ async def test_all_is_the_same_as_no_setting(monkeypatch, everything):
     assert sorted(a) == sorted(b)
 
 
-async def test_picked_means_picked(monkeypatch, everything):
-    """The point of the change. Ralph said yes to this being real: an agent
-    limited to Gmail says it cannot check the calendar, rather than quietly
-    checking it."""
+async def test_a_picked_scope_is_no_longer_a_limit(monkeypatch, everything):
+    """A hand-picked list was a limit until 2026-10-28. Lukas: nobody should
+    have to pick tools. Every agent now reaches everything, and each message
+    carries what Jev picked for it (test_agent_auto_tools)."""
     tools = await _tools(monkeypatch,
                          {"toolIds": ["gmail"], "toolScope": "picked"})
-    assert tools == ["gmail"]
-
-
-async def test_picking_several_keeps_them_all(monkeypatch, everything):
-    tools = await _tools(
-        monkeypatch, {"toolIds": ["gmail", "calendar"], "toolScope": "picked"})
-    assert sorted(tools) == ["calendar", "gmail"]
+    assert tools[0] == "gmail"
+    assert "calendar" in tools and len(tools) >= 12
 
 
 async def test_picking_nothing_falls_back_to_everything(monkeypatch, everything):
