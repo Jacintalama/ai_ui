@@ -1116,6 +1116,32 @@
         </div>
         <div class="form-error" id="rules-error"></div>
 
+        <!-- Events out (2026-10-28): a URL the platform posts to when
+             something of yours happens. -->
+        <h3 class="auto-h3" style="margin-top:22px">Events out</h3>
+        <div class="hint" style="margin-bottom:10px">Give a URL and the
+          platform posts there when something of yours happens: a build
+          finished, a scheduled run ended, an automation ran, an agent asked
+          a question, a question was answered, minutes were taken. Each post
+          is signed with the hook's secret (<code>X-IO-Signature</code>).</div>
+        <div id="hooks-new" class="auto-new" hidden>
+          <div class="hint" style="margin-bottom:6px">The hook's secret. Copy
+            it now: it is not shown again.</div>
+          <div class="auto-key-row">
+            <code id="hooks-secret" class="auto-key"></code>
+            <button class="btn" type="button" id="hooks-copy">Copy</button>
+          </div>
+        </div>
+        <div id="hooks-list"></div>
+        <div class="auto-form-row" style="margin-top:10px; flex-wrap: wrap">
+          <input id="hook-url" type="url" maxlength="2000" placeholder="https://..."
+                 aria-label="Hook URL" style="flex:2; min-width:200px">
+          <input id="hook-label" type="text" maxlength="60" placeholder="Label (n8n)"
+                 aria-label="Hook label" style="flex:1; min-width:120px">
+          <button class="btn primary" type="button" id="hook-add">Add hook</button>
+        </div>
+        <div class="form-error" id="hooks-error"></div>
+
         <h3 class="auto-h3" style="margin-top:22px">Keys</h3>
         <div class="hint" style="margin-bottom:14px">A key lets n8n, or any
           script, run one of your agents from outside: send it as
@@ -3415,13 +3441,114 @@
       }
       document.getElementById("rule-add").addEventListener("click", addRule);
 
+      // --- events out (2026-10-28) ---------------------------------------
+      var HOOKS_URL = "/api/tasks/events/hooks";
+      function hooksError(msg) { document.getElementById("hooks-error").textContent = msg || ""; }
+      function drawHooks(list) {
+        var host = document.getElementById("hooks-list");
+        host.innerHTML = "";
+        if (!list.length) {
+          host.innerHTML = '<div class="hint">No hooks yet. Nothing is posted anywhere.</div>';
+          return;
+        }
+        list.forEach(function (h) {
+          var row = document.createElement("div");
+          row.className = "auto-rule" + (h.enabled ? "" : " paused");
+          row.setAttribute("data-hook-id", h.id);
+          var name = document.createElement("div");
+          name.className = "auto-rule-name";
+          name.textContent = (h.label || "Hook") + (h.enabled ? "" : " (paused)");
+          var small = document.createElement("small");
+          small.textContent = h.url + (h.last_result ? ", last: " + h.last_result : ", never sent")
+            + ((h.events || []).indexOf("*") !== -1 ? ", every event" : ", " + (h.events || []).join(", "));
+          name.appendChild(small);
+          row.appendChild(name);
+          var acts = document.createElement("div");
+          acts.className = "auto-rule-acts";
+          [["data-hook-test", "Send a test"], ["data-hook-toggle", h.enabled ? "Pause" : "Resume"],
+           ["data-hook-delete", "Delete"]].forEach(function (p) {
+            var b = document.createElement("button");
+            b.className = "btn"; b.type = "button"; b.textContent = p[1];
+            b.setAttribute(p[0], h.id);
+            acts.appendChild(b);
+          });
+          row.appendChild(acts);
+          var note = document.createElement("div");
+          note.className = "auto-rule-last";
+          note.setAttribute("data-hook-note", h.id);
+          row.appendChild(note);
+          host.appendChild(row);
+        });
+      }
+      async function loadHooks() {
+        hooksError("");
+        try {
+          var body = await getJson(HOOKS_URL);
+          drawHooks(body.hooks || []);
+        } catch (e) {
+          hooksError("Could not load your hooks. Try again.");
+        }
+      }
+      async function addHook() {
+        hooksError("");
+        try {
+          var made = await sendAuto("POST", HOOKS_URL, {
+            url: document.getElementById("hook-url").value.trim(),
+            label: document.getElementById("hook-label").value.trim(),
+            events: ["*"]
+          });
+          document.getElementById("hooks-secret").textContent = made.secret || "";
+          document.getElementById("hooks-new").hidden = !made.secret;
+          document.getElementById("hook-url").value = "";
+          document.getElementById("hook-label").value = "";
+          await loadHooks();
+        } catch (e) {
+          hooksError((e && e.message) || "Could not add the hook. Try again.");
+        }
+      }
+      async function hookAction(btn) {
+        hooksError("");
+        try {
+          if (btn.hasAttribute("data-hook-test")) {
+            var id = btn.getAttribute("data-hook-test");
+            var out = await sendAuto("POST", HOOKS_URL + "/" + encodeURIComponent(id) + "/test");
+            var note = document.querySelector('[data-hook-note="' + id + '"]');
+            if (note) note.textContent = out.note || (out.ok ? "The URL answered." : "The URL did not answer.");
+            return;
+          }
+          if (btn.hasAttribute("data-hook-toggle")) {
+            var row = btn.closest("[data-hook-id]");
+            await sendAuto("PATCH", HOOKS_URL + "/" + encodeURIComponent(btn.getAttribute("data-hook-toggle")),
+                           { enabled: row.classList.contains("paused") });
+          } else if (btn.hasAttribute("data-hook-delete")) {
+            if (!window.confirm("Delete this hook? Nothing more is posted to it.")) return;
+            await sendAuto("DELETE", HOOKS_URL + "/" + encodeURIComponent(btn.getAttribute("data-hook-delete")));
+          } else {
+            return;
+          }
+          await loadHooks();
+        } catch (e) {
+          hooksError((e && e.message) || "That did not work. Try again.");
+        }
+      }
+      document.getElementById("hook-add").addEventListener("click", addHook);
+      document.getElementById("hooks-copy").addEventListener("click", function () {
+        var t = document.getElementById("hooks-secret").textContent;
+        if (t && navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(t).catch(function () {});
+        }
+      });
+
       function openAutomation() {
         document.getElementById("automation-new").hidden = true;
         document.getElementById("automation-key").textContent = "";
+        document.getElementById("hooks-new").hidden = true;
+        document.getElementById("hooks-secret").textContent = "";
         openDialog("automation-overlay");
         loadApprovals();
         loadAutomations();
         loadRules();
+        loadHooks();
         loadKeys();
       }
       async function makeKey() {
@@ -3481,6 +3608,8 @@
         if (no) { decideApproval(no.getAttribute("data-refuse"), false); return; }
         var rd = ev.target.closest("[data-rule-delete]");
         if (rd) { deleteRule(rd.getAttribute("data-rule-delete")); return; }
+        var hk = ev.target.closest("[data-hook-id] button");
+        if (hk) { hookAction(hk); return; }
         var act = ev.target.closest(".auto-rule:not(.approval) button");
         if (act) autoAction(act);
       });

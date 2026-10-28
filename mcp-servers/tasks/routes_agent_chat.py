@@ -38,6 +38,7 @@ import agent_decider
 import agent_jev
 import agent_job_triage
 import agent_minutes
+import events_out
 import agent_routing
 import agent_skills
 from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS, FREE_POOL_EXHAUSTED,
@@ -969,6 +970,10 @@ async def _minutes_events(email: str, messages: list[dict], tid: str,
                      "minutes": True})
     agent_events.publish("speaking_started", agent_id=lead_id,
                          user_email=email, chars=len(got["text"]))
+    events_out.emit(email, "minutes.taken", {
+        "agent_id": lead_id, "agent_name": lead_name, "question": asked,
+        "text": got["text"], "todo": got.get("todo") or [],
+        "written": got.get("written", 0)})
     yield {"event": "message",
            "data": render.into_turn(tid, render.agent_bubble(
                lead_name, got["text"], None, label=agent_minutes.LABEL, at=at))}

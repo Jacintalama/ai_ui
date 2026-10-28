@@ -21,6 +21,7 @@ import agent_access
 import agent_approvals
 import agent_events
 import automations
+import events_out
 from routes_agent_turn import _run_turn
 from routes_automation import _slots
 
@@ -150,4 +151,9 @@ async def fire(automation: dict, payload, agent_name: str = "") -> dict:
                               status, shown) if shown else "none"
     await automations.record_run(email, automation["id"], status, summary,
                                  shown, delivered)
+    events_out.emit(email, "automation.finished", {
+        "automation_id": str(automation["id"]), "name": automation.get("name", ""),
+        "agent_id": automation["agent_id"], "agent_name": agent_name or automation["agent_id"],
+        "status": status, "trigger": summary, "answer": answer, "notes": notes,
+        "delivered": delivered})
     return {"status": status, "answer": answer, "notes": notes, "delivered": delivered}

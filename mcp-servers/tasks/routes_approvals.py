@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 import agent_approvals
 import automations
+import events_out
 from auth import CurrentUser, current_user
 
 logger = logging.getLogger("routes_approvals")
@@ -86,8 +87,15 @@ async def hold_and_tell(email: str, agent_id: str, agent_name: str, pending: dic
     """Write a held question down and say how to answer it. Returns the
     row, or None when it could not be written."""
     question = question_for(agent_name, pending.get("calls") or [])
-    return await agent_approvals.hold(email, agent_id, agent_name, pending,
-                                      origin, origin_ref, question)
+    row = await agent_approvals.hold(email, agent_id, agent_name, pending,
+                                     origin, origin_ref, question)
+    if row:
+        events_out.emit(email, "approval.requested", {
+            "approval_id": row["id"], "agent_id": agent_id, "agent_name": agent_name,
+            "origin": origin, "origin_ref": origin_ref, "question": question,
+            "tools": [str(((c.get("function") or {}).get("name")) or "")
+                      for c in pending.get("calls") or [] if isinstance(c, dict)]})
+    return row
 
 
 async def decide(email: str, approval_id: str, approved: bool, via: str) -> dict:
@@ -134,6 +142,10 @@ async def decide(email: str, approval_id: str, approved: bool, via: str) -> dict
                 email, row["origin_ref"], agent["name"], status, shown)
         elif row.get("origin") == agent_approvals.ORIGIN_CHAT and via != agent_approvals.VIA_CHAT:
             delivered = await _deliver_chat_seam(email, agent["id"], agent["name"], shown)
+    events_out.emit(email, "approval.decided", {
+        "approval_id": approval_id, "agent_id": agent["id"], "agent_name": agent["name"],
+        "approved": approved, "via": via, "origin": row.get("origin"),
+        "status": status, "answer": answer, "notes": notes, "delivered": delivered})
     return {"status": status, "answer": answer, "notes": notes, "agent": agent,
             "delivered": delivered}
 

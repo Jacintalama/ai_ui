@@ -249,6 +249,19 @@ inside the tool loop (`agent_runner._standing_rules`) before a call is held.
 An automation's agent on Ask now asks (`SURFACE_AUTOMATION` → `MODE_ASK`) and
 the run records `waiting`. See `docs/automations.md`.
 
+### Events out (2026-10-28)
+`events_out.emit(email, event, data)` is fire-and-forget: a background task
+POSTs a signed JSON envelope to every enabled hook of that person that wants
+the event (`tasks.event_hook`, migration 062; `X-IO-Signature` is
+`sha256=` HMAC of the body under the hook's secret; three tries on a 5xx).
+Events: `build.finished` (end of `routes_execution._run_execution`),
+`schedule.finished` (`scheduler._finalize_run`), `automation.finished`
+(`automation_runner.fire`), `approval.requested` / `approval.decided`
+(`routes_approvals`), `minutes.taken` (`routes_agent_chat._minutes_events`).
+Hooks are made under **Events out** on the Automation panel
+(`routes_events.py`, URL checked with `callback_problem`). Nothing on the way
+out can reach the thing that happened. See `docs/automations.md`.
+
 ### Hard rules
 - **NEVER deploy your local `mcp-servers/tasks/templates.py`.** The server's copy is ahead (more App Builder templates). Pull the server's version before editing, or you'll silently drop templates.
 - **NEVER touch, overwrite, or commit `.env`** — the server's `.env` holds the only copy of the real production secrets.
