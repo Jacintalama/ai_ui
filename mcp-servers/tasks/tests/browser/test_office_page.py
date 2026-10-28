@@ -2869,6 +2869,33 @@ def test_a_bubble_in_a_chat_window_is_not_squeezed_by_its_time_stamp(page):
     assert when.evaluate("el => getComputedStyle(el).position") == "absolute"
 
 
+def test_a_chat_window_has_no_sideways_scroll_and_room_to_read(page):
+    """2026-10-28 screenshot: the Team window scrolled sideways. A "Watch
+    it build" card's unwrapped address made it ~700px in a 300px window
+    (measured on the live page), and the window was too small to read."""
+    build = ("Started it: https://ai-ui.coolestdomain.win/tasks/static/preview.html"
+             "?task=6f1c2d9e-4b7a-4c55-9d1e-8a2b3c4d5e6f-and-a-long-tail")
+    page.route("**/tasks/agents/chat/thread**", lambda r: r.fulfill(
+        status=200, content_type="text/html",
+        body=render.thread([{"role": "user", "content": "Build it", "turn_id": "t1",
+                             "at": "2026-10-28T09:00:00+00:00"},
+                            {"role": "assistant", "agent_name": "Mia", "content": build,
+                             "at": "2026-10-28T09:00:30+00:00"}])))
+    page.locator('.who-chat[data-id="agent-iris-a103"]').click()
+    win = page.locator('#chatdock .cw[data-chat="agent-iris-a103"]')
+    win.locator(".am.agent .acard").wait_for(state="visible")
+    got = win.evaluate(
+        "w => { const t = w.querySelector('.ap-thread');"
+        " return { scroll: t.scrollWidth, client: t.clientWidth,"
+        "          card: w.querySelector('.acard').getBoundingClientRect().right,"
+        "          edge: t.getBoundingClientRect().right,"
+        "          width: w.getBoundingClientRect().width,"
+        "          height: w.getBoundingClientRect().height }; }")
+    assert got["scroll"] <= got["client"], got
+    assert got["card"] <= got["edge"], got
+    assert got["width"] >= 360 and got["height"] >= 480, got
+
+
 # --- a build is the agent working (2026-10-17) ---------------------------------
 
 def test_an_agent_building_an_app_is_drawn_building(page):

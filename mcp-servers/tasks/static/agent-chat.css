@@ -433,8 +433,12 @@
 /* An app an agent just built or changed, as something to open. It sits under
    the answer rather than replacing the link in it: the sentence explains what
    changed, and this is where you go. */
+/* max-width: the unwrapped address is the card's minimum width, so without
+   it a long preview link made the card ~700px in a 300px office window and
+   the thread scrolled sideways (2026-10-28). */
 .acard {
   display: flex; align-items: center; gap: 10px; margin-top: 8px;
+  max-width: 100%; box-sizing: border-box;
   padding: 9px 11px; border-radius: var(--radius-lg);
   background: var(--surface-2); border: 1px solid var(--border-2);
   color: inherit; text-decoration: none;
