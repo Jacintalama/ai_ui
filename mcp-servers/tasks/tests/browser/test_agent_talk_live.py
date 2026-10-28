@@ -82,6 +82,9 @@ async def test_talking_to_an_agent_is_answered_out_loud_with_picked_tools():
     assert agent, "the test account has no agents"
     agent_id, name = agent[0]
     since = datetime.now(timezone.utc)
+    # The service keeps one tool pick per message for two minutes, so a
+    # sentence another live test just sent would not ask Jev again.
+    tag = since.strftime("%H%M%S")
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
@@ -135,12 +138,14 @@ async def test_talking_to_an_agent_is_answered_out_loud_with_picked_tools():
                 await page.wait_for_timeout(1500)
                 return speech[heard]
 
-            status, kind, body = await talk("in one short sentence, who are you?")
+            status, kind, body = await talk(
+                "in one short sentence, who are you? (check %s)" % tag)
             assert status == 200 and kind.startswith("audio/mpeg"), (status, kind)
             assert body["voice"], body
             assert len(body["input"]) > 5, body
 
-            status, kind, body = await talk("what is on my calendar tomorrow")
+            status, kind, body = await talk(
+                "what is on my calendar tomorrow? (check %s)" % tag)
             assert status == 200 and kind.startswith("audio/mpeg"), (status, kind)
             plays = await page.evaluate("() => window.__plays")
             assert plays and all(p["started"] is True for p in plays), plays

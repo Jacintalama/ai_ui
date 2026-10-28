@@ -158,14 +158,18 @@ def _now():
 
 
 async def test_auto_answers_with_a_tool_jev_picked(site):
-    """A calendar question on Auto: IO answers, not the bare free model, and
-    Jev handed it the calendar."""
+    """A calendar question on Auto: our loop answers, not the bare free
+    model, and Jev handed it the calendar. Which of the two answers is
+    Jev's call (2026-10-28: it gave the question to Mia, whose reply then
+    held up), so either IO or one of the person's agents may take it."""
     since = _now()
     await _open(site, AUTO)
     reply = await _send(site, "what is on my calendar tomorrow")
     assert FALLBACK not in reply["text"], reply
     assert len(reply["text"]) > 20, reply
-    runs = await _runs_since("io-assistant", since)
+    runs = await _rows(
+        "select agent_id, status from tasks.agent_run where user_email = :e "
+        "and started_at >= :t order by started_at", e=EMAIL, t=since)
     assert [r.status for r in runs] == ["completed"], runs
     picks = await _rows(
         "select outcome from tasks.jev_check where user_email = :e and "
