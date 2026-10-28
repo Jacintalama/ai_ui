@@ -25,6 +25,7 @@ import httpx
 
 import agent_access
 import agent_activity
+import agent_approvals
 import agent_brief
 import agent_escalation
 import agent_llm
@@ -319,6 +320,10 @@ def _router_gave_up(content) -> bool:
 #: replaced. The pool is now paid ids with no ":free" suffix, which is why
 #: membership is decided by _in_pool and not by the suffix.
 #:
+#: Seam: this person's standing approval rules (agent_approvals.rules_for).
+#: Tests hand the loop a list instead of a database.
+_standing_rules = agent_approvals.rules_for
+
 #: Must stay in step with AGENT_FREE_MODELS in docker-compose.unified.yml,
 #: which is what actually sets it on the server.
 FREE_MODELS = [m.strip() for m in os.environ.get(
@@ -734,6 +739,9 @@ async def _chat(token: str, model: str, messages: list[dict],
     convo = list(messages)
     notes: list[str] = []
     mode = tool_mode or agent_access.MODE_READ_ONLY
+    # This person's standing approval rules, read the first time a write
+    # would be held and kept for the rest of the turn.
+    rules: list[dict] | None = None
     write_allowed = mode == agent_access.MODE_FULL
     # Set before the loop so a tuned-down max_iterations of 0 still has
     # something defined to return, instead of an UnboundLocalError.
@@ -954,7 +962,26 @@ async def _chat(token: str, model: str, messages: list[dict],
                     result = await execute_tool_call(call, user_email, tool_ids,
                                                      model, outcome=outcome)
                 elif is_write_call(name, probe) and not write_allowed:
+                    # A standing rule answers the usual question before it
+                    # is asked (agent_approvals, 2026-10-28): "allow sends
+                    # to our own domain", "never delete". Read once per
+                    # turn, and only for a turn that may ask at all.
+                    ruled = None
                     if mode == agent_access.MODE_ASK:
+                        if rules is None:
+                            rules = await _standing_rules(user_email)
+                        ruled = agent_approvals.rule_decision(rules, name, probe)
+                    if ruled is not None and ruled.get("decision") == agent_approvals.ALLOW:
+                        result = await execute_tool_call(call, user_email, tool_ids,
+                                                         model, outcome=outcome)
+                    elif ruled is not None:
+                        why = ("your rule" + (" '" + str(ruled.get("label")) + "'"
+                                              if ruled.get("label") else "")
+                               + " denies it")
+                        notes.append("Declined to run " + label + ", because " + why + ".")
+                        result = outcome.refused(
+                            "Refused: " + why + ", so " + label + " was not run.")
+                    elif mode == agent_access.MODE_ASK:
                         # Held back, not refused. The turn ends below and picks
                         # up again once the owner answers.
                         pending.append(call)
@@ -963,12 +990,13 @@ async def _chat(token: str, model: str, messages: list[dict],
                             call,
                             ToolOutcome(status=agent_activity.STEP_HELD))
                         continue
-                    notes.append(
-                        "Declined to run " + label + ", because "
-                        + refusal_reason + ".")
-                    result = outcome.refused(
-                        "Refused: " + refusal_reason + ", so "
-                        + label + " was not run.")
+                    else:
+                        notes.append(
+                            "Declined to run " + label + ", because "
+                            + refusal_reason + ".")
+                        result = outcome.refused(
+                            "Refused: " + refusal_reason + ", so "
+                            + label + " was not run.")
                 else:
                     # tool_ids scopes which native tools this agent is even
                     # allowed to run, not only which ones the model was told

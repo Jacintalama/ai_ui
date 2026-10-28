@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 import agent_access
+import agent_approvals
 import agent_avatar
 import agent_activity
 import agent_brief
@@ -1238,22 +1239,76 @@ async def chat(body: ChatIn,
         return await _route_chat(body, x_internal_secret)
     key = _pending_key(_pin_key(body.chat_id, body.user_email))
     held = await _read_pending(key)
+    text = agent_routing.last_user_text(body.messages)
+    answer = agent_routing.answers_yes_or_no(text)
     if held is not None:
         await _clear_pending(key)
-        text = agent_routing.last_user_text(body.messages)
-        answer = agent_routing.answers_yes_or_no(text)
         same_person = (str(held.get("user_email") or "").lower()
                        == (body.user_email or "").lower())
         if answer is not None and same_person and held.get("agent_id"):
+            # The question has a row too (agent_approvals): settled first,
+            # so an answer already given on the Agents page is not run a
+            # second time here.
+            row_id = str(held.get("approval_id") or "")
+            if row_id and not await agent_approvals.settle(
+                    body.user_email, row_id, answer, agent_approvals.VIA_CHAT):
+                return _reply([{"agent": None, "answer": ALREADY_ANSWERED,
+                                "notes": []}], queue=[], marker="")
             out = await _resume_held(body, held, answer)
             if out is not None:
                 return out
+    elif answer is not None:
+        # Nothing held in this chat, but a bare yes or no may be for a
+        # question asked somewhere else: an automation's agent, or another
+        # chat. One waiting question is answered; more than one is listed,
+        # since "yes" says nothing about which.
+        out = await _answer_waiting(body, answer)
+        if out is not None:
+            return out
     out = await _route_chat(body, x_internal_secret)
     for turn in out.get("turns") or []:
         if _held(turn):
-            await _write_pending(key, turn["pending"])
+            pending = dict(turn["pending"])
+            who = turn.get("agent") if isinstance(turn.get("agent"), dict) else {}
+            row = await agent_approvals.hold(
+                body.user_email, str(pending.get("agent_id") or ""),
+                str(who.get("name") or pending.get("agent_id") or ""), pending,
+                agent_approvals.ORIGIN_CHAT, key,
+                approval_question(who.get("name") or pending.get("agent_id"),
+                                  pending.get("calls") or []))
+            if row:
+                pending["approval_id"] = row["id"]
+            await _write_pending(key, pending)
             break
     return out
+
+
+#: Said when a yes or no arrives for a question answered elsewhere already.
+ALREADY_ANSWERED = "That was already answered, so nothing more was done."
+
+
+async def _answer_waiting(body: ChatIn, approved: bool) -> dict | None:
+    """A bare yes or no with nothing held in this chat: the one question
+    waiting elsewhere, or a list of them. None when nothing waits and the
+    message goes on to be routed as usual."""
+    waiting = await agent_approvals.pending_for(body.user_email)
+    if not waiting:
+        return None
+    if len(waiting) > 1:
+        lines = ["More than one question is waiting, so I did not guess which "
+                 "you meant:"]
+        for w in waiting:
+            lines.append("- %s: %s" % (w.get("agent_name") or w.get("agent_id"),
+                                       (w.get("question") or "").split("\n")[0]))
+        lines.append("Answer them on the Agents page under Automation.")
+        return _reply([{"agent": None, "answer": "\n".join(lines), "notes": []}],
+                      queue=[], marker="")
+    import routes_approvals
+    out = await routes_approvals.decide(body.user_email, waiting[0]["id"], approved,
+                                        agent_approvals.VIA_CHAT)
+    turn = {"agent": out.get("agent"), "answer": out.get("answer") or "",
+            "notes": out.get("notes") or []}
+    return _reply([turn], queue=[], marker="")
 
 
 async def _resume_held(body: ChatIn, held: dict, approved: bool) -> dict | None:

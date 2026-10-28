@@ -2079,3 +2079,90 @@ def test_a_refused_automation_shows_the_servers_sentence(page):
     page.locator("#auto-create").click()
     page.wait_for_function(
         "() => document.getElementById('automations-error').textContent.includes('Tell the agent')")
+
+
+# --- approvals from anywhere (2026-10-28) -------------------------------------
+
+def _approvals_route(page, approvals, rules):
+    def route(r):
+        url, method = r.request.url, r.request.method
+        path = url.split("?")[0].rstrip("/")
+        if path.endswith("/api/tasks/approvals") and method == "GET":
+            body = {"approvals": [a for a in approvals if a["status"] == "pending"]}
+        elif "/api/tasks/approvals/" in path and path.endswith("/decide") and method == "POST":
+            aid = path.rsplit("/", 2)[1]
+            sent = json.loads(r.request.post_data or "{}")
+            for a in approvals:
+                if a["id"] == aid:
+                    a["status"] = "approved" if sent["approved"] else "refused"
+                    a["sent"] = sent
+            body = {"status": "done", "answer": "Sent to Bo." if sent["approved"] else "Not sent.",
+                    "notes": [], "agent": {"id": "agent-mine-a1b2", "name": "Researcher"}, "delivered": "chat"}
+        elif path.endswith("/api/tasks/approvals/rules") and method == "GET":
+            body = {"rules": list(rules)}
+        elif path.endswith("/api/tasks/approvals/rules") and method == "POST":
+            sent = json.loads(r.request.post_data or "{}")
+            rules.append({"id": "r%d" % (len(rules) + 1), "tool": sent["tool"].lower(),
+                          "decision": sent["decision"], "when_contains": sent.get("when_contains", ""),
+                          "label": sent.get("label", ""), "sent": sent})
+            body = rules[-1]
+        elif "/api/tasks/approvals/rules/" in path and method == "DELETE":
+            rid = path.rsplit("/", 1)[1]
+            rules[:] = [x for x in rules if x["id"] != rid]
+            body = {"deleted": True}
+        else:
+            r.fallback()
+            return
+        r.fulfill(status=200, content_type="application/json", body=json.dumps(body))
+    page.route("**/api/tasks/approvals**", route)
+
+
+def test_a_waiting_question_is_shown_and_answered_from_the_panel(page):
+    approvals = [{"id": "ap1", "agent_id": "agent-mine-a1b2", "agent_name": "Researcher",
+                  "question": "Researcher wants to run:\n  send_email\n     to: bo@acme.com\n\nReply yes to let it, or no to skip.",
+                  "status": "pending", "origin": "automation"}]
+    rules = []
+    _approvals_route(page, approvals, rules)
+    _autos_route(page, [])
+    _keys_route(page, [])
+    page.locator("#open-automation").click()
+    page.wait_for_selector("#automation-panel", state="visible")
+    row = page.locator('[data-approval-id="ap1"]')
+    row.wait_for(state="visible")
+    assert "Researcher asks:" in row.inner_text() and "send_email" in row.inner_text()
+    row.locator("[data-approve]").click()
+    page.wait_for_function(
+        "() => (document.querySelector('[data-approval-answer=\"ap1\"]') || {}).textContent === 'Sent to Bo.'")
+    assert approvals[0]["sent"] == {"approved": True}
+    assert row.locator(".auto-rule-acts").is_hidden()
+
+
+def test_no_waiting_question_means_no_section(page):
+    _approvals_route(page, [], [])
+    _autos_route(page, [])
+    _keys_route(page, [])
+    page.locator("#open-automation").click()
+    page.wait_for_selector("#automation-panel", state="visible")
+    page.wait_for_timeout(200)
+    assert page.locator("#approvals-wrap").is_hidden()
+
+
+def test_a_standing_rule_is_added_listed_and_deleted(page):
+    rules = []
+    _approvals_route(page, [], rules)
+    _autos_route(page, [])
+    _keys_route(page, [])
+    page.locator("#open-automation").click()
+    page.wait_for_selector("#automation-panel", state="visible")
+    assert "No rules yet" in page.locator("#rules-list").inner_text()
+    page.fill("#rule-tool", "send_email")
+    page.select_option("#rule-decision", "allow")
+    page.fill("#rule-when", "@acme.com")
+    page.locator("#rule-add").click()
+    row = page.locator('[data-rule-id="r1"]')
+    row.wait_for(state="visible")
+    assert rules[0]["sent"] == {"tool": "send_email", "decision": "allow", "when_contains": "@acme.com"}
+    assert "Allow send_email when it contains" in row.inner_text()
+    row.locator("[data-rule-delete]").click()
+    row.wait_for(state="detached")
+    assert "No rules yet" in page.locator("#rules-list").inner_text()

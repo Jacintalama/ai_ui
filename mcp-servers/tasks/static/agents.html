@@ -698,6 +698,7 @@
   .auto-rule-url code { flex: 1; font-size: 11px; word-break: break-all; user-select: all; }
   .auto-rule-acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
   .auto-rule-last { color: var(--muted); font-size: 12px; margin-top: 6px; white-space: pre-wrap; }
+  .approval-q { font-size: 12px; white-space: pre-wrap; margin: 6px 0 0; color: var(--muted); }
   .auto-new { padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--border);
               border-radius: 8px; }
   .auto-key-row { display: flex; gap: 8px; align-items: center; }
@@ -1059,6 +1060,12 @@
       <div class="modal" id="automation-panel" role="dialog" aria-modal="true"
            aria-labelledby="automation-title" tabindex="-1">
         <h2 id="automation-title">Automation</h2>
+        <!-- Approvals from anywhere (2026-10-28): what an agent stopped to
+             ask, from an automation or another chat, answered here. -->
+        <div id="approvals-wrap" hidden>
+          <h3 class="auto-h3">Waiting for your yes</h3>
+          <div id="approvals-list"></div>
+        </div>
         <!-- Automations (2026-10-27): rules of your own. When something
              POSTs to the rule's URL, the agent does what the rule says and
              the answer goes where you chose. -->
@@ -1086,6 +1093,28 @@
           </div>
         </div>
         <div class="form-error" id="automations-error"></div>
+
+        <!-- Standing rules (2026-10-28): the usual questions, answered
+             before they are asked. -->
+        <h3 class="auto-h3" style="margin-top:22px">Standing rules</h3>
+        <div class="hint" style="margin-bottom:10px">Answer the usual
+          questions once. A rule allows or denies a tool, always or only
+          when the call mentions some text: allow <code>send_email</code>
+          when it contains <code>@yourcompany.com</code>, deny
+          <code>delete_*</code>. Deny wins.</div>
+        <div id="rules-list"></div>
+        <div class="auto-form-row" style="margin-top:10px; flex-wrap: wrap">
+          <input id="rule-tool" type="text" maxlength="120" placeholder="Tool (send_email, create_*)"
+                 aria-label="Tool" style="flex:1; min-width:160px">
+          <select id="rule-decision" aria-label="Allow or deny" style="flex:0 0 auto">
+            <option value="allow">Allow</option>
+            <option value="deny">Deny</option>
+          </select>
+          <input id="rule-when" type="text" maxlength="120" placeholder="Only when the call contains (optional)"
+                 aria-label="When the call contains" style="flex:1; min-width:160px">
+          <button class="btn primary" type="button" id="rule-add">Add rule</button>
+        </div>
+        <div class="form-error" id="rules-error"></div>
 
         <h3 class="auto-h3" style="margin-top:22px">Keys</h3>
         <div class="hint" style="margin-bottom:14px">A key lets n8n, or any
@@ -3286,11 +3315,129 @@
       }
       document.getElementById("auto-create").addEventListener("click", createAutomation);
 
+      // --- waiting questions (2026-10-28) ----------------------------
+      var APPROVALS_URL = "/api/tasks/approvals";
+      function drawApprovals(list) {
+        var wrap = document.getElementById("approvals-wrap");
+        var host = document.getElementById("approvals-list");
+        host.innerHTML = "";
+        wrap.hidden = !list.length;
+        list.forEach(function (a) {
+          var row = document.createElement("div");
+          row.className = "auto-rule approval";
+          row.setAttribute("data-approval-id", a.id);
+          var q = document.createElement("div");
+          q.className = "auto-rule-name";
+          q.textContent = (a.agent_name || a.agent_id) + " asks:";
+          var pre = document.createElement("pre");
+          pre.className = "approval-q";
+          pre.textContent = a.question || "";
+          var acts = document.createElement("div");
+          acts.className = "auto-rule-acts";
+          [["data-approve", "Yes", "btn primary"], ["data-refuse", "No", "btn"]].forEach(function (p) {
+            var b = document.createElement("button");
+            b.className = p[2]; b.type = "button"; b.textContent = p[1];
+            b.setAttribute(p[0], a.id);
+            acts.appendChild(b);
+          });
+          var ans = document.createElement("div");
+          ans.className = "auto-rule-last";
+          ans.setAttribute("data-approval-answer", a.id);
+          row.appendChild(q); row.appendChild(pre); row.appendChild(acts); row.appendChild(ans);
+          host.appendChild(row);
+        });
+      }
+      async function loadApprovals() {
+        try {
+          var body = await getJson(APPROVALS_URL);
+          drawApprovals(body.approvals || []);
+        } catch (e) {
+          drawApprovals([]);
+        }
+      }
+      async function decideApproval(id, yes) {
+        var row = document.querySelector('[data-approval-id="' + id + '"]');
+        if (row) row.querySelectorAll("button").forEach(function (b) { b.disabled = true; });
+        try {
+          var out = await sendAuto("POST", APPROVALS_URL + "/" + encodeURIComponent(id) + "/decide",
+                                   { approved: !!yes });
+          var ans = document.querySelector('[data-approval-answer="' + id + '"]');
+          if (ans) ans.textContent = (out.answer || (out.notes || []).join(" ") || "Done.");
+          if (row) row.querySelector(".auto-rule-acts").hidden = true;
+          await loadAutomations();
+        } catch (e) {
+          autosError((e && e.message) || "That did not work. Try again.");
+          await loadApprovals();
+        }
+      }
+
+      // --- standing rules (2026-10-28) ----------------------------------
+      var RULES_URL = "/api/tasks/approvals/rules";
+      function rulesError(msg) { document.getElementById("rules-error").textContent = msg || ""; }
+      function drawRules(list) {
+        var host = document.getElementById("rules-list");
+        host.innerHTML = "";
+        if (!list.length) {
+          host.innerHTML = '<div class="hint">No rules yet. Every question is asked.</div>';
+          return;
+        }
+        list.forEach(function (r) {
+          var row = document.createElement("div");
+          row.className = "conn-row";
+          row.setAttribute("data-rule-id", r.id);
+          var name = document.createElement("div");
+          name.className = "conn-name";
+          name.textContent = (r.decision === "deny" ? "Deny " : "Allow ") + r.tool
+            + (r.when_contains ? " when it contains \u201c" + r.when_contains + "\u201d" : "");
+          var del = document.createElement("button");
+          del.className = "btn"; del.type = "button"; del.textContent = "Delete";
+          del.setAttribute("data-rule-delete", r.id);
+          row.appendChild(name); row.appendChild(del);
+          host.appendChild(row);
+        });
+      }
+      async function loadRules() {
+        rulesError("");
+        try {
+          var body = await getJson(RULES_URL);
+          drawRules(body.rules || []);
+        } catch (e) {
+          rulesError("Could not load your rules. Try again.");
+        }
+      }
+      async function addRule() {
+        rulesError("");
+        try {
+          await sendAuto("POST", RULES_URL, {
+            tool: document.getElementById("rule-tool").value.trim(),
+            decision: document.getElementById("rule-decision").value,
+            when_contains: document.getElementById("rule-when").value.trim()
+          });
+          document.getElementById("rule-tool").value = "";
+          document.getElementById("rule-when").value = "";
+          await loadRules();
+        } catch (e) {
+          rulesError((e && e.message) || "Could not add the rule. Try again.");
+        }
+      }
+      async function deleteRule(id) {
+        rulesError("");
+        try {
+          await sendAuto("DELETE", RULES_URL + "/" + encodeURIComponent(id));
+          await loadRules();
+        } catch (e) {
+          rulesError("Could not delete that rule. Try again.");
+        }
+      }
+      document.getElementById("rule-add").addEventListener("click", addRule);
+
       function openAutomation() {
         document.getElementById("automation-new").hidden = true;
         document.getElementById("automation-key").textContent = "";
         openDialog("automation-overlay");
+        loadApprovals();
         loadAutomations();
+        loadRules();
         loadKeys();
       }
       async function makeKey() {
@@ -3344,7 +3491,13 @@
         if (ev.target === autoOverlay) closeDialog("automation-overlay");
         var rv = ev.target.closest("[data-revoke-key]");
         if (rv) revokeKey(rv.getAttribute("data-revoke-key"));
-        var act = ev.target.closest(".auto-rule button");
+        var yes = ev.target.closest("[data-approve]");
+        if (yes) { decideApproval(yes.getAttribute("data-approve"), true); return; }
+        var no = ev.target.closest("[data-refuse]");
+        if (no) { decideApproval(no.getAttribute("data-refuse"), false); return; }
+        var rd = ev.target.closest("[data-rule-delete]");
+        if (rd) { deleteRule(rd.getAttribute("data-rule-delete")); return; }
+        var act = ev.target.closest(".auto-rule:not(.approval) button");
         if (act) autoAction(act);
       });
       document.getElementById("connections-close").addEventListener(

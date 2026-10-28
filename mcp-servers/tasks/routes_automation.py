@@ -36,6 +36,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 import agent_access
+import agent_approvals
 import automation_keys
 from auth import CurrentUser, current_user
 from routes_agent_turn import _agents_for, _run_turn
@@ -57,6 +58,7 @@ CALLBACK_TRIES = 3
 STATUS_DONE = "done"
 STATUS_FAILED = "failed"
 STATUS_ACCEPTED = "accepted"
+STATUS_WAITING = "waiting"
 
 NO_KEY = ("Send an automation key: Authorization: Bearer iok_... "
           "Make one on the Agents page under Automation.")
@@ -153,13 +155,24 @@ async def _run(email: str, agent: dict, message: str) -> dict:
             out = await _run_turn_seam(
                 email, agent["id"], [{"role": "user", "content": message}],
                 brief=True, surface=agent_access.SURFACE_AUTOMATION)
-        pending = isinstance(out.get("pending"), dict) and bool(out["pending"].get("calls"))
+        held = out.get("pending") if isinstance(out.get("pending"), dict) else None
         notes = [n for n in (out.get("notes") or []) if isinstance(n, str)]
-        if pending:
-            # Cannot happen on this surface (ask reads), but the shape is
-            # the turn's to define, so it is handled rather than assumed.
-            notes.append("The agent stopped to ask for approval, which an "
-                         "automation cannot give.")
+        if held and held.get("calls"):
+            # The agent stopped to ask. Written down with an id
+            # (agent_approvals, 2026-10-28), so the person can answer on
+            # the Agents page or in the main chat; the caller reads the
+            # question and a waiting status now.
+            import routes_approvals
+            name = agent.get("name") or agent["id"]
+            row = await routes_approvals.hold_and_tell(
+                email, agent["id"], name, held, agent_approvals.ORIGIN_API, "")
+            question = routes_approvals.question_for(name, held["calls"])
+            if row is None:
+                notes.append("The question could not be written down, so it "
+                             "cannot be answered later.")
+            return {"status": STATUS_WAITING, "answer": question,
+                    "notes": notes + [routes_approvals.HOW_TO_ANSWER],
+                    "approval_id": (row or {}).get("id")}
         return {"status": STATUS_DONE, "answer": str(out.get("answer") or ""),
                 "notes": notes}
     except HTTPException as exc:

@@ -233,6 +233,22 @@ page under **Automation**, or from the main chat through
 through `agent_jev.TOOL_NOTES["automations"]`, the writes ask first); twenty
 per person. See `docs/automations.md`.
 
+### Approvals from anywhere (2026-10-28)
+A question an agent on Ask stops to ask is a row (`agent_approvals.py`,
+`tasks.approval`, migration 061) with an id, a day's expiry, and the held
+calls and conversation. `routes_approvals.decide` is the one place an answer
+lands, from the Agents page (`/api/tasks/approvals/{id}/decide`) or a bare
+yes/no in the main chat with nothing held in that chat
+(`routes_agent_turn._answer_waiting`): it settles the row first (so two
+answers cannot both run the call), resumes through `_resume_turn`, and
+delivers to the automation's delivery or the agent's office conversation. A
+question born in the main chat gets a row too, with the chat's BotState key
+as `origin_ref`, and the chat's own yes settles it. Standing rules
+(`tasks.approval_rule`, `agent_approvals.rule_decision`, deny wins) answer
+inside the tool loop (`agent_runner._standing_rules`) before a call is held.
+An automation's agent on Ask now asks (`SURFACE_AUTOMATION` → `MODE_ASK`) and
+the run records `waiting`. See `docs/automations.md`.
+
 ### Hard rules
 - **NEVER deploy your local `mcp-servers/tasks/templates.py`.** The server's copy is ahead (more App Builder templates). Pull the server's version before editing, or you'll silently drop templates.
 - **NEVER touch, overwrite, or commit `.env`** — the server's `.env` holds the only copy of the real production secrets.
