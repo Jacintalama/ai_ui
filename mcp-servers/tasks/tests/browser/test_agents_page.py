@@ -2111,3 +2111,65 @@ def test_a_standing_rule_is_added_listed_and_deleted(page):
     row.locator("[data-rule-delete]").click()
     row.wait_for(state="detached")
     assert "No rules yet" in page.locator("#rules-list").inner_text()
+
+
+# --- events out (2026-10-28) -------------------------------------------------------
+
+def _hooks_route(page, hooks):
+    def route(r):
+        url, method = r.request.url, r.request.method
+        path = url.split("?")[0].rstrip("/")
+        if path.endswith("/api/tasks/events/hooks") and method == "GET":
+            body = {"hooks": list(hooks), "events": ["build.finished"]}
+        elif path.endswith("/api/tasks/events/hooks") and method == "POST":
+            sent = json.loads(r.request.post_data or "{}")
+            hooks.append({"id": "h%d" % (len(hooks) + 1), "url": sent["url"], "label": sent.get("label", ""),
+                          "events": sent.get("events", ["*"]), "enabled": True, "last_result": "",
+                          "secret_prefix": "ehs_abcd", "sent": sent})
+            body = dict(hooks[-1], secret="ehs_abcdefghijklmnopqrstuvwxyz0123")
+        elif "/api/tasks/events/hooks/" in path and path.endswith("/test") and method == "POST":
+            body = {"ok": True, "note": "The URL answered."}
+        elif "/api/tasks/events/hooks/" in path and method == "PATCH":
+            hid = path.rsplit("/", 1)[1]
+            sent = json.loads(r.request.post_data or "{}")
+            for h in hooks:
+                if h["id"] == hid and "enabled" in sent:
+                    h["enabled"] = sent["enabled"]
+            body = next((h for h in hooks if h["id"] == hid), {})
+        elif "/api/tasks/events/hooks/" in path and method == "DELETE":
+            hid = path.rsplit("/", 1)[1]
+            hooks[:] = [h for h in hooks if h["id"] != hid]
+            body = {"deleted": True}
+        else:
+            r.fallback()
+            return
+        r.fulfill(status=200, content_type="application/json", body=json.dumps(body))
+    page.route("**/api/tasks/events/hooks**", route)
+
+
+def test_a_hook_is_added_with_its_secret_once_tested_paused_and_deleted(page):
+    hooks = []
+    _hooks_route(page, hooks)
+    _approvals_route(page, [], [])
+    _autos_route(page, [])
+    _keys_route(page, [])
+    page.locator("#open-automation").click()
+    page.wait_for_selector("#automation-panel", state="visible")
+    assert "No hooks yet" in page.locator("#hooks-list").inner_text()
+    page.fill("#hook-url", "https://hooks.example.com/io")
+    page.fill("#hook-label", "n8n")
+    page.locator("#hook-add").click()
+    row = page.locator('[data-hook-id="h1"]')
+    row.wait_for(state="visible")
+    assert hooks[0]["sent"] == {"url": "https://hooks.example.com/io", "label": "n8n", "events": ["*"]}
+    assert page.locator("#hooks-secret").inner_text() == "ehs_abcdefghijklmnopqrstuvwxyz0123"
+    assert "n8n" in row.inner_text() and "every event" in row.inner_text()
+    row.locator("[data-hook-test]").click()
+    page.wait_for_function(
+        "() => (document.querySelector('[data-hook-note=\"h1\"]') || {}).textContent === 'The URL answered.'")
+    row.locator("[data-hook-toggle]").click()
+    page.wait_for_selector('[data-hook-id="h1"].paused')
+    page.on("dialog", lambda d: d.accept())
+    page.locator('[data-hook-id="h1"] [data-hook-delete]').click()
+    page.locator('[data-hook-id="h1"]').wait_for(state="detached")
+    assert "No hooks yet" in page.locator("#hooks-list").inner_text()

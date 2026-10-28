@@ -92,3 +92,27 @@ The same panel also makes **keys** for the older way in: an `iok_` key
 sent as a bearer token to `POST /api/tasks/agents/run` with an agent name
 and a message, for a caller that wants to pick the agent and the message
 itself. See `docs/n8n-run-agent.md`.
+
+## Events out
+
+Give a URL on the same panel, under **Events out**, and the platform
+POSTs there when something of yours happens:
+
+| Event | When |
+|---|---|
+| `build.finished` | an App Builder build or enhance ended |
+| `schedule.finished` | a scheduled run ended |
+| `automation.finished` | an automation ran: done, failed or waiting |
+| `approval.requested` | an agent stopped to ask |
+| `approval.decided` | a question was answered |
+| `minutes.taken` | a meeting left minutes behind |
+
+Each post is JSON, `{"event", "at", "id", "data"}`, with the header
+`X-IO-Event` naming the event and `X-IO-Signature` carrying
+`sha256=<HMAC-SHA256 of the body>` under the hook's secret, shown once
+when the hook is made. Three tries on a server error; a client error is
+not retried. The last result shows on the hook. **Send a test** posts a
+test event now. Five hooks per person. The URL must be public, like an
+automation's callback.
+
+In n8n: a Webhook node, then an IF on `{{$json.event}}`.

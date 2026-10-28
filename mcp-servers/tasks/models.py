@@ -300,6 +300,25 @@ class ApprovalRule(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class EventHook(Base):
+    """A URL the platform POSTs to when something of this person's happens
+    (events_out.py). See migration 062."""
+    __tablename__ = "event_hook"
+    __table_args__ = {"schema": "tasks"}
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_email = Column(Text, nullable=False)
+    url = Column(Text, nullable=False)
+    secret = Column(Text, nullable=False)
+    events = Column(JSONB, nullable=False, default=list)
+    label = Column(Text, nullable=False, default="")
+    enabled = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_sent_at = Column(DateTime(timezone=True), nullable=True)
+    last_result = Column(Text, nullable=False, default="")
+    fail_count = Column(Integer, nullable=False, default=0)
+
+
 class GatewayLink(Base):
     """A platform account (Telegram, CLI) paired to an IO account.
 

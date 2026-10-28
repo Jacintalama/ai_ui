@@ -34,6 +34,7 @@ from claude_executor import (
     parse_plan, parse_test_outcome, sql_tool_available,
 )
 from db import session
+import events_out
 from prompt_utils import clean_user_prompt
 from heavy_lock import heavy_lock
 from models import ChatMessage, ProjectSupabase, TaskExecution, TaskItem
@@ -535,9 +536,18 @@ async def _run_execution(
         # office floor since the job was spawned (routes_code
         # _mark_building); the item ending is the run ending.
         await _finish_agent_runs(task_id, outcome.kind)
+        # And the outside is told (events_out, 2026-10-28). Fire and
+        # forget, after everything that matters is written.
+        events_out.emit(assignee_email, "build.finished", {
+            "task_id": str(task_id), "slug": slug or extracted_slug or "",
+            "outcome": outcome.kind, "status": new_task_status,
+            "rolled_back": bool(revert_message), "summary": (outcome.payload or "")[:2000]})
     except Exception as exc:
         logger.exception("Execution failed: %s", exc)
         await _finish_agent_runs(task_id, "failed")
+        events_out.emit(locals().get("assignee_email") or "", "build.finished", {
+            "task_id": str(task_id), "outcome": "failed", "status": "pending",
+            "summary": "The run failed before it finished."})
         async with session() as s:
             await s.execute(
                 update(TaskExecution).where(TaskExecution.id == execution_id)

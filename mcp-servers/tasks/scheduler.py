@@ -94,6 +94,7 @@ from sqlalchemy import select, text, update
 from db import session
 from models import Schedule, TaskItem
 from secret_scrub import scrub
+import events_out
 
 
 # Host-local connector endpoints (published 127.0.0.1 ports) the scheduled agent
@@ -511,6 +512,11 @@ async def _finalize_run(sched: Schedule) -> None:
                 )
             )
             await s.commit()
+        # The outside is told (events_out, 2026-10-28): fire and forget.
+        events_out.emit(getattr(sched, "user_email", "") or "", "schedule.finished", {
+            "schedule_id": str(sched.id), "name": getattr(sched, "name", ""),
+            "agent_id": getattr(sched, "agent_id", None), "status": status,
+            "result": scrub(result or "")[:4000]})
         # Deliver the run's result into the user's Discord thread, if configured.
         delivery_channel = getattr(sched, "delivery_channel_id", None)
         if delivery_channel:
