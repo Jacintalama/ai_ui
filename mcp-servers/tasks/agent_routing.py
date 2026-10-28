@@ -436,9 +436,29 @@ def _label_line_re(names):
     if not cleaned:
         return None
     alts = "|".join(re.escape(n) for n in cleaned)
+    # Three shapes: "Ada:", "**Ada**", and since 2026-10-27 the robot before
+    # the bold name, "![Ada](data:image/...) **Ada**" (agent_avatar
+    # .reply_face). The picture is dropped first by drop_data_images, so
+    # the line is matched here with or without it.
     return re.compile(
-        r"^[ \t]*(?:(?:%s)[ \t]*:|\*\*(?:%s)\*\*)[ \t]*$" % (alts, alts),
+        r"^[ \t]*(?:!\[[^\]]*\]\(data:image/[^)]*\)[ \t]*)?"
+        r"(?:(?:%s)[ \t]*:|\*\*(?:%s)\*\*)[ \t]*$" % (alts, alts),
         re.IGNORECASE | re.MULTILINE)
+
+
+#: A picture inlined as data, the way the robot face is (agent_avatar).
+#: Never useful to a model, and a base64 SVG is about five hundred tokens:
+#: seven agents greeting once put four thousand tokens of pictures into
+#: every later turn's history, and a model shown them copied them, so a
+#: reply opened with the robot twice (seen live 2026-10-28).
+_DATA_IMAGE = re.compile(r"!\[[^\]]*\]\(data:image/[^)]*\)[ \t]*")
+
+
+def drop_data_images(text):
+    """The text with every inlined picture removed. Anything else stays."""
+    if not isinstance(text, str) or not text:
+        return text if isinstance(text, str) else ""
+    return _DATA_IMAGE.sub("", text)
 
 
 def strip_label_lines(text, names) -> str:
@@ -454,6 +474,7 @@ def strip_label_lines(text, names) -> str:
     """
     if not isinstance(text, str) or not text:
         return text if isinstance(text, str) else ""
+    text = drop_data_images(text)
     pattern = _label_line_re(names)
     if pattern is None:
         return text
@@ -475,9 +496,10 @@ def strip_leading_labels(text, names) -> str:
     """
     if not isinstance(text, str) or not text:
         return text if isinstance(text, str) else ""
+    text = drop_data_images(text)
     pattern = _label_line_re(names)
     if pattern is None:
-        return text
+        return text.strip()
     lines = text.split("\n")
     i = 0
     while i < len(lines) and (not lines[i].strip() or pattern.match(lines[i])):

@@ -189,6 +189,13 @@ def arguments_of(call) -> dict:
     return out if isinstance(out, dict) else {}
 
 
+#: Methods no agent may run from inside its own turn, by name. Whether the
+#: owner set the agent to read, ask or all does not matter: this is not a
+#: write to approve, it is a loop. Checked in execute_tool_call and in the
+#: runner before a call is held for approval.
+METHODS_NO_AGENT_MAY_CALL = frozenset({"ask_agents"})
+
+
 def is_write_call(method_name: str, params: dict | None = None) -> bool:
     """True when THIS call could change something, arguments included.
 
@@ -635,6 +642,17 @@ async def execute_tool_call(
     if not name:
         return outcome.failed(
             "That tool call named no tool, so nothing was run.")
+
+    if agent_id and name in METHODS_NO_AGENT_MAY_CALL:
+        # The Ask Your Agents tool from inside an agent's own turn is a
+        # round inside a round: it would ask every agent, this one
+        # included, while the person waits on the outer answer. Refused by
+        # method name, whatever id the tool's row was given when it was
+        # pasted in (routes_agent_turn bars the row by id and title; this
+        # is the catch for the rest).
+        return outcome.refused(
+            "An agent cannot ask the agents from inside its own turn. Answer "
+            "from what you know, or ask one colleague with the colleague tool.")
 
     # The live office's tool badge. An event with no row on purpose (see
     # record_step on why a start row was removed), and only while a run is

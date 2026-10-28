@@ -1,3 +1,5 @@
+import asyncio
+import contextvars
 """One agent turn, run for the chat gateway.
 
 The gateway holds the conversation and delivers the words. This holds the
@@ -94,7 +96,21 @@ class ResumeIn(BaseModel):
 #: An agent must not reach the tool that runs agents. It is already inside a
 #: turn, so calling it would start a round inside a round, and the person is
 #: waiting on the outer one.
+#: The agents already listed for the message being answered, set by
+#: _turn_for around its turn so _resolve_agent_row reads them instead of
+#: paging Open WebUI's model list a second time. A context variable rather
+#: than a parameter: _run_turn is stood in for by tests and callers with
+#: its own signature, and the listing is a fact about the request, not
+#: about the turn.
+_listing_for_turn: contextvars.ContextVar = contextvars.ContextVar(
+    "agents_listed_for_this_message", default=None)
+
 _TOOLS_AN_AGENT_MAY_NOT_HAVE = frozenset({"agents"})
+#: The same tool by its title, because an admin names the id when pasting
+#: it in: on the live box it is not "agents", and Mia asked to run
+#: ask_agents on "hi team" (2026-10-28). agent_tools refuses the method by
+#: name as well, whatever the row is called.
+_TOOL_TITLES_AN_AGENT_MAY_NOT_HAVE = frozenset({"ask your agents"})
 
 #: An agent limited to the tools somebody actually picked. Anything else,
 #: including absent and including junk, means everything the owner can reach,
@@ -123,7 +139,9 @@ async def _every_tool_for(user_email: str) -> list[str]:
     out = []
     for item in items if isinstance(items, list) else []:
         tool_id = item.get("id") if isinstance(item, dict) else item
-        if isinstance(tool_id, str) and tool_id not in _TOOLS_AN_AGENT_MAY_NOT_HAVE:
+        title = str(item.get("label") or "").strip().lower() if isinstance(item, dict) else ""
+        if (isinstance(tool_id, str) and tool_id not in _TOOLS_AN_AGENT_MAY_NOT_HAVE
+                and title not in _TOOL_TITLES_AN_AGENT_MAY_NOT_HAVE):
             out.append(tool_id)
     return out
 
@@ -159,7 +177,8 @@ NOT_YOUR_AGENT = ("That agent is not one of yours any more. Pick another "
                   "model, or make the agent again on the Agents page.")
 
 
-async def _resolve_agent_row(user_email: str, agent_id: str
+async def _resolve_agent_row(user_email: str, agent_id: str,
+                             listing: list[dict] | None = None
                              ) -> tuple[str, list[str], str | None, dict, list[dict]]:
     """(token, tool ids, access level, the agent row, every agent listed).
 
@@ -184,7 +203,15 @@ async def _resolve_agent_row(user_email: str, agent_id: str
                             detail="no account for that user")
     token = mint_owui_token(owner, ttl_seconds=CHAT_TOKEN_TTL_SECONDS,
                             session_stamp=await session_stamp_for(owner))
-    agents, truncated = await _list_agents(token)
+    # `listing` is the agents the caller already fetched for this message
+    # (/agents/chat lists them to route), so one message does not page Open
+    # WebUI's model list twice. A caller with none, or one that may be
+    # short, leaves it None and the list is read here as it always was.
+    listing = listing or _listing_for_turn.get()
+    if listing:
+        agents, truncated = list(listing), False
+    else:
+        agents, truncated = await _list_agents(token)
     if main_assistant.is_assistant(agent_id):
         # The main chat's own assistant is not a row in Open WebUI. It may
         # reach everything this person can, and asks before it changes
@@ -1064,30 +1091,42 @@ async def _turn_for(user_email: str, agent: dict, messages: list[dict],
     removed, and any label it still echoes at the top of its answer is
     removed before the real one is added.
     """
-    try:
-        memory = await agent_memory.recall_block(user_email, agent["id"])
-    except Exception:                                       # noqa: BLE001
-        # Its own arm, not the one below. Sharing that one would answer a
-        # broken memory read with the sentence that says the turn failed,
-        # spending the whole answer on the one part of it that is optional.
-        logger.warning("could not read agent memory for %s", agent.get("id"),
-                       exc_info=True)
-        memory = ""
-    # A caller running a round reads this once and hands the same clock to
-    # everybody, the way it does with the graph block: read_timezone opens
-    # its own Postgres connection and closes it, so a per-agent read would
-    # cost a connection per agent per message. Only a caller running one
-    # agent leaves it out, and then this is the one read.
+    async def _memory() -> str:
+        try:
+            return await agent_memory.recall_block(user_email, agent["id"])
+        except Exception:                                   # noqa: BLE001
+            # Its own arm, not the one below. Sharing that one would answer
+            # a broken memory read with the sentence that says the turn
+            # failed, spending the whole answer on the one optional part.
+            logger.warning("could not read agent memory for %s", agent.get("id"),
+                           exc_info=True)
+            return ""
+
+    # A caller running a round reads the clock once and hands the same one
+    # to everybody, the way it does with the graph block: read_timezone
+    # opens its own Postgres connection and closes it, so a per-agent read
+    # would cost a connection per agent per message. Only a caller running
+    # one agent leaves it out, and then this is the one read. The memory
+    # and the clock are two independent reads, so they run side by side
+    # (2026-10-28, "smooth and fast"): neither waits for the other.
     if now is None:
-        now = await clock_for(user_email)
+        memory, now = await asyncio.gather(_memory(), clock_for(user_email))
+    else:
+        memory = await _memory()
     try:
         history = ([_identity_line(agent, names, memory=memory,
                                    roster=roster, graph=graph, now=now)]
                    + agent_routing.clean_history_for_agent(messages, names))
-        out = (await _run_turn(user_email, agent["id"], history,
-                               tool_ids=tool_ids)
-               if tool_ids is not None
-               else await _run_turn(user_email, agent["id"], history))
+        # The roster is this person's own agents, already listed to route
+        # the message; handing it on saves the turn a second listing.
+        reset = _listing_for_turn.set([a for a in roster if isinstance(a, dict)] or None)
+        try:
+            out = (await _run_turn(user_email, agent["id"], history,
+                                   tool_ids=tool_ids)
+                   if tool_ids is not None
+                   else await _run_turn(user_email, agent["id"], history))
+        finally:
+            _listing_for_turn.reset(reset)
     except Exception as exc:                                # noqa: BLE001
         # One failure is worth naming rather than generalising: an agent on a
         # callback pipe cannot run at all, and the person fixes it in one
@@ -1326,8 +1365,9 @@ async def _route_chat(body: ChatIn, x_internal_secret: str = "") -> dict:
         # Once for the message, not once per agent: naming two agents runs two
         # turns about one question, and the account has not changed between
         # them.
-        graph = await agent_graph.graph_block(body.user_email, text)
-        now = await clock_for(body.user_email)
+        graph, now = await asyncio.gather(
+            agent_graph.graph_block(body.user_email, text),
+            clock_for(body.user_email))
         speakers = named[:1] if getattr(body, "first_only", False) else named
         turns = []
         for agent in speakers:
