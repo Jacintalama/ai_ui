@@ -2106,6 +2106,8 @@ def test_a_standing_rule_is_added_listed_and_deleted(page):
     _keys_route(page, [])
     page.locator("#open-automation").click()
     page.wait_for_selector("#automation-panel", state="visible")
+    # Same race as the keys list: the rules arrive on their own fetch.
+    page.wait_for_selector("#rules-list .hint")
     assert "No rules yet" in page.locator("#rules-list").inner_text()
     page.fill("#rule-tool", "send_email")
     page.select_option("#rule-decision", "allow")
@@ -2162,6 +2164,9 @@ def test_a_hook_is_added_with_its_secret_once_tested_paused_and_deleted(page):
     _keys_route(page, [])
     page.locator("#open-automation").click()
     page.wait_for_selector("#automation-panel", state="visible")
+    # Same race as the keys list: the hooks arrive on their own fetch. This one
+    # has already failed in CI for it.
+    page.wait_for_selector("#hooks-list .hint")
     assert "No hooks yet" in page.locator("#hooks-list").inner_text()
     page.fill("#hook-url", "https://hooks.example.com/io")
     page.fill("#hook-label", "n8n")
