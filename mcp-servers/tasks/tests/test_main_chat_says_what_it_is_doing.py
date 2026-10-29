@@ -511,3 +511,109 @@ def test_the_raw_assistant_id_is_never_shown_to_a_person():
     """io-assistant is an internal id. It used to reach both the stored
     approval and its question once the agent row was nulled."""
     assert "io-assistant" not in rt.approval_question(None, [])
+
+
+# --- the tools must not vanish when somebody says go (2026-10-29) -------------
+#
+# Reported with a screenshot: asking for a daily quote agent, then "create it
+# please", and the chat answered "I can't actually create agents or scheduled
+# cron jobs inside your platform". It can: agent_builder and schedules are
+# both granted. Jev was shown one orphan sentence, so the follow-up carried no
+# subject. From tasks.jev_check on the live box, the same conversation:
+#
+#   13:56:42  agent_builder,schedules  0.89   describing it
+#   13:57:38  agent_builder            0.84   still describing it
+#   13:57:48  none                     0.34   "create it please"
+#
+# Agreement is always the shortest message, so this failed hardest exactly
+# when somebody said go.
+
+FOLLOW_UP = [
+    {"role": "user", "content": "make an agent that sends a daily quote on a cron"},
+    {"role": "assistant", "content": "Would you like me to create the agent now?"},
+    {"role": "user", "content": "create it please"},
+]
+
+
+def test_the_conversation_is_given_to_the_tool_pick():
+    said = rt.recent_exchange(FOLLOW_UP)
+    assert "daily quote" in said, "the subject of the request was not carried"
+    assert "cron" in said
+
+
+def test_the_message_being_judged_is_not_repeated_as_context():
+    """The caller passes it separately, so including it here would weigh the
+    same sentence twice."""
+    assert "create it please" not in rt.recent_exchange(FOLLOW_UP)
+
+
+def test_an_opening_message_has_no_context_and_that_is_fine():
+    assert rt.recent_exchange([{"role": "user", "content": "hello"}]) == ""
+    assert rt.recent_exchange([]) == ""
+    assert rt.recent_exchange(None) == ""
+
+
+def test_only_the_recent_turns_are_carried():
+    """An old topic must not outweigh the current one."""
+    many = [{"role": "user", "content": "topic %d" % i} for i in range(40)]
+    said = rt.recent_exchange(many)
+    assert "topic 0" not in said and "topic 38" in said
+    assert len(said.splitlines()) <= rt.CONTEXT_TURNS
+
+
+def test_rubbish_in_the_history_does_not_crash_the_pick():
+    msgs = [None, "a string", 7, {"role": "tool", "content": "ignored"},
+            {"role": "user", "content": "the real one"},
+            {"role": "user", "content": "now"}]
+    assert rt.recent_exchange(msgs) == "person: the real one"
+
+
+def test_an_attached_turn_still_contributes_its_words():
+    """The same list-of-parts shape that used to read as empty everywhere."""
+    msgs = [{"role": "user", "content": [
+                {"type": "text", "text": "look at this invoice"},
+                {"type": "image_url", "image_url": {"url": "data:x"}}]},
+            {"role": "user", "content": "chase it"}]
+    assert "invoice" in rt.recent_exchange(msgs)
+
+
+def test_jev_is_asked_about_the_follow_up_with_its_subject(monkeypatch):
+    """End to end through _tool_pick: what Jev actually receives."""
+    seen = {}
+
+    async def pick_tools(email, text, tools, context=""):
+        seen["text"] = text
+        seen["context"] = context
+        return ["agent_builder"]
+
+    async def every_tool(_email):
+        return ["agent_builder", "schedules", "gmail"]
+
+    monkeypatch.setattr(rt.agent_jev, "pick_tools", pick_tools)
+    monkeypatch.setattr(rt, "_every_tool_for", every_tool)
+    monkeypatch.setattr(rt, "_assistant_on", lambda: True)
+    monkeypatch.setattr(rt.agent_llm, "can_run", lambda _a: True)
+
+    body = _ChatBody("create it please")
+    body.messages = FOLLOW_UP
+    picked = asyncio.run(rt._tool_pick(body, "create it please"))
+    assert picked == ["agent_builder"]
+    assert seen["text"] == "create it please"
+    assert "daily quote" in seen["context"], (
+        "Jev was asked about the follow-up with no subject again")
+
+
+def test_the_question_without_context_is_word_for_word_what_it_was():
+    """The calibration cases are single messages. Changing their wording
+    would silently invalidate the measured 0.75 cut."""
+    import agent_jev
+    state, _q = agent_jev.tools_request("check my inbox", ["gmail"])
+    assert state == "The person wrote:\ncheck my inbox"
+
+
+def test_with_context_the_latest_message_is_clearly_the_one_being_judged():
+    import agent_jev
+    state, _q = agent_jev.tools_request(
+        "create it please", ["gmail"], context="person: make a quote agent")
+    assert state.rstrip().endswith("create it please")
+    assert "The person has now written:" in state

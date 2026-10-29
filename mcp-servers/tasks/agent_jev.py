@@ -488,8 +488,35 @@ TOOL_NOTES = {
 }
 
 
-def tools_request(text: str, tools: list[str]) -> tuple[str, dict]:
-    """One Noul per tool, ids t0, t1, ... in the order given."""
+#: How much of the conversation Jev is shown behind the latest message.
+#: Enough for a follow-up to inherit its subject, not so much that an old
+#: topic outweighs the current one.
+CONTEXT_CHARS = 900
+
+
+def tools_request(text: str, tools: list[str],
+                  context: str = "") -> tuple[str, dict]:
+    """One Noul per tool, ids t0, t1, ... in the order given.
+
+    `context` is what was said just before, and it exists because without it
+    this check read one orphan sentence. Measured on the live box
+    2026-10-29, a person asking for a daily quote agent:
+
+        13:56:42  agent_builder,schedules  0.89   describing it
+        13:57:38  agent_builder            0.84   still describing it
+        13:57:48  none                     0.34   "create it please"
+
+    "create it please" has no subject in it, so Jev picked nothing, the
+    assistant never ran, and the plain free model answered "I can't
+    actually create agents or scheduled cron jobs inside your platform" --
+    which is false, and is the platform denying its own feature at the
+    moment somebody asked for it. The capability vanished exactly when it
+    was wanted, because agreement is always the shortest message.
+
+    Empty context gives the question the old wording verbatim, so the
+    calibration cases (scripts/jev_checks_calibrate.py) still measure what
+    they measured before.
+    """
     questions = {}
     for i, tool in enumerate(tools):
         note = TOOL_NOTES.get(tool) or f"the tool called {tool}"
@@ -503,18 +530,30 @@ def tools_request(text: str, tools: list[str]) -> tuple[str, dict]:
                 "false": "the message can be answered without it, or is "
                          "about something else",
             }}
-    return "The person wrote:\n" + _clip(text), questions
+    if not str(context or "").strip():
+        return "The person wrote:\n" + _clip(text), questions
+    # The latest message last and labelled, so it is plainly the one being
+    # judged and the rest is there only to give it a subject.
+    return ("Earlier in this conversation:\n"
+            + " ".join(str(context).split())[:CONTEXT_CHARS]
+            + "\n\nThe person has now written:\n" + _clip(text)), questions
 
 
-async def pick_tools(email: str, text: str,
-                     tools: list[str]) -> list[str] | None:
+async def pick_tools(email: str, text: str, tools: list[str],
+                     context: str = "") -> list[str] | None:
     """The tools Jev is sure this message needs, in the order given: [] when
     it needs none, None when Jev could not be asked or answered unreadably
-    (the caller then offers every tool, as before). Never raises."""
+    (the caller then offers every tool, as before). Never raises.
+
+    `context` is what was said just before. A follow-up carries no subject of
+    its own ("create it please", "yes do it", "go ahead"), and agreement is
+    always the shortest message, so without it the tools go missing at
+    exactly the moment somebody says go.
+    """
     tools = [t for t in tools or [] if isinstance(t, str) and t]
     if not tools:
         return []
-    state, questions = tools_request(text, tools)
+    state, questions = tools_request(text, tools, context)
     least = cut(PURPOSE_TOOLS)
 
     def picked(answers: dict) -> list[str]:
