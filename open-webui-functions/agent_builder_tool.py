@@ -82,22 +82,41 @@ class Tools:
             a["name"] + (" (" + a["role"] + ")" if a.get("role") else "") for a in agents) + "."
 
     async def create_agent(self, name: str, instructions: str, role: str = "",
-                           access: str = "read", __user__: dict = {}) -> str:
-        """Create a new AI agent for this person. `name` is one word (Jack,
-        Mia). `instructions` is what it does and how it answers, in plain
-        sentences. `role` is two or three words shown on its card (Project
-        manager). `access` is read (looks things up, changes nothing), ask
-        (can act but asks first) or all (acts without asking); use read
-        unless the person asked for more. The agent appears in the Agent
-        Office at once."""
+                           access: str = "read", confirm: str = "",
+                           __user__: dict = {}) -> str:
+        """Create a new AI agent for this person, in TWO steps.
+
+        Call it WITHOUT `confirm` first. Nothing is created: you get back the
+        agent exactly as it would be, including its full instructions, and
+        you must show that to the person word for word and ask whether to go
+        ahead. Do not summarise the instructions; they are what the agent
+        will be, and the person is approving them.
+
+        Only once they have seen it and agreed, call again with the SAME
+        name, instructions, role and access plus the `confirm` code that came
+        back. Changing any wording invalidates the code on purpose, and you
+        will get a fresh preview to show them instead.
+
+        `name` is one word (Jack, Mia). `instructions` is what it does and how
+        it answers, in plain sentences. `role` is two or three words shown on
+        its card (Project manager). `access` is read (looks things up,
+        changes nothing), ask (can act but asks first) or all (acts without
+        asking); use read unless the person asked for more.
+        """
         email = self._email(__user__)
         if not email:
             return "I do not know who is asking, so I cannot make an agent."
         ok, data = await self._call("POST", "/agents/make", email, {
             "name": (name or "").strip(), "instructions": (instructions or "").strip(),
-            "role": (role or "").strip(), "access": (access or "read").strip().lower()})
+            "role": (role or "").strip(), "access": (access or "read").strip().lower(),
+            "confirm": (confirm or "").strip()})
         if not ok:
             return data
+        # The service decides whether this was a preview or a create, and it
+        # enforces it: a confirm code it has not issued does not create
+        # anything. So the tool reports what happened rather than assuming.
+        if not data.get("created", True):
+            return data.get("message") or "Nothing was created yet."
         words = {"read": "read only", "ask": "with access, asking first", "all": "all access"}
         return ("Made " + data.get("name", name) + (" (" + data["role"] + ")" if data.get("role") else "") +
                 ", " + words.get(data.get("access"), "read only") +
