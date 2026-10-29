@@ -39,6 +39,15 @@ BEGIN
             CONTINUE;
         END IF;
 
+        -- The repair needs Open WebUI's own account table to turn an id into
+        -- an address. That table belongs to another service, and this one is
+        -- run against databases that do not have it (CI's database tier is
+        -- one). Without this guard the repair would raise and, because db.py
+        -- runs migrations in order at every startup, would block every
+        -- migration after it on a fresh database. The CHECK below needs only
+        -- the token table, so it is added either way.
+        IF to_regclass('public."user"') IS NOT NULL THEN
+
         -- An id-keyed row whose account also has an address-keyed row is dead
         -- weight. Every read has only ever asked by address, so the address
         -- row is the one that has been working: drop the id row rather than
@@ -68,6 +77,8 @@ BEGIN
             RAISE NOTICE '063 %: dropped % duplicate, rekeyed %',
                          tbl, n_del, n_key;
         END IF;
+
+        END IF;  -- public."user" exists
 
         -- The assertion. Deliberately loose: it only has to tell an address
         -- apart from a user id, and a tighter rule risks rejecting somebody's
