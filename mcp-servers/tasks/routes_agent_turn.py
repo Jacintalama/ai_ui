@@ -1343,6 +1343,52 @@ async def _jev_answer(body: ChatIn, text: str, agents: list[dict],
 CONTEXT_TURNS = 6
 
 
+def _tools_pin_key(chat_id: str, user_email: str) -> str:
+    """Which tools this chat was last working with, per person."""
+    return "agenttools:web:%s:%s" % (user_email, chat_id)
+
+
+async def _read_tools_pin(key: str) -> list:
+    """The tools this chat used a moment ago, or []. Never raises."""
+    try:
+        async with session() as s:
+            row = (await s.execute(
+                select(BotState).where(BotState.state_key == key)
+            )).scalar_one_or_none()
+        if row is None:
+            return []
+        if row.expires_at is not None and row.expires_at < datetime.now(timezone.utc):
+            return []
+        value = row.value if isinstance(row.value, dict) else {}
+        tools = value.get("tools")
+        return [t for t in tools if isinstance(t, str)] if isinstance(tools, list) else []
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not read the tool pin", exc_info=True)
+        return []
+
+
+async def _write_tools_pin(key: str, tools: list) -> None:
+    """Remember what this chat is working with. Never raises."""
+    expires = datetime.now(timezone.utc) + timedelta(seconds=PIN_TTL_SECONDS)
+    value = {"tools": [t for t in (tools or []) if isinstance(t, str)]}
+    try:
+        async with session() as s:
+            row = (await s.execute(
+                select(BotState).where(BotState.state_key == key)
+            )).scalar_one_or_none()
+            if row:
+                row.value = value
+                row.updated_at = datetime.now(timezone.utc)
+                row.expires_at = expires
+            else:
+                s.add(BotState(state_key=key, value=value,
+                               updated_at=datetime.now(timezone.utc),
+                               expires_at=expires))
+            await s.commit()
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not write the tool pin", exc_info=True)
+
+
 def recent_exchange(messages, turns: int = CONTEXT_TURNS) -> str:
     """What was said just before the latest message, as plain lines.
 
@@ -1411,8 +1457,36 @@ async def _tool_pick(body: ChatIn, text: str) -> list[str] | None:
         tools = await _every_tool_for(body.user_email)
         if not tools:
             return None
-        return await agent_jev.pick_tools(body.user_email, text, tools,
-                                          context)
+        picked = await agent_jev.pick_tools(body.user_email, text, tools,
+                                            context)
+        pin_key = _tools_pin_key(body.chat_id, body.user_email)
+        if picked:
+            # Working on something: remember what with, so the next message
+            # does not have to earn it again.
+            await _write_tools_pin(pin_key, picked)
+            return picked
+        # Jev picked nothing. If this chat was working with tools a moment
+        # ago, keep them, because a confirmation is not a change of subject.
+        #
+        # Measured on the live box 2026-10-29, one person creating an agent:
+        #
+        #   15:40:32  agent_builder,calendar,schedules  0.93  the brief
+        #   15:40:45  none                              0.72  "create it"
+        #
+        # The cut is 0.75. The step that COMPLETES a task is the shortest
+        # message in it, so it scores lowest, and the tools were dropped at
+        # the one moment they were needed. The free model then answered and
+        # said "Crane is now active" about an agent that was never made.
+        #
+        # Only ever tools this person still has, in case one was removed
+        # since, and only while the pin is fresh (PIN_TTL_SECONDS).
+        if picked is not None and not is_small_talk(text):
+            held = [t for t in await _read_tools_pin(pin_key) if t in tools]
+            if held:
+                logger.info("tool pick was empty; keeping %s from this chat",
+                            ",".join(held))
+                return held
+        return picked
     except Exception:                                       # noqa: BLE001
         logger.warning("the main chat's tool pick failed; the free model "
                        "answers instead", exc_info=True)

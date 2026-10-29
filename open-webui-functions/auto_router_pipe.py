@@ -443,10 +443,49 @@ class Pipe:
             "reasoning": self.valves.MODEL_REASONING,
         }.get(category, self.valves.MODEL_GENERAL)
 
+    #: Said to the free model before anything else, because it has no tools
+    #: and does not know it.
+    #:
+    #: Reported repeatedly on 2026-10-29. Asked to create an agent, it
+    #: answered "Created: Crane is now your dedicated cron-jobs agent", then
+    #: "Crane is now active", then "Hi! Crane is live and monitoring your
+    #: schedules right now". No agent was ever created. Earlier the same day
+    #: it went the other way and said "I can't actually create agents or
+    #: scheduled cron jobs inside your platform", which is also false.
+    #:
+    #: Both come from the same hole: this model is answering for a platform
+    #: it knows nothing about. Inventing success is much the worse of the
+    #: two, because the person walks away believing they have something they
+    #: do not, and only finds out when they look for it.
+    #:
+    #: So it is told the one thing it must not get wrong: it has no hands.
+    #: It is deliberately NOT told to say the platform cannot do these
+    #: things, because the platform can, and that was the other failure.
+    NO_HANDS = (
+        "You are the free chat model inside the IO platform. You are "
+        "answering directly and you have NO tools in this reply, so you "
+        "cannot read mail, see a calendar, create an agent, make a cron "
+        "job, build an app or change anything.\n\n"
+        "Never say or imply that you have done any of those. Do not write "
+        "'Created:', 'Done', 'is now active' or 'is live' about anything in "
+        "this platform. If the person asked for something to be made or "
+        "changed, say plainly that it has not been done yet and ask them to "
+        "say it once more so it can be carried out.\n\n"
+        "Equally, never tell them the platform cannot do it. It can: it "
+        "creates agents, schedules, automations, videos, documents and apps, "
+        "and reads their mail, calendar and Drive. The limit is this reply, "
+        "not the product."
+    )
+
+    def _with_no_hands(self, messages: list) -> list:
+        """The conversation with that note in front of it."""
+        return [{"role": "system", "content": self.NO_HANDS}] + list(messages or [])
+
     def _payload(self, body: dict, model: str) -> dict:
         """Only forward fields OpenRouter accepts; Open WebUI adds extras
         (model name, user, metadata) that would be rejected."""
-        out = {"model": model, "messages": body.get("messages") or []}
+        out = {"model": model,
+               "messages": self._with_no_hands(body.get("messages") or [])}
         for k in ("stream", "temperature", "top_p", "max_tokens",
                   "frequency_penalty", "presence_penalty", "stop"):
             if body.get(k) is not None:
