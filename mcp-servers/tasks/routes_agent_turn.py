@@ -333,12 +333,13 @@ def _last_user_text(messages: list[dict]) -> str:
     time a turn reaches here the messages carry the identity line, the
     recall block and the earlier turns of the conversation, and reflecting
     on all of that would write down again what was settled days ago.
+
+    One implementation, in agent_routing, because this had the same blind
+    spot the ladder had: a turn with something attached arrives as a list of
+    parts, and both read "" from it. The agent would then reflect on nothing
+    for every message the person attached a file to.
     """
-    for m in reversed(messages or []):
-        if isinstance(m, dict) and m.get("role") == "user":
-            content = m.get("content")
-            return content if isinstance(content, str) else ""
-    return ""
+    return agent_routing.last_user_text(messages or [])
 
 
 def _trim_for_storage(conversation: list[dict]) -> list[dict]:
@@ -1170,9 +1171,40 @@ async def _jev_release(key: str, email: str, text: str) -> bool:
         return False
 
 
-#: Jev is not asked about a greeting: a message this short has no subject
-#: to hand anyone, and the general model answers it well.
-JEV_MIN_WORDS = 4
+#: Words that are a greeting or a pleasantry and nothing else. A message made
+#: up only of these has no subject in it to hand anyone and no tool to pick
+#: for it, so Jev is not asked and the free model answers, which it does well.
+#:
+#: This replaces a word count of four, changed 2026-10-29. The count was
+#: aimed at "hi" and "thanks" but it caught the shortest REAL requests along
+#: with them: "check my inbox" is three words, "any new email" is three, "read
+#: my emails" is three. Every one of them skipped the tool pick and went to a
+#: model with no mailbox, which is the single thing this chat is most often
+#: asked to do. Length was never what distinguished a greeting from a request;
+#: the words are.
+_PLEASANTRIES = frozenset({
+    "hi", "hey", "hello", "heya", "hiya", "yo", "sup", "greetings",
+    "morning", "afternoon", "evening", "night", "good", "day",
+    "thanks", "thank", "thankyou", "thx", "ty", "ta", "cheers", "appreciate",
+    "ok", "okay", "k", "kk", "cool", "nice", "great", "perfect", "awesome",
+    "lovely", "lol", "haha", "hah", "yay",
+    "bye", "goodbye", "later", "cya", "ciao",
+    "yes", "yeah", "yep", "yup", "no", "nope", "nah", "sure", "fine",
+    "please", "pls", "sorry", "welcome",
+    "you", "u", "your", "there", "it", "that", "me", "my", "all", "and",
+    "mate", "man", "buddy", "friend", "team", "everyone",
+})
+
+
+def is_small_talk(text: str) -> bool:
+    """A greeting or a pleasantry with no request in it.
+
+    True only when EVERY word is a pleasantry, so "thanks" and "good morning
+    everyone" skip Jev while "thanks, check my inbox" does not: one word that
+    is not on the list is enough to make it a message about something.
+    """
+    words = re.findall(r"[a-z']+", (text or "").lower())
+    return bool(words) and all(w in _PLEASANTRIES for w in words)
 
 #: In the MAIN CHAT, an agent answers only when the person named it.
 #:
@@ -1208,7 +1240,7 @@ async def _jev_decision(body: ChatIn, text: str, agents: list[dict]) -> dict | N
     try:
         if not agent_decider.enabled():
             return None
-        if len((text or "").split()) < JEV_MIN_WORDS:
+        if is_small_talk(text):
             return None
         decision = await agent_decider.decide(body.user_email, body.chat_id, text,
                                               body.messages, agents)
@@ -1281,7 +1313,7 @@ async def _tool_pick(body: ChatIn, text: str) -> list[str] | None:
     try:
         if not _assistant_on():
             return None
-        if len((text or "").split()) < JEV_MIN_WORDS:
+        if is_small_talk(text):
             return None
         if not agent_llm.can_run(main_assistant.agent()):
             return None

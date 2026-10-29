@@ -176,6 +176,18 @@ Workspace → Tools in the Open WebUI admin, not by deploy. `agent_builder_tool.
 through `/agents/make` and `/agents/roster`; it sends only `X-User-Email`, like
 `schedules_tool.py`, and the service scopes every call to that email.
 
+**A pipe runs from its `public.function` row, and the file beside it on the
+server goes stale without a word.** Measured 2026-10-29: the live
+`auto_router` row matched `main` byte for byte, while
+`/root/proxy-server/open-webui-functions/auto_router_pipe.py` matched commit
+`3adaf8a3f` from 2026-09-16, four commits and six weeks behind. Nothing is
+wrong with that, the file is only a reference copy and
+`open-webui-functions/` is not in the orchestrator's watch list, but it is a
+loaded gun: writing that file to the row would silently revert six weeks of
+pipe work. **Update the row from the repo, never from the server's copy, and
+check `md5(content)` against the repo file afterwards.** The row takes effect
+with no restart.
+
 ### Connecting a Google account (2026-10-29)
 **A connect is started by the server, never by a URL that names an account.**
 The browser goes to `/<service>/auth/google/link`, the api-gateway
@@ -226,6 +238,29 @@ set on create and backfilled on the agents page's seed call,
 `routes_agents.refresh_agents`), so an agent mentioned with `@` in the main chat answers with its own
 face; a reply Auto routed to an agent opens with the small robot and the name
 (`rendered_web` and `faces` on `/agents/chat`).
+
+**A hardcoded free model id lasts about six weeks (2026-10-29).** Of the six
+ids `auto_router_pipe.py` shipped with on 2026-09-10, FOUR had been withdrawn
+by 2026-10-29, `MODEL_GENERAL` among them. `_keep_available` only ever
+shrinks the candidate list, so a general or a maths question was left with one
+candidate, and that one answered 429 on three probes of three: the chat was
+not giving weaker answers, it was giving none. `_top_up` now refills the list
+from the catalogue (free chat ids only, capped at `MAX_CANDIDATES`), so a
+round of withdrawals can never leave nothing to try. **Probe an id three
+times before trusting it**: `liquid/lfm-2.5-2.6b` passed one arithmetic probe
+in September, was kept on that basis, and was the dead end in October.
+Re-measure the pool when Auto starts saying every free model is busy.
+
+**Two things the chat could not hear (2026-10-29).** A turn with a file
+attached arrives as a LIST of parts, and `agent_routing.last_user_text` read
+`""` from every one of them, so naming an agent in a message with a
+screenshot reached nobody, Jev was never asked and no tool was picked. It
+joins the text parts now, and `routes_agent_turn._last_user_text` delegates
+to it rather than keeping a second copy of the same blind spot. Separately,
+Jev was gated behind a four-word floor meant for greetings, which also
+swallowed "check my inbox", "any new email" and "read my emails". The gate is
+`is_small_talk` now: a message is a greeting because of its words, not its
+length.
 
 **`@Ada` runs our loop (2026-10-27).** Every agent's `base_model_id` is the IO
 pipe (`io.io`) and its language model is `meta.llm` (`agent_llm.py`: `llm_of`,

@@ -43,26 +43,42 @@ DEFAULT_CATEGORY = "general"
 # When the chosen free model is rate-limited (429) or errors, Auto retries these
 # in order so a busy free provider never dead-ends the user.
 #
-# Every id here was measured against the live API on 2026-09-10: each one
-# answered "what is 17 times 4" correctly, in the time noted. The previous pool
-# listed openai/gpt-oss-20b:free and nvidia/nemotron-nano-9b-v2:free, both of
-# which OpenRouter had withdrawn, and google/gemma-4-26b-a4b-it:free, which
-# answers 429 on essentially every call. So three of four retries could not
-# have worked no matter what was asked.
+# Re-measured 2026-10-29, and the result is why this block changed shape. Of
+# the six ids the router shipped with, FOUR had been withdrawn, including
+# MODEL_GENERAL, which is where most questions land. That left a general or a
+# maths question with exactly one surviving candidate, liquid/lfm-2.5-2.6b,
+# and that one answered 429 on three probes out of three. So Auto was not
+# giving weaker answers, it was giving none: "every free model was
+# rate-limited or failed".
 #
-# Deliberately excluded, and why:
-#   google/gemma-4-31b-it:free       answered once, then 429 on the next call
-#   poolside/laguna-*:free           429
-#   thinkingmachines/inkling*:free   403, not available on this account
-#   nvidia/nemotron-3-ultra-*:free   timed out at 45s
-#   nvidia/nemotron-3-nano-omni-*    returned a body with no choices
-#   nvidia/nemotron-3.5-lightning    correct but 9.4s, too slow to wait on
+# A single probe is not reliability, which the last round learned the hard
+# way, so every id below answered THREE probes of a real question (not
+# arithmetic: "what is the difference between a webhook and a cron job").
+# The order is measured reliability first, then speed.
+#
+# Deliberately excluded, and why. Each one of these looked fine on one probe:
+#   liquid/lfm-2.5-2.6b:free        429 on 3 of 3, after passing a single probe
+#   poolside/laguna-s-2.1:free      429 on 3 of 3 (laguna-xs likewise)
+#   nvidia/nemotron-3.5-lightning   200 with an EMPTY body on 2 of 3
+#   nvidia/nemotron-3-ultra-550b    answered arithmetic, then a body with no
+#                                   choices on a longer question. 550B and
+#                                   1M context, so worth re-probing later.
+#   google/gemma-4-*:free           429
+#   thinkingmachines/inkling*:free  403, not available on this account
+#   xingchen-agi/xing4.0-29b:free   429
 FALLBACK_POOL = [
-    "nex-agi/nex-n2.5-mini:free",              # 0.5s
-    "inclusionai/ling-3.0-flash-fin:free",     # 0.8s
-    "nvidia/nemotron-3-super-120b-a12b:free",  # 1.0s
-    "nex-agi/nex-n2.5-pro:free",               # 1.3s
-    "liquid/lfm-2.5-2.6b:free",                # 1.4s
+    # 3/3, and the only id that also held up on multi-step reasoning (twice)
+    # and on exact instruction following. Vision-capable, which is why an
+    # attached image is worth sending it.
+    "nvidia/nemotron-3.5-super-vl:free",        # 2.5-6.4s, 1M context
+    # 3/3 and the fastest, but it returns an EMPTY body on longer work (two
+    # attempts at a six-step word problem, both empty). Fine as a fallback
+    # because an empty 200 already falls through to the next model.
+    "recursive/flint-v1.0:free",                # 2.3-4.5s
+    "cohere/north-mini-code:free",              # 1.6-15.2s, code-trained
+    "dots-studio/dots-3-note-preview:free",     # 3.1-5.7s, empty on one probe
+    # 2/3, and 26s when it does answer. Last resort only.
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
 ]
 
 #: OpenRouter's free ids rotate: a model that worked last month can be gone
@@ -113,6 +129,46 @@ def _keep_available(candidates: list, available: set) -> list:
         return candidates
     live = [m for m in candidates if m in available]
     return live or candidates
+
+
+#: Ids OpenRouter serves that are not general chat models, so topping up must
+#: never reach for one. nvidia/nemotron-3.5-content-safety:free is a safety
+#: classifier: it is free, it is live, and it would answer a question about
+#: invoices with a safety verdict.
+_NOT_CHAT = ("content-safety", "-guard", "moderation", "embed", "rerank")
+
+#: How many models one message may try. Without a cap, topping up from a
+#: catalogue of sixteen lets a single question spend a minute being refused
+#: by ids nobody has ever probed.
+MAX_CANDIDATES = 7
+
+
+def _top_up(candidates: list, available: set) -> list:
+    """The candidates, then any other free chat model the catalogue serves.
+
+    This is the half that was missing, and it is why four withdrawn ids could
+    take the chat down without anybody noticing. `_keep_available` only ever
+    SHRINKS the list, so as ids rot the pool quietly empties: on 2026-10-29 a
+    general question was left with exactly one candidate, and that one was
+    permanently rate-limited. Nothing said so. The chat just reported that
+    every free model was busy, which read like a bad afternoon on the free
+    tier rather than a pool that had rotted away months earlier.
+
+    Measured ids keep their order at the front, because they are the ones
+    known to answer. What gets appended is unprobed, which is worth trying
+    only once the known-good ones have all failed, and is still far better
+    than having nothing left to try.
+    """
+    out = list(candidates)
+    if available:
+        for mid in sorted(available):
+            if len(out) >= MAX_CANDIDATES:
+                break
+            if (mid.endswith(":free") and mid not in out
+                    and not any(bad in mid for bad in _NOT_CHAT)):
+                out.append(mid)
+    return out[:MAX_CANDIDATES]
+
 
 RULES = {
     "coder": [
@@ -187,10 +243,12 @@ class Pipe:
         # Model ids are OpenRouter :free ids and DO rotate. If a route starts
         # failing, re-check https://openrouter.ai/api/v1/models and update here.
         MODEL_GENERAL: str = Field(
-            # Was openai/gpt-oss-20b:free, which OpenRouter has withdrawn.
-            # General is where most questions land, so this one id being dead
-            # is most of why Auto (Free) failed. Measured at 0.5s and correct.
-            default="nex-agi/nex-n2.5-mini:free",
+            # Was nex-agi/nex-n2.5-mini:free, withdrawn. General is where most
+            # questions land, so this one id being dead is most of why Auto
+            # stopped answering at all. This is the only id that held up on
+            # every probe: 3/3 live, correct multi-step reasoning twice, and
+            # exact instruction following.
+            default="nvidia/nemotron-3.5-super-vl:free",
             description="Free model for general questions.",
         )
         MODEL_CODER: str = Field(
@@ -198,7 +256,12 @@ class Pipe:
             description="Free model for code questions.",
         )
         MODEL_REASONING: str = Field(
-            default="nvidia/nemotron-3-super-120b-a12b:free",
+            # Was nvidia/nemotron-3-super-120b-a12b:free, withdrawn. The same
+            # id as general on purpose: of the models still served, it is the
+            # only one that got a six-step word problem right twice without
+            # taking 26 seconds over it. The category is kept so an admin can
+            # repoint it the moment something better appears.
+            default="nvidia/nemotron-3.5-super-vl:free",
             description="Free model for math and logic questions.",
         )
         SHOW_ROUTE: bool = Field(
@@ -336,8 +399,9 @@ class Pipe:
             # these ran an agent three times for one message. The free model
             # answers it as it always did, whole, with no footer, which would
             # otherwise end up inside the title.
-            candidates = _keep_available(self._candidates(category),
-                                         await _available_models(key))
+            available = await _available_models(key)
+            candidates = _top_up(
+                _keep_available(self._candidates(category), available), available)
             out = await self._complete({**body, "stream": False},
                                        self._headers(key), category, candidates, None)
             return FOOTER_RE.sub("", out) if isinstance(out, str) else out
@@ -370,10 +434,14 @@ class Pipe:
         await self._emit(__event_emitter__, "", done=True)
 
         candidates = self._candidates(category)
-        # Before spending a retry on it. A withdrawn id and a rate-limited one
-        # fail identically from here, so without this the pool gets burned on
-        # models that could not have answered whatever was asked.
-        candidates = _keep_available(candidates, await _available_models(key))
+        # Drop the withdrawn ids before spending a retry on one: a withdrawn
+        # id and a rate-limited one fail identically from here, so without
+        # this the pool gets burned on models that could not have answered
+        # whatever was asked. Then top the list back up from the catalogue,
+        # so a round of withdrawals can never leave the chat with nothing
+        # left to try.
+        available = await _available_models(key)
+        candidates = _top_up(_keep_available(candidates, available), available)
         headers = self._headers(key)
         if body.get("stream"):
             return self._stream(body, headers, category, candidates, __event_emitter__)

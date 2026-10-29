@@ -153,9 +153,15 @@ def test_every_tool_case_names_tools_the_pick_offers():
 
 
 def test_every_tool_case_reaches_the_assistant():
-    """Not a greeting, and no agent's name: those never get a tool pick."""
+    """Not a greeting, and no agent's name: those never get a tool pick.
+
+    Asked by the words rather than by a word count since 2026-10-29. The
+    count was the point of this check and also its blind spot: a calibration
+    case may now be three words long, because "check my inbox" is a real
+    request and used to be gated out as if it were "hello there".
+    """
     for text, _, _ in cal.TOOL_CASES:
-        assert len(text.split()) >= routes_agent_turn.JEV_MIN_WORDS, text
+        assert not routes_agent_turn.is_small_talk(text), text
 
 
 def test_tool_scores_count_misses_and_extras():
