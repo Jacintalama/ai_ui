@@ -493,6 +493,55 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   //: than being rebuilt somewhere else: a replaced node starts life at the
   //: new coordinates and jumps, and no transition can animate that.
   //: Returns the length of the walk this placing started, or 0.
+  //: How long the new arrival stands in the middle saying hello before it
+  //: sets off. Long enough to read three words, short enough that nobody
+  //: waits for the floor.
+  var HELLO_MS = 1500;
+
+  //: An agent that has just been made walks in rather than appearing at its
+  //: desk. Returns false when it cannot, and the caller falls back to the
+  //: pop it did before: an office that is not on screen, or has no measured
+  //: size yet, has no middle to walk from.
+  //:
+  //: Everything it needs already exists. placeSlot walks any CONNECTED slot
+  //: whose coordinates change, and walking.css has the stride, the lean and
+  //: the settle. All this does is start it somewhere else.
+  function walkIn(el, slot, m, layer) {
+    var w = layer.clientWidth, h = layer.clientHeight;
+    // No size means the floor is hidden or not laid out. Walking from 0,0
+    // would be a robot sliding in from the corner, which is worse than the
+    // pop it replaces.
+    if (!(w > 40 && h > 40)) return false;
+    // Already where it is going: a one-room office, or a desk in the
+    // middle. Walking nowhere looks like a bug.
+    var cx = Math.round(w / 2 - SLOT_W / 2), cy = Math.round(h / 2 - 40);
+    if (Math.abs(cx - slot.left) < 24 && Math.abs(cy - slot.top) < 24) return false;
+
+    el.style.left = cx + "px";
+    el.style.top = cy + "px";
+    el.classList.add("arriving");
+
+    var hello = document.createElement("div");
+    hello.className = "hello";
+    // textContent, so a name is a name and never markup.
+    hello.textContent = "Hi, I am " + (m.name || m.id);
+    el.appendChild(hello);
+
+    setTimeout(function () {
+      // Gone from the floor while it was saying hello (deleted, or a redraw
+      // took it): nothing to walk.
+      if (!el.isConnected) return;
+      hello.classList.add("going");
+      el.classList.remove("arriving");
+      // The coordinates change on a connected slot, so this IS the walk.
+      placeSlot(el, slot);
+      setTimeout(function () {
+        if (hello.parentNode) hello.parentNode.removeChild(hello);
+      }, 400);
+    }, HELLO_MS);
+    return true;
+  }
+
   function placeSlot(el, slot) {
     var nx = slot.left + "px", ny = slot.top + "px";
     if (!el.isConnected || (el.style.left === nx && el.style.top === ny)) {
@@ -825,9 +874,21 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
         el.innerHTML = slotInner(m);
         el.setAttribute("data-sig", slotStructure(m));
         watchArrival(el);
-        // Somebody new on a floor already drawn (an agent just made) pops
-        // up at its desk; the first draw's agents were simply there.
-        if (FLOOR_DRAWN) {
+        // Somebody new on a floor already drawn walks in: they appear in
+        // the middle, say hello, and then go to their desk. The first
+        // draw's agents were simply there, and still are.
+        //
+        // This is the only moment the office has to show that an agent was
+        // really made. Three times on 2026-10-29 the chat claimed it had
+        // created one and had not, and nothing on this floor could have
+        // told you either way. A robot that walks to a desk is proof you
+        // can watch.
+        //
+        // Nothing new is animated here: placeSlot already walks any
+        // connected slot whose coordinates change, and walking.css already
+        // has the stride, the lean and the settle. This only decides where
+        // it starts from.
+        if (FLOOR_DRAWN && !walkIn(el, slot, m, layer)) {
           el.classList.add("born");
           setTimeout(function () { el.classList.remove("born"); }, 700);
         }
