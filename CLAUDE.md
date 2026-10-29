@@ -176,6 +176,18 @@ Workspace → Tools in the Open WebUI admin, not by deploy. `agent_builder_tool.
 through `/agents/make` and `/agents/roster`; it sends only `X-User-Email`, like
 `schedules_tool.py`, and the service scopes every call to that email.
 
+**A pipe runs from its `public.function` row, and the file beside it on the
+server goes stale without a word.** Measured 2026-10-29: the live
+`auto_router` row matched `main` byte for byte, while
+`/root/proxy-server/open-webui-functions/auto_router_pipe.py` matched commit
+`3adaf8a3f` from 2026-09-16, four commits and six weeks behind. Nothing is
+wrong with that, the file is only a reference copy and
+`open-webui-functions/` is not in the orchestrator's watch list, but it is a
+loaded gun: writing that file to the row would silently revert six weeks of
+pipe work. **Update the row from the repo, never from the server's copy, and
+check `md5(content)` against the repo file afterwards.** The row takes effect
+with no restart.
+
 ### Connecting a Google account (2026-10-29)
 **A connect is started by the server, never by a URL that names an account.**
 The browser goes to `/<service>/auth/google/link`, the api-gateway
