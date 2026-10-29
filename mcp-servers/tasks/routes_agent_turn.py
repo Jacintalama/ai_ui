@@ -1333,6 +1333,43 @@ async def _jev_answer(body: ChatIn, text: str, agents: list[dict],
         return None
 
 
+#: Turns of the conversation Jev is shown behind the latest message. Enough
+#: for a follow-up to inherit its subject, few enough that an old topic
+#: cannot outweigh the current one.
+CONTEXT_TURNS = 6
+
+
+def recent_exchange(messages, turns: int = CONTEXT_TURNS) -> str:
+    """What was said just before the latest message, as plain lines.
+
+    Jev used to be shown one orphan sentence, so "create it please" carried
+    no subject and no tool was picked. Measured live on 2026-10-29: the same
+    person's "make a daily quote agent" picked agent_builder and schedules
+    at 0.89, and their very next message, "create it please", picked nothing
+    at 0.34. The assistant never ran and the free model answered "I can't
+    actually create agents or scheduled cron jobs inside your platform",
+    which is the product denying its own feature at the moment it was asked
+    for. Agreement is always the shortest message, so this failed hardest
+    exactly when somebody said go.
+
+    The latest message is EXCLUDED: the caller passes that separately as the
+    thing being judged, and repeating it would weight it twice.
+    """
+    out = []
+    for m in list(messages or [])[-(turns + 1):-1]:
+        if not isinstance(m, dict):
+            continue
+        role = m.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        said = agent_routing.last_user_text([dict(m, role="user")])
+        said = " ".join(str(said or "").split())
+        if said:
+            out.append("%s: %s" % ("person" if role == "user" else "reply",
+                                   said[:400]))
+    return "\n".join(out)
+
+
 def _assistant_on() -> bool:
     """MAIN_ASSISTANT=0 switches the assistant off; anything else is on."""
     return os.environ.get("MAIN_ASSISTANT", "1").strip() != "0"
@@ -1363,7 +1400,8 @@ async def _tool_pick(body: ChatIn, text: str) -> list[str] | None:
         tools = await _every_tool_for(body.user_email)
         if not tools:
             return None
-        return await agent_jev.pick_tools(body.user_email, text, tools)
+        return await agent_jev.pick_tools(body.user_email, text, tools,
+                                          recent_exchange(body.messages))
     except Exception:                                       # noqa: BLE001
         logger.warning("the main chat's tool pick failed; the free model "
                        "answers instead", exc_info=True)
