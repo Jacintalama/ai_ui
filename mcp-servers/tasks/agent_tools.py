@@ -195,6 +195,25 @@ def arguments_of(call) -> dict:
 #: runner before a call is held for approval.
 METHODS_NO_AGENT_MAY_CALL = frozenset({"ask_agents"})
 
+#: Tools that get the owner's approval THEMSELVES, in their own words, and
+#: so must never be held for the generic one as well.
+#:
+#: create_agent (2026-10-29) is in two steps: called without a confirm code
+#: it creates nothing and returns the whole brief for the person to read,
+#: and it only writes when called back with the code that brief produced.
+#: Held as a generic write on top of that, the person is asked twice for the
+#: same thing: once in plain language ("here is what Crane would be"), then
+#: again as raw arguments ("This will run: create_agent").
+#:
+#: Reported 2026-10-29 with a screenshot. Saying yes to the brief did not
+#: create the agent, it opened a second question, and the model filled the
+#: confusion by proposing a different agent entirely.
+#:
+#: The preview is the stronger approval of the two: it shows the
+#: instructions the agent will be given, in full, rather than a JSON blob.
+#: A tool only belongs here if it genuinely asks first on its own.
+METHODS_THAT_ASK_FOR_THEMSELVES = frozenset({"create_agent"})
+
 
 def is_write_call(method_name: str, params: dict | None = None) -> bool:
     """True when THIS call could change something, arguments included.
@@ -213,6 +232,11 @@ def is_write_call(method_name: str, params: dict | None = None) -> bool:
     A call_tool whose tool_name is missing or not a string stays a write. So
     does one nested inside another, which nothing should be doing.
     """
+    if method_name in METHODS_THAT_ASK_FOR_THEMSELVES:
+        # It asks the owner itself, in better words than this hold could.
+        # See the note on the set above: being held as well asks the same
+        # person the same question twice and loses the answer in between.
+        return False
     if method_name != "call_tool":
         return is_write_tool(method_name)
     inner = (params or {}).get("tool_name")
