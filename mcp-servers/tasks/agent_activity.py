@@ -104,6 +104,12 @@ STALE_AFTER_SCHEDULE = timedelta(minutes=70)
 
 SOURCE_SCHEDULE = "schedule"
 SOURCE_CHANNEL = "channel"
+#: The main chat in Open WebUI: Auto (Free), an @-mentioned agent on the IO
+#: pipe, or the ask_agents tool. Added 2026-10-29, because before it these
+#: runs were written as SOURCE_CHANNEL and were therefore indistinguishable
+#: from Discord's. The busiest surface on the platform was the one with no
+#: measurements at all. See `main_chat()` below for why the mark is safe.
+SOURCE_CHAT = "chat"
 #: Another agent asked for this run. The office reads it to say who is
 #: helping whom, which is a fact about a row rather than an animation.
 SOURCE_COLLEAGUE = "colleague"
@@ -198,6 +204,40 @@ def job_step():
 
 def in_job_step() -> bool:
     return bool(_JOB_STEP.get())
+
+
+#: Whether the turn in flight came from the main chat. A ContextVar for the
+#: same reason as the two above: the route knows, start_run writes, and
+#: _run_turn sits in between.
+#:
+#: Why this exists (2026-10-29): until now a main chat turn recorded
+#: `source` as "channel", the same value Discord uses, because channel is
+#: the fallback and nothing else fitted. So the 136 channel rows could not
+#: be split, and there was NO latency, failure rate or cost for the main
+#: chat anywhere in the database. Three fixes shipped to that chat the same
+#: day could not be shown to have changed a single number.
+#:
+#: Marked at the route rather than guessed from the body, and it is sound to
+#: mark the whole route: POST /agents/chat has exactly three callers, all
+#: Open WebUI pipes in the main chat (auto_router_pipe, io_gateway_pipe,
+#: agents_tool). The agents PANEL is a different router, /tasks/agents/chat,
+#: and the bots come in through /agents/turn.
+_MAIN_CHAT: contextvars.ContextVar = contextvars.ContextVar(
+    "agent_activity_main_chat", default=False)
+
+
+@contextlib.contextmanager
+def main_chat():
+    """Mark every run started inside this block as a main chat turn."""
+    token = _MAIN_CHAT.set(True)
+    try:
+        yield
+    finally:
+        _MAIN_CHAT.reset(token)
+
+
+def in_main_chat() -> bool:
+    return bool(_MAIN_CHAT.get())
 
 
 async def start_run(agent_id: str, user_email: str, source: str,

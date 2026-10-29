@@ -251,6 +251,32 @@ times before trusting it**: `liquid/lfm-2.5-2.6b` passed one arithmetic probe
 in September, was kept on that basis, and was the dead end in October.
 Re-measure the pool when Auto starts saying every free model is busy.
 
+**The chat says what it is doing, and its runs can be counted (2026-10-29).**
+`POST /agents/chat/stream` is the same work as `/agents/chat` with each
+progress line sent as it happens (`agent_progress.say`, SSE via
+`sse_starlette`, the pipe falls back to the one-shot POST on a 404 so the row
+and the container can be updated in either order). A line is only ever sent
+when it is true of THAT message: who is answering, because an agent was named
+or Jev picked one, and what is being read, because Jev picked a tool. An
+ordinary question says nothing, which is why the old blanket "Choosing who
+answers..." was removed. The final line is composed by the SERVICE and
+returned as `status` on the reply, because only the service knows whether a
+real agent spoke, the assistant read something, or neither.
+
+**It does not stream the answer, on purpose.** `agent_jev.reply_answers` can
+decide an agent's reply did not answer and discard it, and `_assistant_failed`
+does the same for the assistant; text that may be thrown away must not already
+be on the person's screen. The plain free-model path, the fast one, has always
+streamed.
+
+Main chat runs now record `source` as `chat` (`agent_activity.main_chat()`,
+marked at the route because all three callers of `/agents/chat` are main chat
+pipes; the panel is `/tasks/agents/chat` and the bots are `/agents/turn`).
+Before this they were written as `channel`, the same value Discord uses, so
+the busiest surface on the platform was the only one with no latency, failure
+rate or cost anywhere in the database. `_source_for` holds the precedence and
+is a pure function so it can be tested without a turn.
+
 **Two things the chat could not hear (2026-10-29).** A turn with a file
 attached arrives as a LIST of parts, and `agent_routing.last_user_text` read
 `""` from every one of them, so naming an agent in a message with a

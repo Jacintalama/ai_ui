@@ -24,6 +24,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Header, HTTPException
+from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -39,6 +40,7 @@ import agent_handoff
 import agent_jev
 import agent_llm
 import agent_memory
+import agent_progress
 import agent_routing
 import main_assistant
 import agent_skills
@@ -374,6 +376,36 @@ def _pending_payload(user_email: str, agent_id: str,
     }}
 
 
+def _source_for(surface: str) -> str:
+    """What to record as the reason this run exists.
+
+    Pulled out of the start_run call so it can be tested without running a
+    turn, which needs a database and a model (the repo's testing-seams
+    pattern). The order is the point of it, most specific first:
+
+    Colleague before anything else, because a handoff inside a meeting is
+    still a handoff, and "who asked this agent" is the more specific fact.
+    A job step next: it is why this run exists, more specifically than the
+    meeting it may sit in. Then the meeting. Then the main chat, because a
+    meeting called FROM the main chat is still a meeting.
+
+    Channel is last and is a fallback, and that is what hid the main chat:
+    its turns were written as "channel", the same value Discord uses, so
+    the busiest surface on the platform was the one with no measurements.
+    """
+    if surface == agent_access.SURFACE_COLLEAGUE:
+        return agent_activity.SOURCE_COLLEAGUE
+    if surface == agent_access.SURFACE_AUTOMATION:
+        return agent_activity.SOURCE_AUTOMATION
+    if agent_activity.in_job_step():
+        return agent_activity.SOURCE_JOB
+    if agent_activity.in_meeting():
+        return agent_activity.SOURCE_MEETING
+    if agent_activity.in_main_chat():
+        return agent_activity.SOURCE_CHAT
+    return agent_activity.SOURCE_CHANNEL
+
+
 async def _run_turn(user_email: str, agent_id: str, messages: list[dict],
                     brief: bool = False,
                     surface: str = agent_access.SURFACE_CHANNEL,
@@ -429,17 +461,7 @@ async def _run_turn(user_email: str, agent_id: str, messages: list[dict],
     mode = agent_access.effective_mode(level, None, surface)
 
     run_id = await agent_activity.start_run(
-        agent_id, user_email,
-        # Colleague first: a handoff inside a meeting is still a handoff,
-        # and "who asked this agent" is the more specific fact. A job step
-        # next: it is why this run exists, more specifically than a meeting.
-        (agent_activity.SOURCE_COLLEAGUE
-         if surface == agent_access.SURFACE_COLLEAGUE
-         else agent_activity.SOURCE_AUTOMATION
-         if surface == agent_access.SURFACE_AUTOMATION
-         else agent_activity.SOURCE_JOB if agent_activity.in_job_step()
-         else agent_activity.SOURCE_MEETING if agent_activity.in_meeting()
-         else agent_activity.SOURCE_CHANNEL),
+        agent_id, user_email, _source_for(surface),
         parent_run_id=parent_run_id)
     usage = agent_escalation.TurnUsage(run_id=run_id)
     outcome = "failed"
@@ -965,13 +987,23 @@ def _faces_of(turns) -> dict:
     return out
 
 
-def _reply(turns, queue=None, marker: str = "") -> dict:
+def _reply(turns, queue=None, marker: str = "", status: str = "") -> dict:
     """The /chat response: the turns, two renderings of them (plain, and
     with the agents' faces for the web), the faces by id, and the queue
-    and marker the older shape carried."""
+    and marker the older shape carried.
+
+    `status` is the one line to leave on the person's screen afterwards:
+    "Answered by Mia", or "Used your email" when the assistant read
+    something, or "" when the free model answered and nothing happened
+    worth reporting. Decided here rather than in the pipe because this is
+    where it is known whether a real agent spoke or the assistant did, and
+    getting that wrong is what put "Answered by your agent" over an answer
+    with no agent in it (2026-10-28).
+    """
     return {"turns": turns, "rendered": render_turns(turns),
             "rendered_web": render_turns(turns, faces=True),
-            "faces": _faces_of(turns), "queue": queue or [], "marker": marker}
+            "faces": _faces_of(turns), "queue": queue or [], "marker": marker,
+            "status": status}
 
 
 def turns_marker(ids) -> str:
@@ -1269,6 +1301,11 @@ async def _jev_answer(body: ChatIn, text: str, agents: list[dict],
     Never raises."""
     try:
         names = [a.get("name") for a in agents if a.get("name")]
+        # Said before the turn, not after: the turn is the slow part, and
+        # the whole point is that the wait stops being silent. Jev's pick
+        # is a real fact about this message, so naming the agent here is
+        # honest even though the reply may still be discarded below.
+        agent_progress.say(agent_progress.answering_line([agent.get("name")]))
         turn = await _turn_for(body.user_email, agent, body.messages, names,
                                roster=agents,
                                graph=await agent_graph.graph_block(
@@ -1283,7 +1320,8 @@ async def _jev_answer(body: ChatIn, text: str, agents: list[dict],
             if ok is False:
                 return None
         await _write_pin(_pin_key(body.chat_id, body.user_email), agent["id"])
-        return _reply([turn], queue=[], marker="")
+        return _reply([turn], queue=[], marker="",
+                      status=agent_progress.answered_by([agent.get("name")]))
     except Exception:                                       # noqa: BLE001
         logger.warning("Jev could not pick an agent for the chat; answering as "
                        "before", exc_info=True)
@@ -1346,6 +1384,11 @@ async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
             return None
         assistant = main_assistant.agent()
         names = [a.get("name") for a in agents if a.get("name")]
+        # The slowest thing the main chat does, and until now the most
+        # silent: "check my inbox" took 9.5s on the live box with nothing
+        # on screen. Said before the turn, naming the place rather than the
+        # tool id, and no agent's name, because no agent is involved.
+        agent_progress.say(agent_progress.reading_line(picked))
         turn = await _turn_for(
             body.user_email, assistant, body.messages, names, roster=agents,
             graph=await agent_graph.graph_block(body.user_email, text),
@@ -1357,7 +1400,11 @@ async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
         if not pending:
             # IO speaking for itself: no name or face over the answer.
             turn = dict(turn, agent=None)
-        return _reply([turn], queue=[], marker="")
+        # What it read, left on screen. An answer built from the person's
+        # own mailbox used to be indistinguishable from one the model made
+        # up, which is the difference between information and a guess.
+        return _reply([turn], queue=[], marker="",
+                      status=agent_progress.used_line(picked))
     except Exception:                                       # noqa: BLE001
         logger.warning("the main chat's assistant could not answer; the free "
                        "model answers instead", exc_info=True)
@@ -1377,6 +1424,93 @@ async def chat(body: ChatIn,
     one approved call twice.
     """
     _require_internal(x_internal_secret)
+    # Every caller of this route is the main chat, so the mark goes here
+    # rather than being inferred from the body further in. It makes the run
+    # rows say "chat" instead of "channel", which is what makes the main
+    # chat measurable at all (agent_activity.main_chat).
+    with agent_activity.main_chat():
+        return await _chat_inner(body, x_internal_secret)
+
+
+async def _chat_events(body: ChatIn, x_internal_secret: str):
+    """The same work as `chat`, as a stream: each progress line as it
+    happens, then the reply `chat` would have returned.
+
+    Why a second route rather than a flag on the first: /agents/chat has
+    three callers and two of them (io_gateway_pipe, agents_tool) want one
+    JSON object and nothing else. A streaming response is a different
+    contract, so it gets a different path, and a caller that has not been
+    taught about it is unaffected.
+
+    The turn runs as a task and the queue is drained beside it, which is
+    what lets a line reach the person while the tool loop it describes is
+    still going. A failure here must cost the status lines and never the
+    answer, so the task's exception is re-raised to the caller exactly as
+    the plain route would raise it.
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+    done = object()
+
+    async def work():
+        try:
+            with agent_activity.main_chat(), \
+                    agent_progress.reporting_to(queue.put_nowait):
+                return await _chat_inner(body, x_internal_secret)
+        finally:
+            queue.put_nowait(done)
+
+    task = asyncio.create_task(work())
+    # If the person closes the tab mid-turn, sse_starlette closes this
+    # generator and nobody is left to await the task. The turn is NOT
+    # cancelled, deliberately: it may be halfway through sending an email,
+    # and a half-done tool call is worse than an answer nobody reads. This
+    # just collects the result so a failure after the reader has gone does
+    # not surface as "Task exception was never retrieved".
+    task.add_done_callback(lambda t: t.cancelled() or t.exception())
+    try:
+        while True:
+            item = await queue.get()
+            if item is done:
+                break
+            yield {"event": "status", "data": json.dumps({"line": str(item)})}
+        reply = await task
+    except Exception:                                       # noqa: BLE001
+        logger.warning("the main chat's streamed turn failed", exc_info=True)
+        yield {"event": "error", "data": "{}"}
+        return
+    yield {"event": "reply", "data": json.dumps(reply)}
+
+
+@router.post("/chat/stream")
+async def chat_stream(body: ChatIn,
+                      x_internal_secret: str = Header(default="")
+                      ) -> EventSourceResponse:
+    """`chat`, with the progress lines sent as they happen.
+
+    The main chat used to go silent for the whole turn: 9.5s for "check my
+    inbox" and 12.3s for an attachment an agent took, measured live on
+    2026-10-29, with nothing on screen. This is how the pipe learns what to
+    say during that wait.
+
+    It does NOT stream the answer, on purpose. `agent_jev.reply_answers` can
+    decide an agent's reply did not answer the question, and then it is
+    discarded and the free model answers instead; `_assistant_failed` does
+    the same for the assistant. Text that might still be thrown away must
+    not already be on the person's screen.
+    """
+    _require_internal(x_internal_secret)
+    # sse_starlette rather than a hand-rolled StreamingResponse, to match
+    # the panel's stream (routes_agent_chat) and to get its ping, which is
+    # what keeps a long tool loop from looking like a dead connection.
+    # X-Accel-Buffering because a buffered event stream arrives all at once
+    # at the end, which is exactly the silence this route exists to remove.
+    return EventSourceResponse(
+        _chat_events(body, x_internal_secret),
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+async def _chat_inner(body: ChatIn, x_internal_secret: str) -> dict:
+    """The body of `chat`, so the main chat mark wraps all of it."""
     if not getattr(body, "route_only", False):
         return await _route_chat(body, x_internal_secret)
     key = _pending_key(_pin_key(body.chat_id, body.user_email))
@@ -1520,8 +1654,13 @@ async def _route_chat(body: ChatIn, x_internal_secret: str = "") -> dict:
             agent_graph.graph_block(body.user_email, text),
             clock_for(body.user_email))
         speakers = named[:1] if getattr(body, "first_only", False) else named
+        # Each agent is announced as its own turn starts, not all at once
+        # up front: they run one at a time (3.8GB box), so saying all three
+        # names immediately would claim work that has not begun.
         turns = []
         for agent in speakers:
+            agent_progress.say(
+                agent_progress.answering_line([agent.get("name")]))
             turns.append(await _turn_for(body.user_email, agent, body.messages,
                                          names, roster=agents, graph=graph,
                                          now=now))
@@ -1539,11 +1678,14 @@ async def _route_chat(body: ChatIn, x_internal_secret: str = "") -> dict:
         first_only = bool(getattr(body, "first_only", False))
         queue = [a["id"] for a in named[1:]] if first_only else []
         ids = [a["id"] for a in named] if queue else []
+        spoke = agent_progress.answered_by([a.get("name") for a in speakers])
         if first_pending:
             await _write_pin(key, named[0]["id"])
-            return _reply(turns, queue=queue, marker=turns_marker(ids))
+            return _reply(turns, queue=queue, marker=turns_marker(ids),
+                          status=spoke)
         await _write_pin(key, named[-1]["id"])
-        return _reply(turns, queue=queue, marker=turns_marker(ids))
+        return _reply(turns, queue=queue, marker=turns_marker(ids),
+                      status=spoke)
 
     pinned_id = await _read_pin(key)
     agent = next((a for a in agents if a.get("id") == pinned_id), None)
@@ -1641,9 +1783,14 @@ async def _route_chat(body: ChatIn, x_internal_secret: str = "") -> dict:
     # A follow up keeps the agent awake. Without this the pin would run out
     # five minutes after the agent was last NAMED, mid conversation.
     names = [a.get("name") for a in agents if a.get("name")]
+    # The pinned agent, the skill owner or the subject owner: the person
+    # did not name anybody this time, so saying who picked the message up
+    # matters more here than where they did.
+    agent_progress.say(agent_progress.answering_line([agent.get("name")]))
     turn = await _turn_for(body.user_email, agent, body.messages, names,
                            roster=agents,
                            graph=await agent_graph.graph_block(
                                body.user_email, text))
     await _write_pin(key, agent["id"])
-    return _reply([turn], queue=[], marker="")
+    return _reply([turn], queue=[], marker="",
+                  status=agent_progress.answered_by([agent.get("name")]))
