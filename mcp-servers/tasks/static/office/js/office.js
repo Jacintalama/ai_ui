@@ -2645,8 +2645,12 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   // Never raises, and never clears the floor on a failure: what is drawn
   // stays drawn, which is no worse than before.
   var _reloading = false;
-  async function reloadOnReturn() {
-    if (_reloading || document.hidden) return;
+  //: `told` means the shell said this pane is on screen, so believe it
+  //: rather than re-deriving it from document.hidden, which is still false
+  //: for a frame that was merely display:none. Reported 2026-10-29: "i need
+  //: to refresh so i can see it in ai agents and office".
+  async function reloadOnReturn(told) {
+    if (_reloading || (!told && document.hidden)) return;
     _reloading = true;
     try {
       await loadAgents();
@@ -2658,13 +2662,19 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
       _reloading = false;
     }
   }
-  document.addEventListener("visibilitychange", reloadOnReturn);
+  document.addEventListener("visibilitychange", function () { reloadOnReturn(false); });
+  window.addEventListener("focus", function () { reloadOnReturn(false); });
+  // The browser's back button restores a page from the bfcache without
+  // running any of it again, so nothing else here would fire.
+  window.addEventListener("pageshow", function (ev) {
+    if (ev.persisted) reloadOnReturn(true);
+  });
   // The shell says when this pane is back on screen. Only from the window
   // that framed this page, and only from this origin.
   window.addEventListener("message", function (ev) {
     if (ev.origin !== window.location.origin) return;
     if (ev.source !== window.parent) return;
-    if (ev.data && ev.data.aiuiFrameVisible === true) reloadOnReturn();
+    if (ev.data && ev.data.aiuiFrameVisible === true) reloadOnReturn(true);
   });
 
   (async function init() {
