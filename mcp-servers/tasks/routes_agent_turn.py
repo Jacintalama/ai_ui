@@ -904,7 +904,12 @@ def approval_question(agent_name: str, calls) -> str:
     arguments, not a phrase written per tool, which would be wrong somewhere
     and be wrong exactly where somebody approves the wrong thing. The IO
     pipe's wording, here since Auto renders what this service sends."""
-    lines = ["%s wants to run:" % (agent_name or "This agent")]
+    # No name means the assistant asking for itself in the main chat, where
+    # the person named nobody. "This agent wants to run" is as wrong there as
+    # a robot and a bold IO over the answer: it invents a third party out of
+    # the free model's own tool call.
+    lines = [("%s wants to run:" % agent_name) if agent_name
+             else "This will run:"]
     for call in calls if isinstance(calls, list) else []:
         call = call if isinstance(call, dict) else {}
         fn = call.get("function")
@@ -1397,9 +1402,22 @@ async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
                    and bool(turn["pending"].get("calls")))
         if not pending and _assistant_failed(str(turn.get("answer") or "")):
             return None
-        if not pending:
-            # IO speaking for itself: no name or face over the answer.
-            turn = dict(turn, agent=None)
+        # IO speaking for itself: no name and no face over the answer, and
+        # that holds whether it answered or stopped to ask.
+        #
+        # It used to hold only when it answered, so a turn that stopped for
+        # approval kept the assistant's agent row and the chat drew the
+        # office robot and a bold "IO" above it. Reported 2026-10-29 with a
+        # screenshot: "i havnet mention any agent why is this". Exactly the
+        # complaint from 2026-10-28 that put this line here in the first
+        # place, surviving in the one branch it was never applied to. The
+        # assistant is the free model with the tools Jev picked; nobody was
+        # named, so nobody is shown.
+        #
+        # Safe for the approval itself: what resumes a held call is
+        # pending["agent_id"], never turn["agent"], which is only ever a
+        # display name.
+        turn = dict(turn, agent=None)
         # What it read, left on screen. An answer built from the person's
         # own mailbox used to be indistinguishable from one the model made
         # up, which is the difference between information and a guess.
@@ -1546,11 +1564,22 @@ async def _chat_inner(body: ChatIn, x_internal_secret: str) -> dict:
         if _held(turn):
             pending = dict(turn["pending"])
             who = turn.get("agent") if isinstance(turn.get("agent"), dict) else {}
+            # The assistant carries no agent row by design, so without this
+            # both the Agents page and the stored question would fall back
+            # to its raw id and read "io-assistant wants to run:". The page
+            # still needs to say where the question came from, and the
+            # honest answer is the main chat rather than any agent.
+            held_by = str(pending.get("agent_id") or "")
+            asked_by = who.get("name")
+            shown_as = (asked_by or ("Main chat"
+                                     if main_assistant.is_assistant(held_by)
+                                     else held_by))
             row = await agent_approvals.hold(
-                body.user_email, str(pending.get("agent_id") or ""),
-                str(who.get("name") or pending.get("agent_id") or ""), pending,
+                body.user_email, held_by, shown_as, pending,
                 agent_approvals.ORIGIN_CHAT, key,
-                approval_question(who.get("name") or pending.get("agent_id"),
+                approval_question(asked_by if asked_by
+                                  else (None if main_assistant.is_assistant(held_by)
+                                        else held_by),
                                   pending.get("calls") or []))
             if row:
                 pending["approval_id"] = row["id"]
