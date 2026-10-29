@@ -51,36 +51,47 @@
 
   // ========== Helpers ==========
 
-  // Cache the resolved email to avoid repeated API calls
+  // The signed-in account's address, cached once resolved.
+  //
+  // Never a user id. Every per-user table on the platform is keyed by the
+  // address, and Open WebUI's JWT carries an id and no address, so this used
+  // to answer with the id whenever it was asked before the address had been
+  // fetched (which happened a second after load, and only then). A Google
+  // consent started inside that second wrote the id into gmail_tokens,
+  // gdrive_tokens and calendar_tokens, and every read, which asks by address,
+  // found nothing. One account was connected and unreachable at the same
+  // time, in all three services, with no error anywhere.
+  // See mcp-servers/gmail/account_identity.py for the server's half.
   var _cachedEmail = null;
 
+  // Loose on purpose: this only has to tell an address from a user id.
+  function _isEmail(v) {
+    return typeof v === 'string' && /^[^@\s]+@[^@\s]+$/.test(v.trim());
+  }
+
   function getEffectiveEmail() {
-    // Return cached email if available
     if (_cachedEmail) return _cachedEmail;
 
-    // Try to decode JWT token from Open WebUI
-    var token = localStorage.getItem('token');
-    if (token) {
-      try {
-        var payload = JSON.parse(atob(token.split('.')[1]));
-        if (payload && payload.id) {
-          // Use user ID as identifier (email not in JWT)
-          _cachedEmail = payload.id;
-          return _cachedEmail;
-        }
-      } catch (e) {}
-    }
-
-    // Fallback: search localStorage for email
+    // Open WebUI keeps the signed-in user object in localStorage, so the
+    // address is usually available before /api/v1/auths/ answers. The JWT is
+    // deliberately not consulted: it has an id and no address.
     for (var i = 0; i < localStorage.length; i++) {
       try {
         var val = localStorage.getItem(localStorage.key(i));
         if (!val) continue;
         var obj = JSON.parse(val);
-        if (obj && obj.email) { _cachedEmail = obj.email; return _cachedEmail; }
-        if (obj && obj.user && obj.user.email) { _cachedEmail = obj.user.email; return _cachedEmail; }
+        if (obj && _isEmail(obj.email)) {
+          _cachedEmail = obj.email.trim();
+          return _cachedEmail;
+        }
+        if (obj && obj.user && _isEmail(obj.user.email)) {
+          _cachedEmail = obj.user.email.trim();
+          return _cachedEmail;
+        }
       } catch (e) {}
     }
+    // Not cached: this is a guess, and the next call should get another
+    // chance at the real thing.
     return 'default@local';
   }
 
@@ -91,14 +102,44 @@
     fetch('/api/v1/auths/', {
       headers: { 'Authorization': 'Bearer ' + token }
     }).then(function(r) { return r.json(); }).then(function(data) {
-      if (data && data.email) {
-        _cachedEmail = data.email;
-        console.log('[AIUI] User email resolved:', data.email);
+      if (data && _isEmail(data.email)) {
+        _cachedEmail = data.email.trim();
         // Sync Gmail connection state with the server so stale localStorage
         // doesn't show UI for a connection the server no longer has.
         syncGmailStateFromServer();
       }
     }).catch(function() {});
+  }
+
+  // Run `fn(address)` once the address is known for certain, asking the server
+  // if the page cannot answer. Used by anything that binds an identity to
+  // something stored server side, where a guess becomes a row somebody else
+  // may own: a connect under 'default@local' is a bucket two accounts could
+  // share, which is a worse outcome than a connect that waited a moment.
+  var _UNSURE_WHO = 'Could not confirm which account you are signed in as. '
+    + 'Please reload the page and try again.';
+
+  function withUserEmail(fn) {
+    if (_isEmail(_cachedEmail)) { fn(_cachedEmail); return; }
+    var known = getEffectiveEmail();
+    if (_isEmail(known) && known !== 'default@local') { fn(known); return; }
+    var token = localStorage.getItem('token');
+    if (!token) {
+      showNotification('Please sign in again, then try connecting.', true);
+      return;
+    }
+    fetch('/api/v1/auths/', {
+      headers: { 'Authorization': 'Bearer ' + token }
+    }).then(function (r) { return r.json(); }).then(function (data) {
+      if (data && _isEmail(data.email)) {
+        _cachedEmail = data.email.trim();
+        fn(_cachedEmail);
+      } else {
+        showNotification(_UNSURE_WHO, true);
+      }
+    }).catch(function () {
+      showNotification(_UNSURE_WHO, true);
+    });
   }
 
   function syncGmailStateFromServer() {
@@ -125,6 +166,8 @@
   }
 
   // Resolve email on load
+  resolveUserEmail();
+  // Kept as a retry: the first call races page setup on a cold load.
   setTimeout(resolveUserEmail, 1000);
 
   // Tell the platform what timezone this browser is in, so the assistant knows
@@ -771,9 +814,15 @@
     var searchTerm = '';
 
     function unifiedConnect() {
-      try { localStorage.setItem('aiui-return-url', window.location.href); } catch (er) {}
-      window.location.href = GMAIL_API + '/auth/google/start?user_email='
-        + encodeURIComponent(email) + '&connect=all';
+      // The address is confirmed before the consent, not assumed from
+      // whatever the page happened to know when this modal was built: one
+      // consent writes gmail_tokens, gdrive_tokens and calendar_tokens, and
+      // all three are keyed by it.
+      withUserEmail(function (addr) {
+        try { localStorage.setItem('aiui-return-url', window.location.href); } catch (er) {}
+        window.location.href = GMAIL_API + '/auth/google/start?user_email='
+          + encodeURIComponent(addr) + '&connect=all';
+      });
     }
 
     // Square logo tile: real logo via Clearbit -> Google favicon -> letter.
@@ -1738,7 +1787,6 @@
   }
 
   function uploadEmailAttachments(messageId, attachments) {
-    var userEmail = getEffectiveEmail();
     var token = getWebUIToken();
 
     attachments.forEach(function(att) {
@@ -1760,7 +1808,10 @@
       console.log('[AIUI] Downloading attachment:', att.filename);
 
       // Download attachment from Gmail
-      fetch(GMAIL_API + '/gmail_download_attachment/' + messageId + '/' + att.attachment_id + '?user_email=' + encodeURIComponent(userEmail) + '&filename=' + encodeURIComponent(att.filename))
+      // No user_email on the URL: the api-gateway injects the validated
+      // X-User-Email, and the parameter used to let any caller name any
+      // connected account.
+      fetch(GMAIL_API + '/gmail_download_attachment/' + messageId + '/' + att.attachment_id + '?filename=' + encodeURIComponent(att.filename))
         .then(function(r) {
           if (!r.ok) throw new Error('Download failed');
           return r.blob();
@@ -2479,8 +2530,6 @@
     if (!connected) {
       // Unified connect: one consent links Gmail + Calendar + Drive. Whatever
       // service prompted this, send the user through the single Google flow.
-      var unifiedUrl = GMAIL_API + '/auth/google/start?user_email='
-        + encodeURIComponent(email) + '&connect=all';
       var btn = document.createElement('button');
       btn.type = 'button';
       btn.style.cssText = 'display:inline-flex;align-items:center;gap:8px;margin:8px 0;' +
@@ -2488,8 +2537,13 @@
         'font-weight:600;font-size:14px;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,0.25);';
       btn.innerHTML = icon + '<span>Connect Google</span>';
       btn.addEventListener('click', function () {
-        try { localStorage.setItem('aiui-return-url', window.location.href); } catch (e) {}
-        window.location.href = unifiedUrl;
+        // Same rule as the modal: the address is settled at the click, from
+        // the server if the page cannot be sure, never from a stale capture.
+        withUserEmail(function (addr) {
+          try { localStorage.setItem('aiui-return-url', window.location.href); } catch (e) {}
+          window.location.href = GMAIL_API + '/auth/google/start?user_email='
+            + encodeURIComponent(addr) + '&connect=all';
+        });
       });
       container.appendChild(btn);
       var note = document.createElement('div');
