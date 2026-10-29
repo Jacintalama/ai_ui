@@ -1073,7 +1073,14 @@ async def test_a_turn_that_asks_shows_the_question_and_holds_the_call(held):
     out = await rt.chat(_auto("create three assistants for my coffee shop"),
                         x_internal_secret="s")
     shown = out["rendered_web"]
-    assert "IO wants to run" in shown and "create_agent" in shown
+    # Was "IO wants to run". Changed 2026-10-29 on a screenshot: "i havnet
+    # mention any agent why is this". Nobody was named, so the question must
+    # not be attributed to anyone, and the assistant is not an agent to
+    # attribute it to. The question itself is unchanged, which is what the
+    # rest of this test still checks.
+    assert "This will run" in shown and "create_agent" in shown
+    assert "IO wants to run" not in shown, "an agent was named for a message that named none"
+    assert "data:image" not in shown, "the office robot was drawn over it"
     assert "Barista" in shown and "Reply yes" in shown
     assert list(held.values())[0]["calls"] == [CALL]
 
