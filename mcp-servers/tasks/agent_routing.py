@@ -408,6 +408,15 @@ def last_user_text(messages) -> str:
 
     Reads backwards rather than taking messages[-1], because a tool result or
     an assistant turn can be last.
+
+    A turn with something attached arrives as a LIST of parts rather than a
+    string, and this used to answer "" to all of them. Proven on 2026-10-29:
+    attach a screenshot, type "mia, what is in this", and the whole routing
+    ladder sees an empty message. No name matches, so Mia never hears it;
+    Jev is never asked; no tool is picked. The person watched their agent
+    ignore them and the free model answer instead. So the text parts are
+    joined and the rest of the parts, the image itself, travel on in the
+    messages as before.
     """
     if not isinstance(messages, (list, tuple)):
         return ""
@@ -417,6 +426,11 @@ def last_user_text(messages) -> str:
         content = m.get("content")
         if isinstance(content, str):
             return content
+        if isinstance(content, (list, tuple)):
+            return " ".join(
+                p["text"] for p in content
+                if isinstance(p, dict) and isinstance(p.get("text"), str)
+                and p.get("type", "text") == "text").strip()
     return ""
 
 

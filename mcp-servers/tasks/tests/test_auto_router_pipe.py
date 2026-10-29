@@ -259,16 +259,95 @@ def test_a_catalogue_matching_nothing_leaves_the_pool_alone(mod):
 
 
 def test_the_withdrawn_ids_are_not_in_the_pool(mod):
-    """Named rather than counted, so re-adding one is a visible failure."""
-    for dead in ("openai/gpt-oss-20b:free", "nvidia/nemotron-nano-9b-v2:free"):
-        assert dead not in mod.FALLBACK_POOL, dead
-        assert dead != mod.Pipe.Valves().MODEL_GENERAL, dead
+    """Named rather than counted, so re-adding one is a visible failure.
+
+    The second group was withdrawn between 2026-09-10 and 2026-10-29, which
+    is six weeks: that is the real clock on a hardcoded free id.
+    """
+    dead = (
+        "openai/gpt-oss-20b:free", "nvidia/nemotron-nano-9b-v2:free",
+        "nex-agi/nex-n2.5-mini:free", "nex-agi/nex-n2.5-pro:free",
+        "inclusionai/ling-3.0-flash-fin:free",
+        "nvidia/nemotron-3-super-120b-a12b:free",
+    )
+    valves = mod.Pipe.Valves()
+    for gone in dead:
+        assert gone not in mod.FALLBACK_POOL, gone
+        for route in ("MODEL_GENERAL", "MODEL_CODER", "MODEL_REASONING"):
+            assert getattr(valves, route) != gone, "%s -> %s" % (route, gone)
 
 
-def test_the_permanently_rate_limited_model_is_not_in_the_pool(mod):
-    """google/gemma-4-26b-a4b-it:free answered 429 on every probe. It is not a
-    fallback: a fallback that is always busy is a wasted retry."""
-    assert "google/gemma-4-26b-a4b-it:free" not in mod.FALLBACK_POOL
+def test_the_permanently_rate_limited_models_are_not_in_the_pool(mod):
+    """A fallback that is always busy is a wasted retry.
+
+    liquid/lfm-2.5-2.6b is the cautionary one. It passed a single arithmetic
+    probe in September and was kept, then answered 429 on three of three in
+    October, by which time every other id had been withdrawn and it was the
+    only candidate left for a general question. One probe is not reliability.
+    """
+    for busy in ("google/gemma-4-26b-a4b-it:free", "google/gemma-4-31b-it:free",
+                 "liquid/lfm-2.5-2.6b:free", "poolside/laguna-s-2.1:free",
+                 "poolside/laguna-xs-2.1:free"):
+        assert busy not in mod.FALLBACK_POOL, busy
+
+
+# --- the pool can no longer rot away to nothing (2026-10-29) ----------------
+#
+# What went wrong: _keep_available only ever SHRINKS the candidate list. Four
+# of six ids were withdrawn, which left a general question with exactly one
+# candidate, and that one was permanently rate-limited. The chat reported
+# "every free model was rate-limited or failed" and nothing said why.
+
+
+def test_a_gutted_pool_is_topped_up_from_the_catalogue(mod):
+    """The failure that was live. Every measured id is gone; the catalogue is
+    still serving others, so the person gets an answer instead of an apology."""
+    kept = mod._keep_available(["gone-a:free", "gone-b:free"],
+                               {"other-x:free", "other-y:free"})
+    # _keep_available fails open and hands back the dead list untouched.
+    topped = mod._top_up(kept, {"other-x:free", "other-y:free"})
+    assert "other-x:free" in topped and "other-y:free" in topped
+
+
+def test_topping_up_keeps_the_measured_ids_in_front(mod):
+    """The probed ids answer; the appended ones are only guesses. Trying a
+    guess before a known-good model would make every answer slower."""
+    topped = mod._top_up(["measured:free"], {"measured:free", "aaa-guess:free"})
+    assert topped[0] == "measured:free", topped
+
+
+def test_topping_up_never_reaches_for_a_model_that_is_not_a_chat_model(mod):
+    """nvidia/nemotron-3.5-content-safety:free is free, live, and would answer
+    a question about invoices with a safety verdict."""
+    topped = mod._top_up(["a:free"],
+                         {"a:free", "nvidia/nemotron-3.5-content-safety:free"})
+    assert topped == ["a:free"]
+
+
+def test_topping_up_never_reaches_for_a_paid_model(mod):
+    """The whole promise of this router is that no paid model is ever used,
+    and the catalogue it tops up from lists the paid ones too."""
+    topped = mod._top_up(["a:free"], {"a:free", "anthropic/expensive-model"})
+    assert topped == ["a:free"]
+
+
+def test_one_message_cannot_try_the_whole_catalogue(mod):
+    """Without a cap, a question would spend a minute being refused by ids
+    nobody has probed before it gave up."""
+    catalogue = {"m%02d:free" % i for i in range(40)}
+    assert len(mod._top_up(["a:free"], catalogue)) == mod.MAX_CANDIDATES
+
+
+def test_an_unreadable_catalogue_adds_nothing(mod):
+    """Fails closed in this direction, on purpose: with no catalogue there is
+    nothing to top up FROM, and inventing ids would waste the retries."""
+    assert mod._top_up(["a:free", "b:free"], set()) == ["a:free", "b:free"]
+
+
+def test_topping_up_does_not_duplicate_a_candidate(mod):
+    """A duplicate is a retry spent asking the same busy model twice."""
+    topped = mod._top_up(["a:free"], {"a:free"})
+    assert topped == ["a:free"]
 
 
 def test_every_pool_entry_is_a_free_id(mod):
