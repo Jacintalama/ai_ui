@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 import agent_access
+import agent_attach
 import agent_approvals
 import agent_avatar
 import agent_activity
@@ -356,6 +357,12 @@ def _trim_for_storage(conversation: list[dict]) -> list[dict]:
         if not isinstance(msg, dict):
             continue
         content = msg.get("content")
+        if isinstance(content, list):
+            # A message with a picture in it. The picture is up to five MB
+            # of base64 and the description is in the words, so the words
+            # are what is kept (2026-10-29).
+            msg = agent_attach.words_only([msg])[0]
+            content = msg["content"]
         if isinstance(content, str) and len(content) > PENDING_CONTENT_CHARS:
             msg = dict(msg)
             msg["content"] = (content[:PENDING_CONTENT_CHARS]

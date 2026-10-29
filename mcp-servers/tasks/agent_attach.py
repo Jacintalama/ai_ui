@@ -9,11 +9,20 @@ message as text, so an attachment becomes text before the round starts:
 - a picture is described once by a model that can see, with every word in
   it written out (VISION_MODEL, the agents' own GLM, which takes images).
 
-Text rather than the picture itself, because a room round asks every agent
-in turn and replays the history on every later turn: one description is one
-vision call, where the picture would be a vision prompt per agent per turn,
-and the fallback model (glm-4.7-flash) cannot see at all. agent_routing
-drops inlined pictures from history for the same reason.
+The description is what is kept, because a room round replays the history
+on every later turn: one description is one vision call, where the picture
+would be a vision prompt per agent per turn, and the fallback model
+(glm-4.7-flash) cannot see at all. agent_routing drops inlined pictures from
+history for the same reason.
+
+Since 2026-10-29 the picture itself is seen too, and nobody waits for the
+description. The send stores the message with PENDING where the description
+goes and returns at once (it used to sit about seven seconds on the vision
+call); describe() runs beside the round and fill() puts the words in. The
+round that answers the message hands its agents the picture itself
+(with_pictures), held in memory for that one round and never stored, and a
+model that cannot see is handed the words alone (words_only, applied by
+agent_runner on every post).
 
 The text rides in the message under a line saying it is data from a file,
 not instructions, the way automations.message_for hands over a webhook body.
@@ -22,6 +31,7 @@ it (split below), and a picture's small preview the browser made.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import logging
@@ -50,6 +60,21 @@ THUMB_CHARS = 60000
 
 VISION_MODEL = os.environ.get("AGENT_VISION_MODEL", "z-ai/glm-5.3-flash")
 VISION_TIMEOUT_SECONDS = 60.0
+#: Models an agent may be handed a picture on. Only ones seen to read a
+#: picture on this platform: glm-5.3-flash has described every attached
+#: picture since 2026-10-28. Anything else is handed the words alone, so a
+#: model that cannot see never fails a turn on an image. Comma separated in
+#: AGENT_SEEING_MODELS to add one once it has been tried.
+SEEING_MODELS = frozenset(
+    m.strip() for m in os.environ.get("AGENT_SEEING_MODELS", VISION_MODEL).split(",")
+    if m.strip())
+
+#: Where a picture's description goes until it has been written.
+PENDING = ("[Its description is still being written. Whoever can see is "
+           "shown the picture itself.]")
+#: What stays when it could not be written.
+UNDESCRIBED = ("[It could not be described. Whoever could see was shown the "
+               "picture itself.]")
 
 TEXT_EXTENSIONS = {
     "txt", "md", "markdown", "csv", "tsv", "json", "yaml", "yml", "xml",
@@ -92,6 +117,9 @@ class Prepared:
     """What a message's attachments turned into."""
     text: str = ""
     shown: list[dict] = field(default_factory=list)
+    #: The pictures as sent, {name, url} with a data URL, for describe() and
+    #: for the round that answers. Never stored.
+    pictures: list[dict] = field(default_factory=list)
 
 
 def _ext(name: str) -> str:
@@ -245,6 +273,7 @@ async def prepare(email: str, files: list[tuple[str, str, bytes]],
         raise Refused(f"At most {MAX_FILES} files on one message.")
     parts: list[str] = []
     shown: list[dict] = []
+    pictures: list[dict] = []
     left = TOTAL_CHARS
     for raw_name, ctype, data in files:
         name = _clean_name(raw_name)
@@ -261,17 +290,12 @@ async def prepare(email: str, files: list[tuple[str, str, bytes]],
             elif kind == "pdf":
                 text = pdf_text(data)
             else:
+                # Described later (describe), not here: the send does not
+                # wait on the vision model.
                 url = "data:%s;base64,%s" % (_mime_for(raw_name, ctype),
                                              base64.b64encode(data).decode("ascii"))
-                try:
-                    text = await _see(email, url)
-                except Refused:
-                    raise
-                except Exception as exc:                    # noqa: BLE001
-                    logger.warning("attachment: the picture could not be described", exc_info=True)
-                    raise Refused(f"{name} could not be looked at just now. Try again in a moment.") from exc
-                if not text:
-                    raise Refused(f"{name} could not be looked at just now. Try again in a moment.")
+                pictures.append({"name": name, "url": url})
+                text = PENDING
         except Refused as r:
             msg = str(r)
             raise Refused(msg if msg.startswith(name) else f"{name} {msg}.") from r
@@ -283,4 +307,59 @@ async def prepare(email: str, files: list[tuple[str, str, bytes]],
         if thumb:
             item["thumb"] = thumb
         shown.append(item)
-    return Prepared(text="\n\n".join(parts), shown=shown)
+    return Prepared(text="\n\n".join(parts), shown=shown, pictures=pictures)
+
+
+async def describe(email: str, pictures: list[dict]) -> dict[str, str]:
+    """{name: description} for each picture, all looked at side by side.
+
+    Never raises: a picture that could not be looked at is UNDESCRIBED, and
+    the agents that can see were shown it anyway.
+    """
+    async def one(pic: dict) -> str:
+        try:
+            said = await _see(email, pic["url"])
+        except Exception:                                   # noqa: BLE001
+            logger.warning("attachment: the picture could not be described", exc_info=True)
+            return UNDESCRIBED
+        return _cut(said, TEXT_CHARS) if said and said.strip() else UNDESCRIBED
+
+    got = await asyncio.gather(*(one(p) for p in pictures))
+    return {p["name"]: text for p, text in zip(pictures, got)}
+
+
+def fill(content: str, name: str, text: str) -> str:
+    """The message with `name`'s description in place of PENDING."""
+    head = _HEAD.format(name=name, kind="picture") + "\n"
+    return (content or "").replace(head + PENDING, head + text.strip(), 1)
+
+
+def with_pictures(content, pictures: list[dict]) -> list[dict]:
+    """A message's content as parts: its words, then each picture itself."""
+    if isinstance(content, list):
+        parts = list(content)
+    else:
+        parts = [{"type": "text", "text": str(content or "")}]
+    return parts + [{"type": "image_url", "image_url": {"url": p["url"]}}
+                    for p in pictures if p.get("url")]
+
+
+def sees(model: str | None) -> bool:
+    """Whether a picture may be put in front of this model."""
+    return bool(model) and model in SEEING_MODELS
+
+
+def words_only(messages: list[dict]) -> list[dict]:
+    """The messages with every picture taken out, for a model that cannot
+    see: a message of parts becomes the words in it. The description is in
+    those words, so nothing that was said about the picture is lost."""
+    out = []
+    for m in messages:
+        content = m.get("content") if isinstance(m, dict) else None
+        if isinstance(content, list):
+            words = "\n".join(p.get("text", "") for p in content
+                              if isinstance(p, dict) and p.get("type") == "text")
+            m = dict(m)
+            m["content"] = words
+        out.append(m)
+    return out

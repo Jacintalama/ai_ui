@@ -54,6 +54,14 @@ class RoomSession:
     #: here until the drain reaches it. Reusing a fresh id at drain time
     #: instead would answer a turn the browser never rendered with that id.
     queued_turn_ids: list[str] = field(default_factory=list)
+    #: turn id -> what a queued message carried for its bubble (name, kind,
+    #: preview), put on the message when the drain reaches it. Without it
+    #: a queued picture lost its preview once answered (2026-10-29).
+    queued_attached: dict[str, list] = field(default_factory=dict)
+    #: turn id -> the pictures sent with that message ({name, url}), for the
+    #: round that answers it, which hands them to its agents. Memory only,
+    #: never saved, and dropped when that round ends.
+    pictures: dict[str, list] = field(default_factory=dict)
     last_used: float = field(default_factory=time.time)
     #: The saved conversation this session is working on, or None before the
     #: first message has been sent.

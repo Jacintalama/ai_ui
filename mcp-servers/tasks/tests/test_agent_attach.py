@@ -95,13 +95,19 @@ async def test_a_pdf_is_its_text():
 
 
 async def test_a_picture_is_described_once_by_the_vision_model(clean):
+    """Once, and not while the send waits (test_agent_attach_seen.py): the
+    message carries PENDING until describe() fills it in."""
     thumb = "data:image/jpeg;base64,AAAA"
     got = await agent_attach.prepare("a@b", [("board.png", "image/png", b"\x89PNG....")],
                                      {"board.png": thumb})
+    assert clean == []
+    assert agent_attach.PENDING in got.text
+    assert got.shown == [{"name": "board.png", "kind": "image", "thumb": thumb}]
+    said = await agent_attach.describe("a@b", got.pictures)
     assert len(clean) == 1 and clean[0][0] == "a@b"
     assert clean[0][1].startswith("data:image/png;base64,")
-    assert "launch on Friday" in got.text
-    assert got.shown == [{"name": "board.png", "kind": "image", "thumb": thumb}]
+    text = agent_attach.fill(got.text, "board.png", said["board.png"])
+    assert "launch on Friday" in text and agent_attach.PENDING not in text
 
 
 async def test_a_preview_that_is_not_a_small_picture_is_dropped():
@@ -123,13 +129,15 @@ async def test_what_cannot_be_used_is_refused_in_words(files, words):
     assert words in str(r.value)
 
 
-async def test_a_picture_the_model_cannot_see_is_refused(monkeypatch):
+async def test_a_picture_the_model_cannot_see_says_so(monkeypatch):
+    """No longer refused: the agents that can see are shown the picture
+    itself, so a description that failed costs only the description."""
     async def blind(email, url):
         raise RuntimeError("provider down")
     monkeypatch.setattr(agent_attach, "_see", blind)
-    with pytest.raises(agent_attach.Refused) as r:
-        await agent_attach.prepare("a@b", [("a.png", "image/png", b"x")])
-    assert "could not be looked at" in str(r.value)
+    got = await agent_attach.prepare("a@b", [("a.png", "image/png", b"x")])
+    said = await agent_attach.describe("a@b", got.pictures)
+    assert said == {"a.png": agent_attach.UNDESCRIBED}
 
 
 async def test_a_long_file_is_cut_and_says_so():

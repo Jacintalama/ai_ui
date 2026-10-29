@@ -203,6 +203,19 @@ def _history_for_round(messages: list[dict], summary: str = "") -> list[dict]:
     return [head] + keep
 
 
+def _with_pictures(history: list[dict], pictures: list[dict]) -> list[dict]:
+    """The history with `pictures` on its newest message from the person,
+    the one this round answers. A copy: the stored messages stay words."""
+    if not pictures:
+        return history
+    out = list(history)
+    for i in range(len(out) - 1, -1, -1):
+        if out[i].get("role") == "user":
+            out[i] = dict(out[i], content=agent_attach.with_pictures(out[i].get("content"), pictures))
+            break
+    return out
+
+
 def _drop(messages: list[dict], marker: dict) -> None:
     """Remove `marker` by identity.
 
@@ -650,6 +663,11 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
     # agent. See the module docstring of routes_agent_turn for what happens
     # when agents read each other's labelled replies.
     history = _history_for_round(s.messages, s.summary)
+    # The pictures sent with this message, put in front of the agents who
+    # answer it (agent_attach.with_pictures). Only the agents' copy: Jev, the
+    # lead and the minutes read the words, the description among them, and
+    # a model that cannot see gets the words alone (agent_runner).
+    seen_history = _with_pictures(history, s.pictures.get(tid) or [])
 
     # A message to the whole team goes to the lead first, who decides whether
     # it is one answer or a job for several of them. A job becomes a plan
@@ -776,9 +794,9 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
             name = str(agent.get("name") or agent_id)
             yield {"event": "working",
                   "data": render.turn_status(tid, render.working(name))}
-            turn_history = history
+            turn_history = seen_history
             if may_pass:
-                turn_history = history + [{"role": "user",
+                turn_history = seen_history + [{"role": "user",
                                            "content": PASS_INSTRUCTION}]
             # The person's own words, not PASS_INSTRUCTION, which is the last
             # user message this agent reads. Carried rather than passed because
@@ -931,6 +949,8 @@ async def _run_round(email: str, s: store.RoomSession, agents: list[dict],
                 yield {"event": "message",
                        "data": render.into_turn(tid, render.note(line))}
     finally:
+        # Seen by this round's agents; later turns read the description.
+        s.pictures.pop(tid, None)
         if met:
             agent_events.publish("meeting_ended", agent_id=met[-1],
                                  user_email=email)
@@ -1016,6 +1036,16 @@ def _take_queued(s: store.RoomSession):
     answered on every round for the rest of the session.
     """
     return s.queued.pop(0) if s.queued else None
+
+
+def _queued_turn(s: store.RoomSession, text: str, tid: str) -> dict:
+    """A queued message as it goes into the conversation, with what its
+    bubble showed when it was sent, so the preview survives a reload."""
+    turn = {"role": "user", "at": _now_iso(), "content": text, "turn_id": tid}
+    attached = s.queued_attached.pop(tid, None)
+    if attached:
+        turn["attached"] = attached
+    return turn
 
 
 def _take_queued_turn_id(s: store.RoomSession) -> str:
@@ -1118,6 +1148,64 @@ async def _attachments(files, thumbs) -> list[tuple[str, str, bytes]]:
     return out
 
 
+#: Descriptions being written, held so they are not collected half way.
+_DESCRIBING: set = set()
+#: Messages per conversation whose pictures are held for their round.
+PICTURES_HELD = 3
+
+
+def _see_pictures(email: str, s: store.RoomSession, tid: str,
+                  pictures: list[dict]) -> None:
+    """The pictures of message `tid`: held for the round that answers it,
+    and described in the background into the stored message."""
+    if not pictures:
+        return
+    s.pictures[tid] = pictures
+    # A round that ends before its agents run (a plan card, an approval)
+    # never lets its pictures go; the oldest go here instead. Up to five
+    # MB a message, and this box has 3.8 GB.
+    while len(s.pictures) > PICTURES_HELD:
+        s.pictures.pop(next(iter(s.pictures)))
+    task = asyncio.create_task(_describe_later(email, s, tid, pictures, s.generation))
+    _DESCRIBING.add(task)
+    task.add_done_callback(_DESCRIBING.discard)
+
+
+async def _describe_later(email: str, s: store.RoomSession, tid: str,
+                          pictures: list[dict], generation: int) -> None:
+    """Write each picture's description into message `tid`, wherever it is
+    by now: in the conversation, or still queued behind a round.
+
+    The send used to wait for this, about seven seconds a picture. The round
+    that answers does not need it, its agents see the picture itself; the
+    turns after it, the agents that cannot see and the saved record do.
+    """
+    try:
+        said = await agent_attach.describe(email, pictures)
+    except Exception:                                       # noqa: BLE001
+        log.warning("agent chat: describing the pictures failed", exc_info=True)
+        said = {p["name"]: agent_attach.UNDESCRIBED for p in pictures}
+    if s.generation != generation:
+        return                       # New chat: that conversation is gone
+    def filled(content: str) -> str:
+        for name, text in said.items():
+            content = agent_attach.fill(content, name, text)
+        return content
+    for m in s.messages:
+        if m.get("turn_id") == tid and m.get("role") == "user":
+            m["content"] = filled(str(m.get("content") or ""))
+    for i, queued_tid in enumerate(s.queued_turn_ids):
+        if queued_tid == tid and i < len(s.queued):
+            s.queued[i] = filled(s.queued[i])
+    # A round in flight saves when it ends. With none, nothing else would.
+    if not s.streaming and s.chat_id is not None:
+        try:
+            await store.save_chat(email, s)
+        except Exception:                                   # noqa: BLE001
+            log.warning("agent chat: could not save a picture's description",
+                        exc_info=True)
+
+
 def _thumbs(raw) -> dict:
     """The browser's previews of the attached pictures, by file name."""
     if not isinstance(raw, str) or not raw:
@@ -1141,16 +1229,19 @@ async def agent_chat_send(message: str = Form(""),
     if not typed and not uploads:
         raise HTTPException(status_code=400, detail="empty message")
     shown: list[dict] = []
+    pictures: list[dict] = []
     body = typed
     if uploads:
         # Read before anything is queued or drawn: a message goes with all
-        # of its files or not at all (agent_attach.prepare).
+        # of its files or not at all (agent_attach.prepare). A picture is
+        # not looked at here; see _describe_later.
         try:
             prepared = await agent_attach.prepare(user.email, uploads, _thumbs(thumbs))
         except agent_attach.Refused as r:
             raise HTTPException(status_code=400, detail=str(r)) from r
         body = agent_attach.message_for(typed, prepared)
         shown = prepared.shown
+        pictures = prepared.pictures
     who = _which_chat(agent)
     s = store.get_session(user.email, who)
     await _hydrate(user.email, s, who)
@@ -1168,6 +1259,9 @@ async def agent_chat_send(message: str = Form(""),
         # queued_turn_ids until the drain reaches this message.
         tid = render.new_turn_id()
         s.queued_turn_ids.append(tid)
+        if shown:
+            s.queued_attached[tid] = shown
+        _see_pictures(user.email, s, tid, pictures)
         # Its own turn, appended to the thread out of band so it lands after
         # the running turn rather than inside it.
         return HTMLResponse(
@@ -1181,6 +1275,7 @@ async def agent_chat_send(message: str = Form(""),
         said["attached"] = shown
     s.messages.append(said)
     s.streaming = True
+    _see_pictures(user.email, s, tid, pictures)
     # First message ever: write the row now rather than at the end of the
     # round, so a browser that closes mid-answer still has the question.
     # Best effort, because a database problem must not cost somebody their
@@ -1295,8 +1390,7 @@ async def agent_chat_stream(request: Request,
                 # reconnecting EventSource reads as "nobody has answered this
                 # yet" and would run a second round for.
                 _drop(s.messages, claim)
-                s.messages.append({"role": "user", "at": _now_iso(), "content": nxt,
-                                   "turn_id": s.turn_id})
+                s.messages.append(_queued_turn(s, nxt, s.turn_id))
                 s.messages.append(claim)
                 quote = True
                 # No bubble is emitted: the send that queued this already
@@ -1333,8 +1427,11 @@ async def agent_chat_stream(request: Request,
                     nxt = _take_queued(s)
                     if nxt is None:
                         break
-                    left.append({"role": "user", "at": _now_iso(), "content": nxt,
-                                 "turn_id": _take_queued_turn_id(s)})
+                    left_tid = _take_queued_turn_id(s)
+                    # Never answered by a round of its own: later rounds
+                    # read its description, so the picture is let go.
+                    s.pictures.pop(left_tid, None)
+                    left.append(_queued_turn(s, nxt, left_tid))
                 if left:
                     # Above the claim, not after it, for the same reason the
                     # drain moves it: a "user" tail is what a reconnecting

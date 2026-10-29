@@ -26,6 +26,7 @@ import httpx
 import agent_access
 import agent_activity
 import agent_approvals
+import agent_attach
 import agent_brief
 import agent_escalation
 import agent_llm
@@ -783,11 +784,19 @@ async def _chat(token: str, model: str, messages: list[dict],
         nonlocal active
         while True:
             msgs = convo_now
+            # A picture goes only to a model that can see. Checked on the
+            # free pool, where glm-4.7-flash, the fallback, cannot: posted a
+            # picture it would fail the turn, so it is handed the words, the
+            # description among them (agent_attach). A model outside the
+            # pool is posted what it always was.
+            looking_at = billed(active)
+            if _in_pool(looking_at) and not agent_attach.sees(looking_at):
+                msgs = agent_attach.words_only(msgs)
             if active != model and instructions:
                 # Posting the base model directly, so Open WebUI will not
                 # apply the agent's own instructions. They go first, where
                 # the derived model would have put them.
-                msgs = [{"role": "system", "content": instructions}] + convo_now
+                msgs = [{"role": "system", "content": instructions}] + msgs
             payload: dict = {"model": active, "messages": msgs, "stream": False}
             if with_tools and tool_ids:
                 payload["tool_ids"] = tool_ids
