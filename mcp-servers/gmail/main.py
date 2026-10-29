@@ -429,11 +429,64 @@ async def auth_callback(code: str, state: str = ""):
     """)
 
 
+#: Which Google address a connection belongs to, by platform account. The
+#: profile call is a real HTTP request to Google and the answer cannot change
+#: while a connection lasts, so without this the Connections panel would ask
+#: Google again on every poll for a constant.
+#:
+#: Cleared on disconnect, so reconnecting a DIFFERENT Google account shows the
+#: new one rather than the old one.
+_account_cache: dict = {}
+
+
+async def _google_account(user_email: str) -> Optional[str]:
+    """The Google address this person's tokens actually belong to, or None.
+
+    Worth asking rather than assuming: the token row is keyed by the PLATFORM
+    address, and the Google account that consented can be a different one
+    entirely. Showing the platform address would be a confident lie on the
+    exact screen where somebody is checking which account is connected.
+
+    Never raises. A missing label costs a line of text; a raise here would
+    cost the whole status poll and make a live connection read as absent.
+    """
+    if user_email in _account_cache:
+        return _account_cache[user_email]
+    try:
+        token = await get_valid_token(user_email)
+        if not token:
+            return None
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{GMAIL_API}/users/me/profile",
+                                 headers={"Authorization": f"Bearer {token}"})
+        if r.status_code == 200:
+            address = (r.json() or {}).get("emailAddress")
+            if isinstance(address, str) and address:
+                _account_cache[user_email] = address
+                return address
+    except Exception:                                       # noqa: BLE001
+        # Swallowed on purpose, and nothing is logged with the address in it:
+        # this is only a display label.
+        pass
+    return None
+
+
 @app.get("/auth/status")
 async def auth_status_header(request: Request):
-    """Header-based status (X-User-Email via api-gateway) for the connect-UX poll."""
-    tok = await get_token(await get_user_email(request))
-    return {"connected": tok is not None}
+    """Header-based status (X-User-Email via api-gateway) for the connect-UX poll.
+
+    Carries the connected Google address as `account` (2026-10-29), so the
+    Connections panel can say WHICH account is connected instead of only
+    that one is. Deliberately on this route and not on
+    /auth/google/status?user_email=, which answers for any address given to
+    it: that one already says whether an arbitrary person has connected, and
+    naming their Google account on it would make a small leak a real one.
+    """
+    who = await get_user_email(request)
+    tok = await get_token(who)
+    if tok is None:
+        return {"connected": False, "account": None}
+    return {"connected": True, "account": await _google_account(who)}
 
 
 @app.get("/auth/google/status")
@@ -445,6 +498,9 @@ async def auth_status(user_email: str = "default@local"):
 @app.post("/auth/google/disconnect")
 async def auth_disconnect(user_email: str = "default@local"):
     _tokens.pop(user_email, None)
+    # Or reconnecting a DIFFERENT Google account would keep showing the old
+    # address on the Connections panel until the service restarted.
+    _account_cache.pop(user_email, None)
     if DATABASE_URL:
         try:
             import asyncpg

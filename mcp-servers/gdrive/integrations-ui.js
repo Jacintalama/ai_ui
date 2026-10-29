@@ -857,10 +857,30 @@
       metaEl.textContent = app.sub || (acct && acct !== app.name ? acct : '');
       card.appendChild(metaEl);
 
+      // Which account is connected, directly above the status (2026-10-29).
+      // "Connected" alone does not say connected AS WHOM, and the Google
+      // account that consented is not necessarily the one signed in here, so
+      // it is the one thing a person checking this screen actually wants.
+      // Sits inside the margin-top:auto block below so it stays attached to
+      // the status line rather than floating under the name.
+      var acctEl = null;
+      if (connected && acct) {
+        acctEl = document.createElement('div');
+        acctEl.style.cssText = 'margin-top:auto;text-align:center;color:#9a9a9a;'
+          + 'font-size:11px;line-height:14px;max-width:100%;overflow:hidden;'
+          + 'text-overflow:ellipsis;white-space:nowrap;';
+        acctEl.textContent = acct;
+        acctEl.title = acct;          // the full address on hover when clipped
+        card.appendChild(acctEl);
+      }
+
       var statusEl = document.createElement('div');
       // margin-top:auto pins it to the bottom, so the status line sits on one
-      // baseline across the whole grid no matter what is above it.
-      statusEl.style.cssText = 'margin-top:auto;padding-top:8px;text-align:center;'
+      // baseline across the whole grid no matter what is above it. With an
+      // account line present that one carries the auto instead, or the two
+      // would be pushed apart.
+      statusEl.style.cssText = (acctEl ? 'padding-top:2px;' : 'margin-top:auto;padding-top:8px;')
+        + 'text-align:center;'
         + 'height:' + (SLOT_STATUS + 8) + 'px;line-height:' + SLOT_STATUS + 'px;'
         + 'box-sizing:content-box;';
       if (!app.real) {
@@ -892,11 +912,35 @@
             openTokenPanel(app);
           } else if (!connState[app.id]) {
             unifiedConnect();
-          } else if (confirm('Disconnect ' + app.name + (app.sub ? ' (' + app.sub + ')' : '') + '?')) {
-            var apis = app.apis || [app.api];
-            Promise.all(apis.map(function (api) {
-              return fetch(api + '/auth/google/disconnect?user_email=' + encodeURIComponent(email), { method: 'POST' }).catch(function () {});
-            })).then(function () { connState[app.id] = false; renderGrid(); });
+          } else {
+            // An in-page panel rather than window.confirm (2026-10-29). The
+            // browser dialog is chrome-coloured, lands at the top of the
+            // screen away from the card that was clicked, and says
+            // "ai-ui.coolestdomain.win says" above a bare question, which
+            // reads like a warning from the browser rather than a choice in
+            // the app. It also cannot say WHICH account is about to be
+            // disconnected, which is the one fact worth being sure of.
+            var acctNow = connMeta[app.id] && connMeta[app.id].account_label;
+            askConfirm({
+              title: 'Disconnect ' + app.name + '?',
+              body: acctNow
+                ? acctNow + ' will be disconnected. '
+                  + (app.sub ? app.sub + ' stop working until you connect again.'
+                             : 'It stops working until you connect again.')
+                : (app.sub ? app.sub + ' stop working until you connect again.'
+                           : 'It stops working until you connect again.'),
+              confirmText: 'Disconnect',
+              onConfirm: function () {
+                var apis = app.apis || [app.api];
+                Promise.all(apis.map(function (api) {
+                  return fetch(api + '/auth/google/disconnect?user_email=' + encodeURIComponent(email), { method: 'POST' }).catch(function () {});
+                })).then(function () {
+                  connState[app.id] = false;
+                  if (connMeta[app.id]) connMeta[app.id].account_label = null;
+                  renderGrid();
+                });
+              }
+            });
           }
         });
       }
@@ -914,6 +958,70 @@
       var h = { 'Content-Type': 'application/json' };
       if (t) h['Authorization'] = 'Bearer ' + t;
       return h;
+    }
+
+    // A yes/no the person reads in the app, instead of window.confirm.
+    // Matches the panels below: same overlay, same box, same buttons, so a
+    // destructive answer is given in the place the question was asked.
+    // Escape and the backdrop both cancel, because the safe answer should be
+    // the easy one; only the button confirms.
+    function askConfirm(opts) {
+      var wrap = document.createElement('div');
+      wrap.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;'
+        + 'background:rgba(0,0,0,0.65);z-index:10003;display:flex;align-items:center;'
+        + 'justify-content:center;backdrop-filter:blur(3px);';
+      var box = document.createElement('div');
+      box.style.cssText = 'background:#161616;border:1px solid #2a2a2a;border-radius:16px;'
+        + 'width:min(400px,92vw);padding:22px 24px;color:#eee;'
+        + 'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;';
+
+      var head = document.createElement('div');
+      head.style.cssText = 'font-size:17px;font-weight:650;margin-bottom:6px;';
+      head.textContent = opts.title;
+      box.appendChild(head);
+
+      var body = document.createElement('div');
+      body.style.cssText = 'color:#8d8d8d;font-size:12.5px;line-height:1.55;margin-bottom:18px;';
+      // textContent, not innerHTML: an account label comes from Google.
+      body.textContent = opts.body || '';
+      box.appendChild(body);
+
+      var row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:10px;justify-content:flex-end;';
+      var cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.textContent = 'Cancel';
+      cancel.style.cssText = 'background:#232323;color:#ddd;border:1px solid #333;'
+        + 'border-radius:10px;padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer;';
+      var ok = document.createElement('button');
+      ok.type = 'button';
+      ok.textContent = opts.confirmText || 'OK';
+      // Red, because the only thing asked here is destructive. A person
+      // skimming should be able to tell the two apart without reading.
+      ok.style.cssText = 'background:#b3261e;color:#fff;border:none;'
+        + 'border-radius:10px;padding:9px 16px;font-size:13px;font-weight:650;cursor:pointer;';
+      row.appendChild(cancel);
+      row.appendChild(ok);
+      box.appendChild(row);
+      wrap.appendChild(box);
+
+      function close() {
+        document.removeEventListener('keydown', onKey, true);
+        if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+      }
+      function onKey(e) {
+        if (e.key === 'Escape') { e.stopPropagation(); close(); }
+      }
+      cancel.addEventListener('click', close);
+      wrap.addEventListener('click', function (e) { if (e.target === wrap) close(); });
+      ok.addEventListener('click', function () {
+        close();
+        if (typeof opts.onConfirm === 'function') opts.onConfirm();
+      });
+      // Capture, so Escape closes this and not the Connections modal behind it.
+      document.addEventListener('keydown', onKey, true);
+      document.body.appendChild(wrap);
+      ok.focus();
     }
 
     function openTokenPanel(app) {
@@ -1256,6 +1364,23 @@
         connPartial[app.id] = any && !all;
         connChecked[app.id] = true;
         renderGrid();
+
+        // Which Google account, for the label under the card. A separate
+        // call on purpose: /auth/status is the AUTHENTICATED route, so the
+        // address comes from the session rather than from a query string
+        // anybody could set. Entirely additive, so a failure here costs the
+        // label and never the connected state decided above.
+        if (any) {
+          fetch(GMAIL_API + '/auth/status', { headers: authHeaders() })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (d) {
+              if (!d || !d.account) return;
+              connMeta[app.id] = Object.assign({}, connMeta[app.id] || {},
+                                               { account_label: d.account });
+              renderGrid();
+            })
+            .catch(function () {});
+        }
       });
     });
 
