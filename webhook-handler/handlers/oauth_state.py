@@ -3,8 +3,9 @@ over "<owner>:<ts>" with OAUTH_STATE_SECRET, so a forged state can't bind a
 Google account to someone else's owner identity, and an old/leaked link can't
 be replayed beyond the TTL. Format: <b64url(owner)>.<b64url(ts)>.<b64url(sig)>.
 
-Three identical copies live in webhook-handler, gmail, and gdrive — the bot
-signs, the connector services verify. Keep them in sync.
+Four identical copies live in webhook-handler, gmail, gdrive and
+calendar. The bot signs; the connector services sign for a browser session
+and verify. Keep them in sync.
 """
 import base64
 import hashlib

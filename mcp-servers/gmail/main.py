@@ -210,7 +210,7 @@ async def get_user_email(request: Request) -> str:
 
 NOT_CONNECTED_MSG = (
     "Gmail is not connected. Please visit the following URL to connect:\n\n"
-    "{base_url}/auth/google/start?user_email={email}\n\n"
+    "{base_url}/auth/google/link\n\n"
     "After connecting, try again."
 )
 
@@ -261,6 +261,32 @@ async def _save_token_all_services(user_email: str, access_token: str, refresh_t
         print(f"[unified-connect] failed for {user_email}: {e}", flush=True)
 
 
+#: Marks a state asking for Gmail + Calendar + Drive in one consent. It is
+#: signed together with the address, so neither the identity nor the scope can
+#: be chosen by whoever opens the link.
+UNIFIED_PREFIX = "all::"
+
+
+def _google_url(scope: str, state: str) -> str:
+    """The consent URL. One builder, so start and link cannot drift apart."""
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": OAUTH_REDIRECT_URI,
+        "response_type": "code",
+        "scope": scope,
+        "access_type": "offline",
+        "prompt": "consent",
+        "state": state,
+    }
+    return f"{GOOGLE_AUTH_URL}?{urllib.parse.urlencode(params)}"
+
+
+def _bad_link_page() -> HTMLResponse:
+    return HTMLResponse(_connect_failed_page(
+        "This connect link is not valid, or it has expired. Open Connections "
+        "and press Connect again."), status_code=400)
+
+
 def _connect_failed_page(why: str) -> str:
     """Shown instead of silently connecting an account nobody can look up.
 
@@ -280,52 +306,68 @@ def _connect_failed_page(why: str) -> str:
 # --- OAuth Endpoints ---
 
 @app.get("/auth/google/start")
-async def auth_start(user_email: str = "default@local", state: str = "", connect: str = "gmail"):
-    # The address is what every per-user table is keyed by, so it is settled
-    # here, before the consent, rather than after it. Refusing now costs the
-    # person a reload; refusing later costs them a connection that looks fine
-    # and works nowhere.
+async def auth_start(state: str = "", connect: str = "gmail"):
+    """Begin a connect from a state that was signed for its owner.
+
+    The Discord and Slack flows sign one and send the person the link
+    (clients/connectors.py). A browser cannot: it holds no secret. It goes to
+    /auth/google/link instead, which signs for whoever is signed in.
+
+    This used to accept `user_email` and believe it. Anyone could therefore
+    open this URL naming somebody else, consent with a Google account of their
+    own, and the callback would store those tokens under the named person's
+    address, replacing their real connection: their agents would then be
+    acting in a mailbox that was not theirs. The parameter is gone.
+    """
+    owner = oauth_state.verify_state(state) if state else None
+    if not owner:
+        return _bad_link_page()
+    unified = owner.startswith(UNIFIED_PREFIX)
+    return RedirectResponse(_google_url(
+        ALL_SCOPES if (unified or connect == "all") else SCOPES, state))
+
+
+@app.get("/auth/google/link")
+async def auth_link(request: Request, connect: str = "all"):
+    """Begin a connect for whoever is signed in, and sign the state here.
+
+    The browser never says who it is. The api-gateway authenticates the
+    session (bearer token, or the Open WebUI `token` cookie on a plain
+    navigation) and injects X-User-Email, stripping whatever the client sent,
+    so this is the identity worth signing. That is the whole point of the
+    endpoint: the address is taken from the session rather than from the URL.
+    """
     try:
-        user_email = await account_identity.canonical_email(
-            user_email, _email_for_user_id, required=not state,
-            placeholders_ok=not DATABASE_URL)
-    except account_identity.UnknownAccount as err:
-        return HTMLResponse(_connect_failed_page(str(err)), status_code=400)
-    # connect=all requests Gmail + Calendar + Drive scopes in ONE consent and
-    # marks the state so the callback links all three services at once.
-    if connect == "all":
-        scope = ALL_SCOPES
-        oauth_state_param = "all::" + urllib.parse.quote(user_email)
-    else:
-        scope = SCOPES
-        # The bot passes a pre-signed `state` (owner identity); fall back to the
-        # legacy email-encoded state for manual use.
-        oauth_state_param = state or urllib.parse.quote(user_email)
-    params = {
-        "client_id": GOOGLE_CLIENT_ID,
-        "redirect_uri": OAUTH_REDIRECT_URI,
-        "response_type": "code",
-        "scope": scope,
-        "access_type": "offline",
-        "prompt": "consent",
-        "state": oauth_state_param,
-    }
-    url = f"{GOOGLE_AUTH_URL}?{urllib.parse.urlencode(params)}"
-    return RedirectResponse(url)
+        email = await account_identity.canonical_email(
+            await get_user_email(request), _email_for_user_id,
+            required=True, placeholders_ok=not DATABASE_URL)
+    except account_identity.UnknownAccount:
+        return HTMLResponse(_connect_failed_page(
+            "Could not tell which account you are signed in as. Reload the "
+            "page and try again."), status_code=400)
+    try:
+        state = oauth_state.sign_state(
+            (UNIFIED_PREFIX + email) if connect == "all" else email)
+    except RuntimeError:
+        # No OAUTH_STATE_SECRET. Refusing beats falling back to an unsigned
+        # state, which is the hole this endpoint exists to close.
+        return HTMLResponse(_connect_failed_page(
+            "This server cannot start a connect right now."), status_code=500)
+    return RedirectResponse(_google_url(
+        ALL_SCOPES if connect == "all" else SCOPES, state))
 
 
 @app.get("/auth/google/callback")
-async def auth_callback(code: str, state: str = "default@local"):
-    unified = False
-    if state.startswith("all::"):
-        unified = True
-        user_email = urllib.parse.unquote(state[len("all::"):])
-    else:
-        # Prefer the signed owner identity; fall back to legacy email-encoded state.
-        owner = oauth_state.verify_state(state)
-        if owner is None:
-            owner = urllib.parse.unquote(state)
-        user_email = owner
+async def auth_callback(code: str, state: str = ""):
+    # The state must carry a signature this server made. It used to accept
+    # `all::<address>` unsigned, and an unsigned address as a fallback, which
+    # meant the person a consent was stored against was chosen by whoever
+    # opened the link rather than by who signed in.
+    owner = oauth_state.verify_state(state) if state else None
+    if not owner:
+        return _bad_link_page()
+    unified = owner.startswith(UNIFIED_PREFIX)
+    user_email = owner[len(UNIFIED_PREFIX):] if unified else owner
     # Every path converges here, including the signed state the Discord and
     # Slack flows build, so this is the one place that can promise no token
     # row is ever keyed by anything but an address.

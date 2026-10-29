@@ -274,6 +274,10 @@ services:
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - OAUTH_REDIRECT_URI=https://ai-ui.coolestdomain.win/calendar/auth/google/callback
       - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-openwebui-secret}@postgres:5432/openwebui
+      # This service verified nothing about an OAuth state until now, so it
+      # never needed the secret. It signs and verifies like gmail and gdrive
+      # now, and without this it would refuse every connect.
+      - OAUTH_STATE_SECRET=${OAUTH_STATE_SECRET:-}
     networks:
       - backend
     depends_on:
