@@ -176,6 +176,35 @@ Workspace → Tools in the Open WebUI admin, not by deploy. `agent_builder_tool.
 through `/agents/make` and `/agents/roster`; it sends only `X-User-Email`, like
 `schedules_tool.py`, and the service scopes every call to that email.
 
+### Connecting a Google account (2026-10-29)
+**A connect is started by the server, never by a URL that names an account.**
+The browser goes to `/<service>/auth/google/link`, the api-gateway
+authenticates the session (bearer token, or the Open WebUI `token` cookie on a
+plain navigation) and injects `X-User-Email` after stripping whatever the
+client sent, and the service signs that address into the OAuth `state`
+(`oauth_state.sign_state`). The callback accepts **only** a state it can
+verify.
+
+It used to take the account from a `user_email` query parameter and put it in
+an unsigned state, in all three services, and `calendar` verified nothing at
+all. Anyone who knew a platform user's address could therefore bind their own
+Google account to it; `save_token` does `ON CONFLICT DO UPDATE`, so an
+existing connection was replaced, not skipped, and the panel still read
+"Connected". If you add a fourth connector, copy this shape, not the old one.
+
+Two consequences worth knowing:
+- `OAUTH_STATE_SECRET` must be set for the service, or it can neither sign nor
+  verify and **every connect fails closed**. It is in compose for gmail,
+  gdrive, calendar and webhook-handler, and all four share one value.
+- `oauth_state.py` has **four identical copies** (those same four). Keep them
+  in sync; there is no shared package because each service is its own build
+  context.
+
+A token row is keyed by the account's **email**, never an Open WebUI user id.
+Migration 063 enforces that with a `CHECK` on `gmail_tokens`, `gdrive_tokens`
+and `calendar_tokens`, and `mcp-servers/gmail/account_identity.py` resolves an
+id to its address at the boundary.
+
 ### The main chat (2026-10-26)
 Everyone lands on **Auto (Free)** (`auto_router_pipe.py`, id `auto_router.auto`,
 set as `DEFAULT_MODELS` in compose; an admin's later choice in Admin Settings →

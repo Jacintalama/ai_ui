@@ -17,6 +17,8 @@ from fastapi.testclient import TestClient
 
 os.environ.setdefault(
     "AIUI_FERNET_KEY", base64.urlsafe_b64encode(b"0" * 32).decode())
+# Read at import time by oauth_state, so it must be set before main.py loads.
+os.environ.setdefault("OAUTH_STATE_SECRET", "test-secret-for-signing-states")
 
 MAIN_PATH = pathlib.Path(__file__).resolve().parents[1] / "main.py"
 
@@ -75,21 +77,33 @@ def connected(main, monkeypatch):
 
 
 # --- the callback, which is where the bad rows came from ---------------------
+#
+# Every case here now arrives through a SIGNED state. Accepting an unsigned
+# one is a separate flaw with its own file (test_signed_connect_state.py);
+# what these pin is that whatever identity a verified state carries, the
+# address is what ends up as the key.
+
+
+def _signed(owner):
+    import oauth_state
+    return oauth_state.sign_state(owner)
+
 
 def test_a_consent_carrying_an_address_stores_that_address(main, connected):
     client = TestClient(main.app)
     r = client.get("/auth/google/callback",
-                   params={"code": "c", "state": EMAIL})
+                   params={"code": "c", "state": _signed(EMAIL)})
     assert r.status_code == 200
     assert connected["gmail"] == EMAIL
 
 
 def test_a_consent_carrying_a_user_id_stores_the_address_instead(main, connected):
-    """The repair. The id resolves, so the connection lands where every read
-    will look for it."""
+    """The repair, and still a live path: the bot signs whatever owner it
+    holds, which can be an id. The id resolves, so the connection lands where
+    every read will look for it."""
     client = TestClient(main.app)
     r = client.get("/auth/google/callback",
-                   params={"code": "c", "state": USER_ID})
+                   params={"code": "c", "state": _signed(USER_ID)})
     assert r.status_code == 200
     assert connected["gmail"] == EMAIL, "the id was stored as the key again"
 
@@ -99,19 +113,22 @@ def test_a_unified_consent_keys_all_three_services_by_the_address(main, connecte
     three at once, so the fix has to cover all three at once."""
     client = TestClient(main.app)
     r = client.get("/auth/google/callback",
-                   params={"code": "c", "state": "all::" + USER_ID})
+                   params={"code": "c",
+                           "state": _signed(main.UNIFIED_PREFIX + USER_ID)})
     assert r.status_code == 200
     assert connected["gmail"] == EMAIL
     assert connected["all"] == EMAIL
 
 
 def test_an_unresolvable_identity_is_refused_not_stored(main, connected):
-    """Nothing is written and the page says so. The old behaviour wrote the
-    row and said 'Gmail Connected!'."""
+    """Signed, so it gets past the signature check, and still refused: an id
+    that resolves to no account is not something to key a token by. Nothing is
+    written and the page says so. The old behaviour wrote the row and said
+    'Gmail Connected!'."""
     client = TestClient(main.app)
     r = client.get("/auth/google/callback",
                    params={"code": "c",
-                           "state": "00000000-0000-0000-0000-000000000000"})
+                           "state": _signed("00000000-0000-0000-0000-000000000000")})
     assert r.status_code == 400
     assert "was not connected" in r.text
     assert "gmail" not in connected, "a token was stored under an unknown key"
@@ -121,69 +138,76 @@ def test_the_refusal_page_does_not_claim_success(main, connected):
     client = TestClient(main.app)
     r = client.get("/auth/google/callback",
                    params={"code": "c",
-                           "state": "00000000-0000-0000-0000-000000000000"})
+                           "state": _signed("00000000-0000-0000-0000-000000000000")})
     assert "Connected!" not in r.text
 
 
 # --- the start of the flow, so the refusal comes before the consent ----------
 
-def test_starting_with_an_unresolvable_id_refuses_before_google(main, connected):
+def test_link_with_an_unresolvable_id_refuses_before_google(main, connected):
     """Better to stop here than after the person has signed in to Google and
-    been told it worked."""
+    been told it worked. The identity comes from the gateway header now, so
+    that is what carries the id."""
     client = TestClient(main.app)
-    r = client.get("/auth/google/start",
-                   params={"user_email": "00000000-0000-0000-0000-000000000000"},
+    r = client.get("/auth/google/link",
+                   headers={"X-User-Email": "00000000-0000-0000-0000-000000000000"},
                    follow_redirects=False)
     assert r.status_code == 400
 
 
-def test_starting_with_a_user_id_redirects_with_the_address(main, connected):
+def test_link_with_a_user_id_signs_the_address(main, connected):
+    """A client still sending an id reaches the right account, and the id
+    never travels in the state."""
+    import oauth_state
     client = TestClient(main.app)
-    r = client.get("/auth/google/start",
-                   params={"user_email": USER_ID, "connect": "all"},
-                   follow_redirects=False)
+    r = client.get("/auth/google/link", params={"connect": "all"},
+                   headers={"X-User-Email": USER_ID}, follow_redirects=False)
     assert r.status_code in (302, 307)
     loc = r.headers["location"]
     assert "accounts.google.com" in loc
-    # The state carries the identity through to the callback, so the address
-    # has to be the thing that travels. It is quoted twice on the way out
-    # (once by auth_start, once by urlencode) and unquoted once by the
-    # callback, so the assertion decodes the same way the callback does.
     state = urllib.parse.parse_qs(urllib.parse.urlparse(loc).query)["state"][0]
-    assert urllib.parse.unquote(state) == "all::" + EMAIL
+    assert oauth_state.verify_state(state) == main.UNIFIED_PREFIX + EMAIL
     assert USER_ID not in loc
 
 
 def test_a_presigned_state_is_left_alone(main, connected):
-    """The Discord and Slack flows pass a signed state and no address. That
-    must still work: the callback verifies and normalises it there."""
+    """The Discord and Slack flows sign a state and send the person the link.
+    That must still work."""
     client = TestClient(main.app)
-    r = client.get("/auth/google/start",
-                   params={"state": "signed-token-from-the-bot"},
+    state = _signed(EMAIL)
+    r = client.get("/auth/google/start", params={"state": state},
                    follow_redirects=False)
     assert r.status_code in (302, 307)
-    assert "signed-token-from-the-bot" in r.headers["location"]
+    assert state in r.headers["location"]
 
 
 def test_a_consent_with_no_identity_at_all_is_refused(main, connected, monkeypatch):
-    """The callback's own default state is `default@local`. With a database
-    configured that is a shared bucket, not an account, so it is refused
-    rather than quietly connected on somebody's behalf."""
+    """No state means nothing to verify, so there is nobody to connect."""
     monkeypatch.setattr(main, "DATABASE_URL", "postgres://x/y")
     client = TestClient(main.app)
     r = client.get("/auth/google/callback", params={"code": "c"})
     assert r.status_code == 400
-    assert "placeholder" in r.text
     assert "gmail" not in connected
 
 
-def test_a_box_with_no_database_still_connects_as_the_dev_default(main, connected,
-                                                                 monkeypatch):
-    monkeypatch.setattr(main, "DATABASE_URL", "")
+def test_without_a_signing_secret_a_connect_fails_closed(main, connected,
+                                                         monkeypatch):
+    """A box with no OAUTH_STATE_SECRET cannot sign or verify, so it cannot
+    connect anybody. That is deliberate: this used to fall back to believing
+    an unsigned address, and failing closed is the whole point. It costs the
+    dev default its connect, which the local stack does not run anyway.
+    """
+    import oauth_state
+    monkeypatch.setattr(oauth_state, "_SECRET", b"")
     client = TestClient(main.app)
-    r = client.get("/auth/google/callback", params={"code": "c"})
-    assert r.status_code == 200
-    assert connected["gmail"] == "default@local"
+    r = client.get("/auth/google/callback",
+                   params={"code": "c", "state": "anything"})
+    assert r.status_code == 400
+    assert connected == {}
+    # And the start of the flow says so rather than silently doing nothing.
+    r2 = client.get("/auth/google/link", headers={"X-User-Email": EMAIL},
+                    follow_redirects=False)
+    assert r2.status_code == 500
 
 
 # --- whose mailbox is read comes from the gateway, not the caller -------------

@@ -7,8 +7,10 @@ description: Google Calendar in chat. See your schedule, create events and meeti
 
 # Native Open WebUI tool. The model calls these directly; OWUI injects the
 # signed-in user via __user__ so every action is per-user. On "not connected"
-# the calendar server returns a message containing the /calendar/auth/google/start
+# the calendar server returns a message containing the /calendar/auth/google/link
 # URL, which the frontend (integrations-ui.js) turns into an inline Connect button.
+# That URL carries no address: the server reads the session through the
+# api-gateway and signs the OAuth state itself.
 
 import httpx
 from pydantic import BaseModel, Field

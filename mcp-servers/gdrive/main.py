@@ -1,5 +1,6 @@
 """Google Drive MCP Server — browse and read files from Google Drive."""
 import base64
+import html
 import os
 import json
 import urllib.parse
@@ -168,12 +169,35 @@ def get_user_email(request: Request) -> str:
 
 # --- OAuth Endpoints ---
 
-@app.get("/auth/google/start")
-async def auth_start(user_email: str = "default@local", state: str = ""):
-    """Start Google OAuth flow."""
-    # The bot passes a pre-signed `state` (owner identity); fall back to the
-    # legacy email-encoded state for manual use.
-    oauth_state_param = state or urllib.parse.quote(user_email)
+#: Placeholders the header falls back to when nobody is signed in. They
+#: contain an @, so a shape test alone would let them through, and a token
+#: stored under one belongs to whoever asks next.
+_PLACEHOLDERS = ("default@local", "unknown@local", "anonymous@local")
+
+
+def _signable_email(request: Request):
+    """The address to sign a connect for, or None if nobody is signed in.
+
+    The api-gateway authenticates the session and injects X-User-Email after
+    stripping whatever the client sent, so this is the only identity here
+    worth signing. It also resolves an Open WebUI user id to its address
+    before injecting, so what arrives is an address or nothing.
+    """
+    email = (get_user_email(request) or "").strip()
+    if "@" not in email or email in _PLACEHOLDERS:
+        return None
+    return email
+
+
+def _connect_failed(why: str) -> HTMLResponse:
+    return HTMLResponse(
+        '<html><body style="font-family: sans-serif; text-align: center; '
+        'padding: 50px; background: #1e1e1e; color: #fff;">'
+        '<h1 style="color: #ea4335;">Google Drive was not connected</h1>'
+        '<p>' + html.escape(why) + '</p></body></html>', status_code=400)
+
+
+def _google_url(state: str) -> str:
     params = {
         "client_id": GOOGLE_CLIENT_ID,
         "redirect_uri": OAUTH_REDIRECT_URI,
@@ -181,19 +205,56 @@ async def auth_start(user_email: str = "default@local", state: str = ""):
         "scope": SCOPES,
         "access_type": "offline",
         "prompt": "consent",
-        "state": oauth_state_param,
+        "state": state,
     }
-    url = f"{GOOGLE_AUTH_URL}?{urllib.parse.urlencode(params)}"
-    return RedirectResponse(url)
+    return f"{GOOGLE_AUTH_URL}?{urllib.parse.urlencode(params)}"
+
+
+@app.get("/auth/google/start")
+async def auth_start(state: str = ""):
+    """Begin a connect from a state that was signed for its owner.
+
+    This used to accept `user_email` and believe it, so anyone could open it
+    naming somebody else, consent with a Google account of their own, and have
+    those tokens stored under the named person's address, replacing their real
+    connection. A browser now goes to /auth/google/link instead, which signs
+    for whoever is signed in.
+    """
+    owner = oauth_state.verify_state(state) if state else None
+    if not owner:
+        return _connect_failed("This connect link is not valid, or it has "
+                               "expired. Press Connect again.")
+    return RedirectResponse(_google_url(state))
+
+
+@app.get("/auth/google/link")
+async def auth_link(request: Request):
+    """Begin a connect for whoever is signed in, and sign the state here."""
+    email = _signable_email(request)
+    if not email:
+        return _connect_failed("Could not tell which account you are signed "
+                               "in as. Reload the page and try again.")
+    try:
+        state = oauth_state.sign_state(email)
+    except RuntimeError:
+        # No OAUTH_STATE_SECRET. Refusing beats an unsigned state, which is
+        # the hole this endpoint exists to close.
+        return _connect_failed("This server cannot start a connect right now.")
+    return RedirectResponse(_google_url(state))
 
 
 @app.get("/auth/google/callback")
-async def auth_callback(code: str, state: str = "default@local"):
-    """Handle Google OAuth callback."""
-    # Prefer the signed owner identity; fall back to legacy email-encoded state.
-    owner = oauth_state.verify_state(state)
-    if owner is None:
-        owner = urllib.parse.unquote(state)
+async def auth_callback(code: str, state: str = ""):
+    """Handle Google OAuth callback.
+
+    The state must carry a signature this server made. It used to fall back to
+    an unsigned address, which meant the person a consent was stored against
+    was chosen by whoever opened the link.
+    """
+    owner = oauth_state.verify_state(state) if state else None
+    if not owner:
+        return _connect_failed("This connect could not be verified. Press "
+                               "Connect again.")
     user_email = owner
 
     async with httpx.AsyncClient() as client:
@@ -321,7 +382,7 @@ EXPORT_MAP = {
 
 NOT_CONNECTED_MSG = (
     "Google Drive is not connected. Please visit the following URL to connect:\n\n"
-    "{base_url}/auth/google/start?user_email={email}\n\n"
+    "{base_url}/auth/google/link\n\n"
     "After connecting, try again."
 )
 

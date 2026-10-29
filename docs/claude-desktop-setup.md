@@ -99,4 +99,4 @@ For calendar invites, use these addresses:
 
 **"Tool not found"** — Make sure you restarted Claude Desktop after adding the config.
 
-**"Calendar/Gmail not connected"** — The shared Google account needs OAuth. Ask Jacint to connect it at: `https://ai-ui.coolestdomain.win/calendar/auth/google/start?user_email=aiui.teams@gmail.com`
+**"Calendar/Gmail not connected"** — The shared Google account needs OAuth. Ask Jacint to connect it at: `https://ai-ui.coolestdomain.win/calendar/auth/google/link`, signed in as that account (the URL no longer takes an address: it connects whoever is signed in)

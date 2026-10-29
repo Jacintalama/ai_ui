@@ -111,37 +111,6 @@
     }).catch(function() {});
   }
 
-  // Run `fn(address)` once the address is known for certain, asking the server
-  // if the page cannot answer. Used by anything that binds an identity to
-  // something stored server side, where a guess becomes a row somebody else
-  // may own: a connect under 'default@local' is a bucket two accounts could
-  // share, which is a worse outcome than a connect that waited a moment.
-  var _UNSURE_WHO = 'Could not confirm which account you are signed in as. '
-    + 'Please reload the page and try again.';
-
-  function withUserEmail(fn) {
-    if (_isEmail(_cachedEmail)) { fn(_cachedEmail); return; }
-    var known = getEffectiveEmail();
-    if (_isEmail(known) && known !== 'default@local') { fn(known); return; }
-    var token = localStorage.getItem('token');
-    if (!token) {
-      showNotification('Please sign in again, then try connecting.', true);
-      return;
-    }
-    fetch('/api/v1/auths/', {
-      headers: { 'Authorization': 'Bearer ' + token }
-    }).then(function (r) { return r.json(); }).then(function (data) {
-      if (data && _isEmail(data.email)) {
-        _cachedEmail = data.email.trim();
-        fn(_cachedEmail);
-      } else {
-        showNotification(_UNSURE_WHO, true);
-      }
-    }).catch(function () {
-      showNotification(_UNSURE_WHO, true);
-    });
-  }
-
   function syncGmailStateFromServer() {
     var email = getEffectiveEmail();
     if (!email) return;
@@ -247,8 +216,7 @@
     overlay.appendChild(modal);
 
     modal.querySelector('#aiui-reconnect-btn').addEventListener('click', function() {
-      var email = getEffectiveEmail();
-      window.open(GDRIVE_API + '/auth/google/start?user_email=' + encodeURIComponent(email), 'aiui-oauth', 'width=600,height=700');
+      window.open(GDRIVE_API + '/auth/google/link', 'aiui-oauth', 'width=600,height=700');
       overlay.remove();
     });
 
@@ -814,15 +782,11 @@
     var searchTerm = '';
 
     function unifiedConnect() {
-      // The address is confirmed before the consent, not assumed from
-      // whatever the page happened to know when this modal was built: one
-      // consent writes gmail_tokens, gdrive_tokens and calendar_tokens, and
-      // all three are keyed by it.
-      withUserEmail(function (addr) {
-        try { localStorage.setItem('aiui-return-url', window.location.href); } catch (er) {}
-        window.location.href = GMAIL_API + '/auth/google/start?user_email='
-          + encodeURIComponent(addr) + '&connect=all';
-      });
+      // The page no longer says who is connecting. /auth/google/link reads the
+      // session through the api-gateway and signs the state itself, so an
+      // address in a URL is neither needed nor believed.
+      try { localStorage.setItem('aiui-return-url', window.location.href); } catch (er) {}
+      window.location.href = GMAIL_API + '/auth/google/link?connect=all';
     }
 
     // Square logo tile: real logo via Clearbit -> Google favicon -> letter.
@@ -2359,7 +2323,7 @@
     var icon = service === 'gdrive' ? GDRIVE_ICON_BIG : GMAIL_ICON_BIG;
     var title = service === 'gdrive' ? 'Connect your Google Drive' : 'Connect your Gmail';
     var label = service === 'gdrive' ? 'Connect Google Drive' : 'Connect Gmail';
-    var url = api + '/auth/google/start?user_email=' + encodeURIComponent(email);
+    var url = api + '/auth/google/link';
     var card = document.createElement('div');
     card.id = 'aiui-chat-connect-card';
     card.setAttribute('data-service', service);
@@ -2519,8 +2483,11 @@
 
   setupChatConnectWatcher();
 
-  // Turn the plain connect URL the model prints (".../auth/google/start...")
-  // into a clean, clickable inline button. Robust: reads the rendered message,
+  // Turn the plain connect URL the model prints (".../auth/google/link...")
+  // into a clean, clickable inline button. The older ".../start?user_email="
+  // form is matched too, so a connect line in an old conversation still works;
+  // the button it builds points at the link endpoint either way.
+  // Robust: reads the rendered message,
   // no textareas, no dependence on catching the send. Same-tab redirect.
   function _renderConnectState(container, service, url, email, connected) {
     container.innerHTML = '';
@@ -2537,13 +2504,8 @@
         'font-weight:600;font-size:14px;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,0.25);';
       btn.innerHTML = icon + '<span>Connect Google</span>';
       btn.addEventListener('click', function () {
-        // Same rule as the modal: the address is settled at the click, from
-        // the server if the page cannot be sure, never from a stale capture.
-        withUserEmail(function (addr) {
-          try { localStorage.setItem('aiui-return-url', window.location.href); } catch (e) {}
-          window.location.href = GMAIL_API + '/auth/google/start?user_email='
-            + encodeURIComponent(addr) + '&connect=all';
-        });
+        try { localStorage.setItem('aiui-return-url', window.location.href); } catch (e) {}
+        window.location.href = GMAIL_API + '/auth/google/link?connect=all';
       });
       container.appendChild(btn);
       var note = document.createElement('div');
@@ -2576,7 +2538,7 @@
   function styleConnectButton(anchor) {
     if (!anchor) return;
     var url = anchor.href || '';
-    if (url.indexOf('/auth/google/start') === -1) return;
+    if (url.indexOf('/auth/google/') === -1) return;
     var service = url.indexOf('/gdrive/') !== -1 ? 'gdrive'
       : (url.indexOf('/calendar/') !== -1 ? 'calendar' : 'gmail');
     var api = service === 'gdrive' ? GDRIVE_API : (service === 'calendar' ? CALENDAR_API : GMAIL_API);
@@ -2616,10 +2578,9 @@
     // its start URL has to be fetched from our own API first, so it is
     // handled separately in the click handler below, not here. Anything
     // else is a key-paste app with no login to open at all.
-    var email = getEffectiveEmail();
-    if (provider === 'gmail') return GMAIL_API + '/auth/google/start?user_email=' + encodeURIComponent(email);
-    if (provider === 'gdrive') return GDRIVE_API + '/auth/google/start?user_email=' + encodeURIComponent(email);
-    if (provider === 'calendar') return CALENDAR_API + '/auth/google/start?user_email=' + encodeURIComponent(email);
+    if (provider === 'gmail') return GMAIL_API + '/auth/google/link';
+    if (provider === 'gdrive') return GDRIVE_API + '/auth/google/link';
+    if (provider === 'calendar') return CALENDAR_API + '/auth/google/link';
     return null;
   }
 
@@ -2733,7 +2694,7 @@
     var pending = false;
     function scan() {
       pending = false;
-      var anchors = document.querySelectorAll('a[href*="/auth/google/start"]');
+      var anchors = document.querySelectorAll('a[href*="/auth/google/"]');
       for (var i = 0; i < anchors.length; i++) styleConnectButton(anchors[i]);
     }
     var obs = new MutationObserver(function() {

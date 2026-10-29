@@ -7,7 +7,7 @@ description: Browse, search, and read your Google Drive files from chat. Connect
 
 # Native Open WebUI tool. Model calls these directly; OWUI injects the signed-in
 # user via __user__ (per-user). On "not connected" the gdrive server returns a
-# message with the /gdrive/auth/google/start URL, which the frontend
+# message with the /gdrive/auth/google/link URL, which the frontend
 # (integrations-ui.js) turns into an inline Connect button. Read-only: the Drive
 # OAuth scope is drive.readonly, so there is no create/save yet.
 
