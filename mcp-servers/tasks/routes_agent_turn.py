@@ -1228,7 +1228,11 @@ _PLEASANTRIES = frozenset({
     "bye", "goodbye", "later", "cya", "ciao",
     "yes", "yeah", "yep", "yup", "no", "nope", "nah", "sure", "fine",
     "please", "pls", "sorry", "welcome",
-    "you", "u", "your", "there", "it", "that", "me", "my", "all", "and",
+    # "all", "it", "that", "my", "me", "your" and "and" were here and are
+    # gone (2026-10-29). They are content words, not pleasantries, and a
+    # one-word ANSWER is not small talk: asked "monitor only or manage?",
+    # somebody replies "all", and that was being thrown away as a greeting.
+    "you", "u", "there",
     "mate", "man", "buddy", "friend", "team", "everyone",
 })
 
@@ -1393,7 +1397,14 @@ async def _tool_pick(body: ChatIn, text: str) -> list[str] | None:
     try:
         if not _assistant_on():
             return None
-        if is_small_talk(text):
+        context = recent_exchange(body.messages)
+        # Small talk skips Jev only at the START of a conversation. Once
+        # something has been said, a short message is an ANSWER, not a
+        # greeting: asked "monitor only or manage?", somebody replies
+        # "all", and the word list cannot tell that from "hi all". With
+        # context in hand Jev can, so let it decide. The gate exists to
+        # save a call on an opening hello, and that is all it now does.
+        if is_small_talk(text) and not context:
             return None
         if not agent_llm.can_run(main_assistant.agent()):
             return None
@@ -1401,7 +1412,7 @@ async def _tool_pick(body: ChatIn, text: str) -> list[str] | None:
         if not tools:
             return None
         return await agent_jev.pick_tools(body.user_email, text, tools,
-                                          recent_exchange(body.messages))
+                                          context)
     except Exception:                                       # noqa: BLE001
         logger.warning("the main chat's tool pick failed; the free model "
                        "answers instead", exc_info=True)

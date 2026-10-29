@@ -18,6 +18,8 @@ stop the Agents page from listing whatever the person already has.
 import json
 import logging
 import os
+import hashlib
+import time
 import re
 import uuid
 
@@ -897,6 +899,70 @@ class MakeAgentIn(BaseModel):
     #: read (looks things up), ask (acts, asks first), all (acts). Default
     #: read: a model should not hand out tools nobody chose.
     access: str = "read"
+    #: The code the preview handed back. Absent means "show me what you
+    #: would make"; present and matching means "make it".
+    confirm: str | None = None
+
+
+#: A proposed agent, by owner, until it is confirmed or forgotten. Ten
+#: minutes is long enough to read a brief and answer, short enough that a
+#: code found later is useless.
+_PROPOSALS: dict = {}
+PROPOSAL_TTL_SECONDS = 600
+
+
+def _proposal_key(email: str, name: str, instructions: str,
+                  role: str, access: str) -> str:
+    """A code that stands for THIS exact proposal.
+
+    Derived from the content rather than random, so confirming a proposal
+    whose wording was quietly altered between the preview and the create
+    does not match: the person approved a brief, not a name.
+    """
+    raw = "\x1f".join([email, name, instructions, role or "", access])
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+
+
+def _remember_proposal(code: str) -> None:
+    now = time.time()
+    for old, when in list(_PROPOSALS.items()):
+        if now - when > PROPOSAL_TTL_SECONDS:
+            _PROPOSALS.pop(old, None)
+    _PROPOSALS[code] = now
+
+
+def _proposal_is_live(code: str) -> bool:
+    when = _PROPOSALS.get(code)
+    return bool(when) and (time.time() - when) <= PROPOSAL_TTL_SECONDS
+
+
+def proposal_text(name: str, role: str, access: str, instructions: str,
+                  code: str) -> str:
+    """What the person is asked to approve, in full.
+
+    The instructions are shown WHOLE and never summarised. They are what the
+    agent will be, and approving a summary of them is approving something
+    nobody read.
+    """
+    words = {"read": "Read only. It looks things up and answers, and changes "
+                     "nothing.",
+             "ask": "Can act, but asks you first every time.",
+             "all": "Acts on its own, without asking."}
+    return "\n".join([
+        "Here is the agent I would create. Nothing has been made yet.",
+        "",
+        "Name: %s" % name,
+        "Role: %s" % (role or "(none)"),
+        "Access: %s" % words.get(access, access),
+        "",
+        "Instructions:",
+        instructions,
+        "",
+        "If that is right, say so and I will create it. Tell me what to "
+        "change and I will show you the new version first.",
+        "",
+        "(confirm code: %s)" % code,
+    ])
 
 
 def _make_agent_body(agent_id: str, name: str, role: str | None,
@@ -960,6 +1026,32 @@ async def make_agent(body: MakeAgentIn, user: CurrentUser = Depends(current_user
         raise HTTPException(status_code=400, detail=problem)
     if any(a["name"].lower() == name.lower() for a in mine):
         raise HTTPException(status_code=400, detail=f"You already have an agent called {name}.")
+
+    # Show the brief before writing it (2026-10-29, Lukas). A person should
+    # read what their agent will be told to do before it exists, and the
+    # preview is enforced HERE rather than asked for in a tool docstring,
+    # because a docstring is an instruction to a model and this codebase has
+    # been burned by treating those as guarantees. The code is derived from
+    # the brief, so a proposal whose wording changed between the preview and
+    # the confirm does not match: what was approved was the brief, not the
+    # name.
+    #
+    # It also matters more than it used to: the main chat's assistant runs on
+    # Ask and its writes are held, but a model calling this tool natively
+    # through Open WebUI has no such brake. This is that brake.
+    code = _proposal_key(user.email, name, instructions, role or "", access)
+    if (body.confirm or "").strip() != code:
+        _remember_proposal(code)
+        return {"created": False, "confirm": code, "name": name, "role": role,
+                "access": access, "instructions": instructions,
+                "message": proposal_text(name, role or "", access,
+                                         instructions, code)}
+    if not _proposal_is_live(code):
+        raise HTTPException(status_code=400, detail=(
+            "That confirmation has expired. Ask me to show you the agent "
+            "again and I will write it out fresh."))
+    _PROPOSALS.pop(code, None)
+
     user_id = await _owui_user_id_for(user.email)
     if not user_id:
         raise HTTPException(status_code=400, detail="No account was found for you.")

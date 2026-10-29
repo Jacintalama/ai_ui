@@ -617,3 +617,52 @@ def test_with_context_the_latest_message_is_clearly_the_one_being_judged():
         "create it please", ["gmail"], context="person: make a quote agent")
     assert state.rstrip().endswith("create it please")
     assert "The person has now written:" in state
+
+
+def test_a_one_word_answer_mid_conversation_is_not_small_talk():
+    """Asked "monitor only or manage?", somebody replies "all". That was
+    thrown away as a greeting, because "all" was on the pleasantries list
+    for "hi all", so no tool was picked and the chat said it could not do
+    the thing it had just offered. Reported 2026-10-29."""
+    for answer in ["all", "it", "that", "manage", "my"]:
+        assert not rt.is_small_talk(answer), answer
+
+
+def test_a_greeting_is_still_a_greeting():
+    for hello in ["hi", "hello", "hi there", "good morning", "thanks",
+                  "thank you", "cheers"]:
+        assert rt.is_small_talk(hello), hello
+
+
+def test_small_talk_only_skips_jev_at_the_start(monkeypatch):
+    """Once something has been said, even "yes" is an answer. The word list
+    cannot tell an answer from a greeting; with context, Jev can."""
+    asked = {}
+
+    async def pick_tools(email, text, tools, context=""):
+        asked["text"] = text
+        asked["context"] = context
+        return []
+
+    async def every_tool(_email):
+        return ["agent_builder"]
+
+    monkeypatch.setattr(rt.agent_jev, "pick_tools", pick_tools)
+    monkeypatch.setattr(rt, "_every_tool_for", every_tool)
+    monkeypatch.setattr(rt, "_assistant_on", lambda: True)
+    monkeypatch.setattr(rt.agent_llm, "can_run", lambda _a: True)
+
+    # Opening hello: not worth a call.
+    body = _ChatBody("hi")
+    body.messages = [{"role": "user", "content": "hi"}]
+    assert asyncio.run(rt._tool_pick(body, "hi")) is None
+    assert asked == {}, "Jev was asked about an opening hello"
+
+    # The same word after a real exchange: Jev decides.
+    body2 = _ChatBody("yes")
+    body2.messages = [
+        {"role": "user", "content": "make me a cron agent called Crane"},
+        {"role": "assistant", "content": "Shall I create it?"},
+        {"role": "user", "content": "yes"}]
+    assert asyncio.run(rt._tool_pick(body2, "yes")) == []
+    assert "Crane" in asked["context"], "the answer lost its subject again"
