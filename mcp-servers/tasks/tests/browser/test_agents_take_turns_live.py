@@ -10,8 +10,19 @@ import os
 
 import pytest
 
-pytestmark = pytest.mark.skipif(os.environ.get("AIUI_LIVE") != "1",
-                                reason="live site only; set AIUI_LIVE=1 in the tasks container")
+pytestmark = [
+    pytest.mark.skipif(os.environ.get("AIUI_LIVE") != "1",
+                       reason="live site only; set AIUI_LIVE=1 in the tasks container"),
+    # Since PR #47 (2026-10-28) an unnamed "hi team" in the main chat reaches
+    # no agent, by design (tests/test_main_chat_named_only.py), so this asks
+    # for something the chat no longer does. Run 2026-10-29 it timed out
+    # before sending. It holds again only with the switch on, in the service
+    # and here: routes_agent_turn._agents_may_take_unnamed.
+    pytest.mark.skipif(os.environ.get("AGENTS_ANSWER_UNNAMED", "0").strip().lower()
+                       not in ("1", "true", "yes", "on"),
+                       reason="agents answer only when named (PR #47); "
+                              "set AGENTS_ANSWER_UNNAMED=1 to test the old path"),
+]
 
 HOST = "https://ai-ui.coolestdomain.win"
 EMAIL = "ralphbenitez32@gmail.com"
@@ -39,16 +50,20 @@ async def _rows(page):
 async def test_hi_team_becomes_two_messages_one_after_another():
     import httpx
     from playwright.async_api import async_playwright
-    from owui_token import mint_owui_token
+    from owui_token import mint_owui_token, session_stamp_for
     from routes_gateway import _owui_user_id_for
 
     uid = await _owui_user_id_for(EMAIL)
-    token = mint_owui_token(uid, ttl_seconds=900)
+    # Open WebUI 0.12 refuses a token without the user's session stamp.
+    token = mint_owui_token(uid, ttl_seconds=900,
+                            session_stamp=await session_stamp_for(uid))
     async with async_playwright() as pw:
         browser, page = await _page(pw, token)
         chat_id = None
         try:
-            await page.goto(HOST + "/?models=auto_router.auto", wait_until="networkidle")
+            # "load", not "networkidle": the chat holds a socket open, so the
+            # network never goes idle and the goto timed out (2026-10-29).
+            await page.goto(HOST + "/?models=auto_router.auto", wait_until="load")
             await page.wait_for_timeout(2000)
             box = page.locator("#chat-input, textarea, [contenteditable='true']").first
             await box.click()
@@ -95,7 +110,7 @@ async def test_hi_team_becomes_two_messages_one_after_another():
             chat_id = await page.evaluate("location.pathname.split('/c/')[1]")
 
             # A reload shows the same two rows, from stored data alone.
-            await page.goto(HOST + "/c/" + chat_id, wait_until="networkidle")
+            await page.goto(HOST + "/c/" + chat_id, wait_until="load")
             await page.wait_for_timeout(4000)
             rows = await _rows(page)
             assert [r["header"] for r in rows if r["header"]][:2] == ["Ada", "Mia"], rows
