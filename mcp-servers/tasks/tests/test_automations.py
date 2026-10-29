@@ -47,8 +47,29 @@ def test_problems_are_sentences_that_say_what_to_change():
     assert "Tell the agent" in am.problem_with("Lead", "  ", "chat")
     assert "limit is 4000" in am.problem_with("Lead", "x" * 4001, "chat")
     assert "chat, discord or none" in am.problem_with("Lead", "do x", "email")
-    assert "webhook" in am.problem_with("Lead", "do x", "chat", trigger="email")
+    # "email" used to be the invalid trigger here. It is a real one as of
+    # 2026-10-29 (TRIGGER_EMAIL), so the invalid case needs something that
+    # is actually not a trigger.
+    assert "webhook or an email" in am.problem_with("Lead", "do x", "chat",
+                                                    trigger="carrier-pigeon")
     assert am.problem_with("  New   lead ", "do x", "discord") == ""
+
+
+def test_an_email_rule_must_say_which_emails():
+    """It runs an agent per message, so a rule with no query is a bill
+    rather than a rule. Refused at the door (email_trigger.query_problem),
+    not discovered on the first tick."""
+    assert "Say which emails" in am.problem_with(
+        "Lead", "do x", "chat", trigger=am.TRIGGER_EMAIL)
+    assert am.problem_with("Lead", "do x", "chat", trigger=am.TRIGGER_EMAIL,
+                           trigger_query="from:boss@example.com") == ""
+
+
+def test_a_webhook_rule_needs_no_query():
+    """The query is only meaningful for an email trigger, so it must not
+    become a requirement for the trigger that was already working."""
+    assert am.problem_with("Lead", "do x", "chat",
+                           trigger=am.TRIGGER_WEBHOOK) == ""
 
 
 def test_what_was_posted_reaches_the_agent_as_data_under_a_line_saying_so():

@@ -48,6 +48,13 @@ class AutomationIn(BaseModel):
     agent: str = Field(min_length=1, max_length=200)
     instructions: str = Field(min_length=1, max_length=automations.MAX_INSTRUCTION_CHARS + 1)
     deliver_to: str = automations.DELIVER_CHAT
+    #: webhook (the default, and what every rule was before 2026-10-29)
+    #: or email. An email rule must also say WHICH emails.
+    trigger: str = automations.TRIGGER_WEBHOOK
+    #: A Gmail search ("from:boss@x.com is:unread"). Matching is
+    #: Gmail's job, not ours. Required for an email trigger and
+    #: ignored for a webhook.
+    trigger_query: str = Field(default="", max_length=500)
 
 
 class AutomationPatch(BaseModel):
@@ -56,6 +63,7 @@ class AutomationPatch(BaseModel):
     instructions: str | None = Field(default=None, max_length=automations.MAX_INSTRUCTION_CHARS + 1)
     deliver_to: str | None = None
     enabled: bool | None = None
+    trigger_query: str | None = Field(default=None, max_length=500)
     #: True issues a fresh token, which retires the old URL at once.
     new_token: bool = False
 
@@ -95,7 +103,29 @@ async def _fire(automation: dict, payload, agent_name: str) -> dict:
     return await automation_runner.fire(automation, payload, agent_name)
 
 
+async def _cursors_for(email: str) -> dict:
+    """{automation_id: {checked_at, last_error}} for this person's email
+    rules. Never raises: the page must still list the rules when the cursor
+    table cannot be read, just without the "last looked" line."""
+    try:
+        from sqlalchemy import text as sql_text
+        from db import session
+        async with session() as s:
+            rows = (await s.execute(sql_text(
+                "SELECT automation_id, checked_at, last_error "
+                "  FROM tasks.automation_email_cursor WHERE user_email = :e"),
+                {"e": email})).mappings().all()
+        return {str(r["automation_id"]): {
+            "checked_at": automations._iso(r["checked_at"]),
+            "last_error": r["last_error"] or ""} for r in rows}
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not read the email trigger cursors",
+                       exc_info=True)
+        return {}
+
+
 _fire_seam = _fire
+_cursors_seam = _cursors_for
 
 
 # --- the rows ------------------------------------------------------------------
@@ -105,9 +135,17 @@ async def list_automations(user: CurrentUser = Depends(current_user)) -> dict:
     agents = await _agents_seam(user.email)
     rows = await automations.list_for(user.email)
     out = []
+    # When each email rule last looked, and why it could not (2026-10-29).
+    # Without it an email rule on the page is a name and nothing a person
+    # can check: a rule that has quietly stopped looking, because a token
+    # was revoked, looks exactly like a rule nobody has emailed.
+    cursors = await _cursors_seam(user.email)
     for a in rows:
         shown = _shown(a, agents)
         shown["runs"] = await automations.runs(user.email, a["id"])
+        if a.get("trigger") == automations.TRIGGER_EMAIL:
+            shown.update(cursors.get(str(a["id"])) or
+                         {"checked_at": None, "last_error": ""})
         out.append(shown)
     return {"automations": out}
 
@@ -115,14 +153,17 @@ async def list_automations(user: CurrentUser = Depends(current_user)) -> dict:
 @router.post("/automations")
 async def create_automation(body: AutomationIn,
                             user: CurrentUser = Depends(current_user)) -> dict:
-    problem = automations.problem_with(body.name, body.instructions, body.deliver_to)
+    problem = automations.problem_with(body.name, body.instructions,
+                                       body.deliver_to, body.trigger,
+                                       body.trigger_query)
     if problem:
         raise HTTPException(status_code=422, detail=problem)
     agents = await _agents_seam(user.email)
     agent = await _agent_for(user.email, body.agent, agents)
     try:
         row = await automations.create(user.email, body.name, agent["id"],
-                                       body.instructions, body.deliver_to)
+                                       body.instructions, body.deliver_to,
+                                       body.trigger, body.trigger_query)
     except automations.TooMany:
         raise HTTPException(
             status_code=409,
@@ -147,13 +188,16 @@ async def update_automation(automation_id: str, body: AutomationPatch,
         changes["deliver_to"] = body.deliver_to
     if body.enabled is not None:
         changes["enabled"] = bool(body.enabled)
+    if body.trigger_query is not None:
+        changes["trigger_query"] = body.trigger_query.strip()
     if body.agent is not None:
         changes["agent_id"] = (await _agent_for(user.email, body.agent, agents))["id"]
     if body.new_token:
         changes["hook_token"] = automations.make_token()
     merged = dict(current, **changes)
     problem = automations.problem_with(merged["name"], merged["instructions"],
-                                       merged["deliver_to"], merged["trigger"])
+                                       merged["deliver_to"], merged["trigger"],
+                                       merged.get("trigger_query", ""))
     if problem:
         raise HTTPException(status_code=422, detail=problem)
     row = await automations.update(user.email, automation_id, changes) if changes else current

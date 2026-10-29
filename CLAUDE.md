@@ -323,6 +323,30 @@ when this happens, this agent does this, the answer goes there
 a line saying so (`automations.message_for`). Delivery: `chat` appends to the
 agent's private office conversation, `discord` posts to the person's
 schedules thread through `scheduler._deliver_result`, `none` only replies.
+**An email can start one (2026-10-29).** `TRIGGER_EMAIL` alongside the
+webhook. The rule stores a Gmail search (`automation.trigger_query`,
+migration 064) and `email_poller.py` wakes once a minute, asks mcp-gmail as
+the rule's owner for mail matching it since the rule last looked, and calls
+the same `automation_runner.fire`. Matching is Gmail's job, not ours.
+`email_trigger.py` holds every decision and does no I/O, so it is all
+testable; the poller only talks. Four things that must stay true:
+
+- **A new rule starts at its creation time, never at zero.** Otherwise it
+  fires on the whole mailbox's history, one agent turn per message.
+- **The query carries a 120s overlap** because Gmail's `after:` is inclusive
+  and uses its clock, so `seen_ids` on the cursor drops the duplicates. The
+  overlap is deliberate: losing an email is worse than asking twice.
+- **Five messages per rule per tick**, oldest first, and the cursor still
+  advances past the rest. A flood must not become fifty turns.
+- **A timestamp comes from Gmail's `internalDate`**, never the `Date`
+  header, which the sender writes and is routinely wrong or absent.
+
+A failed look does NOT move the cursor (nothing was read, so nothing was
+handled), but `checked_at` still moves, so a rule that has quietly stopped
+looking is distinguishable from one nobody has emailed. This stands on PR
+#49 and #50: before them a token row could be keyed by a user id no read
+would match, or belong to somebody else's Google account.
+
 Same surface and semaphore as the key route. Made and managed on the Agents
 page under **Automation**, or from the main chat through
 `open-webui-functions/automations_tool.py` (installed by pasting, Jev picks it

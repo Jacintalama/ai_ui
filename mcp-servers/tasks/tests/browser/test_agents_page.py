@@ -1985,9 +1985,14 @@ def test_an_automation_is_added_with_its_url_then_run_paused_and_deleted(page):
     page.locator("#auto-create").click()
     row = page.locator('[data-auto-id="a1"]')
     row.wait_for(state="visible")
+    # trigger and trigger_query joined the body on 2026-10-29, when an email
+    # became a second way to start a rule. A webhook rule sends an empty
+    # query on purpose: the filter boxes mean nothing here, so showing a
+    # filter that would be ignored is worse than sending none.
     assert autos[0]["sent"] == {"name": "New website lead", "agent": "agent-mine-a1b2",
                                 "instructions": "Write a first reply and add a to-do.",
-                                "deliver_to": "discord"}
+                                "deliver_to": "discord",
+                                "trigger": "webhook", "trigger_query": ""}
     assert "https://io.example.com/api/tasks/hooks/hk_tok" in row.inner_text()
     assert "Researcher" in row.inner_text() and "in Discord" in row.inner_text()
     assert page.locator("#auto-name").input_value() == ""

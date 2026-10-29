@@ -148,6 +148,17 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("video_cleanup_loop NOT started: %s", exc)
 
+    # An email can start an automation (2026-10-29). Wakes once a minute and
+    # looks at every enabled email rule. Guarded like the loops above, so a
+    # poller that cannot even be imported costs the email trigger and not
+    # the whole service booting.
+    try:
+        from email_poller import email_poll_loop
+        asyncio.create_task(email_poll_loop())
+        logger.info("email_poll_loop scheduled")
+    except Exception as exc:                                # noqa: BLE001
+        logger.warning("email_poll_loop NOT started: %s", exc)
+
     yield
 
 

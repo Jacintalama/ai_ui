@@ -688,6 +688,14 @@
   .auto-form textarea { width: 100%; resize: vertical; }
   .auto-form-row { display: flex; gap: 8px; align-items: center; }
   .auto-form-row select { flex: 1; }
+  .auto-form-row input[type="text"] { flex: 1; min-width: 0; }
+  /* The email trigger's filter boxes (2026-10-29), set in from the rest of
+     the form so it reads as one question: which emails start this. */
+  .auto-email-when { display: flex; flex-direction: column; gap: 8px;
+                     padding: 10px; border-radius: 8px;
+                     background: var(--panel-2, rgba(127,127,127,.08)); }
+  .auto-email-when input[type="text"] { width: 100%; }
+  .auto-check { display: flex; gap: 6px; align-items: center; font-size: 13px; }
   .auto-rule { padding: 10px 0; border-bottom: 1px solid var(--border); }
   .auto-rule:last-of-type { border-bottom: 0; }
   .auto-rule-head { display: flex; align-items: center; gap: 8px; }
@@ -1083,6 +1091,36 @@
           <textarea id="auto-instructions" rows="3" maxlength="4000"
                     placeholder="What should the agent do when this happens? (Write a first reply to this lead and add a to-do for me.)"
                     aria-label="What to do"></textarea>
+          <!-- What starts it (2026-10-29). A webhook, as it always was, or
+               an email arriving in your connected Gmail. -->
+          <div class="auto-form-row">
+            <select id="auto-trigger" aria-label="What starts it">
+              <option value="webhook">Start it from a URL (a form, n8n, a script)</option>
+              <option value="email">Start it when an email arrives</option>
+            </select>
+          </div>
+          <!-- Only for an email trigger. Hidden until then, because for a
+               webhook these boxes mean nothing. -->
+          <div id="auto-email-when" class="auto-email-when" hidden>
+            <div class="hint" style="margin-bottom:8px">Which emails should
+              start it? It looks at your connected Gmail once a minute, and
+              only at mail that arrived since it last looked, so adding a
+              rule never fires it on your old email.</div>
+            <div class="auto-form-row">
+              <input id="auto-email-from" type="text" maxlength="200"
+                     placeholder="From (boss@example.com)"
+                     aria-label="Only emails from this address">
+              <input id="auto-email-subject" type="text" maxlength="200"
+                     placeholder="Subject contains (invoice)"
+                     aria-label="Only emails whose subject contains this">
+            </div>
+            <label class="auto-check" for="auto-email-unread">
+              <input id="auto-email-unread" type="checkbox"> Unread only
+            </label>
+            <input id="auto-email-advanced" type="text" maxlength="500"
+                   placeholder="Or a Gmail search of your own (from:a@b.c OR from:d@e.f)"
+                   aria-label="A Gmail search of your own">
+          </div>
           <div class="auto-form-row">
             <select id="auto-deliver" aria-label="Where the answer goes">
               <option value="chat">Answer in the agent's chat</option>
@@ -3210,35 +3248,57 @@
           var name = document.createElement("div");
           name.className = "auto-rule-name";
           name.textContent = a.name + (a.enabled ? "" : " (paused)");
+          var byEmail = a.trigger === "email";
           var small = document.createElement("small");
           small.textContent = (a.agent_missing ? "agent missing" : a.agent_name)
+            + ", " + (byEmail ? "starts on an email" : "starts from its URL")
             + ", answers " + ({ chat: "in the agent's chat", discord: "in Discord",
                                 none: "only to the caller" }[a.deliver_to] || a.deliver_to)
             + ", run " + (a.run_count || 0) + (a.run_count === 1 ? " time" : " times");
           name.appendChild(small);
           head.appendChild(name);
           row.appendChild(head);
+          // An email rule has no URL to copy. What it watches for is the
+          // equivalent thing to show: without it the rule is a name and
+          // nothing a person can check.
           var url = document.createElement("div");
           url.className = "auto-rule-url";
           var code = document.createElement("code");
-          code.textContent = a.hook_url;
-          var copy = document.createElement("button");
-          copy.className = "btn"; copy.type = "button"; copy.textContent = "Copy URL";
-          copy.setAttribute("data-auto-copy", a.hook_url);
-          url.appendChild(code); url.appendChild(copy);
+          code.textContent = byEmail ? (a.trigger_query || "(no filter)") : a.hook_url;
+          url.appendChild(code);
+          if (!byEmail) {
+            var copy = document.createElement("button");
+            copy.className = "btn"; copy.type = "button"; copy.textContent = "Copy URL";
+            copy.setAttribute("data-auto-copy", a.hook_url);
+            url.appendChild(copy);
+          }
           row.appendChild(url);
           var acts = document.createElement("div");
           acts.className = "auto-rule-acts";
-          [["data-auto-run", "Run now"],
-           ["data-auto-toggle", a.enabled ? "Pause" : "Resume"],
-           ["data-auto-newurl", "New URL"],
-           ["data-auto-delete", "Delete"]].forEach(function (pair) {
+          var buttons = [["data-auto-run", "Run now"],
+                         ["data-auto-toggle", a.enabled ? "Pause" : "Resume"]];
+          // A new URL only means something for a rule that has one.
+          if (!byEmail) buttons.push(["data-auto-newurl", "New URL"]);
+          buttons.push(["data-auto-delete", "Delete"]);
+          buttons.forEach(function (pair) {
             var b = document.createElement("button");
             b.className = "btn"; b.type = "button"; b.textContent = pair[1];
             b.setAttribute(pair[0], a.id);
             acts.appendChild(b);
           });
           row.appendChild(acts);
+          // When it last looked, and why it could not. A rule that has
+          // quietly stopped looking is otherwise indistinguishable from a
+          // rule nobody has emailed.
+          if (byEmail && (a.checked_at || a.last_error)) {
+            var checked = document.createElement("div");
+            checked.className = "auto-rule-last";
+            checked.textContent = a.last_error
+              ? ("Not looking: " + a.last_error)
+              : ("Last looked " + a.checked_at);
+            if (a.last_error) checked.style.color = "var(--err, #b3261e)";
+            row.appendChild(checked);
+          }
           var last = (a.runs || [])[0];
           if (last) {
             var line = document.createElement("div");
@@ -3269,6 +3329,36 @@
         if (!r.ok) throw new Error(data.detail || ("http " + r.status));
         return data;
       }
+      // The boxes, composed into a Gmail search. Deliberately the same rule
+      // as email_trigger.compose_query on the server: a search the person
+      // typed themselves wins outright, because ANDing the boxes onto it
+      // would quietly change what they wrote. The server composes and
+      // validates it again; this is only so the page can show what it will
+      // watch for before it is saved.
+      function emailQuery() {
+        if (document.getElementById("auto-trigger").value !== "email") return "";
+        var own = document.getElementById("auto-email-advanced").value.trim();
+        if (own) return own;
+        var parts = [];
+        var from = document.getElementById("auto-email-from").value.trim();
+        var subject = document.getElementById("auto-email-subject").value.trim();
+        if (from) parts.push("from:" + from);
+        // Quoted, or a subject with a space becomes two unrelated terms and
+        // the rule matches far more than was asked for.
+        if (subject) parts.push('subject:"' + subject.replace(/"/g, "") + '"');
+        if (document.getElementById("auto-email-unread").checked) parts.push("is:unread");
+        return parts.join(" ");
+      }
+
+      // The filter boxes only mean something for an email trigger.
+      function syncTriggerForm() {
+        var byEmail = document.getElementById("auto-trigger").value === "email";
+        document.getElementById("auto-email-when").hidden = !byEmail;
+      }
+      document.getElementById("auto-trigger")
+        .addEventListener("change", syncTriggerForm);
+      syncTriggerForm();
+
       async function createAutomation() {
         autosError("");
         var btn = document.getElementById("auto-create");
@@ -3278,10 +3368,15 @@
             name: document.getElementById("auto-name").value.trim(),
             agent: document.getElementById("auto-agent").value,
             instructions: document.getElementById("auto-instructions").value.trim(),
-            deliver_to: document.getElementById("auto-deliver").value
+            deliver_to: document.getElementById("auto-deliver").value,
+            trigger: document.getElementById("auto-trigger").value,
+            trigger_query: emailQuery()
           });
           document.getElementById("auto-name").value = "";
           document.getElementById("auto-instructions").value = "";
+          ["auto-email-from", "auto-email-subject", "auto-email-advanced"]
+            .forEach(function (id) { document.getElementById(id).value = ""; });
+          document.getElementById("auto-email-unread").checked = false;
           await loadAutomations();
         } catch (e) {
           autosError((e && e.message) || "Could not add the automation. Try again.");
