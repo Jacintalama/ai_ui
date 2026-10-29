@@ -67,6 +67,20 @@ def test_the_window_is_added_with_an_overlap():
     assert q == "from:boss@example.com after:%d" % (1_000_000 - et.OVERLAP_SECONDS)
 
 
+def test_the_overlap_is_real_and_not_merely_configured():
+    """Written because the test above cannot catch this: it computes what it
+    expects FROM the constant, so it passes happily with an overlap of zero,
+    which mutation testing proved. Without a real overlap an email landing
+    in the same second as the cursor falls on the wrong side of an inclusive
+    `after:` and is never seen again, and nothing would have failed.
+    """
+    assert et.OVERLAP_SECONDS >= 60, "too small to cover a minute's tick"
+    # The window really does reach back behind the cursor.
+    assert "after:999000" not in et.search_query("x", 999_000)
+    asked = int(et.search_query("x", 999_000).rsplit(":", 1)[1])
+    assert asked < 999_000
+
+
 def test_the_window_never_goes_negative():
     """A rule created in the first two minutes of the epoch would otherwise
     ask for after:-1, which Gmail rejects, and a rejected query is a rule

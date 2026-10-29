@@ -312,11 +312,15 @@ _runs = _runs_rows
 # --- what the routes call --------------------------------------------------------
 
 async def create(email: str, name: str, agent_id: str, instructions: str,
-                 deliver_to: str, trigger: str = TRIGGER_WEBHOOK) -> dict:
+                 deliver_to: str, trigger: str = TRIGGER_WEBHOOK,
+                 trigger_query: str = "") -> dict:
+    # A webhook rule keeps an empty query even if one was passed: it would
+    # be dead weight on the row and misleading on the page.
+    query = str(trigger_query or "").strip() if trigger == TRIGGER_EMAIL else ""
     return await _create(email, {"name": clean_name(name), "agent_id": agent_id,
                                  "instructions": instructions.strip(),
-                                 "trigger": trigger, "deliver_to": deliver_to,
-                                 "enabled": True})
+                                 "trigger": trigger, "trigger_query": query,
+                                 "deliver_to": deliver_to, "enabled": True})
 
 
 async def list_for(email: str) -> list[dict]:

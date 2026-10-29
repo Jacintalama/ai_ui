@@ -674,6 +674,15 @@ async def search_emails(input: SearchEmailsInput, request: Request):
                 "subject": extract_header(headers, "Subject") or "(no subject)",
                 "from": extract_header(headers, "From"),
                 "date": extract_header(headers, "Date"),
+                # Gmail's own timestamp, in milliseconds. `date` above is the
+                # Date HEADER, written by the sender, and is routinely wrong,
+                # absent or in a format nobody agreed on, so it cannot carry
+                # a cursor. The email trigger polls this endpoint and needs
+                # to know how far it has got (tasks/email_trigger.py), and
+                # format=metadata has always returned this; it was simply
+                # never passed on. Additive, so nothing reading this today
+                # notices.
+                "internal_date": detail.get("internalDate", ""),
                 "snippet": detail.get("snippet", ""),
             })
         except Exception:
