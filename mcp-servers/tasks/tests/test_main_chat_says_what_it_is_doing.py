@@ -430,3 +430,84 @@ def test_a_discarded_reply_leaves_no_claim_behind(monkeypatch):
     out = asyncio.run(rt._jev_answer(_ChatBody("chase the invoices"),
                                      "chase the invoices", [agent], agent))
     assert out is None, "a reply that did not answer was shown anyway"
+
+
+# --- nobody was named, so nobody is shown (2026-10-29, reported twice) --------
+#
+# Reported with a screenshot: "i havnet mention any agent why is this". Asking
+# the main chat to send an email drew the office robot and a bold "IO" above
+# the approval question, as though an agent had taken it.
+#
+# The line that prevents that was already there from the 2026-10-28 report
+# ("instead of answered by your agent just make it answer directly ... since
+# no mention of his agents"). It was applied only to the branch where the
+# assistant ANSWERS, and a turn that stops to ask goes down the other one.
+
+
+def test_the_assistant_asking_for_approval_shows_no_agent(monkeypatch):
+    """The reported case. A held turn must carry no agent, or the chat draws
+    a face and a name for something the person never mentioned."""
+    held = {"agent_id": "io-assistant",
+            "calls": [{"function": {"name": "send_email",
+                                    "arguments": '{"to": "a@b.c"}'}}]}
+
+    async def turn_for(user_email, agent, messages, names=(), roster=(),
+                       graph="", now=None, tool_ids=None):
+        return {"agent": agent, "answer": "", "notes": [], "pending": held}
+
+    async def graph_block(_email, _text):
+        return ""
+
+    monkeypatch.setattr(rt, "_turn_for", turn_for)
+    monkeypatch.setattr(rt.agent_graph, "graph_block", graph_block)
+    monkeypatch.setattr(rt, "_assistant_on", lambda: True)
+    monkeypatch.setattr(rt.agent_llm, "can_run", lambda _a: True)
+
+    out = asyncio.run(rt._assistant_reply(
+        _ChatBody("send an email to a@b.c"), "send an email to a@b.c", [],
+        picked=["gmail"]))
+    assert out["turns"][0]["agent"] is None, (
+        "the assistant kept an agent row on a held turn, so the chat shows "
+        "a robot and a name for an agent nobody mentioned")
+
+
+def test_a_held_assistant_turn_renders_with_no_robot_and_no_name():
+    """What the person actually sees. The face is a data: image, so a leak
+    shows up as that string in the rendered reply."""
+    turns = [{"agent": None, "answer": "", "notes": [],
+              "pending": {"agent_id": "io-assistant",
+                          "calls": [{"function": {"name": "send_email",
+                                                  "arguments": "{}"}}]}}]
+    web = rt.render_turns(turns, faces=True)
+    assert "data:image" not in web, "the office robot was drawn"
+    assert "**IO**" not in web and "IO wants to run" not in web
+    assert web.startswith("This will run:")
+
+
+def test_an_unnamed_approval_does_not_invent_an_agent():
+    """"This agent wants to run" was the old fallback. In the main chat there
+    is no agent, so it named one that does not exist."""
+    first = rt.approval_question(None, []).splitlines()[0]
+    assert first == "This will run:"
+    assert "agent" not in first.lower()
+
+
+def test_a_named_agent_is_still_named():
+    """The fix must not strip the name off a real agent the person DID ask
+    for: that is the whole point of the approval."""
+    assert rt.approval_question("Mia", []).splitlines()[0] == "Mia wants to run:"
+
+
+def test_a_real_agents_held_turn_keeps_its_face(monkeypatch):
+    """Naming Mia and having her stop to ask must still show Mia."""
+    turns = [{"agent": {"id": "a1", "name": "Mia"}, "answer": "", "notes": [],
+              "pending": {"agent_id": "a1",
+                          "calls": [{"function": {"name": "send_email",
+                                                  "arguments": "{}"}}]}}]
+    assert "Mia wants to run:" in rt.render_turns(turns)
+
+
+def test_the_raw_assistant_id_is_never_shown_to_a_person():
+    """io-assistant is an internal id. It used to reach both the stored
+    approval and its question once the agent row was nulled."""
+    assert "io-assistant" not in rt.approval_question(None, [])
