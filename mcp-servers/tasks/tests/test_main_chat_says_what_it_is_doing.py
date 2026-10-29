@@ -666,3 +666,109 @@ def test_small_talk_only_skips_jev_at_the_start(monkeypatch):
         {"role": "user", "content": "yes"}]
     assert asyncio.run(rt._tool_pick(body2, "yes")) == []
     assert "Crane" in asked["context"], "the answer lost its subject again"
+
+
+# --- a confirmation must not lose the task's tools (2026-10-29) ---------------
+#
+# Measured on the live box, one person creating an agent called Crane:
+#
+#   15:40:32  agent_builder,calendar,schedules  0.93   the brief
+#   15:40:45  none                              0.72   "create it"
+#
+# The cut is 0.75. The step that COMPLETES a task is the shortest message in
+# it, so it scores lowest, and the tools were dropped at the one moment they
+# were needed. The free model answered instead and said "Crane is now active"
+# about an agent that was never created. Three separate confirmations landed
+# at 0.72, 0.74 and 0.77 around the same cut.
+
+
+def _pin_stub(monkeypatch, stored):
+    async def read(_key):
+        return list(stored)
+
+    async def write(_key, tools):
+        stored[:] = list(tools)
+
+    monkeypatch.setattr(rt, "_read_tools_pin", read)
+    monkeypatch.setattr(rt, "_write_tools_pin", write)
+
+
+def _jev_returns(monkeypatch, value, tools=("agent_builder", "schedules", "gmail")):
+    async def pick_tools(email, text, context_or_tools, context=""):
+        return value
+
+    async def every_tool(_email):
+        return list(tools)
+
+    monkeypatch.setattr(rt.agent_jev, "pick_tools", pick_tools)
+    monkeypatch.setattr(rt, "_every_tool_for", every_tool)
+    monkeypatch.setattr(rt, "_assistant_on", lambda: True)
+    monkeypatch.setattr(rt.agent_llm, "can_run", lambda _a: True)
+
+
+def _body(text, history=None):
+    b = _ChatBody(text)
+    b.messages = history or [
+        {"role": "user", "content": "make me a cron agent called Crane"},
+        {"role": "assistant", "content": "Here is what Crane would be..."},
+        {"role": "user", "content": text}]
+    return b
+
+
+def test_what_a_chat_is_working_with_is_remembered(monkeypatch):
+    stored = []
+    _pin_stub(monkeypatch, stored)
+    _jev_returns(monkeypatch, ["agent_builder", "schedules"])
+    asyncio.run(rt._tool_pick(_body("make me a cron agent"), "make me a cron agent"))
+    assert stored == ["agent_builder", "schedules"]
+
+
+def test_a_confirmation_keeps_the_tools_the_task_was_using(monkeypatch):
+    """The reported failure. Jev scores the short confirmation under the cut
+    and returns nothing; the task's tools are kept anyway."""
+    stored = ["agent_builder", "schedules"]
+    _pin_stub(monkeypatch, stored)
+    _jev_returns(monkeypatch, [])
+    picked = asyncio.run(rt._tool_pick(_body("create it"), "create it"))
+    assert picked == ["agent_builder", "schedules"], (
+        "the tools were dropped at the step that completes the task")
+
+
+def test_a_greeting_does_not_keep_the_tools(monkeypatch):
+    """Otherwise every "thanks" after a task would run the assistant."""
+    _pin_stub(monkeypatch, ["agent_builder"])
+    _jev_returns(monkeypatch, [])
+    assert asyncio.run(rt._tool_pick(_body("thanks"), "thanks")) == []
+
+
+def test_a_tool_the_person_no_longer_has_is_not_resurrected(monkeypatch):
+    """A pin outlives a tool being taken away."""
+    _pin_stub(monkeypatch, ["agent_builder", "something_removed"])
+    _jev_returns(monkeypatch, [])
+    picked = asyncio.run(rt._tool_pick(_body("create it"), "create it"))
+    assert picked == ["agent_builder"]
+
+
+def test_an_empty_pin_leaves_the_answer_as_jev_gave_it(monkeypatch):
+    """With nothing held, no tools means no tools, and the free model
+    answers as it always did."""
+    _pin_stub(monkeypatch, [])
+    _jev_returns(monkeypatch, [])
+    assert asyncio.run(rt._tool_pick(_body("what is a webhook"), "what is a webhook")) == []
+
+
+def test_jev_being_unavailable_still_means_unavailable(monkeypatch):
+    """None is "could not ask", not "asked and got nothing". It must not be
+    turned into a tool run by the pin."""
+    _pin_stub(monkeypatch, ["agent_builder"])
+    _jev_returns(monkeypatch, None)
+    assert asyncio.run(rt._tool_pick(_body("create it"), "create it")) is None
+
+
+def test_a_new_subject_replaces_what_is_held(monkeypatch):
+    """The pin follows the work, so moving on moves it."""
+    stored = ["agent_builder"]
+    _pin_stub(monkeypatch, stored)
+    _jev_returns(monkeypatch, ["gmail"])
+    picked = asyncio.run(rt._tool_pick(_body("check my inbox"), "check my inbox"))
+    assert picked == ["gmail"] and stored == ["gmail"]

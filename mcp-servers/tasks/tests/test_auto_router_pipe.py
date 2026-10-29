@@ -542,3 +542,52 @@ async def test_a_background_job_carries_no_route_footer(mod, monkeypatch):
     out = await p.pipe({"messages": _q("tags please"), "stream": True},
                        __user__={"email": "o@example.com"}, __task__="tags_generation")
     assert out == '{"tags": ["coffee"]}'
+
+
+# --- the free model has no hands and must say so (2026-10-29) ----------------
+#
+# Reported repeatedly. Asked to create an agent it answered "Created: Crane is
+# now your dedicated cron-jobs agent", then "Crane is now active", then "Hi!
+# Crane is live and monitoring your schedules right now". No agent was ever
+# created. Earlier the same day it went the other way: "I can't actually
+# create agents or scheduled cron jobs inside your platform", which is also
+# false. Both come from one hole: it answers for a platform it knows nothing
+# about. Inventing success is the worse of the two, because the person walks
+# away believing they have something they do not.
+
+
+def test_the_free_model_is_told_it_has_no_tools(mod):
+    p = mod.Pipe()
+    out = p._payload({"messages": _q("make me an agent")}, "m:free")
+    assert out["messages"][0]["role"] == "system"
+    assert "no tools" in out["messages"][0]["content"].lower()
+
+
+def test_it_is_told_not_to_claim_it_acted(mod):
+    """The exact words it used are named, so the note cannot drift away from
+    the failure it was written for."""
+    note = mod.Pipe().NO_HANDS
+    for phrase in ["Created:", "is now active", "is live"]:
+        assert phrase in note, phrase
+    assert "Never say or imply that you have done" in note
+
+
+def test_it_is_told_the_platform_CAN_do_these_things(mod):
+    """The other half. Telling it to refuse would swap one false answer for
+    another: the platform does create agents, schedules and videos."""
+    note = mod.Pipe().NO_HANDS
+    assert "never tell them the platform cannot" in note.lower()
+    assert "The limit is this reply, not the product." in note
+
+
+def test_the_persons_own_messages_are_untouched_behind_it(mod):
+    p = mod.Pipe()
+    said = _q("make me an agent")
+    out = p._payload({"messages": said}, "m:free")
+    assert out["messages"][1:] == said
+
+
+def test_the_note_is_added_once_not_per_turn(mod):
+    p = mod.Pipe()
+    out = p._payload({"messages": _q("hello")}, "m:free")
+    assert sum(1 for m in out["messages"] if m.get("role") == "system") == 1
