@@ -1864,6 +1864,11 @@ def test_a_key_is_made_shown_once_listed_and_revoked(page):
     _keys_route(page, keys)
     page.locator("#open-automation").click()
     page.wait_for_selector("#automation-panel", state="visible")
+    # The panel is visible before its keys have been fetched, so waiting on the
+    # panel alone races the render: on a slower runner inner_text() comes back
+    # empty and the assertion reads as "the hint is missing" when it has simply
+    # not been written yet. Wait for the rendered hint instead.
+    page.wait_for_selector("#automation-list .hint")
     assert "No keys yet" in page.locator("#automation-list").inner_text()
     assert page.locator("#automation-new").is_hidden()
 
@@ -1965,6 +1970,8 @@ def test_an_automation_is_added_with_its_url_then_run_paused_and_deleted(page):
     _keys_route(page, [])
     page.locator("#open-automation").click()
     page.wait_for_selector("#automation-panel", state="visible")
+    # Same race as the keys list above: wait for the render, not the panel.
+    page.wait_for_selector("#automations-list .hint")
     assert "No automations yet" in page.locator("#automations-list").inner_text()
     # The agent picker holds your own agents only.
     options = page.locator("#auto-agent option").evaluate_all("els => els.map(e => e.value)")
