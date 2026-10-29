@@ -2057,13 +2057,46 @@
       loadActivity();
     }
     document.addEventListener("visibilitychange", catchUpActivity);
+
+    // Coming back to this pane re-reads the agents themselves, not just
+    // their activity (2026-10-29).
+    //
+    // The pane is CACHED, on purpose: a feature must open with no loading,
+    // so the frame is hidden and unhidden rather than rebuilt
+    // (task-panel.js). The cost is that the page a person comes back to is
+    // the page they left. Make an agent in the main chat, open AI Agents,
+    // and it is not there, which reads as the agent never having been made
+    // and is exactly how the afternoon of 2026-10-29 was spent.
+    //
+    // Reported after Crane was finally created: "if user created something
+    // in the mainchat once its open the ai agents or any feature it didnt
+    // see it".
+    //
+    // Cheap, because it is one list and the frame is already built. Never
+    // raises: a failed refresh leaves what was on screen, which is no worse
+    // than today.
+    var refreshing = false;
+    async function refreshOnReturn() {
+      if (refreshing || !onScreen()) return;
+      refreshing = true;
+      try {
+        catchUpActivity();
+        if (typeof load === "function") await load();
+      } catch (e) {
+        /* leave what is on screen; it is no worse than before */
+      } finally {
+        refreshing = false;
+      }
+    }
+    document.addEventListener("visibilitychange", refreshOnReturn);
+
     // The shell says when this pane is back on screen (aiuiFrameVisible in
     // task-panel.js). Only from the window that framed this page, and only
     // from this origin.
     window.addEventListener("message", function (ev) {
       if (ev.origin !== window.location.origin) return;
       if (ev.source !== window.parent) return;
-      if (ev.data && ev.data.aiuiFrameVisible === true) catchUpActivity();
+      if (ev.data && ev.data.aiuiFrameVisible === true) refreshOnReturn();
     });
 
     function render() {

@@ -2569,6 +2569,43 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     }
   });
 
+  // Coming back to the office re-reads the roster (2026-10-29).
+  //
+  // The pane is CACHED on purpose: a feature opens with no loading, so the
+  // frame is hidden and unhidden rather than rebuilt (task-panel.js). The
+  // cost is that the floor a person comes back to is the floor they left.
+  // Make an agent in the main chat, open the office, and its desk is not
+  // there, which reads as the agent never having been made.
+  //
+  // Reported right after Crane was finally created: "if user created
+  // something in the mainchat once its open the ai agents or any feature it
+  // didnt see it".
+  //
+  // Never raises, and never clears the floor on a failure: what is drawn
+  // stays drawn, which is no worse than before.
+  var _reloading = false;
+  async function reloadOnReturn() {
+    if (_reloading || document.hidden) return;
+    _reloading = true;
+    try {
+      await loadAgents();
+      await loadActivity();
+      draw();
+    } catch (e) {
+      console.warn("[office] could not refresh on return", e);
+    } finally {
+      _reloading = false;
+    }
+  }
+  document.addEventListener("visibilitychange", reloadOnReturn);
+  // The shell says when this pane is back on screen. Only from the window
+  // that framed this page, and only from this origin.
+  window.addEventListener("message", function (ev) {
+    if (ev.origin !== window.location.origin) return;
+    if (ev.source !== window.parent) return;
+    if (ev.data && ev.data.aiuiFrameVisible === true) reloadOnReturn();
+  });
+
   (async function init() {
     try {
       await loadAgents();
