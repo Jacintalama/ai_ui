@@ -185,10 +185,13 @@ async def test_agents_first_never_appends_a_marker(mod, monkeypatch):
         async def post(self, url, json=None, headers=None): return R()
 
     monkeypatch.setattr(mod.httpx, "AsyncClient", C)
-    out, who = await p._agents_first({"messages": _q("hi team")}, "o@example.com")
+    out, status = await p._agents_first({"messages": _q("hi team")}, "o@example.com")
     assert out == "Ada:\nHello."
     assert "aiui:turns" not in out
-    assert who == "Ada", "a named agent has somebody to name"
+    # The reply here carries no "status" key, so this also pins the fallback:
+    # a service too old to send one still gets a correct line, built from the
+    # agent name on the turn (2026-10-29).
+    assert status == "Answered by Ada", "a named agent has somebody to name"
 
 
 async def test_a_marker_an_agent_wrote_is_stripped(mod, monkeypatch):
@@ -214,10 +217,10 @@ async def test_a_marker_an_agent_wrote_is_stripped(mod, monkeypatch):
         async def post(self, url, json=None, headers=None): return R()
 
     monkeypatch.setattr(mod.httpx, "AsyncClient", C)
-    out, who = await p._agents_first({"messages": _q("hi team")}, "o@example.com")
+    out, status = await p._agents_first({"messages": _q("hi team")}, "o@example.com")
     assert "aiui:turns" not in out
     assert "Try" in out and "this." in out
-    assert who == "Ada"
+    assert status == "Answered by Ada"
 
 
 # ---------------------------------------------------------------------------
@@ -361,15 +364,18 @@ def test_every_pool_entry_is_a_free_id(mod):
 
 # --- the pipe says what it is doing while the service decides (2026-10-26) --
 
-async def _with_key(mod, monkeypatch, first, who="Mia"):
-    """`first` is the reply, `who` the agent that gave it ("" for the
+async def _with_key(mod, monkeypatch, first, status="Answered by Mia"):
+    """`first` is the reply, `status` the line to leave on screen ("" for the
     assistant, which is the free model with tools and is nobody's agent).
-    _agents_first returns both since 2026-10-28."""
+
+    The SERVICE composes that line as of 2026-10-29, because only it knows
+    which of the three answered: a named agent, the assistant with a tool,
+    or nothing worth reporting. The pipe emits what it is handed."""
     p = mod.Pipe()
     p.valves.OPENROUTER_API_KEY = "k"
 
-    async def agents_first(body, email):
-        return None if first is None else (first, who)
+    async def agents_first(body, email, emit=None):
+        return None if first is None else (first, status)
 
     monkeypatch.setattr(p, "_agents_first", agents_first)
     return p
@@ -400,7 +406,7 @@ async def test_the_assistant_answering_is_not_called_your_agent(mod, monkeypatch
 
     It carries agent=None on its turn, so there is nobody to name, and the
     pipe says nothing at all."""
-    p = await _with_key(mod, monkeypatch, "Elon Musk, about $714 billion.", who="")
+    p = await _with_key(mod, monkeypatch, "Elon Musk, about $714 billion.", status="")
     seen = []
 
     async def emitter(ev):
@@ -451,9 +457,9 @@ async def test_the_web_rendering_with_faces_is_preferred(mod, monkeypatch):
         async def post(self, url, json=None, headers=None): return R()
 
     monkeypatch.setattr(mod.httpx, "AsyncClient", C)
-    out, who = await p._agents_first({"messages": _q("hi ada")}, "o@example.com")
+    out, status = await p._agents_first({"messages": _q("hi ada")}, "o@example.com")
     assert out.startswith("![Ada](data:image/svg+xml;base64,AAAA) **Ada**")
-    assert who == "Ada"
+    assert status == "Answered by Ada"
 
 
 # --- the chat and Open WebUI's background jobs (2026-10-27) ------------------

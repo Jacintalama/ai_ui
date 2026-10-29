@@ -284,17 +284,21 @@ class Pipe:
     def __init__(self):
         self.valves = self.Valves()
 
-    async def _agents_first(self, body: dict, user_email: str):
-        """(reply, who) from whichever agents were named or awake, or None
-        when nobody was and this pipe should answer as usual.
+    async def _agents_first(self, body: dict, user_email: str, emit=None):
+        """(reply, status) from whichever agents were named or awake, or
+        None when nobody was and this pipe should answer as usual.
 
-        `who` is the agent's name, or "" when the answer came from the
-        assistant: the free model with the tools Jev picked, which carries
-        agent=None on its turn. The difference matters to the person. Said
-        plainly 2026-10-28, after a general-knowledge question came back
-        under "Answered by your agent" with no agent involved at all:
-        "instead of answered by your agent just make it answer directly
-        ... since no mention of his agents".
+        `status` is the one line to leave on screen: "Answered by Mia" when
+        a real agent spoke, "Used your email" when the assistant read
+        something, and "" when neither, because nothing happened worth
+        reporting. The service decides it, since only the service knows
+        which of the three it was. Getting that distinction wrong is what
+        put "Answered by your agent" over an answer with no agent in it
+        (2026-10-28): "instead of answered by your agent just make it
+        answer directly ... since no mention of his agents".
+
+        `emit` is Open WebUI's event emitter, used to say what is happening
+        WHILE it happens rather than only at the end.
 
         route_only is what makes this safe to call from here: IO answers
         for itself THROUGH this pipe, so without it the service would ask
@@ -306,24 +310,17 @@ class Pipe:
         """
         if not user_email:
             return None
-        chat_id = (body.get("chat_id")
-                   or (body.get("metadata") or {}).get("chat_id")
-                   or "web")
-        try:
-            async with httpx.AsyncClient(timeout=self.valves.TIMEOUT_SECONDS) as client:
-                r = await client.post(
-                    self.valves.TASKS_URL.rstrip("/") + "/agents/chat",
-                    headers={"X-Internal-Secret": self.valves.INTERNAL_SECRET},
-                    json={"user_email": user_email, "chat_id": chat_id,
-                          "messages": body.get("messages") or [],
-                          "route_only": True})
-                if r.status_code != 200:
-                    return None
-                data = r.json()
-        except Exception:                                   # noqa: BLE001
-            # Never the exception text: an httpx error carries the URL.
+        payload = {"user_email": user_email,
+                   "chat_id": (body.get("chat_id")
+                               or (body.get("metadata") or {}).get("chat_id")
+                               or "web"),
+                   "messages": body.get("messages") or [],
+                   "route_only": True}
+        data, may_retry = await self._ask_streaming(payload, emit)
+        if data is None and may_retry:
+            data = await self._ask_plain(payload)
+        if data is None:
             return None
-        data = data if isinstance(data, dict) else {}
         turns = data.get("turns")
         if not isinstance(turns, list) or not turns:
             return None
@@ -331,16 +328,111 @@ class Pipe:
         rendered = data.get("rendered_web") or data.get("rendered")
         if not (isinstance(rendered, str) and rendered.strip()):
             return None
-        # The assistant sets agent=None on its turn. A name here means a real
-        # agent of this person's spoke, and only then is there anybody to
-        # name in the status line.
-        who = ""
-        for t in turns:
-            a = t.get("agent") if isinstance(t, dict) else None
-            if isinstance(a, dict) and a.get("name"):
-                who = str(a["name"])
-                break
-        return AIUI_TURNS_STRIP_RE.sub("", rendered).rstrip(), who
+        # The line to leave on screen. The SERVICE decides it (2026-10-29):
+        # it is the only place that knows whether a real agent spoke, or
+        # the assistant read something, or neither. The name scan below is
+        # the fallback for a service too old to send one.
+        status = data.get("status")
+        if not isinstance(status, str):
+            status = ""
+            # The assistant sets agent=None on its turn. A name here means
+            # a real agent of this person's spoke, and only then is there
+            # anybody to name in the status line.
+            for t in turns:
+                a = t.get("agent") if isinstance(t, dict) else None
+                if isinstance(a, dict) and a.get("name"):
+                    status = "Answered by %s" % a["name"]
+                    break
+        return AIUI_TURNS_STRIP_RE.sub("", rendered).rstrip(), status
+
+    async def _ask_streaming(self, payload: dict, emit):
+        """Ask /agents/chat/stream and say each line as it arrives.
+
+        This is what ends the silent wait. Measured live 2026-10-29: 9.5s
+        for "check my inbox" and 12.3s for an attachment an agent took,
+        with nothing on screen for any of it.
+
+        Returns (reply, may_retry). Both halves matter, and collapsing them
+        into one Optional was a real bug:
+
+        `may_retry` is True only when the request was never accepted, so
+        nothing can have run and the caller is free to fall back to the
+        one-shot POST. That is the case the fallback exists for: the pipe
+        is a database row and the service is a container, they are never
+        updated in the same instant, and a service without this route
+        answers 404 here.
+
+        Once the response is accepted the turn IS running, so `may_retry`
+        is False from then on, whatever goes wrong afterwards. Retrying a
+        turn that may have run could send the same email twice.
+        """
+        url = self.valves.TASKS_URL.rstrip("/") + "/agents/chat/stream"
+        headers = {"X-Internal-Secret": self.valves.INTERNAL_SECRET}
+        reply = None
+        accepted = False
+        try:
+            async with httpx.AsyncClient(timeout=self.valves.TIMEOUT_SECONDS) as client:
+                async with client.stream("POST", url, headers=headers,
+                                         json=payload) as r:
+                    if r.status_code != 200:
+                        return None, True
+                    # The headers arrive before the work finishes, so a 200
+                    # means the service has taken the turn on.
+                    accepted = True
+                    event = ""
+                    async for line in r.aiter_lines():
+                        if line.startswith("event:"):
+                            event = line[len("event:"):].strip()
+                            continue
+                        if not line.startswith("data:"):
+                            continue          # a ping, a comment, or a gap
+                        raw = line[len("data:"):].strip()
+                        try:
+                            parsed = json.loads(raw) if raw else None
+                        except json.JSONDecodeError:
+                            continue
+                        if event == "status" and isinstance(parsed, dict):
+                            await self._say(emit, str(parsed.get("line") or ""))
+                        elif event == "reply" and isinstance(parsed, dict):
+                            reply = parsed
+                        elif event == "error":
+                            return None, False
+        except Exception:                                   # noqa: BLE001
+            # Never the exception text: an httpx error carries the URL.
+            return reply, not accepted
+        return reply, False
+
+    async def _say(self, emit, line: str) -> None:
+        """One progress line, and never at the answer's expense.
+
+        Open WebUI's socket can go away mid-turn. Before this was its own
+        try, a dead status socket raised inside the read loop and cost the
+        whole reply: the person lost the answer because the service could
+        not tell them it was coming. Found by its own test, not in
+        production, which is the point of having written the test.
+        """
+        if not line:
+            return
+        try:
+            await self._emit(emit, line)
+        except Exception:                                   # noqa: BLE001
+            pass
+
+    async def _ask_plain(self, payload: dict) -> Optional[dict]:
+        """The one-shot POST, for a service without the stream route. No
+        progress lines, which is exactly how it behaved before."""
+        try:
+            async with httpx.AsyncClient(timeout=self.valves.TIMEOUT_SECONDS) as client:
+                r = await client.post(
+                    self.valves.TASKS_URL.rstrip("/") + "/agents/chat",
+                    headers={"X-Internal-Secret": self.valves.INTERNAL_SECRET},
+                    json=payload)
+                if r.status_code != 200:
+                    return None
+                data = r.json()
+        except Exception:                                   # noqa: BLE001
+            return None
+        return data if isinstance(data, dict) else None
 
     def pipes(self) -> list[dict]:
         return [{"id": "auto", "name": "Auto (Free)"}]
@@ -419,17 +511,18 @@ class Pipe:
         # same as it does on IO, and "chase the overdue invoices" reaches
         # whoever keeps the books. The tasks service decides; this pipe
         # only asks, and says so while the person waits.
-        # No "Choosing who answers..." any more. Nothing is being chosen in
-        # the ordinary case: the person named nobody, so the free model
-        # answers and the line only made the wait look like a decision.
-        answered = await self._agents_first(body, (__user__ or {}).get("email") or "")
+        # Still no "Choosing who answers..." before the fact: in the
+        # ordinary case nothing is being chosen, the person named nobody,
+        # and that line only made the wait look like a decision. What is
+        # said now (2026-10-29) is said by the service, as it happens and
+        # only when it is true of this message: "Mia is answering...",
+        # "Reading your email...". A question the free model takes still
+        # says nothing at all, because nothing is happening to it.
+        answered = await self._agents_first(
+            body, (__user__ or {}).get("email") or "", __event_emitter__)
         if answered is not None:
-            reply, who = answered
-            # Named only. The assistant answering is the free model with
-            # hands, and calling that "your agent" is how a question nobody
-            # addressed came back looking as though an agent had taken it.
-            await self._emit(__event_emitter__,
-                             ("Answered by %s" % who) if who else "", done=True)
+            reply, status = answered
+            await self._emit(__event_emitter__, status, done=True)
             return reply
         await self._emit(__event_emitter__, "", done=True)
 
