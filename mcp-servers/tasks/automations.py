@@ -27,7 +27,12 @@ from datetime import datetime, timezone
 logger = logging.getLogger("automations")
 
 TRIGGER_WEBHOOK = "webhook"
-TRIGGERS = frozenset({TRIGGER_WEBHOOK})
+#: An email arriving in the owner's connected Gmail starts the rule
+#: (email_trigger.py decides which emails, email_poller.py does the
+#: looking). Added 2026-10-29, which migration 060 anticipated: "an email
+#: trigger comes next and will add a trigger kind here".
+TRIGGER_EMAIL = "email"
+TRIGGERS = frozenset({TRIGGER_WEBHOOK, TRIGGER_EMAIL})
 
 DELIVER_CHAT = "chat"
 DELIVER_DISCORD = "discord"
@@ -62,7 +67,8 @@ def clean_name(name) -> str:
 
 
 def problem_with(name: str, instructions: str, deliver_to: str,
-                 trigger: str = TRIGGER_WEBHOOK) -> str:
+                 trigger: str = TRIGGER_WEBHOOK,
+                 trigger_query: str = "") -> str:
     """What is wrong with these fields, or "". The sentences are what the
     page shows, so they say what to change."""
     if not clean_name(name):
@@ -75,7 +81,15 @@ def problem_with(name: str, instructions: str, deliver_to: str,
     if deliver_to not in DELIVERIES:
         return "Deliver to is one of chat, discord or none."
     if trigger not in TRIGGERS:
-        return "The only trigger today is a webhook."
+        return "A trigger is either a webhook or an email."
+    if trigger == TRIGGER_EMAIL:
+        # An email rule runs an agent per message, so an unbounded one is a
+        # bill rather than a rule. Refused here, at the door, instead of
+        # being discovered on the first tick.
+        import email_trigger
+        problem = email_trigger.query_problem(str(trigger_query or ""))
+        if problem:
+            return problem
     return ""
 
 
@@ -125,6 +139,7 @@ def row_of(a) -> dict:
     its own: the URL is what somebody copies, and it carries the token."""
     return {"id": str(a.id), "name": a.name, "agent_id": a.agent_id,
             "instructions": a.instructions, "trigger": a.trigger,
+            "trigger_query": getattr(a, "trigger_query", "") or "",
             "hook_token": a.hook_token, "deliver_to": a.deliver_to,
             "enabled": bool(a.enabled), "created_at": _iso(a.created_at),
             "last_run_at": _iso(a.last_run_at), "last_status": a.last_status,

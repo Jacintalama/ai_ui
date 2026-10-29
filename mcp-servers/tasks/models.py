@@ -236,6 +236,10 @@ class Automation(Base):
     agent_id = Column(Text, nullable=False)
     instructions = Column(Text, nullable=False)
     trigger = Column(Text, nullable=False, default="webhook")
+    #: For an email trigger: the Gmail search that decides which emails
+    #: start this rule (migration 064). Empty for a webhook. Matching is
+    #: Gmail's job, not ours, so this is its syntax rather than our own.
+    trigger_query = Column(Text, nullable=False, default="")
     hook_token = Column(Text, nullable=False, unique=True)
     deliver_to = Column(Text, nullable=False, default="chat")
     enabled = Column(Boolean, nullable=False, default=True)
@@ -260,6 +264,32 @@ class AutomationRun(Base):
     trigger_text = Column(Text, nullable=False, default="")
     result = Column(Text, nullable=False, default="")
     delivered = Column(Text, nullable=False, default="")
+
+
+class AutomationEmailCursor(Base):
+    """How far through the mailbox one email-triggered rule has got
+    (email_poller.py). One row per RULE, not per account: each rule has its
+    own Gmail query and so its own idea of what it has already seen.
+    See migration 064.
+
+    `after_epoch` is seconds from Gmail's own internalDate, never from the
+    Date header, which the sender writes and is routinely wrong. It starts
+    at the rule's creation time and NEVER at zero: a rule starting at zero
+    fires on every email in the mailbox's history, and this trigger runs one
+    agent turn per message.
+    """
+    __tablename__ = "automation_email_cursor"
+    __table_args__ = {"schema": "tasks"}
+
+    automation_id = Column(UUID(as_uuid=True), primary_key=True)
+    user_email = Column(Text, nullable=False)
+    after_epoch = Column(BigInteger, nullable=False)
+    #: Newest first, comma separated, capped by email_trigger.SEEN_KEPT.
+    #: The poller queries with a deliberate overlap, so it has to be able
+    #: to recognise what it has already acted on.
+    seen_ids = Column(Text, nullable=False, default="")
+    checked_at = Column(DateTime(timezone=True), nullable=True)
+    last_error = Column(Text, nullable=False, default="")
 
 
 class Approval(Base):
