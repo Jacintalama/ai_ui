@@ -310,6 +310,23 @@ def test_picker_escape_cancels(browser, harness_url):
     iframe_locator.locator("body").press("Escape")
     iframe_locator.locator("#__io_picker_overlay").wait_for(state="detached", timeout=2000)
 
+    # Wait for the MESSAGE, not for the overlay going away. picker.js does
+    #
+    #     post({ type: "io.picker.cancelled" });
+    #     deactivate();
+    #
+    # so the overlay is removed synchronously inside the keydown handler
+    # while the postMessage is delivered to the parent in a later task.
+    # Waiting on the detach and then reading __msgs is therefore a race: it
+    # passed almost always, because Playwright's own polling costs a round
+    # trip that the message usually wins, and failed in CI on 2026-10-29 and
+    # at least once before. The same shape as the four agents-page races
+    # fixed in PR #49: wait for the outcome being asserted, not for a proxy
+    # that happens to precede it.
+    page.wait_for_function(
+        "window.__msgs.some(m => m && m.type === 'io.picker.cancelled')",
+        timeout=2000,
+    )
     msgs = page.evaluate("window.__msgs")
     assert any(m.get("type") == "io.picker.cancelled" for m in msgs)
 
