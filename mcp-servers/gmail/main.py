@@ -1,6 +1,7 @@
 """Gmail MCP Server — search, read, and send emails from Gmail."""
 import os
 import base64
+import html
 import urllib.parse
 from typing import Optional
 from email.mime.text import MIMEText
@@ -14,6 +15,7 @@ from pydantic import BaseModel, Field
 
 import crypto_utils  # encrypt OAuth tokens at rest (AIUI_FERNET_KEY)
 import oauth_state  # verify signed OAuth state (owner identity)
+import account_identity  # an account is keyed by its address, never its id
 from draft_builder import build_draft_raw, build_draft_raw_with_attachment
 
 app = FastAPI(
@@ -168,12 +170,42 @@ async def get_valid_token(user_email: str) -> Optional[str]:
     return new_token
 
 
-def get_user_email(request: Request) -> str:
-    return (
+async def _email_for_user_id(user_id: str) -> Optional[str]:
+    """The address of the account with this Open WebUI user id, or None.
+
+    Only reached when a client sent an id instead of an address, which is a
+    bug in that client. Resolving it here keeps that client's requests working
+    while it is being fixed, and keeps the id out of the token tables.
+    """
+    if not DATABASE_URL:
+        return None
+    try:
+        import asyncpg
+        conn = await asyncpg.connect(DATABASE_URL)
+        try:
+            # "user" is a reserved word, hence the quoting.
+            row = await conn.fetchrow(
+                'SELECT email FROM public."user" WHERE id = $1', user_id)
+            return row["email"] if row else None
+        finally:
+            await conn.close()
+    except Exception:
+        return None
+
+
+async def get_user_email(request: Request) -> str:
+    """The address of the account making this request.
+
+    Normalised through account_identity, because a client may send an Open
+    WebUI user id instead of an address. See that module for how one did, for
+    months, in silence.
+    """
+    raw = (
         request.headers.get("x-user-email")
         or request.headers.get("X-User-Email")
         or "default@local"
     )
+    return await account_identity.canonical_email(raw, _email_for_user_id)
 
 
 NOT_CONNECTED_MSG = (
@@ -229,10 +261,36 @@ async def _save_token_all_services(user_email: str, access_token: str, refresh_t
         print(f"[unified-connect] failed for {user_email}: {e}", flush=True)
 
 
+def _connect_failed_page(why: str) -> str:
+    """Shown instead of silently connecting an account nobody can look up.
+
+    The old behaviour was worse than an error: the consent succeeded, the row
+    was written under a key no read ever asks for, and the person was told
+    "Gmail Connected!".
+    """
+    return (
+        '<html><body style="font-family: sans-serif; text-align: center; '
+        'padding: 50px; background: #1e1e1e; color: #fff;">'
+        '<h1 style="color: #ea4335;">Gmail was not connected</h1>'
+        '<p>%s</p>'
+        '</body></html>' % html.escape(why)
+    )
+
+
 # --- OAuth Endpoints ---
 
 @app.get("/auth/google/start")
 async def auth_start(user_email: str = "default@local", state: str = "", connect: str = "gmail"):
+    # The address is what every per-user table is keyed by, so it is settled
+    # here, before the consent, rather than after it. Refusing now costs the
+    # person a reload; refusing later costs them a connection that looks fine
+    # and works nowhere.
+    try:
+        user_email = await account_identity.canonical_email(
+            user_email, _email_for_user_id, required=not state,
+            placeholders_ok=not DATABASE_URL)
+    except account_identity.UnknownAccount as err:
+        return HTMLResponse(_connect_failed_page(str(err)), status_code=400)
     # connect=all requests Gmail + Calendar + Drive scopes in ONE consent and
     # marks the state so the callback links all three services at once.
     if connect == "all":
@@ -268,6 +326,15 @@ async def auth_callback(code: str, state: str = "default@local"):
         if owner is None:
             owner = urllib.parse.unquote(state)
         user_email = owner
+    # Every path converges here, including the signed state the Discord and
+    # Slack flows build, so this is the one place that can promise no token
+    # row is ever keyed by anything but an address.
+    try:
+        user_email = await account_identity.canonical_email(
+            user_email, _email_for_user_id, required=True,
+            placeholders_ok=not DATABASE_URL)
+    except account_identity.UnknownAccount as err:
+        return HTMLResponse(_connect_failed_page(str(err)), status_code=400)
     async with httpx.AsyncClient() as client:
         resp = await client.post(GOOGLE_TOKEN_URL, data={
             "client_id": GOOGLE_CLIENT_ID,
@@ -323,7 +390,7 @@ async def auth_callback(code: str, state: str = "default@local"):
 @app.get("/auth/status")
 async def auth_status_header(request: Request):
     """Header-based status (X-User-Email via api-gateway) for the connect-UX poll."""
-    tok = await get_token(get_user_email(request))
+    tok = await get_token(await get_user_email(request))
     return {"connected": tok is not None}
 
 
@@ -500,7 +567,7 @@ class CreateDraftAttachmentInput(BaseModel):
 @app.post("/gmail_list_emails", operation_id="gmail_list_emails", summary="List emails from Gmail inbox")
 async def list_emails(input: ListEmailsInput, request: Request):
     """List recent emails from a Gmail label. Use this when the user asks to see their emails, inbox, or recent messages. Returns subjects, senders, dates, and snippets."""
-    user_email = get_user_email(request)
+    user_email = await get_user_email(request)
     access_token = await get_valid_token(user_email)
     if not access_token:
         base = OAUTH_REDIRECT_URI.rsplit("/auth/", 1)[0]
@@ -541,7 +608,7 @@ async def list_emails(input: ListEmailsInput, request: Request):
 @app.post("/gmail_search_emails", operation_id="gmail_search_emails", summary="Search emails in Gmail")
 async def search_emails(input: SearchEmailsInput, request: Request):
     """Search emails across your entire Gmail. Use this when the user asks to find a specific email, search for messages from someone, or look for emails about a topic."""
-    user_email = get_user_email(request)
+    user_email = await get_user_email(request)
     access_token = await get_valid_token(user_email)
     if not access_token:
         base = OAUTH_REDIRECT_URI.rsplit("/auth/", 1)[0]
@@ -576,7 +643,7 @@ async def search_emails(input: SearchEmailsInput, request: Request):
 @app.post("/gmail_read_email", operation_id="gmail_read_email", summary="Read full email content from Gmail")
 async def read_email(input: ReadEmailInput, request: Request):
     """Read the full content of a Gmail email including body and attachment list. Use this when the user wants to read, view, or get the content of a specific email."""
-    user_email = get_user_email(request)
+    user_email = await get_user_email(request)
     access_token = await get_valid_token(user_email)
     if not access_token:
         base = OAUTH_REDIRECT_URI.rsplit("/auth/", 1)[0]
@@ -622,7 +689,7 @@ async def read_email(input: ReadEmailInput, request: Request):
 @app.post("/gmail_send_email", operation_id="gmail_send_email", summary="Send an email via Gmail")
 async def send_email(input: SendEmailInput, request: Request):
     """Send an email from your Gmail account. Use this when the user wants to send, write, or compose a new email to someone. Can also reply to existing threads using reply_to_message_id."""
-    user_email = get_user_email(request)
+    user_email = await get_user_email(request)
     access_token = await get_valid_token(user_email)
     if not access_token:
         base = OAUTH_REDIRECT_URI.rsplit("/auth/", 1)[0]
@@ -670,7 +737,7 @@ async def send_email(input: SendEmailInput, request: Request):
 @app.post("/gmail_create_draft_reply", operation_id="gmail_create_draft_reply", summary="Create a draft reply to an email in Gmail")
 async def create_draft_reply(input: CreateDraftReplyInput, request: Request):
     """Create a draft reply to a specific email. ALWAYS use this when the user asks to draft a reply, create a draft, or respond to an email. The draft is saved in the user's actual Gmail Drafts folder. Requires the message_id of the email to reply to - look for [Gmail Message ID: xxx] in attached email files."""
-    user_email = get_user_email(request)
+    user_email = await get_user_email(request)
     access_token = await get_valid_token(user_email)
     if not access_token:
         base = OAUTH_REDIRECT_URI.rsplit("/auth/", 1)[0]
@@ -731,7 +798,7 @@ async def create_draft_reply(input: CreateDraftReplyInput, request: Request):
 @app.post("/gmail_create_draft", operation_id="gmail_create_draft", summary="Create a new draft email in Gmail")
 async def create_draft(input: CreateDraftInput, request: Request):
     """Create a brand-new draft email (not a reply). Use this when the user asks to draft, compose, or write a new email to someone. The draft is saved in the user's Gmail Drafts folder and is NEVER sent; the user reviews and sends it themselves."""
-    user_email = get_user_email(request)
+    user_email = await get_user_email(request)
     access_token = await get_valid_token(user_email)
     if not access_token:
         base = OAUTH_REDIRECT_URI.rsplit("/auth/", 1)[0]
@@ -763,7 +830,7 @@ async def create_draft_with_attachment(input: CreateDraftAttachmentInput,
     Documents tool's "email this file" flow). Same safety stance as
     gmail_create_draft: the draft is saved in the user's Drafts folder and is
     NEVER sent; the user reviews and sends it themselves."""
-    user_email = get_user_email(request)
+    user_email = await get_user_email(request)
     access_token = await get_valid_token(user_email)
     if not access_token:
         base = OAUTH_REDIRECT_URI.rsplit("/auth/", 1)[0]
@@ -790,8 +857,26 @@ async def create_draft_with_attachment(input: CreateDraftAttachmentInput,
 
 
 @app.get("/gmail_download_attachment/{message_id}/{attachment_id}")
-async def download_attachment(message_id: str, attachment_id: str, user_email: str = "default@local", filename: str = "attachment"):
-    """Download an email attachment by its attachment ID."""
+async def download_attachment(message_id: str, attachment_id: str, request: Request,
+                              filename: str = "attachment"):
+    """Download an email attachment by its attachment ID.
+
+    Whose mailbox is read comes from the header the api-gateway injects, the
+    same as every other endpoint here. It used to come from a `user_email`
+    query parameter, which meant an unauthenticated caller could name any
+    connected account and have this service call Gmail with that person's
+    token: confirmed against production on 2026-10-29, where naming an
+    address returned Google's own "Invalid attachment token" rather than
+    "Not connected", which only happens once a real token has been used.
+    Extraction still needed a valid message and attachment id, so nothing was
+    enumerable, but the authorization check was missing all the same.
+
+    The gateway strips any client-sent x-user-email and sets its own from the
+    validated session, so the header is the only identity here worth trusting.
+    A `user_email` parameter is now ignored rather than rejected, so an older
+    cached page keeps working as its own account.
+    """
+    user_email = await get_user_email(request)
     access_token = await get_valid_token(user_email)
     if not access_token:
         raise HTTPException(status_code=401, detail="Not connected")
@@ -825,7 +910,7 @@ async def download_attachment(message_id: str, attachment_id: str, user_email: s
 @app.post("/gmail_list_labels", operation_id="gmail_list_labels", summary="List Gmail labels and folders")
 async def list_labels(request: Request):
     """List all Gmail labels and folders (Inbox, Sent, Starred, custom labels, etc). Use this when the user asks about their email folders or labels."""
-    user_email = get_user_email(request)
+    user_email = await get_user_email(request)
     access_token = await get_valid_token(user_email)
     if not access_token:
         base = OAUTH_REDIRECT_URI.rsplit("/auth/", 1)[0]
