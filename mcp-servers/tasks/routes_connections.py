@@ -428,10 +428,16 @@ async def trello_oauth_token(body: TrelloTokenBody) -> dict:
                                         "connection again."}
     token = T.token_from_fragment(body.fragment)
     if not T.looks_like_token(token):
-        # Never echo what arrived: it is either a credential or somebody
+        # Never echo what ARRIVED: it is either a credential or somebody
         # else's error page, and neither belongs in a response or a log.
-        logger.warning("trello: the fragment carried no usable token")
-        return {"ok": False, "message": "Trello did not return a token."}
+        # Trello's own `error` is a different thing, written to be read, and
+        # it is the only account anyone gets of what went wrong.
+        why = T.error_from_fragment(body.fragment)
+        logger.warning("trello: no usable token in the fragment (%s)",
+                       why or "and no reason given")
+        return {"ok": False,
+                "message": ("Trello refused: " + why) if why
+                else "Trello did not return a token."}
 
     values = T.stored_values(token)
     ok, label, why = await _ask_vendor(C.provider(T.PROVIDER_ID), values)

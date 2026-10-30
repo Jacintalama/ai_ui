@@ -105,6 +105,43 @@ def test_an_error_fragment_yields_no_token():
     assert T.token_from_fragment("#error=access_denied") == ""
 
 
+# --- why Trello sent somebody back empty handed ------------------------------
+
+def test_trellos_reason_is_read_out_of_the_fragment():
+    """Trello puts `token=` empty and `error=<message>` in the fragment when
+    it refuses. Reading only the token turned every refusal into the same
+    blank sentence and threw away the one account of what went wrong."""
+    frag = "#token=&error=invalid+scope+requested"
+    assert T.token_from_fragment(frag) == ""
+    assert T.error_from_fragment(frag) == "invalid scope requested"
+
+
+def test_a_good_fragment_carries_no_reason():
+    """A success must not be described as a refusal."""
+    assert T.error_from_fragment("#token=" + TOKEN) == ""
+    assert T.error_from_fragment("#" + TOKEN) == ""
+
+
+def test_nothing_back_means_no_reason_rather_than_a_wrong_one():
+    for empty in ["", "#", "   ", None]:
+        assert T.error_from_fragment(empty) == ""
+
+
+def test_a_reason_is_cut_to_a_sentence():
+    """It is rendered on our page. Trello's messages are a sentence, so
+    anything page-length is not a message and is not shown like one."""
+    frag = "#token=&error=" + ("x" * 900)
+    assert len(T.error_from_fragment(frag)) == T.MAX_REASON
+
+
+def test_control_characters_never_reach_the_page():
+    """The page writes this with textContent, so this is tidiness rather
+    than the thing standing between us and an injection. It still should
+    not be able to rewrite the line it sits on."""
+    frag = "#token=&error=denied%0A%0D%00stop"
+    assert T.error_from_fragment(frag) == "deniedstop"
+
+
 # --- what is allowed to be spent as a credential -------------------------------
 
 def test_a_real_token_passes():
