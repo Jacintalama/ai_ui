@@ -6,11 +6,24 @@ that too. Four steps and two pastes, and the step where somebody who is not
 a developer gives up. Automations are worth nothing if nobody gets as far as
 connecting the app they want automated.
 
-**Trello has no OAuth 2.0.** Checked against Atlassian's own docs rather than
-assumed: it offers its `1/authorize` flow and OAuth 1.0a, and nothing else.
-RFC-89 proposed adding OAuth 2.0 and then deprecating both, but nothing
-confirms it shipped, so this builds on what exists today. That is why Trello
-cannot use oauth_providers.py, which is a code exchange and only that.
+**Trello HAS OAuth 2.0, and this deliberately does not use it.** Corrected
+2026-10-30: this file used to say Trello had none. That was true of
+Atlassian's docs when it was written and is no longer true of Trello's app
+admin, which now has an OAuth 2.0 tab issuing a client id and granular
+scopes. Recorded rather than quietly edited, because a confident wrong note
+in this repo has cost a wrong conclusion before.
+
+It is still not used, for a better reason than the one originally given.
+Trello's OAuth 2.0 access token expires in one hour and is renewed with a
+ROTATING, single-use refresh token, and nothing in this service refreshes
+anything. A connect that stops working after an hour, while the card still
+says Connected, is worse than one that lasts thirty days. Trello therefore
+sits with HubSpot and Airtable in oauth_providers.NEEDS_TOKEN_REFRESH_FIRST
+territory, except that unlike those two it has a working route that needs no
+refresh at all, which is the one below.
+
+`1/authorize` is not deprecated. Atlassian's authorization guide still
+presents it as a current option, alongside OAuth 1.0a.
 
 `1/authorize` is the route Trello's own guide calls the simpler one. The
 shape:
@@ -49,8 +62,19 @@ PROVIDER_ID = "trello"
 #: Ours, not the user's. Public by Atlassian's own description, so it is read
 #: from the environment for deployment rather than secrecy. Empty means the
 #: one-click button is not offered and the paste form stays, which is what
-#: every deployment that has not registered a Power-Up should see.
-ENV_KEY = "TRELLO_API_KEY"
+#: every deployment that has not registered an app should see.
+#:
+#: Deliberately NOT `TRELLO_API_KEY` (2026-10-30). That name belongs to
+#: mcp-trello, which pairs it with TRELLO_API_TOKEN as a single platform-wide
+#: Trello account. A Trello token is bound to the key it was issued under, so
+#: pointing TRELLO_API_KEY at a second app would 401 that pair and every
+#: shared Trello tool with it. Measured rather than assumed: old key with old
+#: token answered 200, new key with the same token answered "invalid key".
+#:
+#: Two keys is also the honest shape. The shared account and a person's own
+#: connection are different things, and the shared one exists to be replaced
+#: by connections like this rather than to be shared more widely.
+ENV_KEY = "TRELLO_CONNECT_KEY"
 
 AUTHORIZE_URL = "https://trello.com/1/authorize"
 
