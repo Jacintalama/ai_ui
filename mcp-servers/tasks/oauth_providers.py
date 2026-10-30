@@ -85,12 +85,37 @@ PROVIDERS: Dict[str, OAuthProvider] = {
 }
 
 
+#: Vendors whose one-click connect is NOT an OAuth 2.0 code exchange, so they
+#: cannot live in PROVIDERS above and are handled by their own route.
+#:
+#: Trello (2026-10-30) is the only one. It offers exactly two ways to get a
+#: user token, and neither is OAuth 2.0: its own `1/authorize` flow, and
+#: OAuth 1.0a. Atlassian's RFC-89 proposed adding OAuth 2.0 and then
+#: deprecating both, but nothing confirms it has shipped, so this is the
+#: ground truth to build on rather than something to wait out.
+#:
+#: `1/authorize` is the one used here, and Trello's own guide calls it the
+#: simpler route. The token comes back in the URL FRAGMENT, which a server
+#: never receives, so trello_connect.py serves a page that reads it in the
+#: browser and posts it back.
+NON_OAUTH2_ONE_CLICK = frozenset({"trello"})
+
+
+def one_click(provider_id: str) -> bool:
+    """Whether this vendor can be connected without pasting a credential, by
+    any route. What the card should offer a button for."""
+    pid = provider_id or ""
+    return pid in PROVIDERS or pid in NON_OAUTH2_ONE_CLICK
+
+
 def supports_oauth(provider_id: str) -> bool:
-    """Whether this vendor can do OAuth at all.
+    """Whether this vendor can do OAuth 2.0, the code exchange this module
+    implements.
 
     False for n8n, which is the user's own server, and for Zapier, whose Catch
     Hook is a webhook rather than a grant. Neither will ever offer this, and a
-    card must not imply otherwise.
+    card must not imply otherwise. Also false for Trello, which has a
+    one-click connect but not this one: see NON_OAUTH2_ONE_CLICK.
     """
     return (provider_id or "") in PROVIDERS
 
