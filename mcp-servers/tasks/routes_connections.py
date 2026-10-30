@@ -254,8 +254,15 @@ async def oauth_callback(provider_id: str, code: str = "", state: str = "",
         if auth is None:
             body.update({"client_id": client_id,
                          "client_secret": client_secret})
+        # GitHub answers in `key=value&key=value` unless asked for JSON, and
+        # every provider here is read with r.json(). Harmless to the others.
+        headers = {"Accept": "application/json"}
+        # HubSpot and GitHub want a form; Notion and ClickUp document JSON.
+        sent = ({"data": body} if prov.token_body == "form"
+                else {"json": body})
         async with httpx.AsyncClient(timeout=VERIFY_TIMEOUT_SEC) as client:
-            r = await client.post(prov.token_endpoint, json=body, auth=auth)
+            r = await client.post(prov.token_endpoint, auth=auth,
+                                  headers=headers, **sent)
     except Exception as e:
         logger.warning("oauth: %s token exchange unreachable (%s)",
                        provider_id, type(e).__name__)
@@ -275,6 +282,20 @@ async def oauth_callback(provider_id: str, code: str = "", state: str = "",
                        provider_id, type(e).__name__)
         return _oauth_done(False, provider.label
                            + " did not return a usable token.")
+
+    # GitHub and ClickUp hand back a token and nothing else, so the account
+    # has to be asked for by name. Doing it here also proves the token works
+    # before any card claims a connection, which is the same question the
+    # paste form and the Test button ask, through the same function.
+    if not label:
+        ok, vendor_label, why = await _ask_vendor(provider, values)
+        if not ok:
+            logger.warning("oauth: %s approved but the token did not work "
+                           "(%s)", provider_id, why)
+            return _oauth_done(False, provider.label + " approved the "
+                               "connection, but the token it gave back did "
+                               "not work.")
+        label = vendor_label or provider.label
 
     try:
         await _store_connection(email, provider_id, values, label)

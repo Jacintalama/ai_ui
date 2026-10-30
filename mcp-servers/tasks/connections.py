@@ -118,9 +118,22 @@ def _http_base(values: Dict[str, str], name: str = "base_url") -> str:
 
 
 def _clickup_auth(v):
-    # ClickUp sends the raw token, with no Bearer prefix.
+    """ClickUp takes the SAME field two different ways.
+
+    A personal token (pk_...) is sent raw, with no prefix. An OAuth access
+    token has to be sent as `Bearer <token>`; raw, it is a 401. Checked
+    against ClickUp's own authentication doc, because one widely copied
+    third-party guide says Bearer is never used and is wrong for OAuth.
+
+    So the connect that stored the credential records which kind it is,
+    rather than leaving this to a guess about the token's shape. An absent
+    `scheme` means raw, which is every connection that existed before
+    one-click.
+    """
+    token = _require(v, "token")
+    prefix = "Bearer " if _clean(v, "scheme").lower() == "bearer" else ""
     return VendorAuth(base_url="https://api.clickup.com/api/v2",
-                      headers={"Authorization": _require(v, "token")})
+                      headers={"Authorization": prefix + token})
 
 
 def _trello_auth(v):

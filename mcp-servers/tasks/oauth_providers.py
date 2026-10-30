@@ -53,6 +53,11 @@ class OAuthProvider:
     #: Vendors differ: Notion wants HTTP Basic, most want the id and secret in
     #: the form body.
     token_auth: str = "basic"
+    #: How the token REQUEST is encoded: "json" or "form". Notion and ClickUp
+    #: both document a JSON body. GitHub documents no content type at all, so
+    #: it gets the form encoding RFC 6749 specifies, which is also what
+    #: GitHub's own examples send.
+    token_body: str = "json"
 
 
 def _notion_token(payload: dict) -> Tuple[Dict[str, str], str]:
@@ -70,6 +75,49 @@ def _notion_token(payload: dict) -> Tuple[Dict[str, str], str]:
     return {"token": token}, (clean or "Notion workspace")[:80]
 
 
+#: What the person is asked to approve on GitHub's consent screen. `repo`
+#: because an automation that cannot open an issue or push a commit is not
+#: worth connecting, and GitHub's OAuth apps have no narrower repository
+#: scope: the fine-grained alternative is a GitHub App, which is a different
+#: product and a different build. `read:user` is what makes their login
+#: readable, so the card can say which account is connected.
+#:
+#: Space-delimited, as GitHub's docs specify. These are also the exact boxes
+#: to tick when registering the app.
+GITHUB_SCOPE = "repo read:user"
+
+
+def _bare_token(payload: dict, vendor: str,
+                extra: Optional[Dict[str, str]] = None
+                ) -> Tuple[Dict[str, str], str]:
+    """A token response that carries the token and nothing else.
+
+    GitHub and ClickUp both answer with just an access token, so neither can
+    name the account here. The label is left empty on purpose and the route
+    asks the vendor who this is, which verifies the token in the same breath.
+
+    Both of them also answer 200 with an error body rather than a 4xx when the
+    code is spent or wrong, so this is the only place that failure is caught.
+    """
+    token = (payload or {}).get("access_token") or ""
+    if not token:
+        raise ValueError(vendor + " did not return an access token.")
+    values = {"token": token}
+    values.update(extra or {})
+    return values, ""
+
+
+def _github_token(payload: dict) -> Tuple[Dict[str, str], str]:
+    return _bare_token(payload, "GitHub")
+
+
+def _clickup_token(payload: dict) -> Tuple[Dict[str, str], str]:
+    # ClickUp sends a personal token raw and an OAuth token as a Bearer, and
+    # both arrive in the same `token` field, so which one this is has to be
+    # recorded here. See connections._clickup_auth.
+    return _bare_token(payload, "ClickUp", {"scheme": "Bearer"})
+
+
 PROVIDERS: Dict[str, OAuthProvider] = {
     "notion": OAuthProvider(
         id="notion",
@@ -82,7 +130,49 @@ PROVIDERS: Dict[str, OAuthProvider] = {
         read_token=_notion_token,
         token_auth="basic",
     ),
+    "github": OAuthProvider(
+        id="github",
+        label="GitHub",
+        authorize_endpoint="https://github.com/login/oauth/authorize",
+        token_endpoint="https://github.com/login/oauth/access_token",
+        authorize_extra={"scope": GITHUB_SCOPE},
+        read_token=_github_token,
+        token_auth="body",
+        token_body="form",
+    ),
+    "clickup": OAuthProvider(
+        id="clickup",
+        label="ClickUp",
+        # Not a typo and not a path we shortened: ClickUp's authorize page
+        # really is app.clickup.com/api, while its token endpoint is on
+        # api.clickup.com. Two different hosts, one of them surprising.
+        authorize_endpoint="https://app.clickup.com/api",
+        token_endpoint="https://api.clickup.com/api/v2/oauth/token",
+        # No scopes at all. ClickUp asks the person which Workspaces to
+        # authorize instead, which is a better question than a scope list.
+        authorize_extra={},
+        read_token=_clickup_token,
+        token_auth="body",
+    ),
 }
+
+
+#: Vendors that could do OAuth 2.0 but are deliberately NOT here yet, so the
+#: next person does not read the gap as an oversight.
+#:
+#: HubSpot and Airtable both return a `refresh_token` and an access token that
+#: dies in under an hour: HubSpot in 1800 seconds, Airtable in 3600. Nothing in
+#: this service refreshes anything. So a one-click HubSpot connect would work
+#: for half an hour and then quietly stop, and the card would still say
+#: "Connected" because a stored credential is all it checks. The paste form it
+#: would replace hands over a private-app token that never expires, so the
+#: button would be a downgrade.
+#:
+#: Airtable needs PKCE on top of that, which is a second missing piece.
+#:
+#: Both become small once a refresh exists. That is the order: refresh first,
+#: then these two, and `read_token` returning expires_in is where it starts.
+NEEDS_TOKEN_REFRESH_FIRST = frozenset({"hubspot", "airtable"})
 
 
 #: Vendors whose one-click connect is NOT an OAuth 2.0 code exchange, so they
