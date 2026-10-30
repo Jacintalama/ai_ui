@@ -199,13 +199,40 @@ def describe_fragment(fragment: str) -> str:
     return "keys: " + ", ".join(shape)
 
 
-#: A Trello token is hex. Checked before it is spent on a request, so an
-#: error page or a fragment of HTML never reaches the vendor or the database
-#: looking like a credential.
+#: A credential's worth of characters, with nothing in it that belongs to a
+#: document. Checked before the token is spent on a request, so an error page
+#: or a fragment of HTML never reaches the vendor or the database looking
+#: like a credential.
+#:
+#: NOT hex, corrected 2026-10-30, and this was the whole bug. For years every
+#: Trello token was 64 hexadecimal characters, so that is what this checked.
+#: An app registered in Trello's current admin issues an Atlassian-shaped
+#: token instead: mixed case, digits and punctuation, 76 characters in the
+#: one measured. Every one of them was thrown away here, and the page said
+#: "Trello did not return a token", which was the one thing that had not
+#: happened. The token arrived, was measured at 76 characters, and was
+#: refused for not being hex.
+#:
+#: The lesson worth keeping: this function cannot tell a good token from a
+#: bad one and should never have been written as though it could. What
+#: proves a token is the call to /members/me straight after, which both
+#: names the account and fails loudly. So this is a sanity check on shape
+#: and only that, and it is deliberately generous now, because the cost of
+#: being too strict was six hours and a connect that never worked, while the
+#: cost of being too loose is one rejected API call.
+TOKEN_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-=.")
+
+#: Long enough that no stray word passes, short enough that no page does.
+#: 256 rather than 128 because an Atlassian token is already 76 and the
+#: ceiling should not be the next thing to break.
+MIN_TOKEN, MAX_TOKEN = 32, 256
+
+
 def looks_like_token(value: str) -> bool:
     v = (value or "").strip()
-    return (32 <= len(v) <= 128
-            and all(c in "0123456789abcdefABCDEF" for c in v))
+    return (MIN_TOKEN <= len(v) <= MAX_TOKEN
+            and all(c in TOKEN_CHARS for c in v))
 
 
 def stored_values(user_token: str) -> dict:

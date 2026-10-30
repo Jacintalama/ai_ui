@@ -197,8 +197,47 @@ def test_something_too_short_or_too_long_is_not_a_token():
     assert T.looks_like_token("a" * 400) is False
 
 
-def test_non_hex_is_not_a_token():
-    assert T.looks_like_token("z" * 64) is False
+#: What Trello's current admin issues: an Atlassian-shaped token, mixed case
+#: and 76 characters, not the 64 hexadecimal ones every older app got.
+ATLASSIAN_TOKEN = "ATTA" + ("aB3" * 24)
+
+
+def test_the_token_trello_actually_sends_is_accepted():
+    """The bug, pinned. This was measured in production on 2026-10-30: a
+    76 character token arrived, was refused for not being hexadecimal, and
+    the page told the person Trello had not returned a token.
+
+    Both shapes have to pass. Apps registered years ago still issue hex, and
+    a connection made under one must not break because the other exists.
+    """
+    assert len(ATLASSIAN_TOKEN) == 76
+    assert T.looks_like_token(ATLASSIAN_TOKEN) is True
+    assert T.looks_like_token(TOKEN) is True
+
+
+def test_hex_is_not_the_rule_and_never_should_have_been():
+    """This file used to assert the opposite, and that assertion was the
+    bug wearing a passing test. A validator cannot tell a good token from a
+    bad one; the call to /members/me that follows is what proves it."""
+    assert T.looks_like_token("z" * 64) is True
+
+
+def test_an_atlassian_tokens_punctuation_is_allowed():
+    """These carry a checksum on the end and are not plain alphanumeric."""
+    assert T.looks_like_token("ATATT" + "x" * 60 + "=A1B2C3D4") is True
+
+
+def test_a_ceiling_that_is_not_the_next_thing_to_break():
+    """76 today. The limit should not be the reason the next format fails."""
+    assert T.looks_like_token("a" * T.MAX_TOKEN) is True
+    assert T.looks_like_token("a" * (T.MAX_TOKEN + 1)) is False
+
+
+def test_anything_with_a_space_in_it_is_not_a_credential():
+    """What actually keeps a page out: no token has ever had whitespace in
+    it, and no document has ever been without it."""
+    assert T.looks_like_token("not a token but long enough to be one ok") is False
+    assert T.looks_like_token(TOKEN[:32] + chr(10) + TOKEN[:32]) is False
 
 
 def test_nothing_is_not_a_token():
