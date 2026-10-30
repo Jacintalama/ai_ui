@@ -486,9 +486,26 @@ TOOL_NOTES = {
     "automations": "rules that run one of the person's agents when something "
                    "happens or arrives (a lead, a form, a webhook, an event), "
                    "not on a timer: making, listing, pausing or deleting them",
-    "server:mcp-proxy": "outside services and the web: web search, flights, "
-                        "GitHub, Notion, ClickUp, n8n workflows, the "
-                        "knowledge graph of past chats and meetings",
+    # Measured against the live router on 2026-10-30, not reasoned about.
+    # Four ways of asking about a connected Trello picked this tool 3 times
+    # out of 12 while the note read "GitHub, Notion, ClickUp, n8n
+    # workflows". Naming the apps and what is inside them took it to 12 out
+    # of 12 with the controls unmoved. "can you see my trello?" went 0/3 to
+    # 3/3, and 0/3 is the chat answering "I don't have any tools available
+    # here" about an app the person had just connected.
+    #
+    # The rule this leaves behind, pinned in
+    # tests/test_connected_apps_are_reachable.py: an app the platform can
+    # act in has to be NAMED here, or it is unreachable from the main chat
+    # however well the rest of it works.
+    "server:mcp-proxy": "the apps the person connected and the web: their "
+                        "Trello boards, lists and cards, ClickUp tasks, "
+                        "GitHub repositories and issues, Notion pages, "
+                        "Airtable bases, HubSpot contacts, n8n workflows "
+                        "and Zapier zaps, plus web search, flights and the "
+                        "knowledge graph of past chats and meetings. Seeing "
+                        "what is in one of them, listing it, or adding to "
+                        "it",
 }
 
 
