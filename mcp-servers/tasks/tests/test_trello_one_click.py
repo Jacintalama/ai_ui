@@ -142,6 +142,44 @@ def test_control_characters_never_reach_the_page():
     assert T.error_from_fragment(frag) == "deniedstop"
 
 
+# --- saying what came back, without saying what it was -----------------------
+
+def test_an_empty_fragment_is_named_as_such():
+    """Trello sending nothing and Trello sending a refusal are different
+    problems, and they used to wear the same sentence."""
+    assert "empty" in T.describe_fragment("")
+    assert "empty" in T.describe_fragment("#")
+
+
+def test_the_keys_are_named_and_the_values_are_not():
+    """The whole point. A log line that helps, that cannot leak a token."""
+    d = T.describe_fragment("#token=" + TOKEN + "&error=")
+    assert "token[64 chars]" in d
+    assert "error[0 chars]" in d
+    assert TOKEN not in d
+
+
+def test_a_bare_value_is_measured_not_quoted():
+    d = T.describe_fragment("#" + TOKEN)
+    assert "64 chars" in d
+    assert "hex=True" in d
+    assert TOKEN not in d
+
+
+def test_rubbish_is_described_without_being_repeated():
+    """An error page in the fragment must not end up in the log."""
+    d = T.describe_fragment("#<!doctype html><title>Oops")
+    assert "<title>" not in d
+    assert "Oops" not in d
+
+
+def test_no_description_ever_contains_the_token():
+    """The one property that matters, over every shape we have seen."""
+    for frag in ["#token=" + TOKEN, "#" + TOKEN,
+                 "#token=" + TOKEN + "&error=nope", "#token=&error=nope"]:
+        assert TOKEN not in T.describe_fragment(frag)
+
+
 # --- what is allowed to be spent as a credential -------------------------------
 
 def test_a_real_token_passes():

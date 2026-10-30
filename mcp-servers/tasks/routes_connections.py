@@ -433,8 +433,9 @@ async def trello_oauth_token(body: TrelloTokenBody) -> dict:
         # Trello's own `error` is a different thing, written to be read, and
         # it is the only account anyone gets of what went wrong.
         why = T.error_from_fragment(body.fragment)
-        logger.warning("trello: no usable token in the fragment (%s)",
-                       why or "and no reason given")
+        logger.warning("trello: no usable token in the fragment (%s) [%s]",
+                       why or "and no reason given",
+                       T.describe_fragment(body.fragment))
         return {"ok": False,
                 "message": ("Trello refused: " + why) if why
                 else "Trello did not return a token."}

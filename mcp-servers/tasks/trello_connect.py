@@ -173,6 +173,32 @@ def error_from_fragment(fragment: str) -> str:
     return "".join(c for c in message if c.isprintable())[:MAX_REASON]
 
 
+def describe_fragment(fragment: str) -> str:
+    """What came back, in a form that is safe to write down.
+
+    Names and shapes only, never a value, because the fragment is either a
+    credential or somebody else's error page.
+
+    This exists because "no usable token" was true of three different
+    problems wearing the same sentence: Trello sent nothing, Trello sent a
+    refusal, or Trello sent something that was not a token. Telling them
+    apart took a deploy and another attempt from the person connecting, and
+    the information was in hand the whole time.
+    """
+    raw = (fragment or "").lstrip("#").strip()
+    if not raw:
+        return "empty: Trello redirected back with no fragment at all"
+    if "=" not in raw:
+        return "one bare value, %d chars, hex=%s" % (
+            len(raw), all(c in "0123456789abcdefABCDEF" for c in raw))
+    parsed = urllib.parse.parse_qs(raw, keep_blank_values=True)
+    shape = []
+    for name in sorted(parsed):
+        value = (parsed[name] or [""])[0]
+        shape.append("%s[%d chars]" % (name, len(value)))
+    return "keys: " + ", ".join(shape)
+
+
 #: A Trello token is hex. Checked before it is spent on a request, so an
 #: error page or a fragment of HTML never reaches the vendor or the database
 #: looking like a credential.
