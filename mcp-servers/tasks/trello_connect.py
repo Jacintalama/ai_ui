@@ -143,6 +143,36 @@ def token_from_fragment(fragment: str) -> str:
     return raw
 
 
+#: The most Trello's own words are allowed to take up on our page. Its
+#: messages are a sentence; anything longer is not a message.
+MAX_REASON = 200
+
+
+def error_from_fragment(fragment: str) -> str:
+    """Why Trello sent somebody back without a token, in its own words.
+
+    Documented behaviour: on a refusal Trello redirects to the return_url
+    with `token=` empty and `error=<message>` in the FRAGMENT, beside the
+    token rather than in the query string.
+
+    This existed and was being discarded (2026-10-30). `token_from_fragment`
+    read only the token, so every refusal became the same blank "Trello did
+    not return a token", and the one place the reason was available was the
+    one place nothing looked. A connect that cannot say why it failed costs
+    a trawl through the logs for an answer the vendor already gave.
+
+    Trimmed to printable characters and a sentence's worth, because this is
+    vendor text on our page. The page writes it with textContent, so that is
+    tidiness rather than the thing standing between us and an injection.
+    """
+    raw = (fragment or "").lstrip("#").strip()
+    if not raw or "=" not in raw:
+        return ""
+    found = urllib.parse.parse_qs(raw).get("error") or []
+    message = (found[0] if found else "").strip()
+    return "".join(c for c in message if c.isprintable())[:MAX_REASON]
+
+
 #: A Trello token is hex. Checked before it is spent on a request, so an
 #: error page or a fragment of HTML never reaches the vendor or the database
 #: looking like a credential.
