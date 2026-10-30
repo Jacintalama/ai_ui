@@ -383,6 +383,29 @@ services:
       - ANTHROPIC_MODEL=${AGENT_MODEL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - AIUI_FERNET_KEY=${AIUI_FERNET_KEY:-}
+      # Connecting an app in one click, instead of pasting a token out of a
+      # vendor's settings page. Every one defaults to empty, and empty means
+      # the button is simply not offered and the paste form stays, so an
+      # unregistered app degrades to exactly what it does today.
+      #
+      # Declared ahead of the registrations on purpose: adding an app is then
+      # one line in .env and a restart, with no compose edit and no rebuild.
+      # TRELLO_API_KEY was already in .env on 2026-10-30 and did nothing,
+      # because nothing passed it through to this container.
+      #
+      # Trello needs no secret: Atlassian's docs call the key "intended to be
+      # publicly accessible", and the user's own token carries the permission.
+      - TRELLO_API_KEY=${TRELLO_API_KEY:-}
+      - NOTION_CLIENT_ID=${NOTION_CLIENT_ID:-}
+      - NOTION_CLIENT_SECRET=${NOTION_CLIENT_SECRET:-}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
+      - CLICKUP_CLIENT_ID=${CLICKUP_CLIENT_ID:-}
+      - CLICKUP_CLIENT_SECRET=${CLICKUP_CLIENT_SECRET:-}
+      - AIRTABLE_CLIENT_ID=${AIRTABLE_CLIENT_ID:-}
+      - AIRTABLE_CLIENT_SECRET=${AIRTABLE_CLIENT_SECRET:-}
+      - HUBSPOT_CLIENT_ID=${HUBSPOT_CLIENT_ID:-}
+      - HUBSPOT_CLIENT_SECRET=${HUBSPOT_CLIENT_SECRET:-}
       # tasks mints an Open WebUI token per gateway turn, so it must sign
       # with the SAME secret Open WebUI verifies with. Declared for
       # api-gateway, mcp-proxy and open-webui but never for tasks: it was
