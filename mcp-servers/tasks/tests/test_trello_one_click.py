@@ -151,6 +151,32 @@ def test_the_key_is_stored_beside_the_token_not_read_later(configured,
     assert values["api_key"] == KEY
 
 
+# --- which key this uses, and which it must not --------------------------------
+
+def test_the_connect_key_is_not_the_shared_platform_key():
+    """mcp-trello pairs TRELLO_API_KEY with TRELLO_API_TOKEN as one
+    platform-wide Trello account. A Trello token is bound to the key that
+    issued it, so pointing TRELLO_API_KEY at a second app 401s that pair and
+    every shared Trello tool with it.
+
+    Measured on 2026-10-30 against Trello, not assumed: old key with the old
+    token answered 200, the new key with the same token answered
+    "invalid key". This is the whole reason for a separate name, and it reads
+    like an inconsistency worth tidying away, so it is pinned here.
+    """
+    assert T.ENV_KEY == "TRELLO_CONNECT_KEY"
+    assert T.ENV_KEY != "TRELLO_API_KEY"
+
+
+def test_the_connect_key_is_read_from_its_own_name(monkeypatch):
+    """Reading the shared key as a fallback would reintroduce exactly the
+    mismatch above, quietly and only in production."""
+    monkeypatch.setenv("TRELLO_API_KEY", "d" * 32)
+    monkeypatch.delenv("TRELLO_CONNECT_KEY", raising=False)
+    assert T.configured() is False
+    assert T.api_key() == ""
+
+
 # --- the shape of the thing ----------------------------------------------------
 
 def test_trello_is_declared_as_one_click_but_not_oauth2():

@@ -395,7 +395,13 @@ services:
       #
       # Trello needs no secret: Atlassian's docs call the key "intended to be
       # publicly accessible", and the user's own token carries the permission.
-      - TRELLO_API_KEY=${TRELLO_API_KEY:-}
+      #
+      # TRELLO_CONNECT_KEY and not TRELLO_API_KEY: the latter belongs to
+      # mcp-trello below, which pairs it with TRELLO_API_TOKEN as one
+      # platform-wide Trello account. A token is bound to the key that issued
+      # it, so aiming TRELLO_API_KEY at a second app 401s that pair and every
+      # shared Trello tool with it. Verified against Trello, not assumed.
+      - TRELLO_CONNECT_KEY=${TRELLO_CONNECT_KEY:-}
       - NOTION_CLIENT_ID=${NOTION_CLIENT_ID:-}
       - NOTION_CLIENT_SECRET=${NOTION_CLIENT_SECRET:-}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
