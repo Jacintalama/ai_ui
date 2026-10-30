@@ -192,6 +192,86 @@ def test_a_self_hosted_provider_calls_the_users_own_host(app_and_creds):
     assert calls[0]["url"].startswith("https://n8n.ralph.example/")
 
 
+# --- the Trello verbs people actually ask for -----------------------------
+# Added 2026-10-30. The set was list, list, list and create, so "move my
+# trello card to done" and "comment on that card" had nothing behind them.
+# Both are inside the read,write scope the person already approved, and the
+# consent screen names commenting explicitly.
+
+def _trello(creds):
+    creds[("ralph@example.com", "trello")] = {"api_key": "KEY123",
+                                              "token": "TOK456"}
+
+
+def test_moving_a_card_puts_it_on_another_list(app_and_creds):
+    app, creds, calls, _, _ = app_and_creds
+    _trello(creds)
+    _post(app, "/trello/update_card", "ralph@example.com",
+          {"card_id": "c1", "list_id": "done"})
+    assert calls[0]["method"] == "PUT"
+    assert calls[0]["url"].endswith("/cards/c1")
+    assert calls[0]["params"]["idList"] == "done"
+
+
+def test_renaming_a_card_does_not_blank_everything_else(app_and_creds):
+    """Trello takes a partial update, so an unset field must not be sent.
+    Sending it empty would wipe the description and the due date of every
+    card anybody renamed."""
+    app, creds, calls, _, _ = app_and_creds
+    _trello(creds)
+    _post(app, "/trello/update_card", "ralph@example.com",
+          {"card_id": "c1", "name": "New title"})
+    params = calls[0]["params"]
+    assert params["name"] == "New title"
+    for absent in ("desc", "due", "idList"):
+        assert absent not in params, absent
+
+
+def test_an_explicitly_empty_field_is_dropped_too(app_and_creds):
+    """Two different lines protect a partial update and only one of them is
+    reached by an unset field. A model filling the schema can send
+    description="" meaning "leave it", and that one is caught lower down, in
+    the query builder rather than by exclude_none."""
+    app, creds, calls, _, _ = app_and_creds
+    _trello(creds)
+    _post(app, "/trello/update_card", "ralph@example.com",
+          {"card_id": "c1", "name": "New title", "description": "",
+           "due": ""})
+    params = calls[0]["params"]
+    assert params["name"] == "New title"
+    assert "desc" not in params and "due" not in params
+
+
+def test_commenting_posts_to_the_cards_comment_path(app_and_creds):
+    app, creds, calls, _, _ = app_and_creds
+    _trello(creds)
+    _post(app, "/trello/comment_on_card", "ralph@example.com",
+          {"card_id": "c1", "text": "on it"})
+    assert calls[0]["method"] == "POST"
+    assert calls[0]["url"].endswith("/cards/c1/actions/comments")
+    assert calls[0]["params"]["text"] == "on it"
+
+
+def test_a_write_still_carries_the_persons_own_credential(app_and_creds):
+    """The whole point of these tools. A card has to be moved by the person
+    who asked, not by whoever owns the shared container token."""
+    app, creds, calls, _, _ = app_and_creds
+    _trello(creds)
+    _post(app, "/trello/update_card", "ralph@example.com",
+          {"card_id": "c1", "list_id": "done"})
+    assert calls[0]["params"]["key"] == "KEY123"
+    assert calls[0]["params"]["token"] == "TOK456"
+
+
+def test_a_write_without_a_connection_asks_them_to_connect(app_and_creds):
+    app, _, calls, _, _ = app_and_creds
+    body = _post(app, "/trello/update_card", "nobody@example.com",
+                 {"card_id": "c1", "list_id": "done"}).json()
+    assert body["ok"] is False
+    assert "connect" in body["error"].lower()
+    assert calls == [], "an unsigned request was sent to Trello"
+
+
 # --- the credential does not come back in a tool result -------------------
 
 def test_a_vendor_rejection_does_not_echo_the_credential(app_and_creds):
