@@ -461,8 +461,8 @@ TOOL_NOTES = {
                 "time, scheduling",
     "gdrive": "finding or reading files, documents and spreadsheets in the "
               "person's Google Drive",
-    "documents": "reading or writing documents the person uploaded or wants "
-                 "made",
+    "documents": "documents the person uploaded here or wants made: "
+                 "reading, writing, or listing the ones they have",
     "excel_creator": "making a spreadsheet or Excel file",
     "executive_dashboard": "a summary dashboard of the person's business "
                            "numbers",
@@ -470,11 +470,15 @@ TOOL_NOTES = {
             "building an app",
     "account": "the person's own account: their apps, connected services, "
                "usage and settings",
-    "schedules": "scheduled or recurring jobs: making, listing or changing "
-                 "something that runs on a timer",
+    "schedules": "the person's own cron jobs and recurring tasks that "
+                 "the platform runs for them: making, listing, changing "
+                 "or deleting something that runs on a timer. Not "
+                 "meetings or appointments, which are the calendar",
     "remember": "saving or recalling a fact the person asked to remember",
-    "skills": "looking up a skill or procedure the person set up",
-    "video": "making a video",
+    "skills": "the person's skills: looking one up, or listing the "
+              "skills and procedures they have set up",
+    "video": "the person's videos: making one, or listing the videos "
+             "they have already made",
     "colleague": "asking one of the person's agents for help",
     "agents": "asking the person's agents a question",
     "agent_builder": "making new AI agents or a team of agents for the "
