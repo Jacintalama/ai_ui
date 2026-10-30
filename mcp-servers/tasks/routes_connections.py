@@ -13,6 +13,7 @@ whatever was pasted and finding out at first use, produces a UI that lies.
 import json
 import logging
 import os
+import urllib.parse
 from typing import Dict
 
 import httpx
@@ -22,6 +23,7 @@ from pydantic import BaseModel
 
 import connections as C
 import crypto_utils
+import trello_connect as T
 from auth import current_user, CurrentUser
 
 logger = logging.getLogger("tasks.connections")
@@ -67,9 +69,19 @@ async def _stored(conn, email: str) -> Dict[str, dict]:
 
 
 def _oauth_ready(provider_id: str) -> bool:
-    """True only when the vendor supports it AND this deployment registered an
-    app. Import is local so a missing module can never break the listing."""
+    """True only when the vendor can be connected in one click AND this
+    deployment registered an app for it.
+
+    Named `oauth` on the wire because that is what the card has called it
+    since it existed, and renaming a field the page reads buys nothing. It
+    means "offer the button rather than the paste form", which for Trello is
+    true without any OAuth being involved: it has none (2026-10-30).
+
+    Import is local so a missing module can never break the listing.
+    """
     try:
+        if provider_id == T.PROVIDER_ID:
+            return T.configured()
         import oauth_providers as O
         return O.configured(provider_id)
     except Exception:
@@ -170,6 +182,19 @@ async def oauth_start(provider_id: str,
 
     if not C.provider(provider_id):
         raise HTTPException(status_code=404, detail="Unknown app.")
+
+    # Trello is one click but not OAuth 2.0: it has no code exchange, only
+    # its own 1/authorize flow. Same button, same popup, different road.
+    if provider_id == T.PROVIDER_ID:
+        if not T.configured():
+            raise HTTPException(
+                status_code=503,
+                detail="One-click connect is not set up for this app yet.")
+        state = O.STATES.mint(user.email)
+        back = (_redirect_uri(provider_id) + "?state="
+                + urllib.parse.quote(state, safe=""))
+        return {"url": T.authorize_url(back)}
+
     if not O.configured(provider_id):
         raise HTTPException(
             status_code=503,
@@ -196,6 +221,16 @@ async def oauth_callback(provider_id: str, code: str = "", state: str = "",
     import oauth_providers as O
 
     provider = C.provider(provider_id)
+
+    # Trello lands here with the token after the '#', which the browser keeps
+    # to itself and never sends. So this serves a page that reads it there
+    # and posts it to /oauth/token below. Nothing is decided here.
+    if provider and provider_id == T.PROVIDER_ID:
+        if error:
+            return _oauth_done(False, "Cancelled, or Trello refused the "
+                                      "request.")
+        return _trello_catch_fragment(state)
+
     if not provider or not O.supports_oauth(provider_id):
         return _oauth_done(False, "Unknown app.")
     if error:
@@ -293,6 +328,102 @@ def _oauth_done(ok: bool, message: str) -> HTMLResponse:
         "</script></body>"
     )
     return HTMLResponse(page.replace("@", chr(34)))
+
+
+def _trello_catch_fragment(state: str) -> HTMLResponse:
+    """The page Trello returns to, whose only job is to hand the token back.
+
+    A URL fragment is never sent to a server, so this is the only way to
+    receive a token from Trello's 1/authorize flow. The page reads
+    location.hash, posts it to /oauth/token, and then shows whatever that
+    says.
+
+    The fragment is cleared from the address bar immediately, so the token
+    does not sit in history or get copied out of the bar by somebody sharing
+    a link.
+    """
+    import json as _json
+
+    def _js(value):
+        return (_json.dumps(value)
+                .replace("<", chr(92) + "u003c")
+                .replace(">", chr(92) + "u003e")
+                .replace("&", chr(92) + "u0026"))
+
+    style = ("font-family:-apple-system,Segoe UI,sans-serif;background:#111113;"
+             "color:#ededee;display:flex;align-items:center;"
+             "justify-content:center;height:100vh;margin:0;text-align:center")
+    body = (
+        "<!doctype html><meta charset=utf-8>"
+        "<title>Connecting Trello</title>"
+        "<body style=" + _js(style) + "><div id=m>Connecting Trello...</div>"
+        "<script>(function(){"
+        "var state=" + _js(str(state or "")) + ";"
+        "var hash=location.hash||'';"
+        # Out of the address bar before anything else, token included.
+        "try{history.replaceState(null,'',location.pathname);}catch(e){}"
+        "var m=document.getElementById('m');"
+        "function done(ok,text){"
+        "  m.textContent=text;"
+        "  try{if(window.opener)window.opener.postMessage("
+        "    {aiuiOauth:true,ok:!!ok},location.origin);}catch(e){}"
+        "  if(ok)setTimeout(function(){try{window.close();}catch(e){}},900);"
+        "}"
+        "fetch('/api/tasks/connections/trello/oauth/token',{method:'POST',"
+        "  headers:{'Content-Type':'application/json'},"
+        "  body:JSON.stringify({state:state,fragment:hash})})"
+        " .then(function(r){return r.json().catch(function(){return {};});})"
+        " .then(function(d){done(d&&d.ok,(d&&d.message)||'Could not connect "
+        "Trello.');})"
+        " .catch(function(){done(false,'Could not reach the server.');});"
+        "})();</script></body>")
+    return HTMLResponse(body)
+
+
+class TrelloTokenBody(BaseModel):
+    state: str = ""
+    #: Whatever was after the '#'. Parsed on this side so the page stays as
+    #: small and dumb as possible.
+    fragment: str = ""
+
+
+@router.post("/trello/oauth/token")
+async def trello_oauth_token(body: TrelloTokenBody) -> dict:
+    """Finish a Trello one-click connect.
+
+    Deliberately NOT authenticated by the session, for the same reason the
+    OAuth 2.0 callback is not: the person this grant belongs to is the one
+    named by `state`, minted for them when they started and spendable once.
+    Trusting the session instead would let anyone who can make a signed-in
+    browser follow this URL attach their own Trello to somebody else's
+    account.
+    """
+    import oauth_providers as O
+
+    email = O.STATES.consume(body.state)
+    if not email:
+        # Expired, replayed or forged. All three get the same answer.
+        return {"ok": False, "message": "That approval expired. Start the "
+                                        "connection again."}
+    token = T.token_from_fragment(body.fragment)
+    if not T.looks_like_token(token):
+        # Never echo what arrived: it is either a credential or somebody
+        # else's error page, and neither belongs in a response or a log.
+        logger.warning("trello: the fragment carried no usable token")
+        return {"ok": False, "message": "Trello did not return a token."}
+
+    values = T.stored_values(token)
+    ok, label, why = await _ask_vendor(C.provider(T.PROVIDER_ID), values)
+    if not ok:
+        return {"ok": False,
+                "message": why or "Trello would not accept that token."}
+    try:
+        await _store_connection(email, T.PROVIDER_ID, values,
+                                label or "Trello")
+    except Exception as e:                                  # noqa: BLE001
+        logger.warning("trello: could not store (%s)", type(e).__name__)
+        return {"ok": False, "message": "Could not save that connection."}
+    return {"ok": True, "message": "Trello connected."}
 
 
 async def _store_connection(email: str, provider_id: str,
