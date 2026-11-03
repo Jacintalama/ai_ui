@@ -330,7 +330,17 @@ async def create(email: str, name: str, agent_id: str, instructions: str,
                  trigger_query: str = "") -> dict:
     # A webhook rule keeps an empty query even if one was passed: it would
     # be dead weight on the row and misleading on the page.
-    query = str(trigger_query or "").strip() if trigger == TRIGGER_EMAIL else ""
+    # Kept for every trigger that watches something, which is every one
+    # that is not a webhook. This read `== TRIGGER_EMAIL` until 2026-11-03
+    # and silently dropped the Trello list id: the route validated the id,
+    # said the rule was fine, and stored an empty one. The rule then
+    # existed, looked right on the page, and could never fire, because the
+    # poller refuses a rule that does not say what to watch.
+    #
+    # The shape of the bug worth remembering: validation and persistence
+    # disagreed, and only persistence was true. Whatever the next trigger
+    # is, it needs no change here.
+    query = "" if trigger == TRIGGER_WEBHOOK else str(trigger_query or "").strip()
     return await _create(email, {"name": clean_name(name), "agent_id": agent_id,
                                  "instructions": instructions.strip(),
                                  "trigger": trigger, "trigger_query": query,
