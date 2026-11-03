@@ -236,6 +236,37 @@ def search(query, limit: int = SEARCH_LIMIT) -> list:
             for _n, s in scored[:max(1, int(limit or SEARCH_LIMIT))]]
 
 
+#: How many skills an agent made from a description is offered. Every chosen
+#: skill's instructions ride along on every turn (MAX_TOTAL_CHARS), so a few
+#: that fit the role beat a pile that might.
+SUGGEST_LIMIT = 3
+
+#: The lowest score that counts as a reason. 4 is a word in a tag, 8 in the
+#: name; 1 is a word somewhere in a description, which for a bookkeeper
+#: matched watch-for-changes and faq-from-questions (measured 2026-11-03).
+SUGGEST_FLOOR = 4
+
+
+def suggest(text, limit: int = SUGGEST_LIMIT) -> list:
+    """Skill names that fit an agent described by `text`, best first.
+
+    For an agent made from the main chat with no skills named (Lukas,
+    2026-10-31). Unlike search, a weak match is not offered: a skill handed
+    to an agent is pasted into every one of its turns, so a wrong one costs
+    on every message, not once.
+    """
+    wanted = _words(text)
+    if not wanted:
+        return []
+    scored = []
+    for skill in load_all().values():
+        n = _score(skill, wanted)
+        if n >= SUGGEST_FLOOR:
+            scored.append((n, skill["name"]))
+    scored.sort(key=lambda pair: (-pair[0], pair[1]))
+    return [name for _n, name in scored[:max(1, int(limit))]]
+
+
 def body_of(name) -> str | None:
     """One skill's instructions, or None.
 
