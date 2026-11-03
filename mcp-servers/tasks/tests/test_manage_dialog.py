@@ -139,3 +139,41 @@ def test_the_paste_form_is_still_there_underneath():
     js = _js()
     assert "or paste a token" in js
     assert "or paste a different credential" in js
+
+
+# --- the card, not the dialog: one account name, once ------------------------
+
+def test_the_card_does_not_print_the_account_twice():
+    """Reported from a screenshot on 2026-11-03: the GitHub card read
+    "aiuiteams-hub" above "aiuiteams-hub" above "Connected", and Trello the
+    same with its own account.
+
+    Two different slots were filling from the same value. The lower one is
+    there to say WHO is connected, directly above the status. The upper one
+    is the sub-title slot, which exists so a card with nothing to put there
+    keeps the same height, and it was falling back to the account.
+
+    Google never showed it, because Google has a sub-title. That is why
+    this survived every look at the screen until an app without one was
+    connected.
+    """
+    line = re.search(r"metaEl\.textContent\s*=\s*(.*?);\n", _js(), re.S)
+    assert line, "the card's sub-title slot moved; re-point this test"
+    assert "acct" not in line.group(1), (
+        "the sub-title slot is falling back to the account name, which the "
+        "block below it already prints")
+
+
+def test_the_slot_is_still_there_when_there_is_nothing_for_it():
+    """It keeps the status line from moving between cards, so it must stay
+    assigned rather than be dropped when empty."""
+    line = re.search(r"metaEl\.textContent\s*=\s*(.*?);\n", _js(), re.S)
+    assert "app.sub" in line.group(1)
+
+
+def test_the_account_is_still_shown_somewhere():
+    """Removing the duplicate must not remove the information. "Connected"
+    alone does not say connected as whom, which is the one thing somebody
+    checking this screen wants."""
+    js = _js()
+    assert re.search(r"acctEl\.textContent\s*=\s*acct", js)

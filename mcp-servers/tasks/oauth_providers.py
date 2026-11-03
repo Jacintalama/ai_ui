@@ -98,6 +98,27 @@ def _notion_token(payload: dict) -> Tuple[Dict[str, str], str]:
 #: string drops the parameter entirely.
 GITHUB_SCOPE = os.environ.get("GITHUB_SCOPE", "repo read:user").strip()
 
+#: The app's slug, from github.com/apps/<slug>. Empty means a classic OAuth
+#: App and the ordinary authorize URL.
+#:
+#: This exists because of what happened the first time anyone connected
+#: (2026-11-03). The connect succeeded, the card said Connected as the right
+#: account, /user answered, and the account could see NOTHING: zero
+#: repositories, zero installations.
+#:
+#: Authorising a GitHub App and installing one are two different acts.
+#: Authorisation says who you are. INSTALLATION is what grants access to
+#: repositories, and sending somebody to /login/oauth/authorize gets the
+#: first without ever offering the second. The result is a credential that
+#: works, names the right person, and reaches nothing, which is the worst
+#: shape a connection can have: it passes every check we make.
+#:
+#: The install page does both, because the app is registered with "request
+#: user authorization during installation", so it redirects back to the same
+#: callback with the same code and state. One page, one approval, and the
+#: person picks their repositories on it.
+GITHUB_APP_SLUG = os.environ.get("GITHUB_APP_SLUG", "").strip()
+
 
 def _bare_token(payload: dict, vendor: str,
                 extra: Optional[Dict[str, str]] = None
@@ -251,6 +272,12 @@ def authorize_url(provider_id: str, client_id: str, redirect_uri: str,
     provider = PROVIDERS.get(provider_id or "")
     if not provider:
         raise ValueError("No OAuth for provider: " + str(provider_id))
+    if provider_id == "github" and GITHUB_APP_SLUG:
+        # Not /login/oauth/authorize: see GITHUB_APP_SLUG. The install page
+        # takes no client_id or redirect_uri, because GitHub uses the ones
+        # the app is registered with.
+        return ("https://github.com/apps/" + GITHUB_APP_SLUG
+                + "/installations/new?" + urlencode({"state": state}))
     params = {"client_id": client_id, "redirect_uri": redirect_uri,
               "state": state}
     params.update(provider.authorize_extra)

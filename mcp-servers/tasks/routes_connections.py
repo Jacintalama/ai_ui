@@ -328,6 +328,23 @@ async def oauth_callback(provider_id: str, code: str = "", state: str = "",
                                "not work.")
         label = vendor_label or provider.label
 
+    # A GitHub App that is authorised but not INSTALLED anywhere reaches no
+    # repositories at all, while /user answers perfectly and the card says
+    # Connected as the right person. Measured on the first real connect
+    # (2026-11-03): login right, installations 0, repositories 0.
+    #
+    # Refused rather than stored, because the alternative is a connection
+    # that passes every check we make and does nothing, which costs an
+    # afternoon to tell apart from a broken tool.
+    if provider_id == "github" and O.GITHUB_APP_SLUG:
+        reach = await _github_installations(values)
+        if reach == 0:
+            logger.warning("oauth: github authorised with no installation")
+            return _oauth_done(
+                False, "Authorised, but IO is not installed on any account "
+                       "yet, so it cannot see any repositories. Connect "
+                       "again and choose where to install it.")
+
     try:
         await _store_connection(email, provider_id, values, label)
     except Exception as e:
@@ -430,6 +447,26 @@ def _trello_catch_fragment(state: str) -> HTMLResponse:
         " .catch(function(){done(false,'Could not reach the server.');});"
         "})();</script></body>")
     return HTMLResponse(body)
+
+
+async def _github_installations(values: dict) -> int:
+    """How many accounts this GitHub App is installed on, for this person.
+
+    -1 when the question could not be asked, which is deliberately NOT zero:
+    a network blip must not look like "install it", and must not throw away
+    a grant somebody just approved.
+    """
+    try:
+        auth = C.vendor_auth("github", values)
+        async with httpx.AsyncClient(timeout=VERIFY_TIMEOUT_SEC) as client:
+            r = await client.get(auth.base_url + "/user/installations",
+                                 headers=auth.headers, params=auth.params)
+        if r.status_code != 200:
+            return -1
+        return int((r.json() or {}).get("total_count") or 0)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("github: could not count installations", exc_info=True)
+        return -1
 
 
 class TrelloTokenBody(BaseModel):
