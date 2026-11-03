@@ -84,7 +84,19 @@ def _notion_token(payload: dict) -> Tuple[Dict[str, str], str]:
 #:
 #: Space-delimited, as GitHub's docs specify. These are also the exact boxes
 #: to tick when registering the app.
-GITHUB_SCOPE = "repo read:user"
+#:
+#: Overridable, and EMPTY is the meaningful value (2026-11-03). We
+#: registered a GitHub App rather than an OAuth App, and for a GitHub App
+#: `scope` does not control anything: permissions are fine-grained on the
+#: app itself and the person chooses which repositories at install time,
+#: which is the whole reason for going that way. GitHub's own words are
+#: that beyond `offline_access`, "no other scopes are supported for GitHub
+#: Apps", so sending `repo` there is at best ignored and at worst refused.
+#:
+#: Left as the OAuth App value by default so a deployment that registered
+#: the old kind keeps working untouched. Setting GITHUB_SCOPE to an empty
+#: string drops the parameter entirely.
+GITHUB_SCOPE = os.environ.get("GITHUB_SCOPE", "repo read:user").strip()
 
 
 def _bare_token(payload: dict, vendor: str,
@@ -242,6 +254,11 @@ def authorize_url(provider_id: str, client_id: str, redirect_uri: str,
     params = {"client_id": client_id, "redirect_uri": redirect_uri,
               "state": state}
     params.update(provider.authorize_extra)
+    # An empty value means "do not ask for this at all", not "ask for
+    # nothing". `scope=` on the URL is a request for an empty scope, which
+    # a GitHub App has no reading of, so the parameter has to be absent
+    # rather than blank.
+    params = {k: v for k, v in params.items() if str(v or "").strip()}
     return provider.authorize_endpoint + "?" + urlencode(params)
 
 
