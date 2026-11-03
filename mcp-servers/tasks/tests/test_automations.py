@@ -49,9 +49,14 @@ def test_problems_are_sentences_that_say_what_to_change():
     assert "chat, discord or none" in am.problem_with("Lead", "do x", "email")
     # "email" used to be the invalid trigger here. It is a real one as of
     # 2026-10-29 (TRIGGER_EMAIL), so the invalid case needs something that
-    # is actually not a trigger.
-    assert "webhook or an email" in am.problem_with("Lead", "do x", "chat",
-                                                    trigger="carrier-pigeon")
+    # is actually not a trigger. The sentence itself has now been rewritten
+    # twice for the same reason, which is the point worth keeping: it names
+    # the triggers, so adding one means saying so here. Asserted as the
+    # names rather than the whole sentence, so the fourth trigger changes
+    # one list rather than one string in two places.
+    refused = am.problem_with("Lead", "do x", "chat", trigger="carrier-pigeon")
+    for kind in ("webhook", "email", "Trello"):
+        assert kind.lower() in refused.lower(), kind
     assert am.problem_with("  New   lead ", "do x", "discord") == ""
 
 

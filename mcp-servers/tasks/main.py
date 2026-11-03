@@ -159,6 +159,16 @@ async def lifespan(app: FastAPI):
     except Exception as exc:                                # noqa: BLE001
         logger.warning("email_poll_loop NOT started: %s", exc)
 
+    # A card on a Trello list can start an automation (2026-11-03). Same
+    # heartbeat and the same guard as the email poller above: one trigger
+    # that cannot be imported must not cost the service its boot.
+    try:
+        from trello_poller import trello_poll_loop
+        asyncio.create_task(trello_poll_loop())
+        logger.info("trello_poll_loop scheduled")
+    except Exception as exc:                                # noqa: BLE001
+        logger.warning("trello_poll_loop NOT started: %s", exc)
+
     yield
 
 

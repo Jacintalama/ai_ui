@@ -20,6 +20,7 @@ import json
 import logging
 import os
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -48,12 +49,14 @@ class AutomationIn(BaseModel):
     agent: str = Field(min_length=1, max_length=200)
     instructions: str = Field(min_length=1, max_length=automations.MAX_INSTRUCTION_CHARS + 1)
     deliver_to: str = automations.DELIVER_CHAT
-    #: webhook (the default, and what every rule was before 2026-10-29)
-    #: or email. An email rule must also say WHICH emails.
+    #: webhook (the default, and what every rule was before 2026-10-29),
+    #: email, or trello. Either of the latter two must also say what to
+    #: watch.
     trigger: str = automations.TRIGGER_WEBHOOK
-    #: A Gmail search ("from:boss@x.com is:unread"). Matching is
-    #: Gmail's job, not ours. Required for an email trigger and
-    #: ignored for a webhook.
+    #: What this rule watches, read according to the trigger beside it: a
+    #: Gmail search ("from:boss@x.com is:unread") for an email rule, a
+    #: Trello list id for a Trello one. Ignored for a webhook. Matching is
+    #: the vendor's job in both cases, not ours.
     trigger_query: str = Field(default="", max_length=500)
 
 
@@ -104,23 +107,32 @@ async def _fire(automation: dict, payload, agent_name: str) -> dict:
 
 
 async def _cursors_for(email: str) -> dict:
-    """{automation_id: {checked_at, last_error}} for this person's email
-    rules. Never raises: the page must still list the rules when the cursor
-    table cannot be read, just without the "last looked" line."""
+    """{automation_id: {checked_at, last_error}} for every rule of this
+    person's that something polls for. Never raises: the page must still
+    list the rules when a cursor table cannot be read, just without the
+    "last looked" line.
+
+    Both tables in one query because an automation id is unique across
+    them: a rule has one trigger, so it appears in at most one. Reading
+    them separately would mean two round trips to merge two halves of the
+    same answer.
+    """
     try:
         from sqlalchemy import text as sql_text
         from db import session
         async with session() as s:
             rows = (await s.execute(sql_text(
                 "SELECT automation_id, checked_at, last_error "
-                "  FROM tasks.automation_email_cursor WHERE user_email = :e"),
+                "  FROM tasks.automation_email_cursor WHERE user_email = :e "
+                "UNION ALL "
+                "SELECT automation_id, checked_at, last_error "
+                "  FROM tasks.automation_trello_cursor WHERE user_email = :e"),
                 {"e": email})).mappings().all()
         return {str(r["automation_id"]): {
             "checked_at": automations._iso(r["checked_at"]),
             "last_error": r["last_error"] or ""} for r in rows}
     except Exception:                                       # noqa: BLE001
-        logger.warning("could not read the email trigger cursors",
-                       exc_info=True)
+        logger.warning("could not read the trigger cursors", exc_info=True)
         return {}
 
 
@@ -135,15 +147,17 @@ async def list_automations(user: CurrentUser = Depends(current_user)) -> dict:
     agents = await _agents_seam(user.email)
     rows = await automations.list_for(user.email)
     out = []
-    # When each email rule last looked, and why it could not (2026-10-29).
-    # Without it an email rule on the page is a name and nothing a person
-    # can check: a rule that has quietly stopped looking, because a token
-    # was revoked, looks exactly like a rule nobody has emailed.
+    # When each polled rule last looked, and why it could not (2026-10-29,
+    # Trello 2026-11-03). Without it such a rule on the page is a name and
+    # nothing a person can check: one that has quietly stopped looking,
+    # because a token was revoked, looks exactly like one nobody has
+    # triggered.
     cursors = await _cursors_seam(user.email)
     for a in rows:
         shown = _shown(a, agents)
         shown["runs"] = await automations.runs(user.email, a["id"])
-        if a.get("trigger") == automations.TRIGGER_EMAIL:
+        if a.get("trigger") in (automations.TRIGGER_EMAIL,
+                                automations.TRIGGER_TRELLO):
             shown.update(cursors.get(str(a["id"])) or
                          {"checked_at": None, "last_error": ""})
         out.append(shown)
@@ -170,6 +184,97 @@ async def create_automation(body: AutomationIn,
             detail=f"You have {automations.MAX_PER_PERSON} automations, which is "
                    "the limit. Delete one to make another.")
     return _shown(row, agents)
+
+
+#: Boards shown in the picker, and lists shown under each. A person with
+#: more boards than this is not choosing from a dropdown anyway, and the cap
+#: keeps one enormous account from making the form slow to open.
+MAX_BOARDS = 50
+MAX_LISTS = 50
+#: The picker must not hold the form open behind a slow vendor.
+TRELLO_TIMEOUT_SECONDS = 15
+
+
+async def _trello_boards(email: str) -> dict:
+    """This person's Trello boards, each with its open lists.
+
+    Here rather than in mytools because it is not a tool: no agent calls
+    it, it answers the automation form's dropdown so nobody has to find and
+    paste a 24 character list id. Asking somebody to type an id is how a
+    feature gets built and then not used.
+
+    One call, not one per board: `lists=open` embeds them, and the
+    alternative is a round trip per board on every open of the form.
+    """
+    from routes_connections import secrets_for
+    creds = await secrets_for(email, "trello")
+    if not creds:
+        return {"connected": False, "boards": []}
+    import connections as C
+    try:
+        auth = C.vendor_auth("trello", creds)
+    except ValueError:
+        return {"connected": False, "boards": []}
+
+    params = dict(auth.params)
+    params.update({"fields": "name", "lists": "open",
+                   "list_fields": "name", "filter": "open"})
+    try:
+        async with httpx.AsyncClient(timeout=TRELLO_TIMEOUT_SECONDS) as client:
+            r = await client.get(auth.base_url + "/members/me/boards",
+                                 headers=auth.headers, params=params)
+    except Exception as exc:                                # noqa: BLE001
+        # Never the message: Trello's credential rides in the query string
+        # and the exception text can carry the URL.
+        logger.warning("trello boards: unreachable (%s)", type(exc).__name__)
+        raise HTTPException(status_code=502,
+                            detail="Could not reach Trello just now.")
+    if r.status_code in (401, 403):
+        raise HTTPException(
+            status_code=400,
+            detail="Your Trello connection was rejected. Reconnect it from "
+                   "Connections.")
+    if r.status_code >= 400:
+        # Never r.text: Trello echoes the request, credential included.
+        logger.warning("trello boards: answered %d", r.status_code)
+        raise HTTPException(status_code=502,
+                            detail="Trello could not list your boards.")
+    try:
+        data = r.json()
+    except Exception:                                       # noqa: BLE001
+        data = []
+
+    boards = []
+    for b in (data if isinstance(data, list) else [])[:MAX_BOARDS]:
+        if not isinstance(b, dict):
+            continue
+        lists = [{"id": str(l.get("id") or ""),
+                  "name": " ".join(str(l.get("name") or "").split())}
+                 for l in (b.get("lists") or [])[:MAX_LISTS]
+                 if isinstance(l, dict) and l.get("id")]
+        if not lists:
+            # A board with no open lists has nothing to watch, and offering
+            # it means choosing it and then finding the second dropdown
+            # empty.
+            continue
+        boards.append({"id": str(b.get("id") or ""),
+                       "name": " ".join(str(b.get("name") or "").split()),
+                       "lists": lists})
+    return {"connected": True, "boards": boards}
+
+
+_trello_boards_seam = _trello_boards
+
+
+@router.get("/automations/trello/lists")
+async def trello_lists(user: CurrentUser = Depends(current_user)) -> dict:
+    """The boards and lists the automation form offers.
+
+    Above the /automations/{automation_id} routes in this file, but those
+    are PATCH and DELETE while this is a GET, so there is nothing for
+    "trello" to be mistaken for an id in.
+    """
+    return await _trello_boards_seam(user.email)
 
 
 @router.patch("/automations/{automation_id}")

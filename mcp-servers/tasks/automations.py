@@ -32,7 +32,13 @@ TRIGGER_WEBHOOK = "webhook"
 #: looking). Added 2026-10-29, which migration 060 anticipated: "an email
 #: trigger comes next and will add a trigger kind here".
 TRIGGER_EMAIL = "email"
-TRIGGERS = frozenset({TRIGGER_WEBHOOK, TRIGGER_EMAIL})
+#: A card arriving on, or changing on, a Trello list the owner connected
+#: starts the rule (trello_trigger.py decides which cards, trello_poller.py
+#: does the looking). Added 2026-11-03. It is the trigger the one-click
+#: connect was built for: connecting a board was never the point, watching
+#: one was.
+TRIGGER_TRELLO = "trello"
+TRIGGERS = frozenset({TRIGGER_WEBHOOK, TRIGGER_EMAIL, TRIGGER_TRELLO})
 
 DELIVER_CHAT = "chat"
 DELIVER_DISCORD = "discord"
@@ -81,7 +87,15 @@ def problem_with(name: str, instructions: str, deliver_to: str,
     if deliver_to not in DELIVERIES:
         return "Deliver to is one of chat, discord or none."
     if trigger not in TRIGGERS:
-        return "A trigger is either a webhook or an email."
+        return "A trigger is a webhook, an email, or a Trello list."
+    if trigger == TRIGGER_TRELLO:
+        # Same reason as the email branch below: a rule that cannot work
+        # should not be saveable, because one that quietly never fires
+        # looks exactly like one nobody has triggered.
+        import trello_trigger
+        problem = trello_trigger.list_problem(str(trigger_query or ""))
+        if problem:
+            return problem
     if trigger == TRIGGER_EMAIL:
         # An email rule runs an agent per message, so an unbounded one is a
         # bill rather than a rule. Refused here, at the door, instead of
