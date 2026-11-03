@@ -68,6 +68,7 @@ from tool_embeddings import (
 from access import (may_use_server, require_identified,
                     servers_for_caller)
 from mcp_http_client import get_mcp_client, MCPStreamableClient
+from tool_listing import by_server
 from admin_api import admin_router
 
 
@@ -521,6 +522,23 @@ async def generate_dynamic_openapi_filtered(user_email: Optional[str], entra_gro
             }
         }
 
+        # 2026-11-03, Lukas: see what every server offers. search_tools can
+        # only answer a guess, so "what tools do you have" needs its own.
+        paths["/meta/list_tools"] = {
+            "post": {
+                "summary": "List every tool you can use, grouped by server",
+                "description": (
+                    "Use this when the person asks what tools, integrations "
+                    "or MCP servers are available. Returns each server and "
+                    "its tool names. Takes no arguments."
+                ),
+                "operationId": "list_tools",
+                "responses": {
+                    "200": {"description": "Each server with its tool names"}
+                }
+            }
+        }
+
         return {
             "openapi": "3.1.0",
             "info": {
@@ -959,6 +977,26 @@ async def meta_call_tool(body: CallToolRequest, request: Request):
 
     # Fallback to tenant execution
     return await execute_tool_on_tenant(server_id, original_path, body.arguments, tenant_ids)
+
+
+@app.post("/meta/list_tools")
+async def meta_list_tools(request: Request):
+    """Every server this caller may use, with its tool names.
+
+    The same access check and the same live fetch as GET /{server_id}, for
+    all of them at once. A server that cannot be reached is listed with no
+    tools and a note, so it is visible rather than silently missing.
+    """
+    user = await extract_user_from_headers_optional(request)
+    require_identified(user.email if user else None)
+    allowed = []
+    for server_id, config in ALL_SERVERS.items():
+        if await user_has_tenant_access_async(user.email, server_id, user.entra_groups):
+            allowed.append((server_id, config))
+    fetched = await asyncio.gather(*(fetch_server_tools(c) for _s, c in allowed),
+                                   return_exceptions=True)
+    return by_server([(sid, cfg.display_name, tools if isinstance(tools, list) else [])
+                      for (sid, cfg), tools in zip(allowed, fetched)])
 
 
 @app.get("/meta/stats")
