@@ -53,9 +53,34 @@ def client(owui):
     return TestClient(app)
 
 
+#: The page's own body, posted twice: once to see the agent, once to make
+#: it. Both calls carry the same wording, because the confirm code is
+#: derived from the brief and changing a word between them invalidates it.
+MAKE_JACK = {"name": "Jack", "role": "Bookkeeper",
+             "instructions": "Keep the books straight.", "access": "ask"}
+
+
+def test_nothing_is_made_until_it_has_been_seen(client, owui):
+    """The preview (2026-10-29). Asked for after the chat announced "Crane
+    is now your dedicated cron-jobs agent" for an agent that did not exist.
+
+    Enforced in the service rather than asked for in the tool's docstring,
+    because a docstring is an instruction to a model: one that calls make
+    with no code gets a preview whether it wanted one or not.
+    """
+    r = client.post("/api/tasks/agents/make", json=MAKE_JACK)
+    assert r.status_code == 200, r.text
+    shown = r.json()
+    assert shown["created"] is False
+    assert shown["confirm"]
+    assert owui["created"] == [], "it made the agent before anyone saw it"
+    # The brief whole, never summarised: what is approved is what is read.
+    assert "Keep the books straight." in shown["message"]
+
+
 def test_an_agent_is_made_with_the_agents_pages_own_body(client, owui):
-    r = client.post("/api/tasks/agents/make", json={
-        "name": "Jack", "role": "Bookkeeper", "instructions": "Keep the books straight.", "access": "ask"})
+    code = client.post("/api/tasks/agents/make", json=MAKE_JACK).json()["confirm"]
+    r = client.post("/api/tasks/agents/make", json=dict(MAKE_JACK, confirm=code))
     assert r.status_code == 200, r.text
     assert r.json()["name"] == "Jack" and r.json()["id"].startswith("agent-jack-")
     body = owui["created"][0]
@@ -81,6 +106,8 @@ def test_the_rules_are_the_pages_rules(client, owui):
     ]
     for body, said in bad:
         r = client.post("/api/tasks/agents/make", json=body)
+        # Refused at the preview, so a bad request never gets as far as
+        # handing back a code that would make it real.
         assert r.status_code == 400 and said in r.json()["detail"], (body, r.text)
     assert owui["created"] == []
 
@@ -112,11 +139,43 @@ async def test_the_chat_tool_makes_an_agent_as_the_person_asking():
     said = await tool.create_agent("Jack", "Keep the books.", role="Bookkeeper", access="ask",
                                    __user__={"email": "r@example.com"})
     assert said.startswith("Made Jack (Bookkeeper), with access, asking first.")
+    # An empty `confirm` is what asks for the preview, and it is sent on
+    # every call so the service can tell "no code" from "a code I never
+    # issued". Compared whole rather than field by field, because a field
+    # quietly appearing in what the chat posts as somebody is the thing
+    # worth noticing.
     assert calls[0] == ("POST", "/agents/make", "r@example.com",
-                        {"name": "Jack", "instructions": "Keep the books.", "role": "Bookkeeper", "access": "ask"})
+                        {"name": "Jack", "instructions": "Keep the books.",
+                         "role": "Bookkeeper", "access": "ask", "confirm": ""})
     said = await tool.list_my_agents(__user__={"email": "r@example.com"})
     assert said == "Your agents: Mia (Receptionist)."
     assert await tool.create_agent("Jack", "x", __user__={}) == "I do not know who is asking, so I cannot make an agent."
+
+
+async def test_the_chat_never_says_it_made_an_agent_it_only_previewed():
+    """The Crane bug itself. The chat said "Created: Crane is now your
+    dedicated cron-jobs agent" three times on 2026-10-29 and no such agent
+    existed.
+
+    The service refusing to create without a code is only half of it. If
+    the tool read a preview as a success, the person would still be told
+    the agent was made, and the service being right would be invisible.
+    """
+    tool = _tool()
+    preview = {"created": False, "confirm": "abc123",
+               "name": "Crane", "role": "Cron jobs",
+               "message": "Here is the agent I would create. Nothing has "
+                          "been made yet."}
+
+    async def call(method, path, email, json_body=None):
+        return True, preview
+    tool._call = call
+
+    said = await tool.create_agent("Crane", "Watch the cron jobs.",
+                                   __user__={"email": "r@example.com"})
+    assert said == preview["message"]
+    assert "Made Crane" not in said
+    assert "nothing has been made yet" in said.lower()
 
 
 

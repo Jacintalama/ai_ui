@@ -892,7 +892,13 @@ def assistant(_wire, monkeypatch):
     calls = {"pick": []}
     state = {"pick": ["calendar"]}
 
-    async def pick_tools(email, text, tools):
+    # `context` arrived 2026-10-29: without what was said just before,
+    # a follow-up like "create it please" carries no subject and Jev
+    # picks nothing. A fake with the old signature does not fail as a
+    # wrong answer, it raises inside _tool_pick, which catches and
+    # falls back to the free model, so every assertion downstream
+    # fails for a reason that looks nothing like the cause.
+    async def pick_tools(email, text, tools, context=""):
         calls["pick"].append((email, text, list(tools)))
         return state["pick"]
 
@@ -969,7 +975,13 @@ async def test_the_agent_decision_and_the_tool_pick_are_asked_side_by_side(
         order.append("decide end")
         return agent_decider.Decision(path=agent_decider.PATH_FALLBACK, reason="unsure")
 
-    async def pick_tools(email, text, tools):
+    # `context` arrived 2026-10-29: without what was said just before,
+    # a follow-up like "create it please" carries no subject and Jev
+    # picks nothing. A fake with the old signature does not fail as a
+    # wrong answer, it raises inside _tool_pick, which catches and
+    # falls back to the free model, so every assertion downstream
+    # fails for a reason that looks nothing like the cause.
+    async def pick_tools(email, text, tools, context=""):
         order.append("pick start")
         await asyncio.sleep(0.05)
         order.append("pick end")
@@ -998,7 +1010,13 @@ async def test_only_the_tool_pick_is_asked_when_nobody_is_named(
         order.append("decide")
         return agent_decider.Decision(path=agent_decider.PATH_FALLBACK, reason="x")
 
-    async def pick_tools(email, text, tools):
+    # `context` arrived 2026-10-29: without what was said just before,
+    # a follow-up like "create it please" carries no subject and Jev
+    # picks nothing. A fake with the old signature does not fail as a
+    # wrong answer, it raises inside _tool_pick, which catches and
+    # falls back to the free model, so every assertion downstream
+    # fails for a reason that looks nothing like the cause.
+    async def pick_tools(email, text, tools, context=""):
         order.append("pick")
         return []
 
