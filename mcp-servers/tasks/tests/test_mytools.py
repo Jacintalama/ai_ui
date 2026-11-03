@@ -258,6 +258,45 @@ def test_a_folder_listing_comes_through_the_same_path(app_and_creds):
     assert [i["name"] for i in body["items"]] == ["app.py", "lib"]
 
 
+def test_the_root_of_a_repository_can_be_listed(app_and_creds):
+    """Measured against GitHub on 2026-11-03: ".../contents/" 404s where
+    ".../contents" works, so listing a repo's root failed while every other
+    path succeeded. The hardest kind of bug to read from a tool result,
+    because the error says the repository was not found."""
+    app, creds, calls, reply, Resp = app_and_creds
+    _github(creds)
+    reply["response"] = Resp(200, [{"name": "README.md", "path": "README.md",
+                                    "type": "file", "size": 10}])
+    body = _post(app, "/github/list_folder", "ralph@example.com",
+                 {"owner": "o", "repo": "r", "path": ""}).json()
+    assert body["ok"] is True
+    assert calls[0]["url"].endswith("/repos/o/r/contents"), calls[0]["url"]
+
+
+def test_an_omitted_optional_segment_is_not_a_missing_value(app_and_creds):
+    """Leaving `path` out entirely is the ordinary way to ask for the root,
+    and it used to answer "Missing required value: path" about an argument
+    the tool declares as optional."""
+    app, creds, calls, reply, Resp = app_and_creds
+    _github(creds)
+    reply["response"] = Resp(200, [])
+    body = _post(app, "/github/list_folder", "ralph@example.com",
+                 {"owner": "o", "repo": "r"}).json()
+    assert body["ok"] is True
+    assert calls[0]["url"].endswith("/repos/o/r/contents")
+
+
+def test_a_real_path_still_keeps_every_segment(app_and_creds):
+    """The trailing-slash fix must not eat a legitimate path."""
+    app, creds, calls, reply, Resp = app_and_creds
+    _github(creds)
+    reply["response"] = Resp(200, {"path": "src/app.py", "size": 1,
+                                   "content": ""})
+    _post(app, "/github/read_file", "ralph@example.com",
+          {"owner": "o", "repo": "r", "path": "src/app.py"})
+    assert calls[0]["url"].endswith("/repos/o/r/contents/src/app.py")
+
+
 def test_a_pull_requests_changes_carry_the_diff(app_and_creds):
     """The whole point of reviewing one. Without `patch` there is nothing to
     review, only a list of filenames."""
