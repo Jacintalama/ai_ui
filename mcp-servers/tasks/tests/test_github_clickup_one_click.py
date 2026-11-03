@@ -221,3 +221,51 @@ def test_the_paste_form_is_untouched(pid):
     """One-click is an addition. A deployment with no app registered, and
     anyone who would rather paste a token, both keep what they had."""
     assert C.required_fields(pid) == ["token"]
+
+
+# --- a GitHub App rather than an OAuth App (2026-11-03) ----------------------
+# Registered as a GitHub App, because an OAuth App's `repo` scope is read AND
+# write across every repository the person owns and there is no narrower one.
+# A GitHub App has fine-grained permissions and the person chooses which
+# repositories at install time. Same authorize and token endpoints, so no new
+# flow, and user tokens need not expire, which is the thing that kept us off
+# Trello's OAuth 2.0.
+
+def test_the_scope_can_be_dropped_entirely(monkeypatch):
+    """`scope=` is a request for an empty scope, not the absence of one.
+    GitHub's own words: beyond offline_access, "no other scopes are
+    supported for GitHub Apps". The parameter has to be gone, not blank."""
+    import importlib
+    monkeypatch.setenv("GITHUB_SCOPE", "")
+    O2 = importlib.reload(O)
+    try:
+        assert O2.GITHUB_SCOPE == ""
+        url = O2.authorize_url("github", client_id="CID",
+                               redirect_uri="https://io.example/cb", state="S")
+        assert "scope" not in url
+        assert "client_id=CID" in url and "state=S" in url
+    finally:
+        monkeypatch.delenv("GITHUB_SCOPE", raising=False)
+        importlib.reload(O2)
+
+
+def test_an_oauth_app_deployment_is_untouched(monkeypatch):
+    """Default behaviour has to survive, or anyone who registered the older
+    kind of app silently stops being able to connect."""
+    import importlib
+    monkeypatch.delenv("GITHUB_SCOPE", raising=False)
+    O2 = importlib.reload(O)
+    assert O2.GITHUB_SCOPE == "repo read:user"
+    assert "repo" in O2.authorize_url("github", client_id="C",
+                                      redirect_uri="https://io.example/cb",
+                                      state="S")
+
+
+def test_nothing_else_loses_its_parameters(monkeypatch):
+    """The filter drops empty values from every provider's URL, so the ones
+    that genuinely need a parameter must still carry it."""
+    import importlib
+    O2 = importlib.reload(O)
+    url = O2.authorize_url("notion", client_id="C",
+                           redirect_uri="https://io.example/cb", state="S")
+    assert "response_type=code" in url and "owner=user" in url
