@@ -339,11 +339,15 @@ async def oauth_callback(provider_id: str, code: str = "", state: str = "",
     if provider_id == "github" and O.GITHUB_APP_SLUG:
         reach = await _github_installations(values)
         if reach == 0:
+            # Not a refusal with nowhere to go. Authorising and installing
+            # are two acts, this is the second one, and the person has no
+            # way to find that page on their own.
             logger.warning("oauth: github authorised with no installation")
             return _oauth_done(
-                False, "Authorised, but IO is not installed on any account "
-                       "yet, so it cannot see any repositories. Connect "
-                       "again and choose where to install it.")
+                False, "Authorised. One more step: IO needs to be installed "
+                       "on the account that holds your repositories before "
+                       "it can see any code.",
+                link=O.install_url(), link_text="Install IO on GitHub")
 
     try:
         await _store_connection(email, provider_id, values, label)
@@ -357,11 +361,16 @@ async def oauth_callback(provider_id: str, code: str = "", state: str = "",
                        + ". You can close this window.")
 
 
-def _oauth_done(ok: bool, message: str) -> HTMLResponse:
+def _oauth_done(ok: bool, message: str, link: str = "",
+                link_text: str = "") -> HTMLResponse:
     """A tiny page for the popup: tell the opener, then say what happened.
 
     The message goes in through textContent, never interpolated markup: it can
     carry a vendor-supplied workspace name.
+
+    `link` is a way forward when there is one, and a page carrying one does
+    NOT close itself: a popup that vanishes before anybody can read, let
+    alone click, is the same as no link at all.
     """
     import json as _json
 
@@ -379,6 +388,8 @@ def _oauth_done(ok: bool, message: str) -> HTMLResponse:
 
     payload = _js({"aiuiOauth": True, "ok": bool(ok)})
     safe = _js(str(message))
+    href = _js(str(link or ""))
+    label = _js(str(link_text or "Continue"))
     style = ("font-family:-apple-system,Segoe UI,sans-serif;background:#111113;"
              "color:#ededee;display:flex;align-items:center;"
              "justify-content:center;height:100vh;margin:0;text-align:center")
@@ -388,12 +399,16 @@ def _oauth_done(ok: bool, message: str) -> HTMLResponse:
     page = (
         "<!doctype html><meta charset=@utf-8@><title>Connection</title>"
         "<body style=@" + style + "@>"
-        "<div><p id=@m@ style=@font-size:15px@></p></div>"
+        "<div><p id=@m@ style=@font-size:15px@></p>"
+        "<p><a id=@a@ hidden style=@color:#8ab4f8;font-size:15px@></a></p></div>"
         "<script>"
         "document.getElementById('m').textContent = " + safe + ";"
+        "var _h = " + href + ", _a = document.getElementById('a');"
+        "if (_h) { _a.href = _h; _a.textContent = " + label + "; _a.hidden = false; }"
         "try { window.opener && window.opener.postMessage(" + payload +
         ", '*'); } catch (e) {}"
-        "setTimeout(function () { try { window.close(); } catch (e) {} }, 2500);"
+        "if (!_h) { setTimeout(function () "
+        "{ try { window.close(); } catch (e) {} }, 2500); }"
         "</script></body>"
     )
     return HTMLResponse(page.replace("@", chr(34)))

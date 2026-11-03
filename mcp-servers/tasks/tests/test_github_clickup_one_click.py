@@ -287,27 +287,44 @@ def _reload(monkeypatch, slug):
     return importlib.reload(O)
 
 
-def test_a_github_app_sends_people_to_install_it(monkeypatch):
+def test_the_connect_always_asks_for_a_code(monkeypatch):
+    """Corrected the same day it shipped. Pointing the connect straight at
+    the install page fixed a first install and broke every reconnect: for
+    an app already installed, that page says Configure, finishing it
+    updates the repository selection, and it never redirects back with a
+    code. Measured in the log as seven oauth/start calls and zero
+    callbacks.
+
+    The authorize URL always returns a code, for a first time and for the
+    hundredth, so that is what the connect uses.
+    """
     O2 = _reload(monkeypatch, "io-aiui")
     try:
         url = O2.authorize_url("github", client_id="CID",
                                redirect_uri="https://io.example/cb", state="S1")
-        assert url.startswith("https://github.com/apps/io-aiui/installations/new")
-        assert "state=S1" in url
+        assert url.startswith("https://github.com/login/oauth/authorize")
+        assert "installations/new" not in url
+        assert "client_id=CID" in url and "state=S1" in url
     finally:
         _reload(monkeypatch, None)
 
 
-def test_the_install_page_carries_no_client_id_or_redirect(monkeypatch):
-    """GitHub uses the ones the app is registered with. Sending our own is
-    at best ignored and at worst a mismatch error after consent."""
+def test_the_install_page_is_still_reachable(monkeypatch):
+    """Offered afterwards to whoever turns out to have no installation
+    behind their token. Both paths have to end somewhere."""
     O2 = _reload(monkeypatch, "io-aiui")
     try:
-        url = O2.authorize_url("github", client_id="CID",
-                               redirect_uri="https://io.example/cb", state="S1")
-        assert "client_id" not in url and "redirect_uri" not in url
+        assert O2.install_url() == (
+            "https://github.com/apps/io-aiui/installations/new")
     finally:
         _reload(monkeypatch, None)
+
+
+def test_there_is_no_install_link_without_an_app(monkeypatch):
+    """An OAuth App deployment has no slug and no install page, so there is
+    nothing to offer and a link to nowhere must not be built."""
+    O2 = _reload(monkeypatch, None)
+    assert O2.install_url() == ""
 
 
 def test_without_a_slug_it_is_the_ordinary_oauth_app_flow(monkeypatch):
