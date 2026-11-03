@@ -112,6 +112,63 @@ def test_the_rules_are_the_pages_rules(client, owui):
     assert owui["created"] == []
 
 
+# --- skills on an agent made from the chat (2026-11-03) ----------------------
+
+def _make(client, body):
+    code = client.post("/api/tasks/agents/make", json=body).json()["confirm"]
+    return client.post("/api/tasks/agents/make", json=dict(body, confirm=code))
+
+
+def test_named_skills_are_shown_and_saved(client, owui):
+    body = dict(MAKE_JACK, skills=["inbox-triage", "draft-reply"])
+    shown = client.post("/api/tasks/agents/make", json=body).json()
+    assert "Skills: inbox-triage, draft-reply" in shown["message"]
+    r = _make(client, body)
+    assert r.status_code == 200, r.text
+    assert r.json()["skills"] == ["inbox-triage", "draft-reply"]
+    # Where the Agents page reads them, so the card shows them ticked.
+    assert owui["created"][0]["meta"]["skillIds"] == ["inbox-triage", "draft-reply"]
+
+
+def test_a_skill_that_does_not_exist_is_left_out_and_said(client, owui):
+    """A model names skills from memory. One that is not in the catalogue
+    is dropped and the person is told, never saved as a name nothing
+    answers to."""
+    body = dict(MAKE_JACK, skills=["inbox-triage", "fly-a-plane"])
+    shown = client.post("/api/tasks/agents/make", json=body).json()
+    assert "Skills: inbox-triage\n" in shown["message"]
+    assert "fly-a-plane" in shown["message"]
+    _make(client, body)
+    assert owui["created"][0]["meta"]["skillIds"] == ["inbox-triage"]
+
+
+def test_no_skills_named_means_ones_that_fit_the_role(client, owui):
+    """Lukas, 2026-10-31: the chat should know which skills the agent needs
+    from what the person said. Against the real catalogue."""
+    body = {"name": "Ivy", "role": "Inbox assistant", "access": "read",
+            "instructions": "Triage my inbox and draft replies to customers."}
+    shown = client.post("/api/tasks/agents/make", json=body).json()
+    assert shown["skills"][0] == "inbox-triage"
+    assert "suggested" in shown["message"].lower()
+    _make(client, body)
+    assert owui["created"][0]["meta"]["skillIds"] == shown["skills"]
+
+
+def test_an_empty_list_means_no_skills(client, owui):
+    _make(client, dict(MAKE_JACK, skills=[]))
+    assert "skillIds" not in owui["created"][0]["meta"]
+
+
+def test_changing_the_skills_after_the_preview_needs_a_new_preview(client, owui):
+    """The skills are part of what the person approved."""
+    code = client.post("/api/tasks/agents/make",
+                       json=dict(MAKE_JACK, skills=["inbox-triage"])).json()["confirm"]
+    r = client.post("/api/tasks/agents/make",
+                    json=dict(MAKE_JACK, skills=["draft-reply"], confirm=code))
+    assert r.json()["created"] is False
+    assert owui["created"] == []
+
+
 def test_the_roster_lists_what_the_chat_needs(client):
     r = client.get("/api/tasks/agents/roster")
     assert r.status_code == 200
