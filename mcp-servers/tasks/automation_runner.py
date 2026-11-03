@@ -110,6 +110,38 @@ async def deliver(automation: dict, agent_name: str, status: str, answer: str) -
     return "none"
 
 
+async def record_skipped(automation: dict, skipped: int, cap: int) -> None:
+    """Write down that a flood was capped, where the person can see it.
+
+    STATUS_SKIPPED was declared on 2026-10-27 and used by nothing until
+    now. Both pollers cap a burst at BURST per tick, advance the cursor
+    past the rest so the same flood cannot arrive for ever, and said so in
+    one INFO line on the server. So somebody who dragged twenty cards into
+    a watched list got five runs, fifteen cards that never fired, and
+    nothing anywhere to say the other fifteen had been dropped.
+
+    That is the worst kind of missing record: the rule looks like it worked.
+
+    One row per tick, not per dropped item. Fifteen rows would bury the
+    runs that actually happened, which are the ones somebody is reading
+    the page for.
+
+    `cap` comes from the caller rather than being named here, because each
+    poller already owns that number and a third copy of it would be free
+    to drift from the two that are enforced.
+    """
+    if skipped <= 0:
+        return
+    thing = "message" if skipped == 1 else "messages"
+    await automations.record_run(
+        automation["user_email"], automation["id"], STATUS_SKIPPED,
+        "%d more %s arrived at once" % (skipped, thing),
+        "Only %d can run per minute, so %d %s skipped. They will not be "
+        "picked up later: the rule has moved on past them."
+        % (cap, skipped, "was" if skipped == 1 else "were"),
+        "none")
+
+
 async def fire(automation: dict, payload, agent_name: str = "") -> dict:
     """Run the automation on what was posted. Returns
     {"status", "answer", "notes", "delivered"}. Never raises."""
