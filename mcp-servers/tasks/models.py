@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Integer, Text, func
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
 
 
@@ -458,3 +458,27 @@ class GatewaySession(Base):
     owui_user_id = Column(Text, nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(),
                         onupdate=func.now())
+
+class UserSkill(Base):
+    """A skill somebody wrote for themselves (user_skills.py).
+
+    Built-in skills stay files in the image. This is only what a person
+    made, and it is private to them: the unique index is on
+    (user_email, name), so two people may each have `inbox-triage` and
+    neither can see the other's. See migration 066.
+    """
+    __tablename__ = "user_skill"
+    __table_args__ = {"schema": "tasks"}
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_email = Column(Text, nullable=False)
+    name = Column(Text, nullable=False)
+    description = Column(Text, nullable=False, default="")
+    #: The tools the skill needs, so the form can say "connect Gmail"
+    #: rather than letting the skill quietly do nothing.
+    tools = Column(ARRAY(Text), nullable=False, default=list)
+    #: Pasted whole into the brief of every agent holding it, every turn,
+    #: which is why user_skills caps it rather than the database.
+    body = Column(Text, nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now())
