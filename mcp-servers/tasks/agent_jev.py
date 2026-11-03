@@ -500,7 +500,8 @@ TOOL_NOTES = {
     # however well the rest of it works.
     "server:mcp-proxy": "the apps the person connected and the web: their "
                         "Trello boards, lists and cards, ClickUp tasks, "
-                        "GitHub repositories and issues, Notion pages, "
+                        "GitHub repositories, their code, issues and "
+                        "pull requests, Notion pages, "
                         "Airtable bases, HubSpot contacts, n8n workflows "
                         "and Zapier zaps, plus web search, flights and the "
                         "knowledge graph of past chats and meetings. Seeing "
