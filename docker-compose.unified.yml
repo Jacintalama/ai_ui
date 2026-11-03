@@ -406,6 +406,14 @@ services:
       - NOTION_CLIENT_SECRET=${NOTION_CLIENT_SECRET:-}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
+      # Empty on purpose for a GitHub APP, which ignores scopes: its
+      # permissions are fine-grained on the app and the person picks the
+      # repositories. `-` and not `:-`, so an empty value set in .env stays
+      # empty while an ABSENT one still gets the OAuth App default. With
+      # `:-` the two cases are indistinguishable and every deployment that
+      # registered the older kind of app would silently stop asking for
+      # the scope it needs.
+      - GITHUB_SCOPE=${GITHUB_SCOPE-repo read:user}
       - CLICKUP_CLIENT_ID=${CLICKUP_CLIENT_ID:-}
       - CLICKUP_CLIENT_SECRET=${CLICKUP_CLIENT_SECRET:-}
       - AIRTABLE_CLIENT_ID=${AIRTABLE_CLIENT_ID:-}
