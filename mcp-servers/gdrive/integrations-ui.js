@@ -1033,7 +1033,7 @@
         + 'justify-content:center;backdrop-filter:blur(3px);';
       var box = document.createElement('div');
       box.style.cssText = 'background:#161616;border:1px solid #2a2a2a;border-radius:16px;'
-        + 'width:min(440px,92vw);padding:22px 24px;color:#eee;'
+        + 'width:min(480px,92vw);padding:22px 24px;color:#eee;'
         + 'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;';
 
       var connected = !!connState[app.id];
@@ -1045,17 +1045,32 @@
       var sub = document.createElement('div');
       sub.style.cssText = 'color:#8d8d8d;font-size:12px;line-height:1.5;margin-bottom:16px;';
       sub.textContent = connected
-        ? 'Connected as ' + (meta.account_label || app.name) + '. Paste a new credential to replace it.'
+        ? ('Connected as ' + (meta.account_label || app.name) + '. '
+           + (meta.oauth ? 'Reconnect to replace it.'
+                         : 'Paste a new credential to replace it.'))
         : (meta.where || '');
       box.appendChild(sub);
 
-      if (meta.oauth && !connected) {
+      // Offered whether or not they are already connected (2026-11-03).
+      // It used to be `meta.oauth && !connected`, so somebody who had
+      // connected Trello in one click and wanted to swap accounts was shown
+      // the four step paste form and nothing else: the path they had just
+      // used was the one path the page would not offer them again.
+      if (meta.oauth) {
+        // Whether this would REPLACE a credential, which changes how its
+        // outcome has to be read below.
+        var replacing = connected;
+        var ONE_CLICK = (replacing ? 'Reconnect with ' : 'Connect with ') + app.name;
+        // What the callback page said about THIS attempt. null means the
+        // window was closed before it said anything.
+        var sawOk = null;
         var go1 = document.createElement('button');
-        go1.textContent = 'Connect with ' + app.name;
+        go1.textContent = ONE_CLICK;
         go1.style.cssText = 'width:100%;background:#fff;color:#111;border:none;'
           + 'border-radius:10px;padding:11px 18px;font-size:13.5px;font-weight:650;'
           + 'cursor:pointer;margin-bottom:14px;';
         go1.addEventListener('click', function () {
+          sawOk = null;
           go1.disabled = true;
           go1.textContent = 'Opening ' + app.name + '…';
           fetch('/api/tasks/connections/' + app.id + '/oauth/start',
@@ -1079,18 +1094,31 @@
                       connChecked[c.provider] = true;
                     });
                     renderGrid();
-                    if (connState[app.id]) { wrap.remove(); }
-                    else {
-                      go1.disabled = false;
-                      go1.textContent = 'Connect with ' + app.name;
-                      msg.style.color = '#e07070';
-                      msg.textContent = 'That did not complete. Try again, or '
-                        + 'paste a token below.';
-                    }
+                    // "Connected" is not evidence when they were already
+                    // connected: a failed reconnect leaves the OLD
+                    // credential in place and the card still saying
+                    // Connected, so closing on that would report success
+                    // for something that did not happen. The callback
+                    // page's own answer is the only thing that knows.
+                    var worked = replacing ? (sawOk === true) : connState[app.id];
+                    if (worked) { wrap.remove(); return; }
+                    go1.disabled = false;
+                    go1.textContent = ONE_CLICK;
+                    msg.style.color = '#e07070';
+                    msg.textContent = replacing
+                      ? (sawOk === false
+                         ? 'That did not complete, so nothing changed. Your '
+                           + 'existing connection is still in place.'
+                         : 'That window closed before it finished. Nothing '
+                           + 'changed.')
+                      : 'That did not complete. Try again, or paste a token below.';
                   });
               }
               function onMsg(e) {
-                if (e && e.data && e.data.aiuiOauth) finish();
+                if (e && e.data && e.data.aiuiOauth) {
+                  sawOk = e.data.ok === true;
+                  finish();
+                }
               }
               window.addEventListener('message', onMsg);
               var poll = setInterval(function () {
@@ -1099,7 +1127,7 @@
             })
             .catch(function () {
               go1.disabled = false;
-              go1.textContent = 'Connect with ' + app.name;
+              go1.textContent = ONE_CLICK;
               msg.style.color = '#e07070';
               msg.textContent = 'Could not start that. Paste a token instead.';
             });
@@ -1109,7 +1137,8 @@
         var orLine = document.createElement('div');
         orLine.style.cssText = 'color:#6b6b6b;font-size:11px;text-align:center;'
           + 'margin:-4px 0 12px;';
-        orLine.textContent = 'or paste a token';
+        orLine.textContent = replacing ? 'or paste a different credential'
+                                       : 'or paste a token';
         box.appendChild(orLine);
       }
 
@@ -1186,13 +1215,22 @@
       box.appendChild(msg);
 
       var row = document.createElement('div');
-      row.style.cssText = 'display:flex;gap:9px;justify-content:flex-end;align-items:center;';
+      // Wrapping, and every button keeping its own words together. Four
+      // buttons at their natural widths come to more than this box is wide,
+      // and flex shrinks before it wraps, so without this they were sized
+      // below their text and rendered as "Disconnec t" and "Cance l".
+      // Reported from a screenshot on 2026-11-03.
+      row.style.cssText = 'display:flex;flex-wrap:wrap;gap:9px;'
+        + 'justify-content:flex-end;align-items:center;';
+      // Applied to each button below rather than through a class, because
+      // this file writes its styles inline and has no stylesheet to add to.
+      var KEEP_WHOLE = 'white-space:nowrap;flex:0 0 auto;';
 
       if (connected) {
         var test = document.createElement('button');
         test.textContent = 'Test connection';
         test.style.cssText = 'background:transparent;color:#9aa6c8;border:1px solid #303030;'
-          + 'border-radius:9px;padding:9px 14px;font-size:13px;cursor:pointer;';
+          + 'border-radius:9px;padding:9px 14px;font-size:13px;cursor:pointer;' + KEEP_WHOLE;
         test.addEventListener('click', function () {
           test.disabled = true;
           test.textContent = 'Checking…';
@@ -1228,7 +1266,8 @@
         var dis = document.createElement('button');
         dis.textContent = 'Disconnect';
         dis.style.cssText = 'background:transparent;color:#c96;border:1px solid #4a3a2a;'
-          + 'border-radius:9px;padding:9px 14px;font-size:13px;cursor:pointer;margin-right:auto;order:-1;';
+          + 'border-radius:9px;padding:9px 14px;font-size:13px;cursor:pointer;'
+          + 'margin-right:auto;order:-1;' + KEEP_WHOLE;
         dis.addEventListener('click', function () {
           dis.disabled = true; dis.textContent = 'Disconnecting\u2026';
           fetch('/api/tasks/connections/' + app.id, { method: 'DELETE', headers: authHeaders() })
@@ -1246,14 +1285,14 @@
       var cancel = document.createElement('button');
       cancel.textContent = 'Cancel';
       cancel.style.cssText = 'background:transparent;color:#aaa;border:1px solid #303030;'
-        + 'border-radius:9px;padding:9px 14px;font-size:13px;cursor:pointer;';
+        + 'border-radius:9px;padding:9px 14px;font-size:13px;cursor:pointer;' + KEEP_WHOLE;
       cancel.addEventListener('click', function () { wrap.remove(); });
       row.appendChild(cancel);
 
       var go = document.createElement('button');
       go.textContent = 'Connect';
       go.style.cssText = 'background:#fff;color:#111;border:none;border-radius:9px;'
-        + 'padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;';
+        + 'padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;' + KEEP_WHOLE;
       go.addEventListener('click', function () {
         var values = {};
         for (var k in inputs) values[k] = inputs[k].value;
