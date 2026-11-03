@@ -481,6 +481,60 @@ def test_any_vendor_error_status_does_not_echo_the_credential(app_and_creds):
         assert "TOK456" not in r.text, status
 
 
+# --- repeating the vendor, without repeating the credential ---------------
+
+def test_the_vendor_gets_to_say_what_was_wrong(app_and_creds):
+    """A real afternoon, 2026-11-03. Asked to read a file, the answer was
+    "GitHub could not find that. Check the id you asked for", which sends
+    somebody hunting a repository name that is not wrong. GitHub had said
+    exactly what was the matter: "This repository is empty."
+    """
+    app, creds, _, reply, Resp = app_and_creds
+    _github(creds)
+    reply["response"] = Resp(404, {"message": "This repository is empty."})
+    body = _post(app, "/github/read_file", "ralph@example.com",
+                 {"owner": "o", "repo": "r", "path": "README.md"}).json()
+    assert body["ok"] is False
+    assert "This repository is empty." in body["error"]
+
+
+def test_a_vendor_message_that_carries_the_credential_is_dropped(app_and_creds):
+    """The reason this is a property and not a list of trusted vendors.
+    Trello's credential rides in the QUERY STRING and its errors echo the
+    request, so repeating a vendor verbatim is how a token is rendered into
+    a chat."""
+    app, creds, _, reply, Resp = app_and_creds
+    creds[("ralph@example.com", "trello")] = {"api_key": "KEY12345",
+                                              "token": "TOK456789"}
+    reply["response"] = Resp(404, {
+        "message": "not found: GET /1/lists/x?key=KEY12345&token=TOK456789"})
+    body = _post(app, "/github/read_file", "ralph@example.com",
+                 {"owner": "o", "repo": "r", "path": "x"}).json()
+    assert "KEY12345" not in body["error"]
+    body = _post(app, "/trello/list_cards", "ralph@example.com",
+                 {"list_id": "x"}).json()
+    assert "KEY12345" not in body["error"] and "TOK456789" not in body["error"]
+
+
+def test_a_page_length_vendor_message_is_cut(app_and_creds):
+    """Their messages are a sentence. Anything longer is not a message."""
+    app, creds, _, reply, Resp = app_and_creds
+    _github(creds)
+    reply["response"] = Resp(404, {"message": "x" * 900})
+    body = _post(app, "/github/read_file", "ralph@example.com",
+                 {"owner": "o", "repo": "r", "path": "x"}).json()
+    assert len(body["error"]) < 300
+
+
+def test_a_vendor_with_nothing_to_say_still_gets_a_sentence(app_and_creds):
+    app, creds, _, reply, Resp = app_and_creds
+    _github(creds)
+    reply["response"] = Resp(404, {})
+    body = _post(app, "/github/read_file", "ralph@example.com",
+                 {"owner": "o", "repo": "r", "path": "x"}).json()
+    assert body["ok"] is False and "could not find" in body["error"]
+
+
 def test_a_rejection_tells_the_user_the_credential_is_the_problem(app_and_creds):
     app, creds, _, reply, Resp = app_and_creds
     creds[("ralph@example.com", "github")] = {"token": "T"}

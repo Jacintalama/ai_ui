@@ -103,6 +103,46 @@ def _err(message: str) -> dict:
     return {"ok": False, "error": message}
 
 
+#: The most of a vendor's own words we will repeat. Their messages are a
+#: sentence; anything longer is not a message.
+MAX_VENDOR_NOTE = 160
+
+
+def _vendor_said(r, creds: Dict[str, str]) -> str:
+    """The vendor's own explanation, when it is safe to repeat.
+
+    This exists because of a real afternoon (2026-11-03). Asked to read a
+    file, the answer was "GitHub could not find that. Check the id you
+    asked for", which sends somebody hunting a wrong repository name that
+    is not wrong. GitHub had said exactly what was the matter: "This
+    repository is empty." We were throwing away the one account of the
+    failure and replacing it with a guess.
+
+    Why this is not simply `r.text`. For Trello the credential rides in the
+    QUERY STRING and its errors echo the request, so repeating a vendor's
+    words verbatim is how a token ends up rendered into a chat. So the rule
+    is a property, not a vendor list: say it only when no part of this
+    person's credential appears in it. That holds for a vendor nobody has
+    thought about yet, which a list does not.
+    """
+    try:
+        payload = r.json()
+    except Exception:                                       # noqa: BLE001
+        return ""
+    message = ""
+    if isinstance(payload, dict):
+        message = str(payload.get("message") or payload.get("error") or "")
+    message = " ".join(c for c in message.split() if c)
+    message = "".join(c for c in message if c.isprintable())[:MAX_VENDOR_NOTE]
+    if not message:
+        return ""
+    for value in (creds or {}).values():
+        v = str(value or "")
+        if len(v) >= 8 and v in message:
+            return ""
+    return " " + message
+
+
 async def _call(provider_id: str, tool: Tool, email: str,
                 args: Dict[str, Any]) -> dict:
     label = (C.provider(provider_id) or C.Provider).label if C.provider(
@@ -170,7 +210,8 @@ async def _call(provider_id: str, tool: Tool, email: str,
                     "expired or lack permission. Reconnect it from "
                     "Connections.")
     if r.status_code == 404:
-        return _err(label + " could not find that. Check the id you asked for.")
+        return _err(label + " could not find that."
+                    + _vendor_said(r, creds))
     if r.status_code >= 400:
         # Never r.text: vendors echo the request, credential included.
         logger.warning("mytools: %s %s returned %s", provider_id, tool.name,
