@@ -902,6 +902,9 @@ class MakeAgentIn(BaseModel):
     #: The code the preview handed back. Absent means "show me what you
     #: would make"; present and matching means "make it".
     confirm: str | None = None
+    #: Skill names from the catalogue. None means "suggest ones that fit the
+    #: role" (2026-11-03); [] means none.
+    skills: list[str] | None = None
 
 
 #: A proposed agent, by owner, until it is confirmed or forgotten. Ten
@@ -912,14 +915,15 @@ PROPOSAL_TTL_SECONDS = 600
 
 
 def _proposal_key(email: str, name: str, instructions: str,
-                  role: str, access: str) -> str:
+                  role: str, access: str, skills: list | None = None) -> str:
     """A code that stands for THIS exact proposal.
 
     Derived from the content rather than random, so confirming a proposal
     whose wording was quietly altered between the preview and the create
     does not match: the person approved a brief, not a name.
     """
-    raw = "\x1f".join([email, name, instructions, role or "", access])
+    raw = "\x1f".join([email, name, instructions, role or "", access,
+                      ",".join(skills or [])])
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
 
 
@@ -937,7 +941,8 @@ def _proposal_is_live(code: str) -> bool:
 
 
 def proposal_text(name: str, role: str, access: str, instructions: str,
-                  code: str) -> str:
+                  code: str, skills: list | None = None,
+                  unknown: list | None = None, suggested: bool = False) -> str:
     """What the person is asked to approve, in full.
 
     The instructions are shown WHOLE and never summarised. They are what the
@@ -948,12 +953,19 @@ def proposal_text(name: str, role: str, access: str, instructions: str,
                      "nothing.",
              "ask": "Can act, but asks you first every time.",
              "all": "Acts on its own, without asking."}
+    skill_lines = ["Skills: %s%s" % (
+        ", ".join(skills or []) or "none",
+        " (suggested from its role; tell me to add or drop any)"
+        if suggested and skills else "")]
+    if unknown:
+        skill_lines.append("Not skills here, so left out: %s" % ", ".join(unknown))
     return "\n".join([
         "Here is the agent I would create. Nothing has been made yet.",
         "",
         "Name: %s" % name,
         "Role: %s" % (role or "(none)"),
         "Access: %s" % words.get(access, access),
+    ] + skill_lines + [
         "",
         "Instructions:",
         instructions,
@@ -966,13 +978,17 @@ def proposal_text(name: str, role: str, access: str, instructions: str,
 
 
 def _make_agent_body(agent_id: str, name: str, role: str | None,
-                     instructions: str, access: str) -> dict:
+                     instructions: str, access: str,
+                     skills: list | None = None) -> dict:
     meta = {"description": instructions[:120], "toolIds": ["server:mcp-proxy"],
             "agent_instructions": instructions, "access": access,
             "llm": _default_model(),
             "profile_image_url": agent_avatar.data_uri(agent_id, name)}
     if role:
         meta["role"] = role
+    # Only when there are some, the way the Agents page writes it.
+    if skills:
+        meta["skillIds"] = list(skills)
     return {"id": agent_id, "name": name, "base_model_id": agent_llm.base_model(),
             "meta": meta, "params": {"system": instructions},
             "access_grants": [], "is_active": True}
@@ -993,6 +1009,27 @@ def _agent_problem(name: str, instructions: str, access: str, mine: int) -> str:
     if mine >= MAX_AGENTS:
         return f"You have {MAX_AGENTS} agents, which is the limit. Delete one to make another."
     return ""
+
+
+def _skills_for(asked, role: str, instructions: str) -> tuple[list, list, bool]:
+    """(kept, unknown, suggested) for an agent being made.
+
+    Nothing named means suggest from what the agent is for (Lukas,
+    2026-10-31: it should know which skills that agent needs from what the
+    person said). Named ones are checked against the catalogue, never
+    trusted: a model names skills from memory, and one that does not exist
+    is left out and said, not saved as a name nothing answers to.
+    """
+    if asked is None:
+        return agent_skills.suggest(" ".join([role or "", instructions])), [], True
+    known = agent_skills.load_all()
+    kept, unknown = [], []
+    for raw in asked:
+        name = str(raw or "").strip()
+        if not name or name in kept or name in unknown:
+            continue
+        (kept if name in known else unknown).append(name)
+    return kept, unknown, False
 
 
 async def _roster_for(email: str) -> list[dict]:
@@ -1039,13 +1076,15 @@ async def make_agent(body: MakeAgentIn, user: CurrentUser = Depends(current_user
     # It also matters more than it used to: the main chat's assistant runs on
     # Ask and its writes are held, but a model calling this tool natively
     # through Open WebUI has no such brake. This is that brake.
-    code = _proposal_key(user.email, name, instructions, role or "", access)
+    skills, unknown, suggested = _skills_for(body.skills, role or "", instructions)
+    code = _proposal_key(user.email, name, instructions, role or "", access, skills)
     if (body.confirm or "").strip() != code:
         _remember_proposal(code)
         return {"created": False, "confirm": code, "name": name, "role": role,
-                "access": access, "instructions": instructions,
+                "access": access, "instructions": instructions, "skills": skills,
                 "message": proposal_text(name, role or "", access,
-                                         instructions, code)}
+                                         instructions, code, skills, unknown,
+                                         suggested)}
     if not _proposal_is_live(code):
         raise HTTPException(status_code=400, detail=(
             "That confirmation has expired. Ask me to show you the agent "
@@ -1062,9 +1101,11 @@ async def make_agent(body: MakeAgentIn, user: CurrentUser = Depends(current_user
     for _ in range(2):
         agent_id = _new_agent_id(slug)
         status, result = await _create_model(
-            token, _make_agent_body(agent_id, name, role, instructions, access))
+            token, _make_agent_body(agent_id, name, role, instructions, access,
+                                    skills))
         if status == 200:
-            return {"id": agent_id, "name": name, "role": role, "access": access}
+            return {"id": agent_id, "name": name, "role": role, "access": access,
+                    "skills": skills}
         if not _is_duplicate_id_error(status, result):
             break
     logger.warning("could not make an agent for %s: status=%s", user.email, status)

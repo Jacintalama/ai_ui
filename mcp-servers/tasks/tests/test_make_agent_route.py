@@ -112,6 +112,63 @@ def test_the_rules_are_the_pages_rules(client, owui):
     assert owui["created"] == []
 
 
+# --- skills on an agent made from the chat (2026-11-03) ----------------------
+
+def _make(client, body):
+    code = client.post("/api/tasks/agents/make", json=body).json()["confirm"]
+    return client.post("/api/tasks/agents/make", json=dict(body, confirm=code))
+
+
+def test_named_skills_are_shown_and_saved(client, owui):
+    body = dict(MAKE_JACK, skills=["inbox-triage", "draft-reply"])
+    shown = client.post("/api/tasks/agents/make", json=body).json()
+    assert "Skills: inbox-triage, draft-reply" in shown["message"]
+    r = _make(client, body)
+    assert r.status_code == 200, r.text
+    assert r.json()["skills"] == ["inbox-triage", "draft-reply"]
+    # Where the Agents page reads them, so the card shows them ticked.
+    assert owui["created"][0]["meta"]["skillIds"] == ["inbox-triage", "draft-reply"]
+
+
+def test_a_skill_that_does_not_exist_is_left_out_and_said(client, owui):
+    """A model names skills from memory. One that is not in the catalogue
+    is dropped and the person is told, never saved as a name nothing
+    answers to."""
+    body = dict(MAKE_JACK, skills=["inbox-triage", "fly-a-plane"])
+    shown = client.post("/api/tasks/agents/make", json=body).json()
+    assert "Skills: inbox-triage\n" in shown["message"]
+    assert "fly-a-plane" in shown["message"]
+    _make(client, body)
+    assert owui["created"][0]["meta"]["skillIds"] == ["inbox-triage"]
+
+
+def test_no_skills_named_means_ones_that_fit_the_role(client, owui):
+    """Lukas, 2026-10-31: the chat should know which skills the agent needs
+    from what the person said. Against the real catalogue."""
+    body = {"name": "Ivy", "role": "Inbox assistant", "access": "read",
+            "instructions": "Triage my inbox and draft replies to customers."}
+    shown = client.post("/api/tasks/agents/make", json=body).json()
+    assert shown["skills"][0] == "inbox-triage"
+    assert "suggested" in shown["message"].lower()
+    _make(client, body)
+    assert owui["created"][0]["meta"]["skillIds"] == shown["skills"]
+
+
+def test_an_empty_list_means_no_skills(client, owui):
+    _make(client, dict(MAKE_JACK, skills=[]))
+    assert "skillIds" not in owui["created"][0]["meta"]
+
+
+def test_changing_the_skills_after_the_preview_needs_a_new_preview(client, owui):
+    """The skills are part of what the person approved."""
+    code = client.post("/api/tasks/agents/make",
+                       json=dict(MAKE_JACK, skills=["inbox-triage"])).json()["confirm"]
+    r = client.post("/api/tasks/agents/make",
+                    json=dict(MAKE_JACK, skills=["draft-reply"], confirm=code))
+    assert r.json()["created"] is False
+    assert owui["created"] == []
+
+
 def test_the_roster_lists_what_the_chat_needs(client):
     r = client.get("/api/tasks/agents/roster")
     assert r.status_code == 200
@@ -146,10 +203,39 @@ async def test_the_chat_tool_makes_an_agent_as_the_person_asking():
     # worth noticing.
     assert calls[0] == ("POST", "/agents/make", "r@example.com",
                         {"name": "Jack", "instructions": "Keep the books.",
-                         "role": "Bookkeeper", "access": "ask", "confirm": ""})
+                         "role": "Bookkeeper", "access": "ask", "confirm": "",
+                         "skills": None})
     said = await tool.list_my_agents(__user__={"email": "r@example.com"})
     assert said == "Your agents: Mia (Receptionist)."
     assert await tool.create_agent("Jack", "x", __user__={}) == "I do not know who is asking, so I cannot make an agent."
+
+
+async def test_the_chat_tool_sends_the_skills_it_was_given():
+    """Empty asks the service to suggest; "none" means none; names are sent
+    as a list for the service to check."""
+    tool = _tool()
+    sent = []
+
+    async def call(method, path, email, json_body=None):
+        sent.append(json_body)
+        return True, {"created": False, "message": "preview"}
+    tool._call = call
+    who = {"email": "r@example.com"}
+    await tool.create_agent("Ivy", "x", skills="inbox-triage, draft-reply", __user__=who)
+    await tool.create_agent("Ivy", "x", skills="none", __user__=who)
+    await tool.create_agent("Ivy", "x", __user__=who)
+    assert [b["skills"] for b in sent] == [["inbox-triage", "draft-reply"], [], None]
+
+
+async def test_the_chat_says_which_skills_the_new_agent_has():
+    tool = _tool()
+
+    async def call(method, path, email, json_body=None):
+        return True, {"id": "agent-ivy-1", "name": "Ivy", "role": "Inbox", "access": "read",
+                      "skills": ["inbox-triage", "draft-reply"]}
+    tool._call = call
+    said = await tool.create_agent("Ivy", "x", confirm="abc", __user__={"email": "r@example.com"})
+    assert "Skills: inbox-triage, draft-reply." in said
 
 
 async def test_the_chat_never_says_it_made_an_agent_it_only_previewed():
