@@ -695,6 +695,12 @@
                      padding: 10px; border-radius: 8px;
                      background: var(--panel-2, rgba(127,127,127,.08)); }
   .auto-email-when input[type="text"] { width: 100%; }
+  /* The Trello trigger's pickers (2026-11-03). Same box as the email
+     filters, because it answers the same question: what starts this. */
+  .auto-trello-when { display: flex; flex-direction: column; gap: 8px;
+                      padding: 10px; border-radius: 8px;
+                      background: var(--panel-2, rgba(127,127,127,.08)); }
+  .auto-trello-when select { width: 100%; }
   .auto-check { display: flex; gap: 6px; align-items: center; font-size: 13px; }
   .auto-rule { padding: 10px 0; border-bottom: 1px solid var(--border); }
   .auto-rule:last-of-type { border-bottom: 0; }
@@ -1097,6 +1103,7 @@
             <select id="auto-trigger" aria-label="What starts it">
               <option value="webhook">Start it from a URL (a form, n8n, a script)</option>
               <option value="email">Start it when an email arrives</option>
+              <option value="trello">Start it when a card lands on a Trello list</option>
             </select>
           </div>
           <!-- Only for an email trigger. Hidden until then, because for a
@@ -1120,6 +1127,19 @@
             <input id="auto-email-advanced" type="text" maxlength="500"
                    placeholder="Or a Gmail search of your own (from:a@b.c OR from:d@e.f)"
                    aria-label="A Gmail search of your own">
+          </div>
+          <!-- Only for a Trello trigger. A list is picked, never typed: a
+               Trello list id is 24 hex characters and asking anyone to find
+               and paste one is how a feature gets built and then not
+               used. -->
+          <div id="auto-trello-when" class="auto-trello-when" hidden>
+            <div class="hint" style="margin-bottom:4px">Which list should
+              start it? It looks once a minute, and only at cards that have
+              changed since it last looked, so adding a rule never fires it
+              on the cards already there.</div>
+            <select id="auto-trello-board" aria-label="Which Trello board"></select>
+            <select id="auto-trello-list" aria-label="Which list on that board"></select>
+            <div class="hint" id="auto-trello-note"></div>
           </div>
           <div class="auto-form-row">
             <select id="auto-deliver" aria-label="Where the answer goes">
@@ -3297,24 +3317,32 @@
           name.className = "auto-rule-name";
           name.textContent = a.name + (a.enabled ? "" : " (paused)");
           var byEmail = a.trigger === "email";
+          var byTrello = a.trigger === "trello";
+          // Only a webhook rule has a URL to copy or to reissue.
+          var byUrl = !byEmail && !byTrello;
           var small = document.createElement("small");
           small.textContent = (a.agent_missing ? "agent missing" : a.agent_name)
-            + ", " + (byEmail ? "starts on an email" : "starts from its URL")
+            + ", " + (byEmail ? "starts on an email"
+                      : byTrello ? "starts on a Trello card"
+                      : "starts from its URL")
             + ", answers " + ({ chat: "in the agent's chat", discord: "in Discord",
                                 none: "only to the caller" }[a.deliver_to] || a.deliver_to)
             + ", run " + (a.run_count || 0) + (a.run_count === 1 ? " time" : " times");
           name.appendChild(small);
           head.appendChild(name);
           row.appendChild(head);
-          // An email rule has no URL to copy. What it watches for is the
+          // A polled rule has no URL to copy. What it watches is the
           // equivalent thing to show: without it the rule is a name and
-          // nothing a person can check.
+          // nothing a person can check. For Trello that is the list's
+          // name, never its id, which would be true and useless.
           var url = document.createElement("div");
           url.className = "auto-rule-url";
           var code = document.createElement("code");
-          code.textContent = byEmail ? (a.trigger_query || "(no filter)") : a.hook_url;
+          code.textContent = byEmail ? (a.trigger_query || "(no filter)")
+            : byTrello ? trelloListName(a.trigger_query)
+            : a.hook_url;
           url.appendChild(code);
-          if (!byEmail) {
+          if (byUrl) {
             var copy = document.createElement("button");
             copy.className = "btn"; copy.type = "button"; copy.textContent = "Copy URL";
             copy.setAttribute("data-auto-copy", a.hook_url);
@@ -3326,7 +3354,7 @@
           var buttons = [["data-auto-run", "Run now"],
                          ["data-auto-toggle", a.enabled ? "Pause" : "Resume"]];
           // A new URL only means something for a rule that has one.
-          if (!byEmail) buttons.push(["data-auto-newurl", "New URL"]);
+          if (byUrl) buttons.push(["data-auto-newurl", "New URL"]);
           buttons.push(["data-auto-delete", "Delete"]);
           buttons.forEach(function (pair) {
             var b = document.createElement("button");
@@ -3363,7 +3391,14 @@
         fillAutoAgents();
         try {
           var body = await getJson(AUTOS_URL);
-          drawAutomations(body.automations || []);
+          var list = body.automations || [];
+          // Before drawing, not after: a Trello rule drawn without its
+          // boards shows a 24 character id, and redrawing to replace it
+          // makes the panel flicker on every load.
+          if (list.some(function (a) { return a.trigger === "trello"; })) {
+            await ensureTrelloBoards();
+          }
+          drawAutomations(list);
         } catch (e) {
           autosError(e && e.message === "signed out"
             ? "Your session expired. Sign in again."
@@ -3398,10 +3433,84 @@
         return parts.join(" ");
       }
 
-      // The filter boxes only mean something for an email trigger.
+      // The person's Trello boards, each with its lists. Fetched once and
+      // kept, because the same answer names the list a saved rule watches
+      // and fills the picker, and nobody needs two round trips for that.
+      var trelloBoards = null, trelloBoardsPromise = null;
+      function ensureTrelloBoards() {
+        if (trelloBoardsPromise) return trelloBoardsPromise;
+        trelloBoardsPromise = getJson(AUTOS_URL + "/trello/lists")
+          .then(function (d) { trelloBoards = d; return d; })
+          .catch(function () {
+            // A failed look must not be cached as "no boards" for ever:
+            // the commonest cause is a session that just expired.
+            trelloBoardsPromise = null;
+            return { connected: false, boards: [] };
+          });
+        return trelloBoardsPromise;
+      }
+      // "Board / List" for a saved rule, or the raw id when the boards are
+      // not loaded. An id on the page is not wrong, only useless.
+      function trelloListName(listId) {
+        var boards = (trelloBoards || {}).boards || [];
+        for (var i = 0; i < boards.length; i++) {
+          var lists = boards[i].lists || [];
+          for (var j = 0; j < lists.length; j++) {
+            if (lists[j].id === listId) return boards[i].name + " / " + lists[j].name;
+          }
+        }
+        return listId || "(no list)";
+      }
+      function fillTrelloLists() {
+        var boards = (trelloBoards || {}).boards || [];
+        var chosen = document.getElementById("auto-trello-board").value;
+        var board = boards.filter(function (b) { return b.id === chosen; })[0];
+        var sel = document.getElementById("auto-trello-list");
+        sel.innerHTML = "";
+        ((board || {}).lists || []).forEach(function (l) {
+          var o = document.createElement("option");
+          o.value = l.id; o.textContent = l.name;
+          sel.appendChild(o);
+        });
+      }
+      async function fillTrelloBoards() {
+        var note = document.getElementById("auto-trello-note");
+        note.textContent = "Loading your boards...";
+        var d = await ensureTrelloBoards();
+        var sel = document.getElementById("auto-trello-board");
+        sel.innerHTML = "";
+        (d.boards || []).forEach(function (b) {
+          var o = document.createElement("option");
+          o.value = b.id; o.textContent = b.name;
+          sel.appendChild(o);
+        });
+        fillTrelloLists();
+        // Three different nothings, and a person can act on each of them
+        // only if they are told apart.
+        note.textContent = !d.connected
+          ? "Connect Trello under Connections first, then reopen this."
+          : ((d.boards || []).length ? "" :
+             "No boards with open lists on this Trello account.");
+      }
+      document.getElementById("auto-trello-board")
+        .addEventListener("change", fillTrelloLists);
+
+      function triggerQuery() {
+        var kind = document.getElementById("auto-trigger").value;
+        if (kind === "email") return emailQuery();
+        if (kind === "trello") return document.getElementById("auto-trello-list").value || "";
+        return "";
+      }
+
+      // The filter boxes only mean something for an email trigger, and the
+      // pickers only for a Trello one.
       function syncTriggerForm() {
-        var byEmail = document.getElementById("auto-trigger").value === "email";
-        document.getElementById("auto-email-when").hidden = !byEmail;
+        var kind = document.getElementById("auto-trigger").value;
+        document.getElementById("auto-email-when").hidden = kind !== "email";
+        document.getElementById("auto-trello-when").hidden = kind !== "trello";
+        // Loaded when it is first wanted, not on every page load: most
+        // people opening this panel are not making a Trello rule.
+        if (kind === "trello") fillTrelloBoards();
       }
       document.getElementById("auto-trigger")
         .addEventListener("change", syncTriggerForm);
@@ -3418,7 +3527,9 @@
             instructions: document.getElementById("auto-instructions").value.trim(),
             deliver_to: document.getElementById("auto-deliver").value,
             trigger: document.getElementById("auto-trigger").value,
-            trigger_query: emailQuery()
+            // One field, read by the server according to the trigger
+            // beside it: a Gmail search, or a Trello list id.
+            trigger_query: triggerQuery()
           });
           document.getElementById("auto-name").value = "";
           document.getElementById("auto-instructions").value = "";
