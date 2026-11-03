@@ -187,6 +187,12 @@ echo "==> [6/6] post-deploy smoke"
 
 SMOKE_FAIL=0
 
+# How long a just-restarted service is given to start answering. 20 tries of
+# 3 seconds is a minute, which is far more than tasks needs and still fails
+# in reasonable time when something is genuinely broken.
+SMOKE_TRIES="${SMOKE_TRIES:-20}"
+SMOKE_WAIT="${SMOKE_WAIT:-3}"
+
 # Map services → smoke URL
 declare -A SMOKE_URLS=(
   [tasks]="http://${ORCH_HOST}/tasks/healthz"
@@ -212,10 +218,28 @@ for svc in ${CHECK_LIST}; do
     fi
     continue
   fi
-  if curl -fsS -o /dev/null -m 10 "${url}"; then
-    echo "  ok: ${svc} → ${url}"
+  # Asked repeatedly, not once. A service that has just been recreated is
+  # not listening yet, and a single curl here returns 502 and calls a deploy
+  # that worked a failure. Measured 2026-11-03: tasks built, restarted, and
+  # answered 200 moments later, while the run was marked failed and
+  # .deploy-state was left stale, so the NEXT deploy recomputed its changed
+  # paths from the wrong commit.
+  #
+  # A deploy that lies about its outcome is worse than one that fails: it
+  # trains everybody to ignore the result.
+  ok=0
+  for attempt in $(seq 1 "${SMOKE_TRIES}"); do
+    if curl -fsS -o /dev/null -m 10 "${url}"; then
+      ok=1
+      [[ "${attempt}" -gt 1 ]] && echo "  ok: ${svc} after ${attempt} tries"
+      break
+    fi
+    sleep "${SMOKE_WAIT}"
+  done
+  if [[ "${ok}" -eq 1 ]]; then
+    echo "  ok: ${svc} -> ${url}"
   else
-    echo "  FAIL: ${svc} → ${url} returned non-200"
+    echo "  FAIL: ${svc} -> ${url} never answered after $(( SMOKE_TRIES * SMOKE_WAIT ))s"
     SMOKE_FAIL=1
   fi
 done
