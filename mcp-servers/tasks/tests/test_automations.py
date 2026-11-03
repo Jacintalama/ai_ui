@@ -414,3 +414,58 @@ def test_the_signed_in_routes_need_a_person():
     assert c.get("/api/tasks/automations").status_code == 401
     assert c.post("/api/tasks/automations", json={"name": "x", "agent": "Ada",
                                                    "instructions": "y"}).status_code == 401
+
+
+# --- what is stored is what was approved (2026-11-03) ----------------------
+
+async def test_a_trello_rule_keeps_the_list_it_was_given(monkeypatch):
+    """Found by making the first real Trello rule. The route validated the
+    list id, answered 200, and stored an empty one, because create() kept
+    the query only for an email trigger.
+
+    The rule then existed, looked right on the page, and could never fire:
+    the poller refuses a rule that does not say what to watch. Validation
+    and persistence disagreed, and only persistence was true.
+    """
+    stored = {}
+
+    async def fake_insert(email, row):
+        stored.update(row)
+        return dict(row, id="r1", created_at=None, last_run_at=None,
+                    last_status=None, run_count=0)
+
+    monkeypatch.setattr(am, "_create", fake_insert)
+    await am.create("r@example.com", "Watch Review", "a1", "Do it.", "chat",
+                    am.TRIGGER_TRELLO, "6ae472c14cc1b6e65b622e10")
+    assert stored["trigger"] == am.TRIGGER_TRELLO
+    assert stored["trigger_query"] == "6ae472c14cc1b6e65b622e10"
+
+
+async def test_an_email_rule_still_keeps_its_search(monkeypatch):
+    stored = {}
+
+    async def fake_insert(email, row):
+        stored.update(row)
+        return dict(row, id="r1", created_at=None, last_run_at=None,
+                    last_status=None, run_count=0)
+
+    monkeypatch.setattr(am, "_create", fake_insert)
+    await am.create("r@example.com", "Chase", "a1", "Do it.", "chat",
+                    am.TRIGGER_EMAIL, "from:boss@x.com")
+    assert stored["trigger_query"] == "from:boss@x.com"
+
+
+async def test_a_webhook_rule_stores_no_query(monkeypatch):
+    """A webhook watches nothing, so anything sent alongside it is noise
+    and must not be kept as if it meant something."""
+    stored = {}
+
+    async def fake_insert(email, row):
+        stored.update(row)
+        return dict(row, id="r1", created_at=None, last_run_at=None,
+                    last_status=None, run_count=0)
+
+    monkeypatch.setattr(am, "_create", fake_insert)
+    await am.create("r@example.com", "Hook", "a1", "Do it.", "chat",
+                    am.TRIGGER_WEBHOOK, "something")
+    assert stored["trigger_query"] == ""
