@@ -124,9 +124,20 @@ async def _call(provider_id: str, tool: Tool, email: str,
         placeholder = "{" + key + "}"
         if placeholder in path:
             path = path.replace(placeholder, str(value))
+    # An OPTIONAL segment nobody filled is an empty segment, not a missing
+    # value. list_folder's `path` is how somebody asks for the root of a
+    # repository, and leaving it out is the ordinary way to do that.
+    for name, spec in (tool.args or {}).items():
+        if len(spec) > 2 and not spec[2]:
+            path = path.replace("{" + name + "}", "")
     if "{" in path:
         missing = path.split("{", 1)[1].split("}", 1)[0]
         return _err("Missing required value: " + missing)
+    # ".../contents/" is not ".../contents". Measured against GitHub on
+    # 2026-11-03: the first 404s, so listing a repository's root failed
+    # while every other path worked, which is the hardest kind of bug to
+    # read from a tool result.
+    path = path.rstrip("/") or "/"
 
     params = dict(auth.params)
     for param_name, arg_name in (tool.query or {}).items():
