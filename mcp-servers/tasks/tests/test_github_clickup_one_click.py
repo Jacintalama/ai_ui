@@ -269,3 +269,75 @@ def test_nothing_else_loses_its_parameters(monkeypatch):
     url = O2.authorize_url("notion", client_id="C",
                            redirect_uri="https://io.example/cb", state="S")
     assert "response_type=code" in url and "owner=user" in url
+
+
+# --- authorising a GitHub App is not installing one (2026-11-03) ------------
+# The first real connect: the card said Connected as the right account,
+# /user answered, and the account could see nothing. Zero installations,
+# zero repositories. Authorisation says who you are; INSTALLATION is what
+# grants access to repositories, and /login/oauth/authorize offers only the
+# first. The result passes every check we make and does nothing.
+
+def _reload(monkeypatch, slug):
+    import importlib
+    if slug is None:
+        monkeypatch.delenv("GITHUB_APP_SLUG", raising=False)
+    else:
+        monkeypatch.setenv("GITHUB_APP_SLUG", slug)
+    return importlib.reload(O)
+
+
+def test_a_github_app_sends_people_to_install_it(monkeypatch):
+    O2 = _reload(monkeypatch, "io-aiui")
+    try:
+        url = O2.authorize_url("github", client_id="CID",
+                               redirect_uri="https://io.example/cb", state="S1")
+        assert url.startswith("https://github.com/apps/io-aiui/installations/new")
+        assert "state=S1" in url
+    finally:
+        _reload(monkeypatch, None)
+
+
+def test_the_install_page_carries_no_client_id_or_redirect(monkeypatch):
+    """GitHub uses the ones the app is registered with. Sending our own is
+    at best ignored and at worst a mismatch error after consent."""
+    O2 = _reload(monkeypatch, "io-aiui")
+    try:
+        url = O2.authorize_url("github", client_id="CID",
+                               redirect_uri="https://io.example/cb", state="S1")
+        assert "client_id" not in url and "redirect_uri" not in url
+    finally:
+        _reload(monkeypatch, None)
+
+
+def test_without_a_slug_it_is_the_ordinary_oauth_app_flow(monkeypatch):
+    """A deployment that registered an OAuth App has no slug and must keep
+    the authorize URL it has always had."""
+    O2 = _reload(monkeypatch, None)
+    url = O2.authorize_url("github", client_id="CID",
+                           redirect_uri="https://io.example/cb", state="S1")
+    assert url.startswith("https://github.com/login/oauth/authorize")
+    assert "client_id=CID" in url
+
+
+def test_the_state_still_rides_along_on_the_install_page(monkeypatch):
+    """It is the only thing that says whose grant this is. Losing it here
+    would mean a token arriving with nobody to attach it to."""
+    O2 = _reload(monkeypatch, "io-aiui")
+    try:
+        assert "state=abc" in O2.authorize_url(
+            "github", client_id="C", redirect_uri="https://io.example/cb",
+            state="abc")
+    finally:
+        _reload(monkeypatch, None)
+
+
+def test_nothing_else_is_diverted_to_an_install_page(monkeypatch):
+    O2 = _reload(monkeypatch, "io-aiui")
+    try:
+        for pid in ("clickup", "notion"):
+            assert "installations/new" not in O2.authorize_url(
+                pid, client_id="C", redirect_uri="https://io.example/cb",
+                state="S")
+    finally:
+        _reload(monkeypatch, None)

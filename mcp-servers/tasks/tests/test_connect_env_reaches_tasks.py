@@ -69,6 +69,13 @@ def test_the_github_scope_is_passed_through():
     assert _declared("GITHUB_SCOPE")
 
 
+def test_the_github_app_slug_is_passed_through():
+    """Without it the connect sends people to authorise rather than install,
+    which grants no repository access and produces a connection that names
+    the right person and reaches nothing."""
+    assert _declared("GITHUB_APP_SLUG")
+
+
 def test_the_scope_keeps_its_default_when_nobody_sets_it():
     """`-` and not `:-`. With `:-`, an empty value and an absent one are
     indistinguishable, and every deployment still on an OAuth App would

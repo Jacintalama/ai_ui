@@ -854,7 +854,12 @@
       metaEl.style.cssText = 'color:#7f7f7f;font-size:11px;text-align:center;'
         + 'height:' + SLOT_META + 'px;line-height:' + SLOT_META + 'px;margin-top:2px;'
         + 'max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-      metaEl.textContent = app.sub || (acct && acct !== app.name ? acct : '');
+      // NOT the account as a fallback. The block below prints it, so a card
+      // with no sub-title showed it twice: "aiuiteams-hub" above
+      // "aiuiteams-hub" above "Connected". Google never showed it because
+      // it has a sub-title, which is why this survived. The slot stays, so
+      // the status line does not move when there is nothing to put in it.
+      metaEl.textContent = app.sub || '';
       card.appendChild(metaEl);
 
       // Which account is connected, directly above the status (2026-10-29).

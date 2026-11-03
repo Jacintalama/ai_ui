@@ -414,6 +414,11 @@ services:
       # registered the older kind of app would silently stop asking for
       # the scope it needs.
       - GITHUB_SCOPE=${GITHUB_SCOPE-repo read:user}
+      # github.com/apps/<slug>. Set means a GitHub App, so the connect
+      # sends people to INSTALL it rather than merely authorise it:
+      # authorising grants no repository access at all, and produces a
+      # connection that names the right person and reaches nothing.
+      - GITHUB_APP_SLUG=${GITHUB_APP_SLUG:-}
       - CLICKUP_CLIENT_ID=${CLICKUP_CLIENT_ID:-}
       - CLICKUP_CLIENT_SECRET=${CLICKUP_CLIENT_SECRET:-}
       - AIRTABLE_CLIENT_ID=${AIRTABLE_CLIENT_ID:-}
