@@ -223,3 +223,34 @@ async def test_the_poller_watches_only_trello_rules():
     source = inspect.getsource(tp._rules)
     assert "a.trigger = :kind" in source
     assert automations.TRIGGER_TRELLO == "trello"
+
+
+# --- a capped flood leaves a record (2026-11-03) ---------------------------
+
+async def test_the_poller_writes_down_what_the_cap_dropped(spy, monkeypatch):
+    """Twenty cards at once is five runs and fifteen that never fire. The
+    cursor moves past them on purpose, so the only place the person who was
+    flooded could learn that was a log line on the server."""
+    noted = []
+
+    async def record_skipped(rule, skipped, cap):
+        noted.append((rule["id"], skipped, cap))
+
+    monkeypatch.setattr(tp, "_record_skipped_seam", record_skipped)
+    spy["found"] = [_card("c%02d" % i, NOW + i + 1) for i in range(20)]
+    out = await tp.check_rule(_rule())
+    assert out["fired"] == T.BURST
+    assert out["skipped"] == 20 - T.BURST
+    assert noted == [("r1", 20 - T.BURST, T.BURST)]
+
+
+async def test_an_ordinary_tick_records_no_skip(spy, monkeypatch):
+    noted = []
+
+    async def record_skipped(rule, skipped, cap):
+        noted.append(skipped)
+
+    monkeypatch.setattr(tp, "_record_skipped_seam", record_skipped)
+    spy["found"] = [_card("c1", NOW + 30)]
+    await tp.check_rule(_rule())
+    assert noted == []

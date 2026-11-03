@@ -293,3 +293,34 @@ def test_a_rule_with_no_cursor_at_all_does_not_read_the_whole_mailbox(spy):
     # And it starts properly from now, rather than staying stuck at zero and
     # refusing for ever.
     assert spy["saved"][0]["after"] > 1_700_000_000
+
+
+# --- a capped flood leaves a record (2026-11-03) ---------------------------
+
+async def test_the_poller_writes_down_what_the_cap_dropped(spy, monkeypatch):
+    """Twenty matching emails in a minute is five runs and fifteen that
+    never fire. The cursor moves past them on purpose, so a log line on the
+    server was the only place the person who was flooded could learn it."""
+    noted = []
+
+    async def record_skipped(rule, skipped, cap):
+        noted.append((rule["id"], skipped, cap))
+
+    monkeypatch.setattr(ep, "_record_skipped_seam", record_skipped)
+    spy["found"] = [_msg("m%02d" % i, 1_000_100 + i) for i in range(20)]
+    out = await ep.check_rule(_rule())
+    assert out["fired"] == et.BURST
+    assert out["skipped"] == 20 - et.BURST
+    assert noted == [("r1", 20 - et.BURST, et.BURST)]
+
+
+async def test_an_ordinary_tick_records_no_skip(spy, monkeypatch):
+    noted = []
+
+    async def record_skipped(rule, skipped, cap):
+        noted.append(skipped)
+
+    monkeypatch.setattr(ep, "_record_skipped_seam", record_skipped)
+    spy["found"] = [_msg("m1", 1_000_100)]
+    await ep.check_rule(_rule())
+    assert noted == []

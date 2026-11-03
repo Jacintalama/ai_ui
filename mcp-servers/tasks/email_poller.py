@@ -159,6 +159,14 @@ _agent_name_seam = _agent_name
 _fire_seam = _fire
 
 
+async def _record_skipped(automation: dict, skipped: int, cap: int) -> None:
+    import automation_runner
+    await automation_runner.record_skipped(automation, skipped, cap)
+
+
+_record_skipped_seam = _record_skipped
+
+
 async def check_rule(rule: dict) -> dict:
     """Look once for one rule. Returns what happened, for the log and the
     tests. Never raises.
@@ -231,6 +239,10 @@ async def check_rule(rule: dict) -> dict:
                            rid, message.get("id"), exc_info=True)
     await _save_cursor_seam(rid, owner, cursor, now_seen, "")
     if skipped:
+        # Written down, not only logged. The cursor has moved past these
+        # and they will never fire, so a log line on the server is the one
+        # place the person who was flooded cannot look.
+        await _record_skipped_seam(rule, skipped, email_trigger.BURST)
         logger.info("email rule %s: %d fired, %d skipped by the burst cap",
                     rid, fired, skipped)
     return {"fired": fired, "skipped": skipped, "error": ""}
