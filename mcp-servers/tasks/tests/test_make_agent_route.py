@@ -203,10 +203,39 @@ async def test_the_chat_tool_makes_an_agent_as_the_person_asking():
     # worth noticing.
     assert calls[0] == ("POST", "/agents/make", "r@example.com",
                         {"name": "Jack", "instructions": "Keep the books.",
-                         "role": "Bookkeeper", "access": "ask", "confirm": ""})
+                         "role": "Bookkeeper", "access": "ask", "confirm": "",
+                         "skills": None})
     said = await tool.list_my_agents(__user__={"email": "r@example.com"})
     assert said == "Your agents: Mia (Receptionist)."
     assert await tool.create_agent("Jack", "x", __user__={}) == "I do not know who is asking, so I cannot make an agent."
+
+
+async def test_the_chat_tool_sends_the_skills_it_was_given():
+    """Empty asks the service to suggest; "none" means none; names are sent
+    as a list for the service to check."""
+    tool = _tool()
+    sent = []
+
+    async def call(method, path, email, json_body=None):
+        sent.append(json_body)
+        return True, {"created": False, "message": "preview"}
+    tool._call = call
+    who = {"email": "r@example.com"}
+    await tool.create_agent("Ivy", "x", skills="inbox-triage, draft-reply", __user__=who)
+    await tool.create_agent("Ivy", "x", skills="none", __user__=who)
+    await tool.create_agent("Ivy", "x", __user__=who)
+    assert [b["skills"] for b in sent] == [["inbox-triage", "draft-reply"], [], None]
+
+
+async def test_the_chat_says_which_skills_the_new_agent_has():
+    tool = _tool()
+
+    async def call(method, path, email, json_body=None):
+        return True, {"id": "agent-ivy-1", "name": "Ivy", "role": "Inbox", "access": "read",
+                      "skills": ["inbox-triage", "draft-reply"]}
+    tool._call = call
+    said = await tool.create_agent("Ivy", "x", confirm="abc", __user__={"email": "r@example.com"})
+    assert "Skills: inbox-triage, draft-reply." in said
 
 
 async def test_the_chat_never_says_it_made_an_agent_it_only_previewed():

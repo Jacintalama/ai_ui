@@ -83,7 +83,7 @@ class Tools:
 
     async def create_agent(self, name: str, instructions: str, role: str = "",
                            access: str = "read", confirm: str = "",
-                           __user__: dict = {}) -> str:
+                           skills: str = "", __user__: dict = {}) -> str:
         """Create a new AI agent for this person, in TWO steps.
 
         Call it WITHOUT `confirm` first. Nothing is created: you get back the
@@ -102,14 +102,27 @@ class Tools:
         its card (Project manager). `access` is read (looks things up,
         changes nothing), ask (can act but asks first) or all (acts without
         asking); use read unless the person asked for more.
+
+        `skills` is a comma separated list of skill names (find_skills lists
+        them). Leave it empty and the service picks skills that fit the
+        role, and they appear in the preview for the person to approve or
+        change. "none" gives the agent no skills. Send the same value again
+        with the `confirm` code.
         """
         email = self._email(__user__)
         if not email:
             return "I do not know who is asking, so I cannot make an agent."
+        wanted = (skills or "").strip()
+        if not wanted:
+            names = None
+        elif wanted.lower() in ("none", "no", "no skills"):
+            names = []
+        else:
+            names = [s.strip() for s in wanted.split(",") if s.strip()]
         ok, data = await self._call("POST", "/agents/make", email, {
             "name": (name or "").strip(), "instructions": (instructions or "").strip(),
             "role": (role or "").strip(), "access": (access or "read").strip().lower(),
-            "confirm": (confirm or "").strip()})
+            "confirm": (confirm or "").strip(), "skills": names})
         if not ok:
             return data
         # The service decides whether this was a preview or a create, and it
@@ -118,6 +131,8 @@ class Tools:
         if not data.get("created", True):
             return data.get("message") or "Nothing was created yet."
         words = {"read": "read only", "ask": "with access, asking first", "all": "all access"}
+        made = data.get("skills") if isinstance(data.get("skills"), list) else []
         return ("Made " + data.get("name", name) + (" (" + data["role"] + ")" if data.get("role") else "") +
                 ", " + words.get(data.get("access"), "read only") +
-                ". It is in the Agent Office now, in the room of its tools.")
+                ". It is in the Agent Office now, in the room of its tools." +
+                (" Skills: " + ", ".join(made) + "." if made else ""))
