@@ -120,6 +120,26 @@ GITHUB_SCOPE = os.environ.get("GITHUB_SCOPE", "repo read:user").strip()
 GITHUB_APP_SLUG = os.environ.get("GITHUB_APP_SLUG", "").strip()
 
 
+def install_url(state: str = "") -> str:
+    """Where somebody goes to give the app access to repositories.
+
+    Corrected 2026-11-03, the same day it was introduced. The connect was
+    pointed straight at this page, which fixed a first install and broke
+    every reconnect: for an app somebody has ALREADY installed, this page
+    says Configure rather than Install, and finishing it updates their
+    repository selection and never redirects back with a code. Measured in
+    the log as seven `oauth/start` calls and zero callbacks.
+
+    So the connect uses the ordinary authorize URL, which always returns a
+    code, and this is offered afterwards to the people who turn out to have
+    no installation behind their token. Both paths end somewhere.
+    """
+    if not GITHUB_APP_SLUG:
+        return ""
+    base = "https://github.com/apps/" + GITHUB_APP_SLUG + "/installations/new"
+    return base + ("?" + urlencode({"state": state}) if state else "")
+
+
 def _bare_token(payload: dict, vendor: str,
                 extra: Optional[Dict[str, str]] = None
                 ) -> Tuple[Dict[str, str], str]:
@@ -272,12 +292,6 @@ def authorize_url(provider_id: str, client_id: str, redirect_uri: str,
     provider = PROVIDERS.get(provider_id or "")
     if not provider:
         raise ValueError("No OAuth for provider: " + str(provider_id))
-    if provider_id == "github" and GITHUB_APP_SLUG:
-        # Not /login/oauth/authorize: see GITHUB_APP_SLUG. The install page
-        # takes no client_id or redirect_uri, because GitHub uses the ones
-        # the app is registered with.
-        return ("https://github.com/apps/" + GITHUB_APP_SLUG
-                + "/installations/new?" + urlencode({"state": state}))
     params = {"client_id": client_id, "redirect_uri": redirect_uri,
               "state": state}
     params.update(provider.authorize_extra)
