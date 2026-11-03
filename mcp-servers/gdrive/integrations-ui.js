@@ -3717,6 +3717,7 @@
     // is next, so it must be looked at regardless of what the header
     // rewrite found.
     if (spans.length) aiuiMaybeTakeTurns(spans[spans.length - 1]);
+    aiuiWatchBuilds();
   }
 
   function wireAiuiAgentNameHeaders() {
@@ -3734,6 +3735,180 @@
     aiuiRefreshAgentNames();
     scan();
   }
+
+  // ===== Build watcher =====
+  //
+  // A build started from the main chat answers in seconds with "Building X
+  // now ... Watch it here: <preview.html?task=id>" and then runs for
+  // minutes. Until 2026-11-03 the chat said nothing more unless somebody
+  // asked, so a person could not tell working from finished from broken
+  // (Lukas, 2026-10-31). The page watches that link and, when the build
+  // settles, adds ONE message with the link to the app, the question it is
+  // waiting on, or why it failed.
+  //
+  // The page and not the service, because Open WebUI's page saves its own
+  // copy of the whole chat on the next message: a message the service wrote
+  // behind its back could be wiped out. The cost is that nothing is posted
+  // while the chat is closed; it catches up when the chat is opened again.
+  var AIUI_BUILD_LINK = /\/tasks\/static\/preview\.html\?task=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/g;
+  var AIUI_BUILD_POLL_MS = 10000;
+  var AIUI_BUILD_GIVE_UP_MS = 60 * 60 * 1000;
+  var AIUI_BUILD_LOOK_MS = 5000;
+  // A link older than this is a build from before the watcher, or one
+  // already reported elsewhere. Closing those on first open would post a
+  // pile of "is built" messages for builds from weeks ago.
+  var AIUI_BUILD_RECENT_S = 2 * 60 * 60;
+  var aiuiBuildWatched = {};
+  var aiuiBuildLastLook = 0;
+
+  function aiuiBuildIdsIn(content) {
+    var ids = [];
+    var text = String(content || '');
+    AIUI_BUILD_LINK.lastIndex = 0;
+    var m;
+    while ((m = AIUI_BUILD_LINK.exec(text)) !== null) {
+      if (ids.indexOf(m[1]) < 0) ids.push(m[1]);
+    }
+    return ids;
+  }
+
+  function aiuiBuildDoneMarker(id) {
+    return '<!-- aiui:build-done ' + id + ' -->';
+  }
+
+  function aiuiBuildIsClosed(chain, id) {
+    var marker = aiuiBuildDoneMarker(id);
+    for (var i = 0; i < chain.length; i++) {
+      if (chain[i] && String(chain[i].content || '').indexOf(marker) >= 0) return true;
+    }
+    return false;
+  }
+
+  // Mirrors routes_aiuibuilder._public_build_status and _preview_url, so the
+  // page says what the build_status tool would say.
+  function aiuiBuildOutcome(task, id, origin) {
+    var status = String((task && task.status) || '');
+    if (status === 'running' || status === 'planning') return null;
+    var slug = (task && task.built_app_slug) || 'The app';
+    var why = String((task && task.result) || '').trim().slice(0, 500);
+    var said;
+    if (status === 'completed') {
+      said = slug + ' is built.\nOpen it here: ' + origin + '/tasks/preview-app/' + slug + '/';
+    } else if (status === 'awaiting_input') {
+      said = slug + ' is waiting on an answer.' + (why ? '\n' + why : '')
+        + '\nAnswer it here: ' + origin + '/tasks/static/preview.html?task=' + id;
+    } else {
+      said = slug + ' did not finish building.' + (why ? '\n' + why : '');
+    }
+    return said + '\n\n' + aiuiBuildDoneMarker(id);
+  }
+
+  function aiuiBuildLine(chatId, text) {
+    if (aiuiChatIdFromUrl() !== chatId) return;
+    var el = document.getElementById('aiui-build-line');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'aiui-build-line';
+      el.style.cssText = 'padding:.25rem 0 .75rem 3.75rem;opacity:.65;font-size:.9rem;';
+      var rows = document.querySelectorAll('[id^="message-"]');
+      var last = rows.length ? rows[rows.length - 1] : null;
+      var slot = last && last.parentElement ? last.parentElement : null;
+      if (slot && slot.parentElement) slot.parentElement.insertBefore(el, slot.nextSibling);
+      else document.body.appendChild(el);
+    }
+    el.textContent = text;
+  }
+
+  function aiuiClearBuildLine() {
+    var el = document.getElementById('aiui-build-line');
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+
+  // Resolves true when the build is closed (written now, or by another tab
+  // already), false to try again on the next tick. Written under the
+  // current tail, and only when that tail is a finished reply: while the
+  // person's next message is being answered, writing would race Open
+  // WebUI's own save of it.
+  function aiuiCloseBuild(chatId, id, text) {
+    return aiuiFetchChat(chatId).then(function (fresh) {
+      var fh = fresh.chat.history;
+      var chain = aiuiChainFromHistory(fh);
+      if (aiuiBuildIsClosed(chain, id)) return true;
+      var tail = chain[chain.length - 1];
+      if (!tail || tail.role !== 'assistant' || tail.done !== true) return false;
+      var newId = aiuiUuid();
+      fh.messages[newId] = {
+        id: newId, parentId: tail.id, childrenIds: [], role: 'assistant',
+        content: text, model: tail.model, modelName: tail.modelName, modelIdx: 0,
+        done: true, timestamp: Math.floor(Date.now() / 1000)
+      };
+      tail.childrenIds = (tail.childrenIds || []).concat([newId]);
+      fh.currentId = newId;
+      return aiuiSaveChat(chatId, { history: fh }).then(function () {
+        if (aiuiChatIdFromUrl() === chatId) aiuiSoftReload(chatId);
+        return true;
+      }, function () { return false; });
+    }, function () { return false; });
+  }
+
+  function aiuiPollBuild(chatId, id, started) {
+    fetch('/api/tasks/' + id, { headers: aiuiAuthHeaders() }).then(function (r) {
+      // Not this person's build, or gone: nothing to report, ever.
+      if (r.status === 403 || r.status === 404) return 'stop';
+      return r.ok ? r.json() : null;
+    }).then(function (task) {
+      if (task === 'stop') return true;
+      if (!task) return false;
+      var text = aiuiBuildOutcome(task, id, location.origin);
+      if (text) return aiuiCloseBuild(chatId, id, text);
+      var mins = Math.max(1, Math.round((Date.now() - started) / 60000));
+      aiuiBuildLine(chatId, 'Still building, ' + mins + ' min so far. '
+        + 'A message will appear here when it is done.');
+      return false;
+    }).catch(function () { return false; }).then(function (finished) {
+      if (finished || Date.now() - started > AIUI_BUILD_GIVE_UP_MS) {
+        aiuiClearBuildLine();
+        return;
+      }
+      setTimeout(function () { aiuiPollBuild(chatId, id, started); }, AIUI_BUILD_POLL_MS);
+    });
+  }
+
+  // From the page scan, at most once every few seconds. Reads the rendered
+  // rows first, which costs nothing, and fetches the stored chat only when
+  // a build link it is not already watching turns up.
+  function aiuiWatchBuilds() {
+    var chatId = aiuiChatIdFromUrl();
+    if (!chatId) return;
+    var now = Date.now();
+    if (now - aiuiBuildLastLook < AIUI_BUILD_LOOK_MS) return;
+    aiuiBuildLastLook = now;
+    var rows = document.querySelectorAll('[id^="message-"]');
+    var fresh = [];
+    for (var i = 0; i < rows.length; i++) {
+      aiuiBuildIdsIn(rows[i].innerHTML).forEach(function (id) {
+        if (!aiuiBuildWatched[id] && fresh.indexOf(id) < 0) fresh.push(id);
+      });
+    }
+    if (!fresh.length) return;
+    fresh.forEach(function (id) { aiuiBuildWatched[id] = true; });
+    aiuiFetchChat(chatId).then(function (data) {
+      var chain = aiuiChainFromHistory(data.chat.history);
+      var nowS = Math.floor(Date.now() / 1000);
+      fresh.forEach(function (id) {
+        if (aiuiBuildIsClosed(chain, id)) return;
+        var said = chain.filter(function (m) {
+          return m && m.role === 'assistant' && aiuiBuildIdsIn(m.content).indexOf(id) >= 0;
+        })[0];
+        if (!said || nowS - Number(said.timestamp || 0) > AIUI_BUILD_RECENT_S) return;
+        aiuiPollBuild(chatId, id, Number(said.timestamp) * 1000 || Date.now());
+      });
+    }).catch(function () {
+      // Could not read the chat: look again on a later scan.
+      fresh.forEach(function (id) { delete aiuiBuildWatched[id]; });
+    });
+  }
+  // ===== End build watcher =====
 
   linkifyConnectButtons();
   wireAiuiConnectLinks();
