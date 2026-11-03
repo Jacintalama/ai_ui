@@ -47,11 +47,27 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL",
                                  "https://ai-ui.coolestdomain.win")
 
 
+#: The public shape of a callback, and the only URL of ours a person
+#: connecting ever sees: it sits in the address bar while they approve, and
+#: it is what gets registered with the vendor.
+#:
+#: /connect/<app>/callback rather than /api/tasks/connections/<app>/oauth/
+#: callback (2026-11-03). The old one is not wrong and nothing about it
+#: restricted anybody, but "api/tasks" is the name of a container and a
+#: database schema, and a person deciding whether to trust us with their
+#: Trello should not be reading our plumbing to do it.
+#:
+#: The old path still serves the same handler and always will: tokens were
+#: issued against it, and a registered callback that stops answering is a
+#: connect that fails with nothing to explain it.
+PUBLIC_CALLBACK = "/connect/{provider}/callback"
+
+
 def _redirect_uri(provider_id: str) -> str:
     """Where the vendor sends the browser back. Must match what was registered
     with them exactly, character for character."""
     return (PUBLIC_BASE_URL.rstrip("/")
-            + "/api/tasks/connections/" + provider_id + "/oauth/callback")
+            + PUBLIC_CALLBACK.format(provider=provider_id))
 
 
 class ConnectBody(BaseModel):
@@ -205,6 +221,21 @@ async def oauth_start(provider_id: str,
     return {"url": O.authorize_url(provider_id, client_id=client_id,
                                    redirect_uri=_redirect_uri(provider_id),
                                    state=state)}
+
+
+#: The clean public path, mounted at the root rather than under this
+#: router's /connections prefix, because the point of it is the shape.
+#: One handler, two paths: a second implementation would be a second thing
+#: to keep correct, and this one decides who a grant belongs to.
+public_router = APIRouter()
+
+
+@public_router.get("/connect/{provider_id}/callback")
+async def oauth_callback_public(provider_id: str, code: str = "",
+                                state: str = "", error: str = ""):
+    """The callback people actually see. Delegates, never duplicates."""
+    return await oauth_callback(provider_id, code=code, state=state,
+                                error=error)
 
 
 @router.get("/{provider_id}/oauth/callback")

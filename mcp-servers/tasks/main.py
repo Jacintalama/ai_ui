@@ -38,6 +38,7 @@ from routes_discord_links import router as discord_links_router
 from routes_state import router as state_router
 from routes_prefs import router as prefs_router
 from routes_connections import router as connections_router
+from routes_connections import public_router as connect_public_router
 from routes_supabase import router as supabase_router
 from routes_supabase_oauth import router as supabase_oauth_router
 from routes_tasks import router as tasks_router
@@ -205,6 +206,7 @@ app.include_router(prefs_router)  # /prefs — per-user timezone (internal, OWUI
 app.include_router(prefs_router, prefix="/api/tasks")  # public: /api/tasks/prefs/*
 app.include_router(connections_router)  # /connections — per-user third-party creds
 app.include_router(connections_router, prefix="/api/tasks")  # public: /api/tasks/connections/*
+app.include_router(connect_public_router)  # public: /connect/<app>/callback
 
 # Per-user tool servers, one sub-app per provider, each serving its own
 # openapi.json so mcp-proxy can discover it. Internal only: it is never routed

@@ -140,6 +140,12 @@
 	handle /api/tasks/* {
 		reverse_proxy api-gateway:8080
 	}
+	# /connect/<app>/callback → gateway → tasks. The public face of an OAuth
+	# callback: what a person sees while approving, and what is registered
+	# with the vendor.
+	handle /connect/* {
+		reverse_proxy api-gateway:8080
+	}
 	# /api/supabase/* (OAuth callback + future endpoints) → gateway → tasks
 	handle /api/supabase/* {
 		reverse_proxy api-gateway:8080

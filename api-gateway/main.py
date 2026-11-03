@@ -564,6 +564,16 @@ async def proxy_handler(path: str, request: Request):
     elif full_path.startswith("/api/tasks"):
         backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
         backend_path = full_path
+    # /connect/<app>/callback → Tasks service. The public face of an OAuth
+    # callback (2026-11-03): the one URL of ours a person connecting sees,
+    # and the one registered with the vendor, so it says what it does rather
+    # than naming a container. Identity headers are stripped from the client
+    # in forward_request like every other route, and the callback itself is
+    # authenticated by its signed state rather than by the session, so a
+    # logged-out browser landing here still completes the grant.
+    elif full_path.startswith("/connect/"):
+        backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
+        backend_path = full_path
     # /api/video-jobs/* → Tasks service (video refine jobs API)
     elif full_path.startswith("/api/video-jobs"):
         backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
