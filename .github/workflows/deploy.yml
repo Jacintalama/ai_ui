@@ -92,7 +92,15 @@ jobs:
         env:
           ORCH_HOST: 46.224.193.25
           USER: github-actions
-        run: ./scripts/deploy_orchestrator.sh
+        # `bash <script>`, not `./<script>`. Every shell script in
+        # this repo is stored mode 100644, because the people who
+        # write them work on Windows, where git records no
+        # executable bit. So ./scripts/deploy_orchestrator.sh is
+        # Permission denied on the runner and the job dies at exit
+        # 126, which is what happened on the first run that got past
+        # the missing secret. Marking this one file executable would
+        # work until somebody re-added it from Windows.
+        run: bash ./scripts/deploy_orchestrator.sh
       - name: verify
         run: |
           curl -fsS https://ai-ui.coolestdomain.win/tasks/healthz
