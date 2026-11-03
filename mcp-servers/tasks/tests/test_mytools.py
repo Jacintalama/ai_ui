@@ -23,6 +23,7 @@ What these tests pin down:
   - every tool is discoverable by mcp-proxy, which reads a plain OpenAPI
     document and indexes POST paths
 """
+import base64
 import json
 
 import pytest
@@ -190,6 +191,135 @@ def test_a_self_hosted_provider_calls_the_users_own_host(app_and_creds):
         "base_url": "https://n8n.ralph.example", "api_key": "K"}
     _post(app, "/n8n/list_my_workflows", "ralph@example.com")
     assert calls[0]["url"].startswith("https://n8n.ralph.example/")
+
+
+# --- reading code and reviewing a pull request ----------------------------
+# Added 2026-11-03, after the first real GitHub connect. The set was four
+# lists and one create, so asked "can you read the code or review a PR", the
+# chat answered correctly that everything inside the repository was out of
+# its reach.
+
+def _github(creds):
+    creds[("ralph@example.com", "github")] = {"token": "gho_TOKEN1"}
+
+
+def test_a_files_content_comes_back_readable(app_and_creds):
+    """GitHub returns it base64 encoded. A model handed base64 will either
+    try to decode it itself or describe the file as binary."""
+    app, creds, calls, reply, Resp = app_and_creds
+    _github(creds)
+    source = "def hello():" + chr(10) + "    return 'world'" + chr(10)
+    reply["response"] = Resp(200, {
+        "path": "src/app.py", "size": len(source), "encoding": "base64",
+        "content": base64.b64encode(source.encode()).decode()})
+    body = _post(app, "/github/read_file", "ralph@example.com",
+                 {"owner": "o", "repo": "r", "path": "src/app.py"}).json()
+    assert body["ok"] is True
+    assert body["item"]["content"] == source
+    assert body["item"]["truncated"] is False
+    assert calls[0]["url"].endswith("/repos/o/r/contents/src/app.py")
+
+
+def test_a_huge_file_is_cut_and_says_so(app_and_creds):
+    """A repo file can be any size and a tool result goes straight into the
+    turn. Silently complete-looking truncation is the worse failure."""
+    app, creds, _, reply, Resp = app_and_creds
+    _github(creds)
+    reply["response"] = Resp(200, {
+        "path": "big.txt", "size": 999,
+        "content": base64.b64encode(b"x" * 60_000).decode()})
+    item = _post(app, "/github/read_file", "ralph@example.com",
+                 {"owner": "o", "repo": "r", "path": "big.txt"}).json()["item"]
+    assert len(item["content"]) == mytools.MAX_FILE_CHARS
+    assert item["truncated"] is True
+
+
+def test_a_file_that_will_not_decode_is_not_a_crash(app_and_creds):
+    """An image, or anything else that is not utf-8."""
+    app, creds, _, reply, Resp = app_and_creds
+    _github(creds)
+    reply["response"] = Resp(200, {"path": "logo.png", "size": 10,
+                                   "content": "!!!not base64!!!"})
+    body = _post(app, "/github/read_file", "ralph@example.com",
+                 {"owner": "o", "repo": "r", "path": "logo.png"}).json()
+    assert body["ok"] is True
+
+
+def test_a_folder_listing_comes_through_the_same_path(app_and_creds):
+    """GitHub answers the same endpoint with a LIST for a directory, so one
+    path serves both and the decoder must pass a list through untouched."""
+    app, creds, _, reply, Resp = app_and_creds
+    _github(creds)
+    reply["response"] = Resp(200, [
+        {"name": "app.py", "path": "src/app.py", "type": "file", "size": 12},
+        {"name": "lib", "path": "src/lib", "type": "dir", "size": 0}])
+    body = _post(app, "/github/list_folder", "ralph@example.com",
+                 {"owner": "o", "repo": "r", "path": "src"}).json()
+    assert [i["name"] for i in body["items"]] == ["app.py", "lib"]
+
+
+def test_a_pull_requests_changes_carry_the_diff(app_and_creds):
+    """The whole point of reviewing one. Without `patch` there is nothing to
+    review, only a list of filenames."""
+    app, creds, calls, reply, Resp = app_and_creds
+    _github(creds)
+    reply["response"] = Resp(200, [
+        {"filename": "src/app.py", "status": "modified", "additions": 3,
+         "deletions": 1,
+         "patch": "@@ -1 +1 @@" + chr(10) + "-old" + chr(10) + "+new"}])
+    body = _post(app, "/github/read_pull_request_changes", "ralph@example.com",
+                 {"owner": "o", "repo": "r", "number": 7}).json()
+    assert body["items"][0]["patch"].startswith("@@")
+    assert calls[0]["url"].endswith("/repos/o/r/pulls/7/files")
+
+
+def test_one_enormous_diff_does_not_push_out_the_rest(app_and_creds):
+    """A generated lockfile can be a megabyte of patch on its own. The file
+    stays listed with its counts, so a reviewer still sees it changed."""
+    app, creds, _, reply, Resp = app_and_creds
+    _github(creds)
+    reply["response"] = Resp(200, [
+        {"filename": "lock.json", "status": "modified", "additions": 9000,
+         "deletions": 9000, "patch": "+" * 50_000},
+        {"filename": "src/app.py", "status": "modified", "additions": 1,
+         "deletions": 0, "patch": "@@ real change @@"}])
+    items = _post(app, "/github/read_pull_request_changes", "ralph@example.com",
+                  {"owner": "o", "repo": "r", "number": 7}).json()["items"]
+    assert len(items) == 2
+    assert len(items[0]["patch"]) < 50_000
+    assert "trimmed" in items[0]["patch"]
+    assert items[0]["additions"] == 9000
+    assert items[1]["patch"] == "@@ real change @@"
+
+
+def test_a_review_is_delivered_as_a_comment(app_and_creds):
+    """GitHub puts pull request comments on the ISSUES path, which reads
+    like a mistake and is not one."""
+    app, creds, calls, _, _ = app_and_creds
+    _github(creds)
+    _post(app, "/github/comment_on_pull_request", "ralph@example.com",
+          {"owner": "o", "repo": "r", "number": 7, "body": "Looks good."})
+    assert calls[0]["method"] == "POST"
+    assert calls[0]["url"].endswith("/repos/o/r/issues/7/comments")
+    assert calls[0]["json"] == {"body": "Looks good."}
+
+
+def test_a_comment_is_written_as_the_person_not_the_platform(app_and_creds):
+    """The whole reason these tools exist. Before them every GitHub call the
+    platform made was made as whoever owns the shared container token."""
+    app, creds, calls, _, _ = app_and_creds
+    _github(creds)
+    _post(app, "/github/comment_on_issue", "ralph@example.com",
+          {"owner": "o", "repo": "r", "number": 2, "body": "On it."})
+    assert calls[0]["headers"]["Authorization"] == "Bearer gho_TOKEN1"
+
+
+def test_reading_code_without_a_connection_asks_them_to_connect(app_and_creds):
+    app, _, calls, _, _ = app_and_creds
+    body = _post(app, "/github/read_file", "nobody@example.com",
+                 {"owner": "o", "repo": "r", "path": "x.py"}).json()
+    assert body["ok"] is False and "connect" in body["error"].lower()
+    assert calls == []
 
 
 # --- the Trello verbs people actually ask for -----------------------------

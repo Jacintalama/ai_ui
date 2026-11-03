@@ -86,6 +86,15 @@ def test_trello_is_named_because_that_is_the_one_that_was_measured():
     assert "board" in note and "card" in note
 
 
+def test_the_note_names_code_and_pull_requests():
+    """Added 2026-11-03 with the tools behind them. `video` taught the rule:
+    a note that does not name the thing is never picked for it, so "review
+    my pull request" needs the words to be there."""
+    note = _note()
+    assert "code" in note
+    assert "pull request" in note
+
+
 def test_the_note_says_doing_and_not_only_seeing():
     """"add a card to my trello board" scored 1/3 against a note that
     described services rather than what is done with them. A note that only

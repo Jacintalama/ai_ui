@@ -183,6 +183,60 @@ async def _call(provider_id: str, tool: Tool, email: str,
 # Hand-written against each vendor's REST API. `keep` is the shortlist of
 # fields a model actually needs to answer a question or act on the result.
 
+#: How much of one file, and of one file's diff, a model is handed. A repo
+#: file can be any size at all and a tool result goes straight into a turn,
+#: so the cap is the difference between reading a file and losing the
+#: conversation. Both say when they have cut, so nothing silently looks
+#: complete.
+MAX_FILE_CHARS = 40_000
+MAX_PATCH_CHARS = 8_000
+
+
+def _github_file(payload: Any) -> Any:
+    """GitHub returns a file's content base64 encoded. Decoded here, because
+    a model handed base64 will either try to decode it itself or describe it
+    as binary.
+
+    A directory comes back as a LIST from the same endpoint, which is what
+    list_folder uses; passed through untouched so one path serves both.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    raw = str(payload.get("content") or "")
+    text, cut = "", False
+    if raw:
+        import base64 as _b64
+        try:
+            text = _b64.b64decode(raw).decode("utf-8", "replace")
+        except Exception:                                   # noqa: BLE001
+            text = ""
+    if len(text) > MAX_FILE_CHARS:
+        text, cut = text[:MAX_FILE_CHARS], True
+    return {"path": payload.get("path"), "size": payload.get("size"),
+            "truncated": cut or bool(payload.get("truncated")),
+            "content": text}
+
+
+def _github_patches(payload: Any) -> Any:
+    """A pull request's files, with each diff trimmed.
+
+    One generated lockfile can be a megabyte of patch on its own and would
+    push every other file in the review out of the turn. The file is still
+    listed with its counts, so a reviewer sees that it changed.
+    """
+    if not isinstance(payload, list):
+        return payload
+    out = []
+    for f in payload:
+        if not isinstance(f, dict):
+            continue
+        patch = str(f.get("patch") or "")
+        if len(patch) > MAX_PATCH_CHARS:
+            patch = patch[:MAX_PATCH_CHARS] + chr(10) + "... diff trimmed ..."
+        out.append({**f, "patch": patch})
+    return out
+
+
 GITHUB_TOOLS = [
     Tool(name="list_my_repos",
          summary="List the GitHub repositories you own or collaborate on, most recently updated first.",
@@ -216,6 +270,82 @@ GITHUB_TOOLS = [
                "body": ("string", "Issue description", False)},
          body=("title", "body"),
          keep=("number", "title", "html_url", "state")),
+    # --- reading code, and reviewing a pull request (2026-11-03) ----------
+    # Asked for directly: "i want the system can read repo codes can review
+    # PR all of it like claude". The set before this was four lists and one
+    # create, so the chat answered, correctly, that anything inside the
+    # repository was out of its reach.
+    Tool(name="read_file",
+         summary="Read one file from a GitHub repository, given its path. "
+                 "Use this to look at the actual code.",
+         method="GET", path="/repos/{owner}/{repo}/contents/{path}",
+         query={"ref": "ref"},
+         args={"owner": ("string", "Repository owner", True),
+               "repo": ("string", "Repository name", True),
+               "path": ("string", "Path inside the repo, like src/app.py", True),
+               "ref": ("string", "Branch, tag or commit. Defaults to the "
+                                 "default branch", False)},
+         unwrap=_github_file,
+         keep=("path", "size", "truncated", "content")),
+    Tool(name="list_folder",
+         summary="List the files and folders at one path in a GitHub "
+                 "repository. Use an empty path for the top level.",
+         method="GET", path="/repos/{owner}/{repo}/contents/{path}",
+         query={"ref": "ref"},
+         args={"owner": ("string", "Repository owner", True),
+               "repo": ("string", "Repository name", True),
+               "path": ("string", "Folder inside the repo. Empty for the root", False),
+               "ref": ("string", "Branch, tag or commit", False)},
+         keep=("name", "path", "type", "size")),
+    Tool(name="list_repo_pull_requests",
+         summary="List the pull requests in one GitHub repository.",
+         method="GET", path="/repos/{owner}/{repo}/pulls",
+         query={"state": "state", "per_page": "limit"},
+         args={"owner": ("string", "Repository owner", True),
+               "repo": ("string", "Repository name", True),
+               "state": ("string", "open, closed or all", False),
+               "limit": ("integer", "How many to return", False)},
+         keep=("number", "title", "state", "html_url", "user", "draft",
+               "updated_at")),
+    Tool(name="read_pull_request",
+         summary="Read one pull request: its title, description, state and "
+                 "how much it changes.",
+         method="GET", path="/repos/{owner}/{repo}/pulls/{number}",
+         args={"owner": ("string", "Repository owner", True),
+               "repo": ("string", "Repository name", True),
+               "number": ("integer", "Pull request number", True)},
+         keep=("number", "title", "state", "body", "html_url", "user",
+               "additions", "deletions", "changed_files", "mergeable_state")),
+    Tool(name="read_pull_request_changes",
+         summary="Read the actual code changes in a pull request, file by "
+                 "file, with the diff. Use this to review a PR.",
+         method="GET", path="/repos/{owner}/{repo}/pulls/{number}/files",
+         query={"per_page": "limit"},
+         args={"owner": ("string", "Repository owner", True),
+               "repo": ("string", "Repository name", True),
+               "number": ("integer", "Pull request number", True),
+               "limit": ("integer", "How many files to return", False)},
+         unwrap=_github_patches,
+         keep=("filename", "status", "additions", "deletions", "patch")),
+    Tool(name="comment_on_pull_request",
+         summary="Leave a comment on a pull request, written as you. This is "
+                 "how a review is delivered.",
+         method="POST", path="/repos/{owner}/{repo}/issues/{number}/comments",
+         args={"owner": ("string", "Repository owner", True),
+               "repo": ("string", "Repository name", True),
+               "number": ("integer", "Pull request number", True),
+               "body": ("string", "The comment, markdown is fine", True)},
+         body=("body",),
+         keep=("id", "html_url", "created_at")),
+    Tool(name="comment_on_issue",
+         summary="Leave a comment on a GitHub issue, written as you.",
+         method="POST", path="/repos/{owner}/{repo}/issues/{number}/comments",
+         args={"owner": ("string", "Repository owner", True),
+               "repo": ("string", "Repository name", True),
+               "number": ("integer", "Issue number", True),
+               "body": ("string", "The comment, markdown is fine", True)},
+         body=("body",),
+         keep=("id", "html_url", "created_at")),
     Tool(name="list_my_pull_requests",
          summary="List open pull requests you have raised across GitHub.",
          method="GET", path="/search/issues",
