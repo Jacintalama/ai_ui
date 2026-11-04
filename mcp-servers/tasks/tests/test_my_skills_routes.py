@@ -259,16 +259,26 @@ def test_a_code_nobody_issued_saves_nothing(client):
     assert state["saved"] == []
 
 
-def test_a_code_belonging_to_somebody_else_saves_nothing(client, monkeypatch):
+def test_a_code_belonging_to_somebody_else_saves_nothing(client):
     """Keyed by code and checked against the email, so a code seen in
-    another person's transcript cannot write into their account."""
+    another person's transcript cannot write into their account.
+
+    The other person gets their OWN client rather than this one with its
+    override swapped mid-test. Swapping it passed locally and failed on
+    CI, where a different FastAPI version resolves the override once: the
+    request still arrived as the first person and the save succeeded,
+    which read as the check being broken when the test was.
+    """
     c, state = client
     code = c.post("/api/tasks/agents/skills/draft",
                   json={"job": "x"}).json()["confirm"]
-    from auth import CurrentUser, current_user
-    c.app.dependency_overrides[current_user] = lambda: CurrentUser(
+
+    other = FastAPI()
+    other.include_router(routes_agents.router, prefix="/api/tasks")
+    other.dependency_overrides[current_user] = lambda: CurrentUser(
         email="someone-else@example.com")
-    r = c.post("/api/tasks/agents/skills/mine", json={"confirm": code})
+    with TestClient(other) as thief:
+        r = thief.post("/api/tasks/agents/skills/mine", json={"confirm": code})
     assert r.status_code == 422
     assert state["saved"] == []
 
