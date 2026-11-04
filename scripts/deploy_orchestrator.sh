@@ -159,7 +159,22 @@ while IFS= read -r path; do
   [[ -n "${path}" ]] && RSYNC_PATHS+=("${path}")
 done <<< "${CHANGED}"
 
-rsync -avz --relative \
+# --inplace, because one of the files under mcp-servers/ is BIND-MOUNTED
+# into another container as a single file: mcp-servers/gdrive/
+# integrations-ui.js, mounted at /app/build/static/integrations-ui.js in
+# open-webui. rsync's default is to write a temporary file and rename it
+# over the target, which gives the path a NEW INODE. A single-file bind
+# mount follows the inode, so the container keeps serving the old file and
+# the page silently stays on yesterday's code until somebody restarts it.
+#
+# That is why that file had always been placed by hand with `cat >`, and
+# why every change to it sat outside this pipeline. --inplace writes
+# through the existing inode, so it does not have to.
+#
+# The cost is that an interrupted transfer leaves a half-written file
+# rather than the old one. For source a service is rebuilt from, a failed
+# build is louder than a stale page.
+rsync -avz --relative --inplace \
   --exclude='__pycache__' \
   --exclude='.pytest_cache' \
   --exclude='*.pyc' \

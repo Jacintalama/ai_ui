@@ -82,3 +82,30 @@ def test_the_script_parses():
         pytest.skip("no bash here")
     out = subprocess.run([bash, "-n", str(SCRIPT)], capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
+
+
+# --- the bind-mounted file (2026-11-04) -----------------------------------
+
+def test_rsync_writes_through_the_existing_inode():
+    """mcp-servers/gdrive/integrations-ui.js is bind-mounted into
+    open-webui as a SINGLE FILE. rsync's default is write-temp-then-rename,
+    which gives the path a new inode; a single-file mount follows the
+    inode, so the container goes on serving the old file and the page
+    silently stays on yesterday's code.
+
+    That is why that file had always been placed by hand, and why every
+    change to it sat outside this pipeline. --inplace is what lets the
+    pipeline own it.
+    """
+    text = SCRIPT.read_text(encoding="utf-8")
+    line = re.search(r"^rsync .*$", text, re.M)
+    assert line, "the rsync call moved; re-point this test"
+    assert "--inplace" in line.group(0), (
+        "rsync will rename over the bind-mounted file and break the mount")
+
+
+def test_the_bind_mounted_file_is_still_inside_a_watched_path():
+    """If it ever leaves mcp-servers/, --inplace protects nothing and the
+    file goes back to needing a hand."""
+    text = (ROOT / "docker-compose.unified.yml").read_text(encoding="utf-8")
+    assert "./mcp-servers/gdrive/integrations-ui.js:" in text
