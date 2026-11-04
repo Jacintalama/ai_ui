@@ -3946,6 +3946,113 @@
   var AIUI_APP_H = '22rem';
   var AIUI_APP_H_BIG = '80vh';
 
+  // ===== The app beside the chat =====
+  //
+  // Expanding used to make the panel taller in place, which is the cheap
+  // half of what was asked for: the app should sit BESIDE the
+  // conversation, with the message in the thread collapsed to a chip
+  // naming it.
+  //
+  // The iframe is MOVED, never rebuilt. Recreating it reloads the app,
+  // which throws away the scroll position and anything typed into it, and
+  // the whole point of expanding is to look at the thing you were already
+  // looking at.
+  var aiuiSplit = null;
+
+  // The element holding both the messages and the composer, found rather
+  // than named: Open WebUI's class names change between versions, but the
+  // pane is reliably the nearest ancestor of the message list that also
+  // contains the message box.
+  function aiuiChatPane() {
+    var msgs = document.getElementById('messages-container');
+    var input = document.getElementById('message-input-container');
+    if (!msgs || !input) return null;
+    var node = msgs.parentElement;
+    while (node && !node.contains(input)) node = node.parentElement;
+    return node;
+  }
+
+  function aiuiSplitClose() {
+    if (!aiuiSplit) return;
+    var s = aiuiSplit;
+    aiuiSplit = null;
+    // Home first, so the app is never parentless even for a tick.
+    if (s.home && s.frame) {
+      s.frame.style.height = s.homeHeight;
+      s.home.appendChild(s.frame);
+    }
+    if (s.panel && s.panel.parentNode) s.panel.parentNode.removeChild(s.panel);
+    if (s.chip && s.chip.parentNode) s.chip.style.display = 'none';
+    if (s.bar) s.bar.style.display = '';
+    if (s.pane) s.pane.style.paddingRight = s.panePad;
+    if (s.onKey) document.removeEventListener('keydown', s.onKey);
+  }
+
+  function aiuiSplitOpen(slug, box, bar, frame, chip) {
+    aiuiSplitClose();
+    var pane = aiuiChatPane();
+    if (!pane) return false;   // caller falls back to growing in place
+
+    var panel = document.createElement('div');
+    panel.style.cssText = 'position:fixed;top:0;right:0;bottom:0;width:50vw;'
+      + 'z-index:9000;background:#0e0e10;display:flex;flex-direction:column;'
+      + 'border-left:1px solid rgba(127,127,127,.3);';
+
+    var head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:center;gap:.5rem;'
+      + 'padding:.5rem .7rem;font-size:.85rem;color:#ededee;'
+      + 'border-bottom:1px solid rgba(127,127,127,.25);flex:0 0 auto;';
+    var name = document.createElement('span');
+    name.textContent = slug;
+    name.style.cssText = 'font-weight:600;flex:1 1 auto;overflow:hidden;'
+      + 'text-overflow:ellipsis;white-space:nowrap;';
+    var out = document.createElement('a');
+    out.href = frame.src;
+    out.target = '_blank';
+    out.rel = 'noopener';
+    out.textContent = '↗';
+    out.title = 'Open in a new tab';
+    out.setAttribute('aria-label', 'Open in a new tab');
+    out.style.cssText = 'color:inherit;opacity:.65;text-decoration:none;'
+      + 'padding:.1rem .35rem;';
+    var shut = document.createElement('button');
+    shut.type = 'button';
+    shut.textContent = '✕';
+    shut.title = 'Put it back in the chat';
+    shut.setAttribute('aria-label', 'Put it back in the chat');
+    shut.style.cssText = 'background:none;border:0;color:inherit;opacity:.65;'
+      + 'cursor:pointer;font-size:.95rem;padding:.1rem .35rem;';
+    shut.addEventListener('click', aiuiSplitClose);
+    head.appendChild(name);
+    head.appendChild(out);
+    head.appendChild(shut);
+
+    var holder = document.createElement('div');
+    holder.style.cssText = 'flex:1 1 auto;min-height:0;';
+
+    var home = frame.parentNode;
+    var homeHeight = frame.style.height;
+    frame.style.height = '100%';
+    holder.appendChild(frame);
+    panel.appendChild(head);
+    panel.appendChild(holder);
+    document.body.appendChild(panel);
+
+    var panePad = pane.style.paddingRight;
+    pane.style.paddingRight = '50vw';
+    bar.style.display = 'none';
+    chip.style.display = '';
+
+    function onKey(e) { if (e.key === 'Escape') aiuiSplitClose(); }
+    document.addEventListener('keydown', onKey);
+
+    aiuiSplit = { panel: panel, frame: frame, home: home, bar: bar,
+                  chip: chip, pane: pane, panePad: panePad,
+                  homeHeight: homeHeight, onKey: onKey };
+    return true;
+  }
+  // ===== End app beside the chat =====
+
   function aiuiShowAppInline(chatId, slug) {
     if (aiuiChatIdFromUrl() !== chatId) return;
     if (!/^[a-z0-9][a-z0-9-]{0,80}$/.test(String(slug || ''))) return;
@@ -3993,14 +4100,34 @@
     }
 
     var frame = document.createElement('iframe');
-    var grow = iconBtn('⤢', 'Make it bigger');
+
+    // What is left in the thread once the app moves out to the side: the
+    // name, and a way back. Without it the message becomes a blank gap
+    // and nothing says what the panel beside the chat belongs to.
+    var chip = document.createElement('button');
+    chip.type = 'button';
+    chip.style.cssText = 'display:none;width:100%;text-align:left;'
+      + 'background:none;border:0;color:inherit;cursor:pointer;'
+      + 'padding:.55rem .7rem;font-size:.85rem;';
+    chip.textContent = '▣  ' + slug + '  ·  showing beside the chat';
+
+    var grow = iconBtn('⤢', 'Show it beside the chat');
     var big = false;
     grow.addEventListener('click', function () {
+      if (aiuiSplit && aiuiSplit.frame === frame) {
+        aiuiSplitClose();
+        return;
+      }
+      if (aiuiSplitOpen(slug, box, bar, frame, chip)) return;
+      // No chat pane to shrink, so this markup is not what we expect.
+      // Growing in place is worse than sitting beside the chat and much
+      // better than a control that does nothing.
       big = !big;
       frame.style.height = big ? AIUI_APP_H_BIG : AIUI_APP_H;
       grow.title = big ? 'Make it smaller' : 'Make it bigger';
       grow.setAttribute('aria-label', grow.title);
     });
+    chip.addEventListener('click', aiuiSplitClose);
 
     var out = document.createElement('a');
     out.href = url;
@@ -4028,6 +4155,7 @@
       + ';border:0;background:#fff;';
 
     box.appendChild(bar);
+    box.appendChild(chip);
     box.appendChild(frame);
     aiuiPutUnderLastMessage(box);
   }
