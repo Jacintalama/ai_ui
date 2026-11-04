@@ -87,8 +87,19 @@ def test_a_build_link_is_found_once_however_often_it_is_linked():
     assert got == [[ID], []]
 
 
+def test_a_build_closed_under_the_old_marker_stays_closed():
+    """Every build finished before 2026-11-04 carries the HTML comment.
+    Forgetting it would post "is built" again under each of them the next
+    time somebody opened that chat."""
+    chain = [{"role": "assistant",
+              "content": "done <!-- aiui:build-done %s -->" % ID}]
+    got = _node("var c = %s; console.log(JSON.stringify(aiuiBuildIsClosed(c, %s)))"
+                % (json.dumps(chain), json.dumps(ID)))
+    assert got is True
+
+
 def test_a_closed_build_is_closed_and_an_open_one_is_not():
-    chain = [{"role": "assistant", "content": "done " + "<!-- aiui:build-done %s -->" % ID}]
+    chain = [{"role": "assistant", "content": "done [aiui-build-done]: #%s" % ID}]
     got = _node("var c = %s; console.log(JSON.stringify([aiuiBuildIsClosed(c, %s), aiuiBuildIsClosed(c, %s)]))"
                 % (json.dumps(chain), json.dumps(ID), json.dumps(OTHER)))
     assert got == [True, False]
@@ -109,9 +120,21 @@ def test_a_build_still_running_has_nothing_to_say(status):
 def test_a_finished_build_gives_the_link_to_the_app():
     said = _outcome({"status": "completed", "built_app_slug": "shop"})
     assert said.startswith("shop is built.\nOpen it here: https://x.test/tasks/preview-app/shop/")
-    # The marker is a markdown link reference since #110, which renders as
-    # nothing; the old HTML comment was printed to the person.
     assert said.rstrip().endswith("[aiui-build-done]: #%s" % ID)
+
+
+def test_the_marker_is_not_something_a_person_has_to_look_at():
+    """It was "<!-- aiui:build-done <id> -->" until 2026-11-04. Open WebUI
+    renders a message as markdown and escapes the HTML in it, so that
+    comment was PRINTED under every finished build from the day the
+    watcher shipped. This test asserted it should be.
+
+    A markdown link reference definition is consumed by the parser and
+    produces no output, which is what a marker is for.
+    """
+    said = _outcome({"status": "completed", "built_app_slug": "shop"})
+    assert "<!--" not in said, "an HTML comment is shown to the person"
+    assert "[aiui-build-done]: #" in said
 
 
 def test_a_build_waiting_on_a_question_asks_it_and_says_where_to_answer():
