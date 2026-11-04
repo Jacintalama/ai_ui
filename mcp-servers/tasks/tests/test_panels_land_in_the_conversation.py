@@ -53,12 +53,37 @@ def test_nothing_looks_for_a_per_message_id_any_more():
     assert '[id^="message-"]' not in code
 
 
-def test_the_thread_is_the_inner_container():
-    """messages-container is col-reverse, so appending to it puts a panel
-    at the TOP of the conversation."""
+def test_the_thread_is_looked_for_in_more_than_one_way():
+    """"full-messages-container" came from a SOURCE MAP, not from the
+    markup this version renders, and it is not in the live page. Every
+    panel fell through to the page body and landed under the message box,
+    which is the bug this file is about, shipped twice."""
     body = _fn("aiuiThread")
     assert "full-messages-container" in body
-    assert "getElementById('messages-container')" not in body
+    assert "getElementById('messages-container')" in body
+
+
+def test_a_reversed_column_is_not_simply_appended_to():
+    """The chat view renders the scroller as "flex flex-col-reverse", and
+    in a reversed column the FIRST child is the one at the bottom.
+    Appending would put the panel above every message: a different wrong
+    place from the one being fixed."""
+    src = _js()
+    assert "function aiuiThreadIsReversed" in src
+    body = _fn("aiuiPutUnderLastMessage")
+    assert "thread.insertBefore(box, thread.firstChild)" in body
+
+
+def test_reading_the_layout_cannot_throw():
+    """getComputedStyle on a detached or cross-document element throws in
+    some browsers, and this runs on every panel."""
+    assert "try {" in _fn("aiuiThreadIsReversed")
+
+
+def test_falling_back_to_the_page_says_so():
+    """It fell back silently for two days and looked like a styling
+    problem. The one place that knows the markup has moved should say."""
+    assert "no chat thread found" in _js()
 
 
 def test_a_panel_is_appended_to_the_thread():

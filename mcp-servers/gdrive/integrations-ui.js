@@ -3870,17 +3870,66 @@
   // please fix"), the reload check compared the composer against itself,
   // and the scan for build links read the composer's markup.
   function aiuiThread() {
-    return document.getElementById('full-messages-container');
+    // Tried in order, because the exact id is not something to rely on.
+    //
+    // "full-messages-container" came from a SOURCE MAP, not from the
+    // markup this version renders, and it is not in the live page: every
+    // panel fell through to document.body and landed under the message
+    // box, which is the same bug twice (Ralph, 2026-11-05: "still in
+    // below the chat").
+    //
+    // The scroller is in the compiled bundle and is reliable. It is
+    // flex-col-REVERSE, so appending to IT puts a thing at the top of the
+    // conversation; its inner wrapper is where the messages live, and
+    // appending there is the bottom. The wrapper is taken by position
+    // rather than by name so a rename cannot do this a third time.
+    var named = document.getElementById('full-messages-container');
+    if (named) return named;
+    return document.getElementById('messages-container');
+  }
+
+  // Whether the thread is laid out bottom-up. The chat view renders
+  // #messages-container with "flex flex-col-reverse overflow-auto", and in
+  // a reversed column the FIRST child is the one at the bottom. Appending
+  // to it would put a panel at the top of the conversation, above every
+  // message, which is a different wrong place from the one this is
+  // fixing.
+  function aiuiThreadIsReversed(el) {
+    try {
+      return String(getComputedStyle(el).flexDirection || '')
+        .indexOf('reverse') >= 0;
+    } catch (e) {
+      return false;
+    }
   }
 
   function aiuiPutUnderLastMessage(box) {
     var thread = aiuiThread();
     if (thread) {
+      // The messages usually sit in one wrapper inside the scroller. Put
+      // the panel in there, after the last of them, which is the bottom
+      // of the conversation however the scroller itself is laid out.
+      var inner = thread.firstElementChild;
+      if (inner && inner.children.length && !aiuiThreadIsReversed(thread)) {
+        inner.appendChild(box);
+        return;
+      }
+      if (aiuiThreadIsReversed(thread)) {
+        thread.insertBefore(box, thread.firstChild);
+        return;
+      }
       thread.appendChild(box);
       return;
     }
-    // Better somewhere visible than nowhere, and it is the signal that
-    // this markup has moved again.
+    // Better somewhere visible than nowhere. It is also the one place
+    // that says the markup has moved again, so it says so out loud: this
+    // fell back silently for two days and looked like a styling problem.
+    try {
+      if (window.console && console.warn) {
+        console.warn('[aiui] no chat thread found; '
+                     + 'putting this under the page instead');
+      }
+    } catch (e) { /* no console */ }
     document.body.appendChild(box);
   }
 
