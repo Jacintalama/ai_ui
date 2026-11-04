@@ -37,6 +37,8 @@ import agent_todo
 import agent_events
 import agent_memory
 import agent_skills
+import skill_writer
+import user_skills
 import free_pool
 from agent_runner import _owui_user_id_for
 from agent_templates import TEMPLATES
@@ -681,6 +683,136 @@ async def skill_body(name: str = "") -> dict:
     if body is None:
         raise HTTPException(status_code=404, detail="no skill by that name")
     return {"name": name, "body": body}
+
+
+# --- skills a person writes for themselves (2026-11-03) ------------------
+# user_skills.py keeps them, skill_writer.py drafts them. Both halves of
+# docs/superpowers/specs/2026-09-09-agent-skill-writer-design.md.
+
+
+class SkillDraftIn(BaseModel):
+    job: str = Field(min_length=1, max_length=skill_writer.MAX_JOB_CHARS + 1)
+
+
+class SkillIn(BaseModel):
+    #: No min_length, on purpose. The schema would answer an empty name
+    #: with "String should have at least 1 character", which is true and
+    #: useless. user_skills.problem_with answers it with "Give the skill a
+    #: name, like chase-invoices", which says what to do.
+    name: str = Field(default="", max_length=200)
+    description: str = Field(default="", max_length=user_skills.MAX_DESCRIPTION_CHARS + 1)
+    #: Capped well above what is allowed, so an oversized body is REFUSED
+    #: with a sentence saying why rather than rejected by the schema with
+    #: "string too long", which says nothing about prompts.
+    body: str = Field(default="", max_length=agent_skills.MAX_SKILL_CHARS * 4)
+    tools: list[str] = []
+
+
+@router.get("/skills/mine")
+async def my_skills(user: CurrentUser = Depends(current_user)) -> dict:
+    """This person's own skills, with their instructions.
+
+    Unlike /skills, this one DOES carry the bodies. The list is small, it is
+    only ever this person's, and the page that shows it is the one they edit
+    them in, so withholding the text would mean a second call per skill.
+    """
+    return {"skills": await user_skills.mine(user.email)}
+
+
+@router.post("/skills/draft")
+async def draft_skill(body: SkillDraftIn,
+                      user: CurrentUser = Depends(current_user)) -> dict:
+    """Write a skill for a job, and save nothing.
+
+    Answered with this person's own minted token, so the request is
+    attributed to them and their own model access applies, the same way
+    making an agent is.
+    """
+    tools = {}
+    try:
+        tools = {t["id"]: t.get("label") or t["id"]
+                 for t in (await tools_for_email(user.email)).get("tools", [])
+                 if isinstance(t, dict) and t.get("id")}
+    except Exception:                                       # noqa: BLE001
+        # A skill written without knowing their tools is worse than one
+        # written with, and far better than no skill at all.
+        logger.warning("could not read tools while drafting a skill",
+                       exc_info=True)
+
+    text = await _draft_seam(user.email, body.job, tools)
+    draft = skill_writer.parse_draft(text)
+    problem = skill_writer.draft_problem(draft)
+    if problem:
+        raise HTTPException(status_code=422, detail=problem)
+    draft["name"] = user_skills.clean_name(draft["name"])
+    draft["warning"] = user_skills.tool_warning(draft["tools"], tools)
+    return draft
+
+
+async def _draft_once(email: str, job: str, tools: dict) -> str:
+    """The one network call. A seam, so everything around it is testable."""
+    import agent_runner
+    user_id = await _owui_user_id_for(email)
+    if not user_id:
+        raise HTTPException(status_code=400, detail="No account was found for you.")
+    token = mint_owui_token(user_id, SEED_TOKEN_TTL_SECONDS,
+                            session_stamp=await session_stamp_for(user_id))
+    out = await agent_runner._post_chat(
+        {"model": _default_model(),
+         "messages": skill_writer.prompt_for(job, tools,
+                                             agent_skills.MAX_SKILL_CHARS),
+         "stream": False}, token)
+    choices = (out or {}).get("choices") or []
+    return (((choices[0] if choices else {}).get("message") or {})
+            .get("content") or "")
+
+
+_draft_seam = _draft_once
+
+
+@router.post("/skills/mine")
+async def save_my_skill(body: SkillIn,
+                        user: CurrentUser = Depends(current_user)) -> dict:
+    """Keep this skill. Validated here and not at draft time, because a
+    draft is allowed to be wrong and a saved skill is not."""
+    name = user_skills.clean_name(body.name)
+    problem = user_skills.problem_with(name, body.description, body.body,
+                                       agent_skills.MAX_SKILL_CHARS)
+    if problem:
+        raise HTTPException(status_code=422, detail=problem)
+    try:
+        saved = await user_skills.save(user.email, name, body.description,
+                                       body.tools, body.body)
+    except user_skills.TooMany:
+        raise HTTPException(
+            status_code=409,
+            detail="You have %d skills, which is the limit. Delete one to "
+                   "make another." % user_skills.MAX_PER_PERSON)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not save a skill", exc_info=True)
+        raise HTTPException(status_code=502,
+                            detail="Could not save that skill. Try again in a moment.")
+    tools = {}
+    try:
+        tools = {t["id"]: t.get("label") or t["id"]
+                 for t in (await tools_for_email(user.email)).get("tools", [])
+                 if isinstance(t, dict) and t.get("id")}
+    except Exception:                                       # noqa: BLE001
+        pass
+    saved["warning"] = user_skills.tool_warning(body.tools, tools)
+    return saved
+
+
+@router.delete("/skills/mine/{name}")
+async def delete_my_skill(name: str,
+                          user: CurrentUser = Depends(current_user)) -> dict:
+    """Remove one. Agents that referenced it are left alone: selected()
+    already drops unknown names, and a missing skill degrades to being left
+    out rather than to a turn that fails."""
+    gone = await user_skills.delete(user.email, user_skills.clean_name(name))
+    if not gone:
+        raise HTTPException(status_code=404, detail="no skill of yours by that name")
+    return {"deleted": True}
 
 
 @router.get("/templates")
