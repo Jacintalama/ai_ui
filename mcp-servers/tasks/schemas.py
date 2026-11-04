@@ -42,8 +42,24 @@ class TaskOut(BaseModel):
     plan: str | None = None
     plan_status: str | None = None
     built_app_slug: str | None = None
+    #: What the build is doing right now, for the live line in the chat.
+    #: The raw key, which only this repo understands.
+    build_step: str | None = None
     created_at: datetime
     completed_at: datetime | None = None
+
+    @computed_field
+    @property
+    def build_step_said(self) -> str:
+        """The step in the words the person reading the chat would use.
+
+        Computed here rather than in the page, because the page is the
+        other half of this and a wording table in both places is one that
+        drifts. The page shows whatever this says and knows none of the
+        keys.
+        """
+        import build_progress
+        return build_progress.wording(self.build_step or "")
 
     @computed_field
     @property

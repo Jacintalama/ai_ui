@@ -32,6 +32,12 @@ class TaskItem(Base):
     plan = Column(Text, nullable=True)
     plan_status = Column(Text, nullable=True)
     built_app_slug = Column(Text, nullable=True)
+    # Which step this build is on, in the person's words, and when it was
+    # set (build_progress.py, migration 067). NULL for a build that
+    # predates this or is between steps; the chat then counts minutes, as
+    # it did before.
+    build_step = Column(Text, nullable=True)
+    build_step_at = Column(DateTime(timezone=True), nullable=True)
     # The design skill the build runs with (design_skill.py), set when an
     # agent with Impeccable ticked started it. NULL runs as it always has.
     design_skill = Column(Text, nullable=True)
