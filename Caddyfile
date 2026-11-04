@@ -370,11 +370,22 @@
 	# WebUI's own build output, whose names carry a hash, so those SHOULD
 	# stay cacheable on a 3.8GB box.
 	#
-	# Without this, Open WebUI answers with max-age=14400 and Cloudflare
-	# holds the old file for FOUR HOURS. Measured 2026-11-04, right after a
-	# deploy: cf-cache-status HIT, age 1907, and a last-modified from eight
-	# hours earlier, so three features shipped that day were invisible to
-	# anybody who did not hard-refresh.
+	# This is the SECOND line of defence, not the first. loader.js asks for
+	# the file as "?v=<milliseconds>", so every page load is a unique URL
+	# and always gets the current file. That is what actually protects us,
+	# and it has a test of its own.
+	#
+	# Kept anyway because the first line is one unguarded expression in
+	# someone else's directory: delete the timestamp and a four-hour window
+	# opens with nothing to catch it.
+	#
+	# Note it does not currently reach a browser. Cloudflare's Browser
+	# Cache TTL rewrites our no-cache to max-age=14400 before it leaves the
+	# edge, which no origin header can beat. Measured 2026-11-04: Caddy on
+	# localhost says "no-cache, must-revalidate" and the same request
+	# through the edge says "max-age=14400, must-revalidate". Fixing that
+	# needs a Cloudflare Cache Rule, which is why the honest protection is
+	# the query string.
 	#
 	# no-cache rather than no-store: the browser may still keep it and ask
 	# with its etag, so the usual answer is a 304 and not the whole file.
