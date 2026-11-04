@@ -3776,12 +3776,15 @@
     return '<!-- aiui:build-done ' + id + ' -->';
   }
 
-  function aiuiBuildIsClosed(chain, id) {
-    var marker = aiuiBuildDoneMarker(id);
+  function aiuiIsClosed(chain, marker) {
     for (var i = 0; i < chain.length; i++) {
       if (chain[i] && String(chain[i].content || '').indexOf(marker) >= 0) return true;
     }
     return false;
+  }
+
+  function aiuiBuildIsClosed(chain, id) {
+    return aiuiIsClosed(chain, aiuiBuildDoneMarker(id));
   }
 
   // Mirrors routes_aiuibuilder._public_build_status and _preview_url, so the
@@ -3885,10 +3888,18 @@
   // person's next message is being answered, writing would race Open
   // WebUI's own save of it.
   function aiuiCloseBuild(chatId, id, text) {
+    return aiuiCloseWith(chatId, aiuiBuildDoneMarker(id), text);
+  }
+
+  // The same write, for anything that watches something and reports once.
+  // Generalised when the video watcher arrived rather than copied, because
+  // two copies of "append a message to somebody's chat without racing Open
+  // WebUI's own save" is two chances to get that wrong.
+  function aiuiCloseWith(chatId, marker, text) {
     return aiuiFetchChat(chatId).then(function (fresh) {
       var fh = fresh.chat.history;
       var chain = aiuiChainFromHistory(fh);
-      if (aiuiBuildIsClosed(chain, id)) return true;
+      if (aiuiIsClosed(chain, marker)) return true;
       var tail = chain[chain.length - 1];
       if (!tail || tail.role !== 'assistant' || tail.done !== true) return false;
       var newId = aiuiUuid();
@@ -3968,6 +3979,9 @@
     fresh.forEach(function (id) { aiuiBuildWatched[id] = true; });
     aiuiFetchChat(chatId).then(function (data) {
       var chain = aiuiChainFromHistory(data.chat.history);
+      // The same chat, already fetched. A second poller fetching it again
+      // would double the cost of a scan for nothing.
+      aiuiWatchVideos(chain, chatId);
       var nowS = Math.floor(Date.now() / 1000);
       fresh.forEach(function (id) {
         if (aiuiBuildIsClosed(chain, id)) return;
@@ -3982,6 +3996,122 @@
       fresh.forEach(function (id) { delete aiuiBuildWatched[id]; });
     });
   }
+  // ===== Video watcher =====
+  //
+  // make_video answers in seconds with "it is rendering ... Its id is
+  // <id>" and then renders for minutes. Until now the chat said nothing
+  // more unless somebody asked for it by that id, which is the same gap
+  // the build watcher closed above and is closed the same way.
+  //
+  // The finished video is SHOWN, not linked. routes_video serves it with
+  // an inline disposition for exactly this, so the element can play it.
+  var AIUI_VIDEO_ID = /[Ii]ts id is ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/g;
+  var AIUI_VIDEO_POLL_MS = 15000;
+  var AIUI_VIDEO_GIVE_UP_MS = 60 * 60 * 1000;
+  var aiuiVideoWatched = {};
+
+  function aiuiVideoIdsIn(content) {
+    var ids = [];
+    var text = String(content || '');
+    AIUI_VIDEO_ID.lastIndex = 0;
+    var m;
+    while ((m = AIUI_VIDEO_ID.exec(text)) !== null) {
+      if (ids.indexOf(m[1]) < 0) ids.push(m[1]);
+    }
+    return ids;
+  }
+
+  function aiuiVideoDoneMarker(id) {
+    return '<!-- aiui:video-done ' + id + ' -->';
+  }
+
+  // Mirrors the video_status tool, so the page says what asking would say.
+  function aiuiVideoOutcome(job, id) {
+    var status = String((job && job.status) || '');
+    if (status !== 'done' && status !== 'failed') return null;
+    var title = String((job && job.title) || 'The video');
+    var said;
+    if (status === 'failed') {
+      var why = String((job && job.error) || '').trim().slice(0, 300);
+      said = title + ' failed.' + (why ? ' ' + why : '');
+    } else if (job && job.output_available && job.share_url) {
+      said = title + ' is ready.\nWatch it here: ' + String(job.share_url);
+    } else {
+      // Rendered, but the share link needs a setting this platform may not
+      // have. Saying "ready" with nowhere to go is worse than this.
+      said = title + ' has finished rendering. It is on the Video page.';
+    }
+    return said + '\n\n' + aiuiVideoDoneMarker(id);
+  }
+
+  function aiuiShowVideoInline(chatId, job, id) {
+    if (aiuiChatIdFromUrl() !== chatId) return;
+    var src = String((job && job.share_url) || '');
+    // Ours, and only ours. The src goes into a media element, and a link
+    // from a row is not a reason to fetch somebody else's host.
+    if (src.indexOf(location.origin + '/api/video-jobs/') !== 0) return;
+    var box_id = 'aiui-video-' + id;
+    if (document.getElementById(box_id)) return;
+
+    var box = document.createElement('div');
+    box.id = box_id;
+    box.style.cssText = 'margin:.5rem 0 1rem 3.75rem;max-width:46rem;';
+    var el = document.createElement('video');
+    el.src = src;
+    el.controls = true;
+    el.preload = 'metadata';
+    el.style.cssText = 'display:block;width:100%;border-radius:10px;background:#000;';
+    box.appendChild(el);
+
+    var rows = document.querySelectorAll('[id^="message-"]');
+    var last = rows.length ? rows[rows.length - 1] : null;
+    var slot = last && last.parentElement ? last.parentElement : null;
+    if (slot && slot.parentElement) slot.parentElement.insertBefore(box, slot.nextSibling);
+    else document.body.appendChild(box);
+  }
+
+  function aiuiPollVideo(chatId, id, started) {
+    fetch('/api/video-jobs/' + id, { headers: aiuiAuthHeaders() }).then(function (r) {
+      if (r.status === 403 || r.status === 404) return 'stop';
+      return r.ok ? r.json() : null;
+    }).then(function (job) {
+      if (job === 'stop') return true;
+      if (!job) return false;
+      var text = aiuiVideoOutcome(job, id);
+      if (text) {
+        if (String(job.status || '') === 'done') aiuiShowVideoInline(chatId, job, id);
+        return aiuiCloseWith(chatId, aiuiVideoDoneMarker(id), text);
+      }
+      var mins = Math.max(1, Math.round((Date.now() - started) / 60000));
+      var ahead = job.queue_position;
+      aiuiBuildLine(chatId, (typeof ahead === 'number' && ahead > 0)
+        ? 'Waiting to render, ' + ahead + ' ahead of it.'
+        : 'Rendering the video, ' + mins + ' min so far.');
+      return false;
+    }).catch(function () { return false; }).then(function (finished) {
+      if (finished || Date.now() - started > AIUI_VIDEO_GIVE_UP_MS) {
+        aiuiClearBuildLine();
+        return;
+      }
+      setTimeout(function () { aiuiPollVideo(chatId, id, started); }, AIUI_VIDEO_POLL_MS);
+    });
+  }
+
+  function aiuiWatchVideos(chain, chatId) {
+    var nowS = Math.floor(Date.now() / 1000);
+    chain.forEach(function (m) {
+      if (!m || m.role !== 'assistant') return;
+      aiuiVideoIdsIn(m.content).forEach(function (id) {
+        if (aiuiVideoWatched[id]) return;
+        if (aiuiIsClosed(chain, aiuiVideoDoneMarker(id))) return;
+        if (nowS - Number(m.timestamp || 0) > AIUI_BUILD_RECENT_S) return;
+        aiuiVideoWatched[id] = true;
+        aiuiPollVideo(chatId, id, Number(m.timestamp) * 1000 || Date.now());
+      });
+    });
+  }
+  // ===== End video watcher =====
+
   // ===== End build watcher =====
 
   linkifyConnectButtons();
