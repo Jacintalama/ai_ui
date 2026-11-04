@@ -138,11 +138,24 @@ def test_no_installation_offers_the_install_page(github_callback):
     assert github_callback["stored"] == [], "a connection reaching nothing was stored"
 
 
-def test_an_installed_app_is_stored_and_offered_nothing(github_callback):
+def test_an_installed_app_is_stored_and_still_offered_the_chooser(
+        github_callback):
+    """This test said "and offered nothing" until 2026-11-04, and it was
+    wrong in the way that matters: it locked in the behaviour Ralph then
+    hit, which was "it didnt choose my repo or any of my option it just
+    connected".
+
+    Having an installation is not the same as having the RIGHT
+    repositories in it. Somebody reconnecting is usually there to change
+    exactly that, and they were the only people never shown the page that
+    does it. GitHub's own page says Configure in this state and edits the
+    selection, so it is the right destination either way.
+    """
     github_callback["installations"] = 1
     page = asyncio.run(R.oauth_callback(
         "github", code="c", state=github_callback["token"])).body.decode()
-    assert "installations/new" not in page
+    assert "installations/new" in page
+    assert "Choose which repositories" in page
     assert github_callback["stored"] == [("ralph@example.com", "github",
                                           "aiuiteams-hub")]
 

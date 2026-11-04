@@ -14,7 +14,7 @@ import json
 import logging
 import os
 import urllib.parse
-from typing import Dict
+from typing import Dict, List, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -357,6 +357,23 @@ async def oauth_callback(provider_id: str, code: str = "", state: str = "",
         return _oauth_done(False, "Could not save that connection.")
 
     logger.info("oauth: %s connected %s as %s", email, provider_id, label)
+
+    if provider_id == "github":
+        # A GitHub connect ALWAYS ends with a way to choose repositories,
+        # even when one is already installed (2026-11-04, Ralph: "it didnt
+        # choose my repo or any of my option it just connected").
+        #
+        # The link used to appear only for somebody with NO installation.
+        # That is the one case where it is unmissable and the only case it
+        # was offered: anybody who had installed it once was shown
+        # "Connected" and no way to change which repositories it covers,
+        # which is the thing they came to do. GitHub's own page says
+        # Configure rather than Install in that state and edits the
+        # selection, so it is the right destination either way.
+        return _oauth_done(
+            True, _github_said(label, await _github_repos(values)),
+            link=O.install_url(), link_text="Choose which repositories")
+
     return _oauth_done(True, "Connected to " + label
                        + ". You can close this window.")
 
@@ -482,6 +499,78 @@ async def _github_installations(values: dict) -> int:
     except Exception:                                       # noqa: BLE001
         logger.warning("github: could not count installations", exc_info=True)
         return -1
+
+
+#: How many repository names the done page will read out. Somebody with
+#: forty does not need forty on a popup; they need to know it worked and
+#: where to change it.
+REPOS_NAMED = 4
+
+#: Installations to ask about. Almost everybody has one. The cap is here so
+#: a person who belongs to many organisations cannot turn one connect into
+#: twenty vendor calls.
+MAX_INSTALLATIONS_ASKED = 3
+
+
+async def _github_repos(values: dict) -> Optional[List[str]]:
+    """Which repositories IO can actually see, for this person.
+
+    None when the question could not be asked, which is NOT the empty list:
+    "we could not look" and "it has been given none" need different words,
+    and only one of them is alarming.
+
+    Authorisation says who you are; INSTALLATION is what grants repository
+    access, and the two are chosen on different pages. So a token can be
+    perfectly valid and reach nothing at all.
+    """
+    try:
+        auth = C.vendor_auth("github", values)
+        names: List[str] = []
+        async with httpx.AsyncClient(timeout=VERIFY_TIMEOUT_SEC) as client:
+            r = await client.get(auth.base_url + "/user/installations",
+                                 headers=auth.headers, params=auth.params)
+            if r.status_code != 200:
+                return None
+            installs = ((r.json() or {}).get("installations")
+                        or [])[:MAX_INSTALLATIONS_ASKED]
+            for inst in installs:
+                iid = (inst or {}).get("id")
+                if iid is None:
+                    continue
+                rr = await client.get(
+                    auth.base_url + "/user/installations/%s/repositories" % iid,
+                    headers=auth.headers,
+                    params=dict(auth.params or {}, per_page="100"))
+                if rr.status_code != 200:
+                    continue
+                for repo in ((rr.json() or {}).get("repositories") or []):
+                    full = str((repo or {}).get("full_name") or "").strip()
+                    if full and full not in names:
+                        names.append(full)
+        return names
+    except Exception:                                       # noqa: BLE001
+        logger.warning("github: could not list repositories", exc_info=True)
+        return None
+
+
+def _github_said(label: str, repos: Optional[List[str]]) -> str:
+    """What the done page says after a GitHub connect.
+
+    Pure, so every wording below is testable without a vendor.
+    """
+    head = "Connected to " + str(label) + "."
+    if repos is None:
+        # We could not look. Saying nothing about repositories is better
+        # than guessing, and the link below still leads to the answer.
+        return head
+    if not repos:
+        return (head + " It cannot see any repositories yet, because none "
+                "have been given to it.")
+    shown = ", ".join(repos[:REPOS_NAMED])
+    more = len(repos) - REPOS_NAMED
+    n = "1 repository" if len(repos) == 1 else "%d repositories" % len(repos)
+    return (head + " It can see " + n + ": " + shown
+            + (" and %d more." % more if more > 0 else "."))
 
 
 class TrelloTokenBody(BaseModel):
