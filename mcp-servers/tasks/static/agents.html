@@ -1019,6 +1019,10 @@
     <div class="aempty">Ask anything. Every agent hears it, and the ones
       with something to say answer. Name one and only they reply.</div>
   </div>
+  <!-- A skill this agent holds that waits on an app the person has not
+       connected (2026-11-04). Drawn by paintNeeds below; hidden in the room
+       and whenever nothing is waiting. -->
+  <div class="ap-needs" id="ap-needs" role="status" hidden></div>
   <form class="ap-composer" hx-post="/tasks/agents/chat/send"
         hx-target="#agent-thread" hx-swap="beforeend"
         hx-on::after-request="this.reset()">
@@ -4309,10 +4313,75 @@
         if (here) rows[r].setAttribute("aria-current", "true");
         else rows[r].removeAttribute("aria-current");
       }
+      paintNeeds();
     }
     // drawRoster() rebuilds the rows after the cards are drawn, so it marks
     // the current one through this.
     window.__aiuiPaintTalk = paint;
+
+    // A skill waiting on an app (2026-11-04, Lukas: suggest skills from what
+    // the person has connected). When the agent being talked to holds a
+    // skill whose app is not connected, say so above the message box with a
+    // Connect button. The service decides what is missing
+    // (/agents/skills/needs, skill_fit), so the page never guesses which
+    // apps a skill needs. paint() runs on every redraw, so the answer is
+    // asked for once per agent and set of skills, not once per paint.
+    var needsKey = null;
+    function drawNeeds(box, needs) {
+      box.textContent = "";
+      needs.forEach(function (n) {
+        var names = (n.skills || []).filter(function (s) { return typeof s === "string" && s; });
+        if (!names.length) return;
+        var line = document.createElement("div");
+        line.className = "ap-needs-line";
+        var said = document.createElement("span");
+        var who = names.length === 1 ? names[0]
+          : names.slice(0, -1).join(", ") + " and " + names[names.length - 1];
+        said.textContent = who + (names.length === 1 ? " needs " : " need ") +
+          (n.label || n.app) + ".";
+        line.appendChild(said);
+        // A #connections link, so the page's own click handler opens the
+        // Connections panel, the same way every other Connect link here does.
+        var go = document.createElement("a");
+        go.href = "#connections";
+        go.className = "btn";
+        go.textContent = n.button || ("Connect " + (n.label || n.app));
+        line.appendChild(go);
+        box.appendChild(line);
+      });
+      box.hidden = !box.childNodes.length;
+    }
+    function paintNeeds() {
+      var box = document.getElementById("ap-needs");
+      if (!box) return;
+      var listed = current.id && ownAgents().filter(function (m) {
+        return m.id === current.id;
+      })[0];
+      var ids = listed && listed.meta && Array.isArray(listed.meta.skillIds)
+        ? listed.meta.skillIds.filter(function (i) { return typeof i === "string" && i; })
+        : [];
+      var key = current.id + "|" + ids.join(",");
+      if (key === needsKey) return;
+      needsKey = key;
+      box.hidden = true;
+      box.textContent = "";
+      if (!current.id || !ids.length) return;
+      var h = {};
+      try {
+        var t = localStorage.getItem("token");
+        if (t) h["Authorization"] = "Bearer " + t;
+      } catch (e) { /* no storage: the gateway answers 401 and nothing shows */ }
+      fetch("/api/tasks/agents/skills/needs?skills=" + encodeURIComponent(ids.join(",")),
+            { headers: h, cache: "no-store" })
+        .then(function (r) { return r.ok ? r.json() : { needs: [] }; })
+        .then(function (d) {
+          // A later switch wins: an answer for an agent no longer open is
+          // dropped rather than drawn under somebody else's name.
+          if (key !== needsKey) return;
+          drawNeeds(box, (d && Array.isArray(d.needs)) ? d.needs : []);
+        })
+        .catch(function () { /* quiet: the notice is help, not a gate */ });
+    }
 
     function load() {
       // Whatever was said in that conversation before, which for a private
