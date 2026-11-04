@@ -221,3 +221,34 @@ async def test_a_picked_agent_answers_as_itself_and_reads_aloud(site):
             break
         await page.wait_for_timeout(500)
     assert speech and speech[0] == (200, "audio/mpeg"), speech
+
+
+async def test_asking_which_skills_to_use_shows_a_connect_button(site):
+    """"which skills should I use?" is answered from what this account has
+    connected, and a skill waiting on an app comes with a Connect button
+    (2026-11-04). The test account has Gmail, Calendar and Drive and no task
+    tracker, so the tracker's button is the one that must be on screen.
+
+    Two live failures this guards, both on 2026-11-04 after every unit test
+    was green: the Skills row's `specs` did not list suggest_skills (the code
+    was written to the row by SQL, and specs are all a model is shown), so
+    the model answered from memory and suggested ClickUp skills to somebody
+    with no ClickUp; then, once it could see the method, the read was held
+    for approval as a write."""
+    since = _now()
+    page = await _open(site, AUTO)
+    reply = await _send(site, "which skills should I use?")
+    assert FALLBACK not in reply["text"], reply
+    assert "Reply yes" not in reply["text"], reply
+    picks = await _rows(
+        "select outcome from tasks.jev_check where user_email = :e and "
+        "purpose = 'tool_pick' and created_at >= :t", e=EMAIL, t=since)
+    assert picks and "skills" in picks[-1].outcome.split(","), picks
+    await page.wait_for_timeout(1000)          # the link scan runs on a timer
+    buttons = await page.evaluate("""() => {
+        const rows = [...document.querySelectorAll('[id^="message-"]')];
+        const last = rows[rows.length - 1];
+        return [...last.querySelectorAll('.aiui-connect-inline button')]
+            .map(b => b.textContent.trim());
+    }""")
+    assert "Connect a task tracker" in buttons, (buttons, reply)

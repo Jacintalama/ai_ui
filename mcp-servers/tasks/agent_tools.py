@@ -142,6 +142,12 @@ READ_METHODS: frozenset[str] = frozenset({
     # library, which is the my_account bug again: a read refused, and the
     # owner told their agent had no access to something it plainly should.
     "use_skill",
+    # Same fall-through as use_skill: "suggest" is neither kind of verb. It
+    # reads which skills fit the apps this person has connected and changes
+    # nothing. Unpinned, "which skills should I use?" in the main chat
+    # answered with a request for permission to read a list (live,
+    # 2026-11-04).
+    "suggest_skills",
     # Fetching a public web page changes nothing of the owner's, so both of
     # these are reads, and a researcher that has to ask permission before
     # reading a page is a researcher nobody uses.

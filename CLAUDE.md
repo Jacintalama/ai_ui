@@ -188,6 +188,18 @@ pipe work. **Update the row from the repo, never from the server's copy, and
 check `md5(content)` against the repo file afterwards.** The row takes effect
 with no restart.
 
+**For a TOOL, update the row through Open WebUI's API, never by SQL on
+`content` (2026-11-04).** A model is shown only the row's `specs`, which
+Open WebUI builds from the code on create and update. Writing `content` by
+SQL ran the new code but left `specs` naming the old methods, so
+`suggest_skills` existed, matched `main` by md5, and no model could see it;
+the main chat answered "which skills should I use?" from memory. Use
+`scripts/insert_<tool>_tool.py` or `/api/v1/tools/id/<id>/update`, and pass
+the row's current `access_grants` back, because the update replaces them.
+Check afterwards that every method in the code appears in `specs`. Do not
+import `open_webui` inside the running container to build specs by hand: on
+2026-11-04 that pushed the container over its memory limit and restarted it.
+
 ### Connecting a Google account (2026-10-29)
 **A connect is started by the server, never by a URL that names an account.**
 The browser goes to `/<service>/auth/google/link`, the api-gateway
