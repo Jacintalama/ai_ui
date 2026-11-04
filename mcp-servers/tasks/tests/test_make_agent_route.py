@@ -42,6 +42,19 @@ def owui(monkeypatch):
         return "stamp"
     monkeypatch.setattr(routes_agents, "session_stamp_for", stamp)
     monkeypatch.setattr(routes_agents, "_default_model", lambda: "gpt-5")
+    # What the person has connected (2026-11-04). The Google three by
+    # default, so the tests above keep meaning what they meant before
+    # connections were read; the tests below change it.
+    got["connected"] = {"gmail", "calendar", "gdrive"}
+    got["mine"] = []
+
+    async def connected(email):
+        return set(got["connected"])
+
+    async def mine(email):
+        return list(got["mine"])
+    monkeypatch.setattr(routes_agents, "_connected_providers", connected)
+    monkeypatch.setattr(routes_agents.user_skills, "mine", mine)
     return got
 
 
@@ -167,6 +180,63 @@ def test_changing_the_skills_after_the_preview_needs_a_new_preview(client, owui)
                     json=dict(MAKE_JACK, skills=["draft-reply"], confirm=code))
     assert r.json()["created"] is False
     assert owui["created"] == []
+
+
+# --- skills that need an app the person has not connected (2026-11-04) -----
+
+INBOX = {"name": "Ivy", "role": "Inbox assistant",
+         "instructions": "Triage my inbox and draft replies to customers.",
+         "access": "read"}
+
+
+def test_a_suggested_skill_needing_gmail_waits_for_gmail(client, owui):
+    """Lukas, 2026-11-03: suggest from what the person has connected. With
+    no Gmail, inbox-triage is not put on the agent, where it would fail on
+    every turn; it is named with a Connect button instead."""
+    owui["connected"] = set()
+    shown = client.post("/api/tasks/agents/make", json=INBOX).json()
+    assert "inbox-triage" not in shown["skills"]
+    assert all(s not in shown["skills"] for s in ("draft-reply",))
+    assert "Connect Gmail to add: " in shown["message"]
+    assert "[Connect Gmail](#aiui-connect:gmail)" in shown["message"]
+    gm = [n for n in shown["needs_connect"] if n["app"] == "gmail"][0]
+    assert "inbox-triage" in gm["skills"]
+
+
+def test_with_gmail_connected_the_same_agent_gets_them(client, owui):
+    shown = client.post("/api/tasks/agents/make", json=INBOX).json()
+    assert shown["skills"][0] == "inbox-triage"
+    assert "#aiui-connect:" not in shown["message"]
+    assert shown["needs_connect"] == []
+
+
+def test_ready_skills_fill_the_places_the_waiting_ones_left(client, owui):
+    """Connections change what is offered, not only what is removed: a
+    lower-ranked skill that works now takes the place of one that cannot."""
+    owui["connected"] = set()
+    shown = client.post("/api/tasks/agents/make", json=INBOX).json()
+    import agent_skills, skill_fit
+    pool = agent_skills.load_all()
+    assert shown["skills"], "nothing ready was offered in their place"
+    for name in shown["skills"]:
+        assert skill_fit.missing(pool[name], set()) == [], name
+
+
+def test_a_named_skill_stays_and_says_what_it_needs(client, owui):
+    owui["connected"] = set()
+    shown = client.post("/api/tasks/agents/make",
+                        json=dict(MAKE_JACK, skills=["inbox-triage"])).json()
+    assert shown["skills"] == ["inbox-triage"]
+    assert "Connect Gmail so these work: inbox-triage" in shown["message"]
+
+
+def test_a_persons_own_skill_is_suggested(client, owui):
+    owui["mine"] = [{"name": "invoice-chaser", "description": "Chase unpaid invoices.",
+                     "tools": [], "body": "Chase them."}]
+    shown = client.post("/api/tasks/agents/make", json=dict(
+        MAKE_JACK, role="Invoice chaser",
+        instructions="Chase unpaid invoices.")).json()
+    assert shown["skills"][0] == "invoice-chaser"
 
 
 def test_the_roster_lists_what_the_chat_needs(client):
