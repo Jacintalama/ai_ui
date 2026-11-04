@@ -3803,6 +3803,61 @@
     return said + '\n\n' + aiuiBuildDoneMarker(id);
   }
 
+  // The app itself, under the reply, when a build finishes (2026-11-04).
+  // A build used to end with a link, so seeing what was made meant opening
+  // a second tab and coming back.
+  //
+  // An IFRAME of the app's own published URL, deliberately, rather than
+  // anything that reads its files: main.py::serve_published_app injects
+  // the project's Supabase url and anon key AT REQUEST TIME, so they are
+  // not in the app's files at all. Anything that assembles the page
+  // another way serves an app whose database silently does not work,
+  // while the same app in a tab works fine.
+  function aiuiShowAppInline(chatId, slug) {
+    if (aiuiChatIdFromUrl() !== chatId) return;
+    if (!/^[a-z0-9][a-z0-9-]{0,80}$/.test(String(slug || ''))) return;
+    var id = 'aiui-app-' + slug;
+    if (document.getElementById(id)) return;
+
+    var box = document.createElement('div');
+    box.id = id;
+    box.style.cssText = 'margin:.5rem 0 1rem 3.75rem;max-width:46rem;'
+      + 'border:1px solid rgba(127,127,127,.3);border-radius:10px;overflow:hidden;';
+
+    var bar = document.createElement('div');
+    bar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;'
+      + 'gap:.5rem;padding:.4rem .6rem;font-size:.8rem;opacity:.75;';
+    var who = document.createElement('span');
+    who.textContent = slug;
+    var open = document.createElement('a');
+    open.href = location.origin + '/tasks/preview-app/' + slug + '/';
+    open.target = '_blank';
+    open.rel = 'noopener';
+    open.textContent = 'Open in a new tab';
+    open.style.cssText = 'color:#8ab4f8;text-decoration:none;';
+    bar.appendChild(who);
+    bar.appendChild(open);
+
+    var frame = document.createElement('iframe');
+    // Same origin and our own app, so this is not a trust boundary. It is
+    // here so a build that loads something of its own cannot navigate the
+    // chat out from under the person reading it.
+    frame.setAttribute('sandbox', 'allow-scripts allow-forms allow-same-origin');
+    frame.setAttribute('loading', 'lazy');
+    frame.title = slug;
+    frame.src = location.origin + '/tasks/preview-app/' + slug + '/';
+    frame.style.cssText = 'display:block;width:100%;height:24rem;border:0;background:#fff;';
+
+    box.appendChild(bar);
+    box.appendChild(frame);
+
+    var rows = document.querySelectorAll('[id^="message-"]');
+    var last = rows.length ? rows[rows.length - 1] : null;
+    var slot = last && last.parentElement ? last.parentElement : null;
+    if (slot && slot.parentElement) slot.parentElement.insertBefore(box, slot.nextSibling);
+    else document.body.appendChild(box);
+  }
+
   function aiuiBuildLine(chatId, text) {
     if (aiuiChatIdFromUrl() !== chatId) return;
     var el = document.getElementById('aiui-build-line');
@@ -3860,7 +3915,15 @@
       if (task === 'stop') return true;
       if (!task) return false;
       var text = aiuiBuildOutcome(task, id, location.origin);
-      if (text) return aiuiCloseBuild(chatId, id, text);
+      if (text) {
+        // Drawn on the way past, not after the write: closing can take
+        // another tick or be done by another tab, and the person is
+        // looking at the chat NOW.
+        if (String(task.status || '') === 'completed' && task.built_app_slug) {
+          aiuiShowAppInline(chatId, task.built_app_slug);
+        }
+        return aiuiCloseBuild(chatId, id, text);
+      }
       // What it is DOING, when the build has said. A timer tells somebody
       // the thing is alive and nothing about whether it is nearly done,
       // stuck on a browser check, or rolling back a change that broke the
