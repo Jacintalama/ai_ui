@@ -1231,9 +1231,12 @@ async def run_agent(sched) -> tuple[str, str, dict]:
             # The schedule's own zone, not the owner's current one: this is the
             # clock the cron matched a minute ago, so it is the clock the run is
             # happening on.
+            import user_skills
             messages = [agent_brief.build(
                 agent, names, memory=memory, roster=roster, graph=graph,
-                now=agent_brief.now_in(getattr(sched, "tz", "") or ""))] + messages
+                now=agent_brief.now_in(getattr(sched, "tz", "") or ""),
+                own_skills=await user_skills.overlay_for(
+                    sched.user_email, (agent or {}).get("meta")))] + messages
 
             # Keyword arguments on purpose: the tests assert on them by name, and
             # a positional call here would silently drift from those assertions.

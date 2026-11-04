@@ -290,17 +290,40 @@ def _ids_from(meta) -> list:
     return [i for i in ids if isinstance(i, str)]
 
 
-def selected(meta) -> list:
+def unknown_ids(meta) -> list:
+    """Skill names this agent holds that we do NOT ship.
+
+    The whole point of this function is to answer "do we need to look
+    anything up" without looking anything up. Most agents hold only
+    built-ins, or none at all, and a database round trip for them is a cost
+    every person on the platform pays for a feature few of them use.
+    """
+    known = load_all()
+    return [i for i in _ids_from(meta) if i not in known]
+
+
+def selected(meta, extra: dict | None = None) -> list:
     """The skills this agent has, in the order they were chosen.
 
     Order is kept because it is the only signal available about which one
     matters most, and it is what a person sees on the card.
+
+    `extra` is that person's own skills, name -> skill, passed in by the
+    caller rather than read here. The design asked for this function to
+    become async and touch the database; it runs inside the brief, inside
+    every turn, on every surface, so instead the I/O stays with the caller
+    and this stays the pure function it was. The behaviour the design
+    wanted is the same and nothing in a turn had to become awaitable.
+
+    A person's own skill WINS on a name collision, which is the rule
+    migration 066 was written around: otherwise a deploy that adds a
+    built-in silently replaces one somebody wrote.
     """
-    known = load_all()
+    known = load_all() if not extra else {**load_all(), **extra}
     return [known[i] for i in _ids_from(meta) if i in known]
 
 
-def brief_for(meta) -> str:
+def brief_for(meta, extra: dict | None = None) -> str:
     """The chosen skills as one block of text for the turn, or "".
 
     Empty for an agent with no skills, which is every agent that predates this
@@ -311,7 +334,7 @@ def brief_for(meta) -> str:
     has to survive. Cutting quietly is not, because the one person who knows a
     skill was ticked is the person watching it appear to be ignored.
     """
-    picked = selected(meta)
+    picked = selected(meta, extra)
     if not picked:
         return ""
 
