@@ -119,3 +119,21 @@ def test_every_named_app_actually_has_tools_behind_it():
     for word in promised:
         pid = next(p for p, w in SPOKEN.items() if w == word)
         assert mytools.PROVIDER_TOOLS.get(pid), pid
+
+
+# --- a tool that can WRITE has to say so (2026-11-04) ----------------------
+
+def test_the_skills_note_says_a_new_one_can_be_written():
+    """write_skill shipped the same day. A tool whose note describes only
+    looking things up is never picked for "write me a skill", however well
+    it works: that is the rule `video` taught at the cost of 140 turns."""
+    note = " ".join(str(agent_jev.TOOL_NOTES.get("skills", "")).split()).lower()
+    assert "writing" in note or "write" in note
+    assert "skill" in note
+
+
+def test_the_skills_note_still_covers_looking_one_up():
+    """The addition must not have replaced what was there. find_skills and
+    use_skill are the commoner calls by far."""
+    note = " ".join(str(agent_jev.TOOL_NOTES.get("skills", "")).split()).lower()
+    assert "looking one up" in note or "listing" in note

@@ -1,8 +1,8 @@
 """
 title: Skills
 author: AIUI Team
-version: 0.1.0
-description: Let an agent find the right ready-made procedure for a job and follow it. Ask "is there a skill for X" or just ask for the job, and the agent looks it up instead of improvising.
+version: 0.2.0
+description: Find a ready-made procedure for a job and follow it, or write a new one when nothing fits. Ask "is there a skill for X", or "write me a skill for chasing invoices".
 """
 
 # Native Open WebUI tool. Talks to the tasks service, which holds the skill
@@ -39,6 +39,12 @@ class Tools:
             return await c.get(f"{self.valves.tasks_url}{path}",
                                params=params,
                                headers={"X-User-Email": email})
+
+    async def _post(self, path: str, payload: dict, email: str):
+        async with httpx.AsyncClient(timeout=self.valves.timeout_seconds) as c:
+            return await c.post(f"{self.valves.tasks_url}{path}",
+                                json=payload,
+                                headers={"X-User-Email": email})
 
     async def find_skills(self, query: str, __user__: dict = {}) -> str:
         """
@@ -99,3 +105,74 @@ class Tools:
             return f"The skill {name!r} has no instructions."
         return ("Follow these instructions for this task, in preference to "
                 f"your own general approach:\n\n{body}")
+
+    # --- writing one when nothing fits (2026-11-04) ----------------------
+    # The platform ships 68 skills and, until this, somebody whose job none
+    # of them covered needed a pull request and a deploy.
+    #
+    # Two calls on purpose. A skill is pasted into every turn of every agent
+    # holding it, so a model must not be able to install instructions the
+    # person has not read. write_skill shows one and saves nothing;
+    # save_skill saves exactly what was shown.
+
+    async def write_skill(self, job: str, __user__: dict = {}) -> str:
+        """
+        Write a new skill for a job that no existing skill covers. Use after
+        find_skills has come back with nothing that fits, or when the user
+        asks for a skill to be written or created.
+
+        This SAVES NOTHING. It writes one and shows it. Show the user what
+        comes back, in full, and tell them to say yes if they want it kept.
+
+        :param job: The job, in the user's own words. "chase unpaid
+            invoices", "write the Monday update".
+        :return: The drafted skill and the code that saves it.
+        """
+        email = (__user__ or {}).get("email", "")
+        try:
+            r = await self._post("/agents/skills/draft", {"job": job}, email)
+        except Exception as e:                              # noqa: BLE001
+            return f"Could not write that skill just now: {e}"
+        if r.status_code == 422:
+            return ((r.json() or {}).get("detail")
+                    or "I could not write that one. Try saying the job in a sentence.")
+        if r.status_code != 200:
+            return "Could not write that skill just now."
+        d = r.json() or {}
+        needs = ", ".join(d.get("tools") or [])
+        lines = ["Here is the skill I would save. Nothing has been saved yet.",
+                 "",
+                 f"Name: {d.get('name', '')}",
+                 f"What it is for: {d.get('description', '')}"]
+        if needs:
+            lines.append(f"Tools it uses: {needs}")
+        if d.get("warning"):
+            lines.append(d["warning"])
+        lines += ["", "Instructions:", d.get("body", ""), "",
+                  "If that is right, say so and I will save it. Tell me what "
+                  "to change and I will write it again.",
+                  f"(confirm code: {d.get('confirm', '')})"]
+        return chr(10).join(lines)
+
+    async def save_skill(self, confirm: str, __user__: dict = {}) -> str:
+        """
+        Save the skill that write_skill just showed. Call this only after the
+        user has seen it and said yes.
+
+        :param confirm: The confirm code from write_skill, exactly as given.
+        :return: Whether it was saved.
+        """
+        email = (__user__ or {}).get("email", "")
+        try:
+            r = await self._post("/agents/skills/mine",
+                                 {"confirm": (confirm or "").strip()}, email)
+        except Exception as e:                              # noqa: BLE001
+            return f"Could not save that skill just now: {e}"
+        if r.status_code in (409, 422):
+            return (r.json() or {}).get("detail") or "That skill was not saved."
+        if r.status_code != 200:
+            return "Could not save that skill just now."
+        d = r.json() or {}
+        out = (f"Saved {d.get('name', 'it')}. It is in your skills now, and "
+               "you can tick it on any of your agents.")
+        return out + (" " + d["warning"] if d.get("warning") else "")

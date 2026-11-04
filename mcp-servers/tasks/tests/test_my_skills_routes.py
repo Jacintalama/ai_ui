@@ -211,3 +211,88 @@ def test_the_shipped_catalogue_is_untouched(client):
     r = c.get("/api/tasks/agents/skills")
     assert r.status_code == 200
     assert len(r.json()["skills"]) == len(agent_skills.load_all())
+
+
+# --- saving exactly what was shown (2026-11-04) ---------------------------
+# write_skill shows a draft and saves nothing; save_skill saves it. The
+# draft is HELD on this side rather than re-sent, because a model asked to
+# repeat 4000 characters paraphrases them, and then the person approves one
+# text while another is stored. That is the failure a preview exists to
+# prevent, reintroduced by the mechanism meant to prevent it.
+
+def test_a_draft_hands_back_a_code(client):
+    c, _ = client
+    assert c.post("/api/tasks/agents/skills/draft",
+                  json={"job": "chase invoices"}).json()["confirm"]
+
+
+def test_the_code_saves_the_draft_exactly_as_shown(client):
+    c, state = client
+    draft = c.post("/api/tasks/agents/skills/draft",
+                   json={"job": "chase invoices"}).json()
+    r = c.post("/api/tasks/agents/skills/mine",
+               json={"confirm": draft["confirm"]})
+    assert r.status_code == 200, r.text
+    saved = state["saved"][0]
+    assert saved["name"] == draft["name"]
+    assert saved["body"] == draft["body"]
+    assert saved["tools"] == draft["tools"]
+
+
+def test_a_code_cannot_be_spent_twice(client):
+    """Otherwise an old transcript saves the same skill again, quietly."""
+    c, state = client
+    code = c.post("/api/tasks/agents/skills/draft",
+                  json={"job": "x"}).json()["confirm"]
+    assert c.post("/api/tasks/agents/skills/mine",
+                  json={"confirm": code}).status_code == 200
+    again = c.post("/api/tasks/agents/skills/mine", json={"confirm": code})
+    assert again.status_code == 422
+    assert "expired" in again.json()["detail"]
+    assert len(state["saved"]) == 1
+
+
+def test_a_code_nobody_issued_saves_nothing(client):
+    c, state = client
+    r = c.post("/api/tasks/agents/skills/mine", json={"confirm": "deadbeef1234"})
+    assert r.status_code == 422
+    assert state["saved"] == []
+
+
+def test_a_code_belonging_to_somebody_else_saves_nothing(client, monkeypatch):
+    """Keyed by code and checked against the email, so a code seen in
+    another person's transcript cannot write into their account."""
+    c, state = client
+    code = c.post("/api/tasks/agents/skills/draft",
+                  json={"job": "x"}).json()["confirm"]
+    from auth import CurrentUser, current_user
+    c.app.dependency_overrides[current_user] = lambda: CurrentUser(
+        email="someone-else@example.com")
+    r = c.post("/api/tasks/agents/skills/mine", json={"confirm": code})
+    assert r.status_code == 422
+    assert state["saved"] == []
+
+
+def test_the_fields_are_ignored_when_a_code_is_given(client):
+    """The whole point. A model that re-sends a shortened body must not be
+    able to store it under a code the person approved."""
+    c, state = client
+    draft = c.post("/api/tasks/agents/skills/draft",
+                   json={"job": "x"}).json()
+    c.post("/api/tasks/agents/skills/mine",
+           json={"confirm": draft["confirm"], "name": "something-else",
+                 "description": "not what was shown", "body": "shorter"})
+    saved = state["saved"][0]
+    assert saved["name"] == draft["name"]
+    assert saved["body"] == draft["body"]
+
+
+def test_saving_without_a_code_still_works(client):
+    """The form on the page sends fields, not a code. Both doors stay
+    open."""
+    c, state = client
+    r = c.post("/api/tasks/agents/skills/mine",
+               json={"name": "typed-by-hand", "description": "d",
+                     "body": "Steps:\n1. Go."})
+    assert r.status_code == 200
+    assert state["saved"][0]["name"] == "typed-by-hand"

@@ -475,8 +475,13 @@ TOOL_NOTES = {
                  "or deleting something that runs on a timer. Not "
                  "meetings or appointments, which are the calendar",
     "remember": "saving or recalling a fact the person asked to remember",
-    "skills": "the person's skills: looking one up, or listing the "
-              "skills and procedures they have set up",
+    # "writing" and "making" named on purpose (2026-11-04). The rule
+    # test_jev_notes_cover_listing.py pins: a note that does not say what a
+    # tool can do is never picked for it, whatever the tool can actually
+    # do. `video` went 140 turns unpicked for exactly this.
+    "skills": "the person's skills: looking one up, listing the skills and "
+              "procedures they have set up, or writing a new skill for a "
+              "job none of them covers",
     "video": "the person's videos: making one, or listing the videos "
              "they have already made",
     "colleague": "asking one of the person's agents for help",
