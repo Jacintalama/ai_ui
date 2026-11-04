@@ -1,5 +1,6 @@
 """AI execution: spawns the claude CLI subprocess, streams progress via SSE."""
 import asyncio
+import build_progress
 import logging
 import os
 from datetime import datetime
@@ -242,10 +243,12 @@ async def _run_autofix(
     instead of losing the build."""
     report: str | None = None
     try:
+        await build_progress.say(task_id, "smoke")
         report = await _smoke_app(slug)
         for i in range(1, AUTOFIX_MAX_PASSES + 1):
             if not report:
                 return None
+            await build_progress.say(task_id, "autofix")
             async with session() as s:
                 await s.execute(
                     update(TaskExecution).where(TaskExecution.id == execution_id)
@@ -257,6 +260,7 @@ async def _run_autofix(
                 execution_id, task_id,
                 user_jwt=user_jwt, schedule_id=schedule_id,
             )
+            await build_progress.say(task_id, "smoke")
             report = await _smoke_app(slug)
         return report
     except Exception as exc:
@@ -316,8 +320,10 @@ async def _run_execution(
             and pre.built_app_slug
             and (pre.description or "").startswith("Enhance apps/")
         ):
+            await build_progress.say(task_id, "baseline")
             baseline = await _capture_baseline(pre.built_app_slug)
 
+        await build_progress.say(task_id, "building")
         full_output = await _stream_claude(
             prompt, execution_id, task_id,
             user_jwt=user_jwt, schedule_id=schedule_id, main_run=True,
@@ -398,6 +404,7 @@ async def _run_execution(
         # only acts when the doc is missing or a stub, and it runs BEFORE the
         # commit sweep so the doc lands in the same commit. Fails open.
         if outcome.kind == "completed" and slug:
+            await build_progress.say(task_id, "docs")
             await _sweep_app_docs(slug, summary=outcome.payload)
 
         # --- HISTORY: commit the app if the agent didn't ---
@@ -408,6 +415,7 @@ async def _run_execution(
         # Runs AFTER AutoFix so the committed tree is the smoke-verified one
         # and any narrow AutoFix edits land in the same commit. Fails open.
         if outcome.kind == "completed" and slug:
+            await build_progress.say(task_id, "commit")
             await _sweep_app_commit(
                 slug, message=outcome.payload, actor_email=assignee_email,
             )
@@ -420,6 +428,7 @@ async def _run_execution(
         # failing is left alone because the enhance may be the fix. Fails open.
         revert_message = None
         if outcome.kind == "completed" and slug and is_regression(baseline, smoke_report):
+            await build_progress.say(task_id, "guard")
             revert_message = await _revert_regression(
                 slug, baseline, smoke_report, actor_email=assignee_email,
             )

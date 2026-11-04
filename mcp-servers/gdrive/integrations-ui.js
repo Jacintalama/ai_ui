@@ -3861,9 +3861,20 @@
       if (!task) return false;
       var text = aiuiBuildOutcome(task, id, location.origin);
       if (text) return aiuiCloseBuild(chatId, id, text);
+      // What it is DOING, when the build has said. A timer tells somebody
+      // the thing is alive and nothing about whether it is nearly done,
+      // stuck on a browser check, or rolling back a change that broke the
+      // app. build_step is the build's own word for the step it is on, in
+      // the language of the person who asked for a website.
+      //
+      // Minutes stay as the fallback, which is every build that predates
+      // this and any build between steps.
       var mins = Math.max(1, Math.round((Date.now() - started) / 60000));
-      aiuiBuildLine(chatId, 'Still building, ' + mins + ' min so far. '
-        + 'A message will appear here when it is done.');
+      var step = String((task && task.build_step_said) || '').trim();
+      aiuiBuildLine(chatId, step
+        ? step + '. ' + mins + ' min so far.'
+        : 'Still building, ' + mins + ' min so far. '
+          + 'A message will appear here when it is done.');
       return false;
     }).catch(function () { return false; }).then(function (finished) {
       if (finished || Date.now() - started > AIUI_BUILD_GIVE_UP_MS) {
