@@ -231,6 +231,28 @@ async def mine(email: str) -> list[dict]:
         return []
 
 
+async def overlay_for(email: str, meta) -> dict:
+    """This person's own skills, name -> skill, for resolving one agent's
+    brief. {} when nothing needs looking up.
+
+    The guard is the point. An agent holding only built-in skills, or none
+    at all, must not cost a database round trip: most agents are one of
+    those, and the cost would be paid on every turn by every person on the
+    platform for a feature few of them use.
+
+    Never raises, because `mine` never raises. A database that cannot be
+    read costs somebody the skills they wrote, never the turn they are in
+    the middle of.
+    """
+    import agent_skills
+    if not str(email or "").strip():
+        return {}
+    if not agent_skills.unknown_ids(meta):
+        return {}
+    return {row["name"]: as_skill(row) for row in await mine(email)
+            if row.get("name")}
+
+
 async def save(email: str, name: str, description: str, tools: list,
                body: str) -> dict:
     """Create or replace one of this person's skills. Raises TooMany."""

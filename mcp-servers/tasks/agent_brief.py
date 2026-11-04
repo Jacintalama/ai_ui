@@ -216,7 +216,8 @@ def _clock_sentence(now: datetime) -> str:
 
 
 def build(agent: dict, names, memory: str = "", roster=(),
-          graph: str = "", now: datetime | None = None) -> dict:
+          graph: str = "", now: datetime | None = None,
+          own_skills: dict | None = None) -> dict:
     """Who the agent is and how it is expected to work, as one system line.
 
     Two faults, both seen live, both fixed here rather than on any one card.
@@ -316,7 +317,11 @@ def build(agent: dict, names, memory: str = "", roster=(),
     # did not know its own name; a skill adds a job to that, it does not
     # replace who is doing it. Joined with a blank line rather than a space
     # because a skill is a markdown document, not another sentence.
-    chosen = agent_skills.brief_for(agent.get("meta"))
+    # `own_skills` is whatever this person wrote for themselves, read by
+    # the caller because the caller is already async and this is not. {}
+    # for everybody who has written none, which is almost everybody, and
+    # then this behaves exactly as it did before they could.
+    chosen = agent_skills.brief_for(agent.get("meta"), own_skills)
     if chosen:
         content += "\n\n" + chosen
     # Last, after the skills. What the agent remembers is the most specific

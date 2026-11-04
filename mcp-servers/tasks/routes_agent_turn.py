@@ -1071,6 +1071,17 @@ def _turn_failed_sentence(name: str) -> str:
 #: The brief lives in agent_brief so every surface can build the same one.
 #: Kept as a name here because this module's own callers, and the tests that
 #: pin what the brief says, have always reached it through this one.
+async def _own_skills(user_email: str, agent: dict) -> dict:
+    """This person's own skills, but only when this agent holds one.
+
+    A seam as well as a guard: the tests replace it, so no test of a turn
+    needs a database for a feature it is not exercising.
+    """
+    import user_skills
+    return await user_skills.overlay_for(user_email,
+                                         (agent or {}).get("meta"))
+
+
 _identity_line = agent_brief.build
 
 
@@ -1117,7 +1128,8 @@ async def _brief_for(user_email: str, agent: dict, roster: list[dict],
     graph = await agent_graph.graph_block(
         user_email, agent_routing.last_user_text(messages))
     return agent_brief.build(agent, names, memory=memory, roster=roster,
-                             graph=graph, now=await clock_for(user_email))
+                             graph=graph, now=await clock_for(user_email),
+                             own_skills=await _own_skills(user_email, agent))
 
 
 async def _turn_for(user_email: str, agent: dict, messages: list[dict],
