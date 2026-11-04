@@ -44,6 +44,7 @@ import agent_memory
 import agent_progress
 import agent_routing
 import main_assistant
+import skill_fit
 import agent_skills
 import routes_prefs
 from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS,
@@ -1512,6 +1513,37 @@ async def _tool_pick(body: ChatIn, text: str) -> list[str] | None:
         return None
 
 
+async def _skill_connect_needs(email: str) -> list:
+    """The apps this person has not connected that some skill needs, as
+    skill_fit.needs_connect gives them. The same reading as
+    /agents/skills/suggest, so the answer and the buttons agree."""
+    import routes_agents                       # it imports this module
+    pool = await routes_agents._skill_pool(email)
+    connected = await routes_agents._connected_providers(email)
+    return skill_fit.overview(pool, connected)["connect"]
+
+
+async def _with_connect_links(email: str, turn: dict) -> dict:
+    """An answer about skills with the Connect links it talks about and left
+    out put back underneath, each a button in the main chat
+    (integrations-ui.js). Measured live 2026-11-04: the model read
+    suggest_skills, wrote "There's a Connect button above if you want that",
+    and dropped the link, so nothing was on screen. A link is never added
+    twice, never for an app the answer does not mention, and never at all
+    when the answer does not talk about connecting. Fails open: the answer
+    as it was."""
+    try:
+        answer = str(turn.get("answer") or "")
+        links = skill_fit.missing_links(answer, await _skill_connect_needs(email))
+        if not links:
+            return turn
+        return dict(turn, answer=answer.rstrip() + "\n\n" + "\n".join(links))
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not add the Connect links to a skills answer",
+                       exc_info=True)
+        return turn
+
+
 async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
                            picked: list[str] | None = None) -> dict | None:
     """The main chat's assistant answering a message nobody took, with the
@@ -1544,6 +1576,8 @@ async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
                    and bool(turn["pending"].get("calls")))
         if not pending and _assistant_failed(str(turn.get("answer") or "")):
             return None
+        if not pending and "skills" in picked:
+            turn = await _with_connect_links(body.user_email, turn)
         # IO speaking for itself: no name and no face over the answer, and
         # that holds whether it answered or stopped to ask.
         #

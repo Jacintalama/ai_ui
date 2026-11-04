@@ -121,3 +121,42 @@ def test_a_long_group_is_cut_with_a_count():
     pool = {"s%02d" % i: sk("s%02d" % i, ["gmail"]) for i in range(12)}
     text = F.overview_text(F.overview(pool, {"gmail"}))
     assert "and 4 more" in text
+
+
+# --- a Connect link the model left out (2026-11-04) -------------------------
+# Live, the main chat's model read suggest_skills and then wrote "There's a
+# Connect button above if you want that" with no link, so no button. Which
+# links belong under an answer is decided here, not by the model.
+
+TRACKER_NEED = {"app": "tracker", "label": F.LABELS["tracker"],
+                "skills": ["daily-standup"], "connect": "#aiui-connect:trello",
+                "button": "Connect a task tracker"}
+GMAIL_NEED = {"app": "gmail", "label": "Gmail", "skills": ["inbox-triage"],
+              "connect": "#aiui-connect:gmail", "button": "Connect Gmail"}
+
+
+def test_an_app_the_answer_talks_about_connecting_gets_its_link():
+    said = ("A task tracker connection (Trello, GitHub or ClickUp) would add "
+            "daily-standup. There's a Connect button above if you want that.")
+    assert F.missing_links(said, [TRACKER_NEED, GMAIL_NEED]) == [
+        "[Connect a task tracker](#aiui-connect:trello)"]
+
+
+def test_a_link_already_in_the_answer_is_not_added_twice():
+    said = "Connect one. [Connect a task tracker](#aiui-connect:trello)"
+    assert F.missing_links(said, [TRACKER_NEED]) == []
+
+
+def test_an_answer_that_never_mentions_connecting_gets_nothing():
+    """"Is there a skill for invoices" answered with a skill name is not an
+    invitation to connect anything."""
+    said = "Use invoice-chaser for that; it needs nothing connected."
+    assert F.missing_links(said, [TRACKER_NEED]) == []
+
+
+def test_only_the_apps_the_answer_names_get_a_link():
+    said = "Connecting Gmail would add inbox-triage."
+    assert F.missing_links(said, [TRACKER_NEED, GMAIL_NEED]) == [
+        "[Connect Gmail](#aiui-connect:gmail)"]
+    assert F.missing_links("", [GMAIL_NEED]) == []
+    assert F.missing_links(said, []) == []
