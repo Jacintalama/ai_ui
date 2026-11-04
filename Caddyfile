@@ -365,6 +365,24 @@
 		reverse_proxy open-webui:8080
 	}
 
+	# integrations-ui.js is OURS and changes with every deploy. It is also
+	# the only mutable thing under /static: everything else here is Open
+	# WebUI's own build output, whose names carry a hash, so those SHOULD
+	# stay cacheable on a 3.8GB box.
+	#
+	# Without this, Open WebUI answers with max-age=14400 and Cloudflare
+	# holds the old file for FOUR HOURS. Measured 2026-11-04, right after a
+	# deploy: cf-cache-status HIT, age 1907, and a last-modified from eight
+	# hours earlier, so three features shipped that day were invisible to
+	# anybody who did not hard-refresh.
+	#
+	# no-cache rather than no-store: the browser may still keep it and ask
+	# with its etag, so the usual answer is a 304 and not the whole file.
+	handle /static/integrations-ui.js {
+		header Cache-Control "no-cache, must-revalidate"
+		reverse_proxy open-webui:8080
+	}
+
 	handle /static/* {
 		reverse_proxy open-webui:8080
 	}
