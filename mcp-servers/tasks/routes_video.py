@@ -571,8 +571,18 @@ async def download(
             ):
                 raise HTTPException(status_code=404, detail="Video not ready")
             output_path = job.output_path
+    # `inline`, not the default `attachment` (2026-11-04). The link this
+    # serves is handed to people as "Watch it here", and an attachment
+    # disposition makes a browser save the file instead of playing it. It
+    # is also what lets the main chat show the video in the conversation:
+    # a <video> element fetching an attachment is relying on browsers
+    # ignoring a header they are entitled to honour.
+    #
+    # The filename is kept, so saving it deliberately still gives a sensible
+    # name rather than the job id with no extension.
     return FileResponse(
-        output_path, media_type="video/mp4", filename=f"{job_id}.mp4"
+        output_path, media_type="video/mp4", filename=f"{job_id}.mp4",
+        content_disposition_type="inline",
     )
 
 
