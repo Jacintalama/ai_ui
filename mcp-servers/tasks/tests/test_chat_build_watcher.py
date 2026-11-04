@@ -109,7 +109,9 @@ def test_a_build_still_running_has_nothing_to_say(status):
 def test_a_finished_build_gives_the_link_to_the_app():
     said = _outcome({"status": "completed", "built_app_slug": "shop"})
     assert said.startswith("shop is built.\nOpen it here: https://x.test/tasks/preview-app/shop/")
-    assert said.rstrip().endswith("<!-- aiui:build-done %s -->" % ID)
+    # The marker is a markdown link reference since #110, which renders as
+    # nothing; the old HTML comment was printed to the person.
+    assert said.rstrip().endswith("[aiui-build-done]: #%s" % ID)
 
 
 def test_a_build_waiting_on_a_question_asks_it_and_says_where_to_answer():
