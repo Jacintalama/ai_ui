@@ -3946,6 +3946,125 @@
   var AIUI_APP_H = '22rem';
   var AIUI_APP_H_BIG = '80vh';
 
+  // ===== The name opens a menu =====
+  //
+  // What the app's name offers, the way ChatGPT's canvas does: where it
+  // came from, its history, and a copy of it.
+  //
+  // Almost none of this is new. Version history is already
+  // "git log -- apps/<slug>/" behind /api/aiuibuilder/<slug>/versions, and
+  // the download is the export the App Builder card has had for months.
+  // This puts them where somebody is actually looking at the app.
+  var AIUI_VERSIONS_SHOWN = 8;
+
+  function aiuiAppMenu(slug, anchorEl) {
+    var open = document.getElementById('aiui-app-menu');
+    if (open) {
+      open.parentNode.removeChild(open);
+      if (open.getAttribute('data-for') === slug) return;
+    }
+
+    var menu = document.createElement('div');
+    menu.id = 'aiui-app-menu';
+    menu.setAttribute('data-for', slug);
+    menu.setAttribute('role', 'menu');
+    var at = anchorEl.getBoundingClientRect();
+    menu.style.cssText = 'position:fixed;z-index:9500;min-width:17rem;'
+      + 'max-width:26rem;max-height:60vh;overflow:auto;'
+      + 'background:#17171a;color:#ededee;border-radius:10px;'
+      + 'border:1px solid rgba(127,127,127,.35);padding:.35rem;'
+      + 'box-shadow:0 10px 30px rgba(0,0,0,.45);font-size:.85rem;'
+      + 'left:' + Math.round(at.left) + 'px;top:' + Math.round(at.bottom + 6) + 'px;';
+
+    function row(text, onPick) {
+      var el = document.createElement(onPick ? 'button' : 'div');
+      if (onPick) {
+        el.type = 'button';
+        el.setAttribute('role', 'menuitem');
+        el.addEventListener('click', onPick);
+      }
+      el.textContent = text;
+      el.style.cssText = 'display:block;width:100%;text-align:left;'
+        + 'background:none;border:0;color:inherit;padding:.4rem .5rem;'
+        + 'border-radius:6px;font-size:.85rem;'
+        + (onPick ? 'cursor:pointer;' : 'opacity:.6;');
+      if (onPick) {
+        el.addEventListener('mouseenter', function () {
+          el.style.background = 'rgba(127,127,127,.18)';
+        });
+        el.addEventListener('mouseleave', function () {
+          el.style.background = 'none';
+        });
+      }
+      menu.appendChild(el);
+      return el;
+    }
+
+    row(slug);
+    row('Open in App Builder', function () {
+      window.open(location.origin + '/app-builder', '_blank', 'noopener');
+      shut();
+    });
+    row('Download it', function () {
+      // A plain navigation, so the browser saves the file instead of this
+      // page holding a zip of somebody's app in memory.
+      window.open('/api/projects/' + encodeURIComponent(slug) + '/export',
+                  '_blank', 'noopener');
+      shut();
+    });
+
+    var hist = row('History');
+    var list = document.createElement('div');
+    menu.appendChild(list);
+    fetch('/api/aiuibuilder/' + encodeURIComponent(slug) + '/versions',
+          { headers: aiuiAuthHeaders() })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (rows) {
+        if (!rows || !rows.length) {
+          hist.textContent = 'No history yet';
+          return;
+        }
+        hist.textContent = 'History';
+        rows.slice(0, AIUI_VERSIONS_SHOWN).forEach(function (v) {
+          var when = String(v.date || '').slice(0, 16).replace('T', ' ');
+          var said = String(v.message || '').slice(0, 70);
+          var r2 = row((v.is_current ? '✓ ' : '    ')
+                       + when + '  ' + said,
+                       v.is_current ? null : function () {
+            // Asked first. Rolling back throws away everything since,
+            // and the menu row is one click from a stray hover.
+            if (!window.confirm('Put the app back to how it was at '
+                                + when + '?')) return;
+            fetch('/api/aiuibuilder/' + encodeURIComponent(slug) + '/rollback', {
+              method: 'POST',
+              headers: aiuiAuthHeaders(),
+              body: JSON.stringify({ sha: v.sha })
+            }).then(function (res) {
+              r2.textContent = res.ok ? 'Put back. Reload to see it.'
+                                      : 'That could not be put back.';
+            }).catch(function () {
+              r2.textContent = 'That could not be put back.';
+            });
+          });
+          if (v.is_current) r2.style.opacity = '.75';
+        });
+      }).catch(function () { hist.textContent = 'History is not available'; });
+
+    function shut() {
+      if (menu.parentNode) menu.parentNode.removeChild(menu);
+      document.removeEventListener('keydown', onKey, true);
+      document.removeEventListener('mousedown', onAway, true);
+    }
+    function onKey(e) { if (e.key === 'Escape') shut(); }
+    function onAway(e) {
+      if (!menu.contains(e.target) && e.target !== anchorEl) shut();
+    }
+    document.addEventListener('keydown', onKey, true);
+    document.addEventListener('mousedown', onAway, true);
+    document.body.appendChild(menu);
+  }
+  // ===== End the name opens a menu =====
+
   // ===== Annotate =====
   //
   // Point at a part of the site and say what to change, rather than
@@ -4245,10 +4364,15 @@
     var dot = document.createElement('span');
     dot.textContent = '▣';
     dot.style.cssText = 'opacity:.55;';
-    var name = document.createElement('span');
+    var name = document.createElement('button');
+    name.type = 'button';
     name.textContent = slug;
+    name.title = 'History, download, and where it came from';
+    name.setAttribute('aria-label', name.title);
     name.style.cssText = 'font-weight:600;flex:1 1 auto;overflow:hidden;'
-      + 'text-overflow:ellipsis;white-space:nowrap;';
+      + 'text-overflow:ellipsis;white-space:nowrap;text-align:left;'
+      + 'background:none;border:0;color:inherit;cursor:pointer;font-size:.85rem;';
+    name.addEventListener('click', function () { aiuiAppMenu(slug, name); });
 
     function iconBtn(glyph, label) {
       var el = document.createElement('button');
