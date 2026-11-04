@@ -3311,7 +3311,20 @@
       }
       // Still working
       $bov.hidden = false;
-      $bovPhase.textContent = PHASE_LABELS[task.status] || task.status;
+      // What it is DOING, not merely that it is running (2026-11-04).
+      //
+      // PHASE_LABELS turns a status into a word, and the status is
+      // "running" for the whole build, so this chip read "Building" for
+      // five minutes while the thing moved through a baseline, the agent,
+      // a browser check, fix passes, a README and a commit.
+      //
+      // build_step_said is the build's own name for the step it is on,
+      // written by routes_execution and phrased for the person who asked
+      // for a website. The status label stays as the fallback: a build
+      // between steps, or one that predates this, still has to say
+      // something.
+      $bovPhase.textContent = (task.build_step_said || "").trim()
+        || PHASE_LABELS[task.status] || task.status;
 
       // awaiting_input: agent emitted NEEDS_INPUT. Swap the live-log /
       // progress-bar for an answer panel so the user can reply (POST
