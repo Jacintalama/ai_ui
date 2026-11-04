@@ -672,6 +672,42 @@ async def find_skills(q: str = "", limit: int = 0) -> dict:
             "total": len(agent_skills.load_all())}
 
 
+@router.get("/skills/suggest")
+async def suggest_skills(user: CurrentUser = Depends(current_user)) -> dict:
+    """Which skills this person's connections make ready, and what
+    connecting more would add (2026-11-04, Lukas: suggest skills from what
+    the user has connected).
+
+    For the main chat's "which skills should I use?" through the Agent
+    Builder tool. `message` is the finished reply; its Connect links become
+    buttons in the main chat. The rest is the same facts as data.
+    """
+    connected = await _connected_providers(user.email)
+    own = await user_skills.mine(user.email)
+    pool = user_skills.merge(agent_skills.load_all(), own)
+    ov = skill_fit.overview(pool, connected)
+    mine_names = sorted({str(r.get("name") or "") for r in own} - {""})
+    return dict(ov, mine=mine_names,
+                message=skill_fit.overview_text(ov, mine=mine_names))
+
+
+@router.get("/skills/needs")
+async def skill_needs(skills: str = "",
+                      user: CurrentUser = Depends(current_user)) -> dict:
+    """Which of these skills wait on an app this person has not connected.
+
+    For the Agents page, which shows a Connect button above the message box
+    when the agent being talked to holds one (2026-11-04). Names come from
+    the agent's own row, so unknown ones are ignored rather than refused.
+    """
+    names = [n.strip() for n in (skills or "").split(",") if n.strip()]
+    if not names:
+        return {"needs": []}
+    pool = await _skill_pool(user.email)
+    _, gaps = skill_fit.split(names, pool, await _connected_providers(user.email))
+    return {"needs": skill_fit.needs_connect(gaps)}
+
+
 @router.get("/skills/body")
 async def skill_body(name: str = "") -> dict:
     """One skill's instructions, for an agent about to follow them.

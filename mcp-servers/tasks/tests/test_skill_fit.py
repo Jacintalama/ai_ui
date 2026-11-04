@@ -70,4 +70,54 @@ def test_connect_lines_for_skills_already_kept_say_so():
 def test_needs_connect_is_the_same_facts_as_data():
     assert F.needs_connect({"gmail": ["a"]}) == [
         {"app": "gmail", "label": "Gmail", "skills": ["a"],
-         "connect": "#aiui-connect:gmail"}]
+         "connect": "#aiui-connect:gmail", "button": "Connect Gmail"}]
+
+
+# --- "which skills should I use?" (2026-11-04) -------------------------------
+
+POOL = {"inbox-triage": sk("inbox-triage", ["gmail"]),
+        "draft-reply": sk("draft-reply", ["gmail"]),
+        "day-ahead": sk("day-ahead", ["calendar", "gmail"]),
+        "find-my-file": sk("find-my-file", ["gdrive"]),
+        "daily-standup": sk("daily-standup", ["server:mcp-proxy"]),
+        "shorten-this": sk("shorten-this", [])}
+
+
+def test_overview_groups_ready_skills_by_the_app_that_makes_them_work():
+    ov = F.overview(POOL, {"gmail"})
+    assert ov["ready"] == [{"app": "gmail", "label": "Gmail",
+                            "skills": ["draft-reply", "inbox-triage"]}]
+    # day-ahead needs Calendar as well, so it waits on Calendar.
+    apps = [c["app"] for c in ov["connect"]]
+    assert apps == ["calendar", "gdrive", "tracker"]
+    assert ov["connect"][0]["skills"] == ["day-ahead"]
+    assert ov["connect"][0]["connect"] == "#aiui-connect:calendar"
+    assert ov["no_connection"] == 1
+
+
+def test_a_skill_needing_two_connected_apps_is_listed_once():
+    ov = F.overview(POOL, {"gmail", "calendar"})
+    listed = [s for g in ov["ready"] for s in g["skills"]]
+    assert listed.count("day-ahead") == 1
+
+
+def test_overview_text_has_buttons_and_says_what_to_do_next():
+    text = F.overview_text(F.overview(POOL, {"gmail"}), mine=["invoice-chaser"])
+    assert "Gmail: draft-reply, inbox-triage" in text
+    assert "Your own skills: invoice-chaser" in text
+    assert "Google Calendar would add: day-ahead" in text
+    assert "[Connect Google Calendar](#aiui-connect:calendar)" in text
+    assert "1 more skill needs nothing connected" in text
+    assert text.rstrip().endswith("Ask me to add any of these to an agent.")
+
+
+def test_with_nothing_connected_it_says_so_plainly():
+    text = F.overview_text(F.overview(POOL, set()))
+    assert "Nothing you have connected unlocks a skill yet." in text
+    assert "[Connect Gmail](#aiui-connect:gmail)" in text
+
+
+def test_a_long_group_is_cut_with_a_count():
+    pool = {"s%02d" % i: sk("s%02d" % i, ["gmail"]) for i in range(12)}
+    text = F.overview_text(F.overview(pool, {"gmail"}))
+    assert "and 4 more" in text
