@@ -479,10 +479,19 @@ TOOL_NOTES = {
     # test_jev_notes_cover_listing.py pins: a note that does not say what a
     # tool can do is never picked for it, whatever the tool can actually
     # do. `video` went 140 turns unpicked for exactly this.
-    "skills": "the person's skills: looking one up, listing the skills and "
-              "procedures they have set up, suggesting which skills fit "
-              "the apps they have connected, or writing a new skill for a "
-              "job none of them covers",
+    # Measured against the live router on 2026-11-04, three tries each.
+    # The note before this one ("the person's skills: looking one up,
+    # listing ... suggesting which skills fit the apps they have
+    # connected ...") was picked 0 of 1 for "which skills should I use?",
+    # 0 of 3 for "suggest some skills for me" and 0 of 3 for "is there a
+    # skill for chasing invoices". This one: 3 of 3 for each of those and
+    # for "recommend skills for my agents"; "check my inbox" and "draft a
+    # reply to Tom" did not pick it. Naming the questions is what worked.
+    "skills": "any question about skills (ready-made procedures an agent "
+              "follows): suggest or recommend skills for me, which skills "
+              "they should use, which skills fit the apps they have "
+              "connected, whether there is a skill for a job, listing the "
+              "skills they have, or writing a new one",
     "video": "the person's videos: making one, or listing the videos "
              "they have already made",
     "colleague": "asking one of the person's agents for help",

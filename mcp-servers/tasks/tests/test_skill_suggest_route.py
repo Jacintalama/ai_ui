@@ -122,5 +122,9 @@ async def test_the_tool_says_plainly_when_it_cannot_ask():
 
 def test_jev_picks_the_skills_tool_for_skills_that_fit_connections():
     import agent_jev
+    """Measured live 2026-11-04: a note that only described the tool was
+    not picked for these; naming the questions was (agent_jev comment)."""
     note = agent_jev.TOOL_NOTES["skills"].lower()
-    assert "suggest" in note and "connected" in note
+    for asked in ("suggest or recommend skills", "which skills they should use",
+                  "fit the apps they have connected", "whether there is a skill"):
+        assert asked in note, asked
