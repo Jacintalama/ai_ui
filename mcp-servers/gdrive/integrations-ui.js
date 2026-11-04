@@ -3946,6 +3946,171 @@
   var AIUI_APP_H = '22rem';
   var AIUI_APP_H_BIG = '80vh';
 
+  // ===== Annotate =====
+  //
+  // Point at a part of the site and say what to change, rather than
+  // describing where it is in words. The panel already shows the running
+  // app, so the thing somebody wants to change is right there under the
+  // pointer.
+  //
+  // It can reach inside the frame because the app is served from OUR
+  // origin and the sandbox carries allow-same-origin. That is also the
+  // limit of it: this works for an app of ours and would not, and should
+  // not, for anything else.
+  var AIUI_MARK = 'aiui-annotate-outline';
+
+  function aiuiSelectorFor(el) {
+    // Enough for a person's agent to find it again, and no more. An id is
+    // the whole answer; otherwise walk up far enough to be unambiguous
+    // without producing a selector nobody can read.
+    if (!el || !el.tagName) return '';
+    if (el.id) return '#' + el.id;
+    var parts = [];
+    var node = el;
+    for (var depth = 0; node && node.tagName && depth < 4; depth += 1) {
+      var part = node.tagName.toLowerCase();
+      var cls = String(node.className || '').trim().split(/\s+/)
+        .filter(function (c) { return c && c !== AIUI_MARK; })[0];
+      if (cls) part += '.' + cls;
+      var parent = node.parentElement;
+      if (parent) {
+        var same = [];
+        for (var i = 0; i < parent.children.length; i++) {
+          if (parent.children[i].tagName === node.tagName) {
+            same.push(parent.children[i]);
+          }
+        }
+        if (same.length > 1) {
+          part += ':nth-of-type(' + (same.indexOf(node) + 1) + ')';
+        }
+      }
+      parts.unshift(part);
+      if (node.id) { parts[0] = '#' + node.id; break; }
+      node = parent;
+    }
+    return parts.join(' > ');
+  }
+
+  function aiuiAnnotateOff(state) {
+    if (!state || !state.doc) return;
+    try {
+      state.doc.removeEventListener('click', state.onClick, true);
+      state.doc.removeEventListener('mouseover', state.onOver, true);
+      if (state.style && state.style.parentNode) {
+        state.style.parentNode.removeChild(state.style);
+      }
+      var marked = state.doc.querySelectorAll('.' + AIUI_MARK);
+      for (var i = 0; i < marked.length; i++) {
+        marked[i].classList.remove(AIUI_MARK);
+      }
+    } catch (e) { /* the frame went away under us */ }
+  }
+
+  function aiuiAnnotateOn(frame, onPick) {
+    var doc;
+    try {
+      doc = frame.contentDocument;
+    } catch (e) {
+      doc = null;
+    }
+    // No document means the app has not finished loading, or something
+    // about this frame is not what we think. Either way there is nothing
+    // to point at, and saying so beats a mode that quietly does nothing.
+    if (!doc || !doc.body) return null;
+
+    var style = doc.createElement('style');
+    style.textContent = '.' + AIUI_MARK + '{outline:2px solid #6b73ff !important;'
+      + 'outline-offset:1px;cursor:crosshair !important;}'
+      + 'body{cursor:crosshair !important;}';
+    doc.head.appendChild(style);
+
+    var last = null;
+    function onOver(e) {
+      if (last) last.classList.remove(AIUI_MARK);
+      last = e.target;
+      if (last && last.classList) last.classList.add(AIUI_MARK);
+    }
+    function onClick(e) {
+      // The app is live: a click would follow its links and submit its
+      // forms, and the person is pointing, not using it.
+      e.preventDefault();
+      e.stopPropagation();
+      var el = e.target;
+      onPick({
+        selector: aiuiSelectorFor(el),
+        tag: (el.tagName || '').toLowerCase(),
+        text: String(el.textContent || '').trim().slice(0, 200)
+      });
+    }
+    doc.addEventListener('mouseover', onOver, true);
+    doc.addEventListener('click', onClick, true);
+    return { doc: doc, style: style, onOver: onOver, onClick: onClick };
+  }
+
+  // What the agent is told. The element is described three ways on
+  // purpose: a selector it can search for, the tag, and the words the
+  // person could see, because a selector alone is brittle and the visible
+  // text is what they were actually pointing at.
+  function aiuiAnnotatePrompt(pick, said) {
+    var where = 'On the page, change this element:\n'
+      + '- selector: ' + (pick.selector || '(unknown)') + '\n'
+      + '- tag: <' + (pick.tag || '?') + '>\n';
+    if (pick.text) where += '- it currently reads: "' + pick.text + '"\n';
+    return where + '\nThe change: ' + said
+      + '\n\nChange only that part. Leave the rest of the page alone.';
+  }
+
+  //: How long to wait on a change before letting go. An enhance is a
+  //: build: minutes, not seconds.
+  var AIUI_CHANGE_POLL_MS = 8000;
+  var AIUI_CHANGE_GIVE_UP_MS = 30 * 60 * 1000;
+
+  // A change asked for by pointing is a BUILD, so the build line already
+  // says what it is doing. The only thing left is to show the result:
+  // reload the frame once it lands, because an app whose code changed
+  // five minutes ago and still shows the old page looks like the change
+  // was ignored.
+  function aiuiWatchChange(chatId, taskId, frame, started) {
+    started = started || Date.now();
+    fetch('/api/tasks/' + taskId, { headers: aiuiAuthHeaders() })
+      .then(function (r) {
+        if (r.status === 403 || r.status === 404) return 'stop';
+        return r.ok ? r.json() : null;
+      }).then(function (task) {
+        if (task === 'stop') return true;
+        if (!task) return false;
+        var status = String(task.status || '');
+        if (status === 'completed') {
+          // Cache-busted: the app is served from its own URL and the
+          // browser has every reason to believe it has not changed.
+          try {
+            var at = frame.src.split('#')[0].split('?')[0];
+            frame.src = at + '?changed=' + Date.now();
+          } catch (e) { /* the frame went away */ }
+          aiuiBuildLine(chatId, 'The change is in. Reloading it.');
+          setTimeout(function () { aiuiClearBuildLine(); }, 4000);
+          return true;
+        }
+        if (status === 'failed') {
+          aiuiBuildLine(chatId, 'That change did not work out. The app is'
+                        + ' as it was.');
+          setTimeout(function () { aiuiClearBuildLine(); }, 8000);
+          return true;
+        }
+        var said = String(task.build_step_said || '').trim();
+        aiuiBuildLine(chatId, said ? said + '...' : 'Making that change...');
+        return false;
+      }).catch(function () { return false; })
+      .then(function (finished) {
+        if (finished || Date.now() - started > AIUI_CHANGE_GIVE_UP_MS) return;
+        setTimeout(function () {
+          aiuiWatchChange(chatId, taskId, frame, started);
+        }, AIUI_CHANGE_POLL_MS);
+      });
+  }
+
+  // ===== End annotate =====
+
   // ===== The app beside the chat =====
   //
   // Expanding used to make the panel taller in place, which is the cheap
@@ -4111,6 +4276,93 @@
       + 'padding:.55rem .7rem;font-size:.85rem;';
     chip.textContent = '▣  ' + slug + '  ·  showing beside the chat';
 
+    // Point at a part of the page and say what to change.
+    var ask = document.createElement('div');
+    ask.style.cssText = 'display:none;padding:.6rem .7rem;'
+      + 'border-top:1px solid rgba(127,127,127,.25);';
+    var asked = document.createElement('input');
+    asked.type = 'text';
+    asked.placeholder = 'What would you like to change?';
+    asked.style.cssText = 'width:100%;padding:.45rem .55rem;border-radius:8px;'
+      + 'border:1px solid rgba(127,127,127,.35);background:transparent;'
+      + 'color:inherit;font-size:.88rem;';
+    var askWhat = document.createElement('div');
+    askWhat.style.cssText = 'font-size:.75rem;opacity:.6;margin-bottom:.35rem;'
+      + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    ask.appendChild(askWhat);
+    ask.appendChild(asked);
+
+    var picked = null;
+    var mode = null;
+
+    function annotateStop() {
+      aiuiAnnotateOff(mode);
+      mode = null;
+      picked = null;
+      ask.style.display = 'none';
+      note.style.opacity = '.6';
+      note.title = 'Point at something to change it';
+      note.setAttribute('aria-label', note.title);
+    }
+
+    var note = iconBtn('✎', 'Point at something to change it');
+    note.addEventListener('click', function () {
+      if (mode) { annotateStop(); return; }
+      mode = aiuiAnnotateOn(frame, function (pick) {
+        picked = pick;
+        askWhat.textContent = 'Changing: ' + (pick.text || pick.selector
+                                              || pick.tag);
+        ask.style.display = '';
+        asked.value = '';
+        asked.focus();
+      });
+      if (!mode) {
+        // Nothing to point at: the app has not finished loading, or this
+        // frame is not one we can reach into. Saying so beats a button
+        // that looks armed and does nothing.
+        askWhat.textContent = 'Wait for the app to finish loading, then try again.';
+        ask.style.display = '';
+        asked.style.display = 'none';
+        setTimeout(function () {
+          ask.style.display = 'none';
+          asked.style.display = '';
+        }, 2600);
+        return;
+      }
+      note.style.opacity = '1';
+      note.title = 'Stop pointing';
+      note.setAttribute('aria-label', note.title);
+    });
+
+    asked.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { annotateStop(); return; }
+      if (e.key !== 'Enter') return;
+      var said = asked.value.trim();
+      if (!said || !picked) return;
+      asked.disabled = true;
+      askWhat.textContent = 'Asking for that change...';
+      fetch('/api/aiuibuilder/' + encodeURIComponent(slug) + '/enhance', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ prompt: aiuiAnnotatePrompt(picked, said) })
+      }).then(function (r) {
+        return r.ok ? r.json() : r.json().then(function (j) {
+          throw new Error(j.detail || 'that could not be asked for');
+        });
+      }).then(function (made) {
+        annotateStop();
+        // The change is a BUILD, so it is watched like any other and the
+        // panel reloads when it lands. Nothing here polls: the watcher
+        // already does, and two pollers on one task is two answers.
+        if (made && made.task_id) {
+          aiuiWatchChange(chatId, made.task_id, frame);
+        }
+      }).catch(function (err) {
+        asked.disabled = false;
+        askWhat.textContent = String((err && err.message) || 'That did not work.');
+      });
+    });
+
     var grow = iconBtn('⤢', 'Show it beside the chat');
     var big = false;
     grow.addEventListener('click', function () {
@@ -4141,6 +4393,7 @@
 
     bar.appendChild(dot);
     bar.appendChild(name);
+    bar.appendChild(note);
     bar.appendChild(grow);
     bar.appendChild(out);
 
@@ -4157,6 +4410,7 @@
     box.appendChild(bar);
     box.appendChild(chip);
     box.appendChild(frame);
+    box.appendChild(ask);
     aiuiPutUnderLastMessage(box);
   }
   function aiuiBuildLine(chatId, text) {

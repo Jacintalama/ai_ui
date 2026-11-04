@@ -578,6 +578,17 @@ async def proxy_handler(path: str, request: Request):
     elif full_path.startswith("/api/video-jobs"):
         backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
         backend_path = full_path
+    # /api/aiuibuilder/* → Tasks service.
+    #
+    # The USER-scoped half of the builder: a person's own apps, keyed by
+    # slug and checked against their email, where /api/tasks/enhance is
+    # admin-only and keyed by a task id. Routed here so the main chat can
+    # ask for a change to an app somebody is looking at (2026-11-04,
+    # Annotate), which is the first thing in a browser to need it; until
+    # now it was reached only from inside the platform.
+    elif full_path.startswith("/api/aiuibuilder"):
+        backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
+        backend_path = full_path
     # /api/projects/* → Tasks service (per-project membership)
     elif full_path.startswith("/api/projects"):
         backend_url = os.getenv("TASKS_URL", "http://tasks:8210")
