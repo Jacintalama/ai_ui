@@ -218,9 +218,66 @@ async def oauth_start(provider_id: str,
 
     client_id, _ = O.client_credentials(provider_id)
     state = O.STATES.mint(user.email)
+
+    # A FIRST GitHub connect goes to the install page, where the person
+    # picks their repositories and comes straight back (2026-11-04, Ralph:
+    # "use the default one please like in the vercel").
+    #
+    # GitHub splits this in two. Authorising says who you are; installing
+    # grants repository access. Our app is registered with "request user
+    # authorization during installation", and GitHub's docs are explicit
+    # that such an app CANNOT have a separate setup URL: the install
+    # redirects to the callback as part of the authorization flow. So the
+    # install page gives both in one approval, which is the whole point.
+    #
+    # Only for somebody with nothing stored. For an app already installed,
+    # that same URL shows Configure instead, finishes on GitHub and never
+    # redirects back with a code. That was measured in the log as seven
+    # oauth/start calls and zero callbacks when this route pointed every
+    # connect at the install page, so the two cases genuinely differ and
+    # the ordinary authorize URL is what a reconnect needs.
+    if provider_id == "github" and not await _has_connection(user.email,
+                                                             provider_id):
+        install = O.install_url(state)
+        if install:
+            return {"url": install}
+
     return {"url": O.authorize_url(provider_id, client_id=client_id,
                                    redirect_uri=_redirect_uri(provider_id),
                                    state=state)}
+
+
+async def _has_connection(email: str, provider_id: str) -> bool:
+    """Whether this person already has this app connected.
+
+    Existence only, so nothing is decrypted to answer a question about
+    which page to open.
+
+    Fails CLOSED, to False, on purpose. Unreachable means "treat them as
+    new", which sends them to the install page: that page works for a
+    first install and, for somebody who turns out to be installed already,
+    shows them their repository selection. The other way round, a blip
+    would send a first-timer to authorize and leave them connected to
+    nothing.
+    """
+    try:
+        conn = await _connect()
+    except Exception:                                       # noqa: BLE001
+        return False
+    try:
+        row = await conn.fetchrow(
+            "SELECT 1 FROM tasks.user_connections "
+            "WHERE email = $1 AND provider = $2", email, provider_id)
+        return row is not None
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not check for an existing connection",
+                       exc_info=True)
+        return False
+    finally:
+        try:
+            await conn.close()
+        except Exception:                                   # noqa: BLE001
+            pass
 
 
 #: The clean public path, mounted at the root rather than under this
