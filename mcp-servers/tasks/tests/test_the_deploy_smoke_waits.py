@@ -109,3 +109,38 @@ def test_the_bind_mounted_file_is_still_inside_a_watched_path():
     file goes back to needing a hand."""
     text = (ROOT / "docker-compose.unified.yml").read_text(encoding="utf-8")
     assert "./mcp-servers/gdrive/integrations-ui.js:" in text
+
+
+# --- the override is a hand-started thing only (2026-11-04) ---------------
+
+def _workflow():
+    return (ROOT / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8")
+
+
+def test_a_push_can_never_overwrite_work_done_on_the_server():
+    """The guard exists because teammates edit files on the box. If a push
+    could set the override, the guard would be decoration: every merge
+    would quietly win over whatever somebody had put there."""
+    text = _workflow()
+    assert "ORCH_OVERWRITE_SERVER_EDITS" in text
+    assert "github.event_name == 'workflow_dispatch'" in text, (
+        "the override is not gated on being hand-started")
+
+
+def test_the_override_defaults_to_off():
+    import yaml
+    spec = yaml.safe_load(_workflow())
+    on = spec.get("on", spec.get(True))
+    inputs = on["workflow_dispatch"]["inputs"]["overwrite_server_edits"]
+    assert inputs["default"] is False
+
+
+def test_the_description_says_what_it_costs():
+    """Somebody ticking this is about to overwrite a colleague's work. The
+    box should say so rather than leaving them to find out."""
+    import yaml
+    spec = yaml.safe_load(_workflow())
+    on = spec.get("on", spec.get(True))
+    said = on["workflow_dispatch"]["inputs"]["overwrite_server_edits"]["description"].lower()
+    assert "refuses" in said or "revert" in said
+    assert "teammates" in said or "server" in said

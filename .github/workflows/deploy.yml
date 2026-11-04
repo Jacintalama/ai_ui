@@ -20,6 +20,16 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      overwrite_server_edits:
+        description: >-
+          Let the repo win over files edited directly on the server. The
+          deploy normally REFUSES those, because teammates work on the box
+          and a repo-wins rsync silently reverts them. Tick this only after
+          looking at the named files and deciding the repo's version is the
+          one to keep.
+        type: boolean
+        default: false
 
 concurrency:
   group: deploy-production
@@ -92,6 +102,12 @@ jobs:
         env:
           ORCH_HOST: 46.224.193.25
           USER: github-actions
+          # Only ever 1 from a hand-started run with the box ticked. A push
+          # cannot set it, so the guard still stands in front of every
+          # ordinary deploy.
+          ORCH_OVERWRITE_SERVER_EDITS: >-
+            ${{ (github.event_name == 'workflow_dispatch' &&
+                 inputs.overwrite_server_edits) && '1' || '0' }}
         # `bash <script>`, not `./<script>`. Every shell script in
         # this repo is stored mode 100644, because the people who
         # write them work on Windows, where git records no
