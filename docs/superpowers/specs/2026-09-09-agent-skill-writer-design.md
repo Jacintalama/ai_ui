@@ -1,7 +1,21 @@
 # Agents write their own skills
 
-**Status:** design, awaiting review
+**Status:** BUILT 2026-11-04, PRs #92 to #95
 **Date:** 2026-09-09
+
+Built as designed. The one open question in it, private per person versus
+shared across the team, was decided on 2026-11-04: **private**, which is
+what this spec proposed. The store has no notion of a visibility or a team
+and there is a test that keeps it that way, so sharing would be a
+deliberate change rather than something that leaked in.
+
+One thing was done differently and the spec's own reasoning is why. It
+proposed `async def brief_for(meta, user_email)` and called that the most
+dangerous change in the work, because the brief runs inside every turn on
+every surface. Both callers of `agent_brief.build` turned out to be async
+already, so the lookup moved out to them and `brief_for` stayed the pure
+function it was. Same behaviour, nothing in a turn became awaitable, and a
+test asserts it is not a coroutine.
 
 ## Why
 

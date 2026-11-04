@@ -215,3 +215,69 @@ def test_the_cap_is_well_clear_of_what_one_agent_can_hold():
     per-agent ceiling is ten. The library may be larger than that."""
     assert US.MAX_PER_PERSON > 10
     assert agent_skills.MAX_TOTAL_CHARS == 8000
+
+
+# --- private per person, decided 2026-11-04 -------------------------------
+# Ralph chose private over shared. The design's argument: a skill is text
+# injected into an agent's brief, so "anybody can write instructions that
+# run inside your agent" is not a default somebody chose, and this platform
+# has had one wildcard-share incident already.
+#
+# That makes the email filter on every query a privacy boundary rather than
+# a convenience, so it is tested as one. These compile the real statements
+# and read the SQL, because the alternative is a database tier that does
+# not run locally and therefore would not have run before this shipped.
+
+def _sql_of(statement):
+    from sqlalchemy.dialects import postgresql
+    return str(statement.compile(dialect=postgresql.dialect()))
+
+
+def test_reading_skills_is_filtered_by_owner():
+    from sqlalchemy import select
+    from models import UserSkill
+    sql = _sql_of(select(UserSkill).where(UserSkill.user_email == "x"))
+    assert "user_email" in sql
+
+
+def test_every_query_in_the_store_names_the_owner():
+    """Read, save, count and delete. A filter missing from any ONE of them
+    is somebody reading, overwriting or deleting another person's skill."""
+    import inspect
+    source = inspect.getsource(US)
+    where_lines = [l for l in source.splitlines()
+                   if ".where(" in l or "UserSkill.user_email" in l]
+    assert len(where_lines) >= 4, (
+        "fewer filters than there are queries: " + "\n".join(where_lines))
+    # Per QUERY, not per function. _save_row holds two, a lookup and a
+    # count, and checking only that the string appears somewhere in the
+    # function passed while the lookup had lost its filter. That exact
+    # mutation went uncaught on the first run of this test.
+    expected = {"_rows_for": 1, "_save_row": 2, "_delete_row": 1}
+    for fn, how_many in expected.items():
+        body = inspect.getsource(getattr(US, fn))
+        found = body.count("UserSkill.user_email == email")
+        assert found == how_many, (
+            "%s filters by owner %d times, expected %d" % (fn, found, how_many))
+
+
+def test_the_unique_index_is_on_the_pair_not_the_name():
+    """Two people may each have a skill called inbox-triage. An index on
+    name alone would make the second person's save collide with the
+    first's, which is both a bug and a disclosure."""
+    import pathlib
+    sql = (pathlib.Path(__file__).resolve().parents[1]
+           / "migrations" / "066_user_skill.sql").read_text(encoding="utf-8")
+    assert "user_skill_owner_name" in sql
+    assert "(user_email, name)" in sql
+
+
+def test_sharing_is_not_half_implemented():
+    """If sharing ever arrives it should be a deliberate change, not
+    something that leaked in. Nothing in the store should know about a
+    visibility, a team or a shared flag today."""
+    import inspect
+    source = inspect.getsource(US).lower()
+    for word in ("shared", "visibility", "team_id", "is_public"):
+        assert word not in source, (
+            "the store half-knows about sharing: " + word)
