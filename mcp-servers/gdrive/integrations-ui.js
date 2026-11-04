@@ -3268,11 +3268,7 @@
       el = document.createElement('div');
       el.id = 'aiui-typing';
       el.style.cssText = 'padding:.25rem 0 .75rem 3.75rem;opacity:.65;font-size:.9rem;';
-      var rows = document.querySelectorAll('[id^="message-"]');
-      var last = rows.length ? rows[rows.length - 1] : null;
-      var slot = last && last.parentElement ? last.parentElement : null;
-      if (slot && slot.parentElement) slot.parentElement.insertBefore(el, slot.nextSibling);
-      else document.body.appendChild(el);
+      aiuiPutUnderLastMessage(el);
     }
     el.setAttribute('data-aiui-chat', String(aiuiChatIdFromUrl() || ''));
     el.textContent = text;
@@ -3313,9 +3309,16 @@
     // in any chat already at that cap the count never grows and every turn
     // would hard reload after five seconds. The identity of the last row
     // changes whether or not the count does.
+    // What the thread looks like now. It only has to CHANGE when a turn
+    // lands, which is why the last message's length is in it: a reply
+    // streams in under the same element, and counting elements alone
+    // would miss it.
     function lastRowId() {
-      var rows = document.querySelectorAll('[id^="message-"]');
-      return rows.length ? rows[rows.length - 1].id : '';
+      var thread = aiuiThread();
+      if (!thread) return '';
+      var last = thread.lastElementChild;
+      return thread.childElementCount + ':'
+        + (last ? String(last.textContent || '').length : 0);
     }
     var before = lastRowId();
     go('/');
@@ -3849,12 +3852,36 @@
   // One place, because three things now sit under a reply: the build
   // while it runs, the app when it is done, and a video when it is
   // rendered. Three copies of "find the last message" would drift.
+  // The element that holds the conversation.
+  //
+  // Open WebUI 0.12 renders it as:
+  //
+  //   <div id="messages-container" class="... flex flex-col-reverse ...">
+  //     <div id="full-messages-container"> ...the messages... </div>
+  //
+  // The outer one is col-REVERSE, so appending to it puts a thing at the
+  // TOP of the thread. It is the inner one or nothing.
+  //
+  // Everything here used to look for '[id^="message-"]'. This version has
+  // no per-message ids, and the only element whose id starts that way is
+  // "message-input-container", the COMPOSER. So the typing line, the
+  // build line and every panel were placed after the input box, outside
+  // the conversation entirely (Ralph, 2026-11-04: "not below in the chat
+  // please fix"), the reload check compared the composer against itself,
+  // and the scan for build links read the composer's markup.
+  function aiuiThread() {
+    return document.getElementById('full-messages-container');
+  }
+
   function aiuiPutUnderLastMessage(box) {
-    var rows = document.querySelectorAll('[id^="message-"]');
-    var last = rows.length ? rows[rows.length - 1] : null;
-    var slot = last && last.parentElement ? last.parentElement : null;
-    if (slot && slot.parentElement) slot.parentElement.insertBefore(box, slot.nextSibling);
-    else document.body.appendChild(box);
+    var thread = aiuiThread();
+    if (thread) {
+      thread.appendChild(box);
+      return;
+    }
+    // Better somewhere visible than nowhere, and it is the signal that
+    // this markup has moved again.
+    document.body.appendChild(box);
   }
 
   // The build itself, watchable in the chat (2026-11-04, Ralph: "it should
@@ -3913,47 +3940,91 @@
     if (box && box.parentElement) box.parentElement.removeChild(box);
   }
 
+  //: A thumbnail is captured in the BACKGROUND. routes_projects answers
+  //: 404 the first time and queues the shot, so a card for an app built
+  //: seconds ago has no picture yet and gets one shortly after.
+  var AIUI_SHOT_TRIES = 6;
+  var AIUI_SHOT_WAIT_MS = 5000;
+
   function aiuiShowAppInline(chatId, slug) {
     if (aiuiChatIdFromUrl() !== chatId) return;
     if (!/^[a-z0-9][a-z0-9-]{0,80}$/.test(String(slug || ''))) return;
     var id = 'aiui-app-' + slug;
     if (document.getElementById(id)) return;
 
+    var open = location.origin + '/tasks/preview-app/' + slug + '/';
+
     var box = document.createElement('div');
     box.id = id;
-    box.style.cssText = 'margin:.5rem 0 1rem 3.75rem;max-width:46rem;'
-      + 'border:1px solid rgba(127,127,127,.3);border-radius:10px;overflow:hidden;';
+    box.style.cssText = 'margin:.5rem 0 1rem 3.75rem;max-width:30rem;'
+      + 'border:1px solid rgba(127,127,127,.28);border-radius:12px;'
+      + 'overflow:hidden;background:rgba(127,127,127,.06);';
 
-    var bar = document.createElement('div');
-    bar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;'
-      + 'gap:.5rem;padding:.4rem .6rem;font-size:.8rem;opacity:.75;';
-    var who = document.createElement('span');
-    who.textContent = slug;
-    var open = document.createElement('a');
-    open.href = location.origin + '/tasks/preview-app/' + slug + '/';
-    open.target = '_blank';
-    open.rel = 'noopener';
-    open.textContent = 'Open in a new tab';
-    open.style.cssText = 'color:#8ab4f8;text-decoration:none;';
-    bar.appendChild(who);
-    bar.appendChild(open);
+    // The picture of the app, which is the point of the card.
+    var shot = document.createElement('div');
+    shot.style.cssText = 'height:11rem;background:rgba(127,127,127,.12);'
+      + 'display:flex;align-items:center;justify-content:center;'
+      + 'font-size:.8rem;opacity:.5;';
+    shot.textContent = 'Taking a picture of it...';
+    var img = document.createElement('img');
+    img.alt = '';
+    img.style.cssText = 'width:100%;height:100%;object-fit:cover;'
+      + 'object-position:top;display:block;';
+    var tries = 0;
+    function load() {
+      // Cache-busted, because the browser caches the 404 as readily as a
+      // picture and would never see the one that arrives a moment later.
+      img.src = '/api/projects/' + encodeURIComponent(slug)
+        + '/thumb.jpg?t=' + Date.now();
+    }
+    img.onload = function () {
+      shot.textContent = '';
+      shot.appendChild(img);
+    };
+    img.onerror = function () {
+      tries += 1;
+      if (tries < AIUI_SHOT_TRIES) {
+        setTimeout(load, AIUI_SHOT_WAIT_MS);
+      } else {
+        // Said plainly rather than left as an empty grey box, which reads
+        // as something broken.
+        shot.textContent = 'No picture yet';
+      }
+    };
+    load();
 
-    var frame = document.createElement('iframe');
-    // Same origin and our own app, so this is not a trust boundary. It is
-    // here so a build that loads something of its own cannot navigate the
-    // chat out from under the person reading it.
-    frame.setAttribute('sandbox', 'allow-scripts allow-forms allow-same-origin');
-    frame.setAttribute('loading', 'lazy');
-    frame.title = slug;
-    frame.src = location.origin + '/tasks/preview-app/' + slug + '/';
-    frame.style.cssText = 'display:block;width:100%;height:24rem;border:0;background:#fff;';
+    var body = document.createElement('div');
+    body.style.cssText = 'padding:.7rem .8rem .8rem;';
 
-    box.appendChild(bar);
-    box.appendChild(frame);
+    var head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:center;gap:.5rem;'
+      + 'margin-bottom:.6rem;flex-wrap:wrap;';
+    var name = document.createElement('span');
+    name.textContent = slug;
+    name.style.cssText = 'font-weight:600;font-size:.95rem;';
+    var badge = document.createElement('span');
+    badge.textContent = 'built';
+    badge.style.cssText = 'font-size:.72rem;padding:.1rem .45rem;'
+      + 'border-radius:999px;background:rgba(80,200,120,.18);'
+      + 'color:#4ec37a;white-space:nowrap;';
+    head.appendChild(name);
+    head.appendChild(badge);
 
+    var go = document.createElement('a');
+    go.href = open;
+    go.target = '_blank';
+    go.rel = 'noopener';
+    go.textContent = 'Open preview';
+    go.style.cssText = 'display:block;text-align:center;padding:.5rem;'
+      + 'border-radius:8px;background:#6b73ff;color:#fff;'
+      + 'text-decoration:none;font-size:.88rem;font-weight:600;';
+
+    body.appendChild(head);
+    body.appendChild(go);
+    box.appendChild(shot);
+    box.appendChild(body);
     aiuiPutUnderLastMessage(box);
   }
-
   function aiuiBuildLine(chatId, text) {
     if (aiuiChatIdFromUrl() !== chatId) return;
     var el = document.getElementById('aiui-build-line');
@@ -3961,11 +4032,7 @@
       el = document.createElement('div');
       el.id = 'aiui-build-line';
       el.style.cssText = 'padding:.25rem 0 .75rem 3.75rem;opacity:.65;font-size:.9rem;';
-      var rows = document.querySelectorAll('[id^="message-"]');
-      var last = rows.length ? rows[rows.length - 1] : null;
-      var slot = last && last.parentElement ? last.parentElement : null;
-      if (slot && slot.parentElement) slot.parentElement.insertBefore(el, slot.nextSibling);
-      else document.body.appendChild(el);
+      aiuiPutUnderLastMessage(el);
     }
     el.textContent = text;
   }
@@ -4067,13 +4134,11 @@
     var now = Date.now();
     if (now - aiuiBuildLastLook < AIUI_BUILD_LOOK_MS) return;
     aiuiBuildLastLook = now;
-    var rows = document.querySelectorAll('[id^="message-"]');
+    var thread = aiuiThread();
     var fresh = [];
-    for (var i = 0; i < rows.length; i++) {
-      aiuiBuildIdsIn(rows[i].innerHTML).forEach(function (id) {
-        if (!aiuiBuildWatched[id] && fresh.indexOf(id) < 0) fresh.push(id);
-      });
-    }
+    aiuiBuildIdsIn(thread ? thread.innerHTML : '').forEach(function (id) {
+      if (!aiuiBuildWatched[id] && fresh.indexOf(id) < 0) fresh.push(id);
+    });
     if (!fresh.length) return;
     fresh.forEach(function (id) { aiuiBuildWatched[id] = true; });
     aiuiFetchChat(chatId).then(function (data) {

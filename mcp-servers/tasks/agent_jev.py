@@ -466,8 +466,26 @@ TOOL_NOTES = {
     "excel_creator": "making a spreadsheet or Excel file",
     "executive_dashboard": "a summary dashboard of the person's business "
                            "numbers",
-    "code": "the person's built apps and their code: reading, changing or "
-            "building an app",
+    # Named the way people ask for it, not the way we file it.
+    #
+    # This said "building an app", and a landing page is not an app to
+    # whoever is reading. Measured on 2026-11-04 over three probes each:
+    # "can you create me a landing page for ice cream app builder" 0/3,
+    # "create a landing page" 0/3, "landing page for tshirt nike" 0/3,
+    # while "can you build me an app" and "make me a website for a
+    # bakery" were 3/3. So the commonest way anybody asks for this
+    # reached no tool at all, and the free model, having nothing to run,
+    # answered "say it again and I'll get it started" twice in a row.
+    #
+    # The words below are what people actually type. A note is the whole
+    # basis on which this tool is picked, so anything missing from it is
+    # a request that silently goes nowhere.
+    "code": "the person's built apps, websites and their code: reading, "
+            "changing, or making something new. A website, a landing "
+            "page, a web page, a site, a web app, a portfolio, a shop, "
+            "an online store, a form or a dashboard they want built, "
+            "redesigned or changed. Also 'build it', 'make it', 'create "
+            "it' about any of those",
     "account": "the person's own account: their apps, connected services, "
                "usage and settings",
     "schedules": "the person's own cron jobs and recurring tasks that "
