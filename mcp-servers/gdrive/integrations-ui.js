@@ -3940,11 +3940,11 @@
     if (box && box.parentElement) box.parentElement.removeChild(box);
   }
 
-  //: A thumbnail is captured in the BACKGROUND. routes_projects answers
-  //: 404 the first time and queues the shot, so a card for an app built
-  //: seconds ago has no picture yet and gets one shortly after.
-  var AIUI_SHOT_TRIES = 6;
-  var AIUI_SHOT_WAIT_MS = 5000;
+  //: How tall the app sits in the conversation, and how tall it goes when
+  //: somebody expands it. Small by default: it is one turn in a chat, not
+  //: the page.
+  var AIUI_APP_H = '22rem';
+  var AIUI_APP_H_BIG = '80vh';
 
   function aiuiShowAppInline(chatId, slug) {
     if (aiuiChatIdFromUrl() !== chatId) return;
@@ -3952,77 +3952,83 @@
     var id = 'aiui-app-' + slug;
     if (document.getElementById(id)) return;
 
-    var open = location.origin + '/tasks/preview-app/' + slug + '/';
+    // The app's OWN published URL. main.py::serve_published_app injects
+    // the project's Supabase url and anon key AT REQUEST TIME, so they
+    // are in no file of the app. Anything that assembles the page another
+    // way shows an app whose database quietly does not work, while the
+    // same app in a tab works perfectly.
+    var url = location.origin + '/tasks/preview-app/' + slug + '/';
 
     var box = document.createElement('div');
     box.id = id;
-    box.style.cssText = 'margin:.5rem 0 1rem 3.75rem;max-width:30rem;'
+    box.style.cssText = 'margin:.5rem 0 1rem 3.75rem;max-width:46rem;'
       + 'border:1px solid rgba(127,127,127,.28);border-radius:12px;'
       + 'overflow:hidden;background:rgba(127,127,127,.06);';
 
-    // The picture of the app, which is the point of the card.
-    var shot = document.createElement('div');
-    shot.style.cssText = 'height:11rem;background:rgba(127,127,127,.12);'
-      + 'display:flex;align-items:center;justify-content:center;'
-      + 'font-size:.8rem;opacity:.5;';
-    shot.textContent = 'Taking a picture of it...';
-    var img = document.createElement('img');
-    img.alt = '';
-    img.style.cssText = 'width:100%;height:100%;object-fit:cover;'
-      + 'object-position:top;display:block;';
-    var tries = 0;
-    function load() {
-      // Cache-busted, because the browser caches the 404 as readily as a
-      // picture and would never see the one that arrives a moment later.
-      img.src = '/api/projects/' + encodeURIComponent(slug)
-        + '/thumb.jpg?t=' + Date.now();
-    }
-    img.onload = function () {
-      shot.textContent = '';
-      shot.appendChild(img);
-    };
-    img.onerror = function () {
-      tries += 1;
-      if (tries < AIUI_SHOT_TRIES) {
-        setTimeout(load, AIUI_SHOT_WAIT_MS);
-      } else {
-        // Said plainly rather than left as an empty grey box, which reads
-        // as something broken.
-        shot.textContent = 'No picture yet';
-      }
-    };
-    load();
+    var bar = document.createElement('div');
+    bar.style.cssText = 'display:flex;align-items:center;gap:.5rem;'
+      + 'padding:.45rem .6rem;font-size:.85rem;'
+      + 'border-bottom:1px solid rgba(127,127,127,.2);';
 
-    var body = document.createElement('div');
-    body.style.cssText = 'padding:.7rem .8rem .8rem;';
-
-    var head = document.createElement('div');
-    head.style.cssText = 'display:flex;align-items:center;gap:.5rem;'
-      + 'margin-bottom:.6rem;flex-wrap:wrap;';
+    var dot = document.createElement('span');
+    dot.textContent = '▣';
+    dot.style.cssText = 'opacity:.55;';
     var name = document.createElement('span');
     name.textContent = slug;
-    name.style.cssText = 'font-weight:600;font-size:.95rem;';
-    var badge = document.createElement('span');
-    badge.textContent = 'built';
-    badge.style.cssText = 'font-size:.72rem;padding:.1rem .45rem;'
-      + 'border-radius:999px;background:rgba(80,200,120,.18);'
-      + 'color:#4ec37a;white-space:nowrap;';
-    head.appendChild(name);
-    head.appendChild(badge);
+    name.style.cssText = 'font-weight:600;flex:1 1 auto;overflow:hidden;'
+      + 'text-overflow:ellipsis;white-space:nowrap;';
 
-    var go = document.createElement('a');
-    go.href = open;
-    go.target = '_blank';
-    go.rel = 'noopener';
-    go.textContent = 'Open preview';
-    go.style.cssText = 'display:block;text-align:center;padding:.5rem;'
-      + 'border-radius:8px;background:#6b73ff;color:#fff;'
-      + 'text-decoration:none;font-size:.88rem;font-weight:600;';
+    function iconBtn(glyph, label) {
+      var el = document.createElement('button');
+      el.type = 'button';
+      el.textContent = glyph;
+      el.title = label;
+      el.setAttribute('aria-label', label);
+      el.style.cssText = 'flex:0 0 auto;background:none;border:0;'
+        + 'color:inherit;opacity:.6;cursor:pointer;font-size:.95rem;'
+        + 'padding:.1rem .3rem;border-radius:6px;';
+      el.addEventListener('mouseenter', function () { el.style.opacity = '1'; });
+      el.addEventListener('mouseleave', function () { el.style.opacity = '.6'; });
+      return el;
+    }
 
-    body.appendChild(head);
-    body.appendChild(go);
-    box.appendChild(shot);
-    box.appendChild(body);
+    var frame = document.createElement('iframe');
+    var grow = iconBtn('⤢', 'Make it bigger');
+    var big = false;
+    grow.addEventListener('click', function () {
+      big = !big;
+      frame.style.height = big ? AIUI_APP_H_BIG : AIUI_APP_H;
+      grow.title = big ? 'Make it smaller' : 'Make it bigger';
+      grow.setAttribute('aria-label', grow.title);
+    });
+
+    var out = document.createElement('a');
+    out.href = url;
+    out.target = '_blank';
+    out.rel = 'noopener';
+    out.textContent = '↗';
+    out.title = 'Open in a new tab';
+    out.setAttribute('aria-label', 'Open in a new tab');
+    out.style.cssText = 'flex:0 0 auto;color:inherit;opacity:.6;'
+      + 'text-decoration:none;font-size:.95rem;padding:.1rem .3rem;';
+
+    bar.appendChild(dot);
+    bar.appendChild(name);
+    bar.appendChild(grow);
+    bar.appendChild(out);
+
+    // Our own app on our own origin, so not a trust boundary. The sandbox
+    // is here so a built page cannot navigate the chat out from under the
+    // person reading it.
+    frame.setAttribute('sandbox', 'allow-scripts allow-forms allow-same-origin allow-popups');
+    frame.setAttribute('loading', 'lazy');
+    frame.title = slug;
+    frame.src = url;
+    frame.style.cssText = 'display:block;width:100%;height:' + AIUI_APP_H
+      + ';border:0;background:#fff;';
+
+    box.appendChild(bar);
+    box.appendChild(frame);
     aiuiPutUnderLastMessage(box);
   }
   function aiuiBuildLine(chatId, text) {
