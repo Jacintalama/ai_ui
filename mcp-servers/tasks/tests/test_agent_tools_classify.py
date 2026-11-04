@@ -187,6 +187,18 @@ def test_using_a_skill_is_a_read():
     assert not is_write_tool("use_skill")
 
 
+def test_suggesting_skills_is_a_read():
+    """It reads which skills fit what the person has connected and changes
+    nothing. Pinned for the same reason as use_skill: "suggest" is neither a
+    write verb nor a read verb, so the name fell through to write.
+
+    Measured live 2026-11-04: "which skills should I use?" in the main chat
+    answered "This will run: suggest_skills. Reply yes to let it", a request
+    for permission to read a list."""
+    assert not is_write_tool("suggest_skills")
+    assert not agent_tools.is_write_call("suggest_skills", {})
+
+
 def test_the_pin_is_narrow():
     """Pinning a name must not accidentally bless its neighbours."""
     assert is_write_tool("delete_skill")
