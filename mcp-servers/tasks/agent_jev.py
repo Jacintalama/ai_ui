@@ -480,7 +480,8 @@ TOOL_NOTES = {
     # tool can do is never picked for it, whatever the tool can actually
     # do. `video` went 140 turns unpicked for exactly this.
     "skills": "the person's skills: looking one up, listing the skills and "
-              "procedures they have set up, or writing a new skill for a "
+              "procedures they have set up, suggesting which skills fit "
+              "the apps they have connected, or writing a new skill for a "
               "job none of them covers",
     "video": "the person's videos: making one, or listing the videos "
              "they have already made",

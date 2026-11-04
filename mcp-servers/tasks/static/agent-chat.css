@@ -464,6 +464,13 @@
   color: var(--accent);
 }
 
+/* A skill waiting on an app the person has not connected (2026-11-04). */
+.ap-needs { display: flex; flex-direction: column; gap: 6px; margin: 0 0 8px; }
+.ap-needs[hidden] { display: none; }
+.ap-needs-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  font-size: 13px; color: var(--muted, #8b8b95); }
+.ap-needs-line .btn { padding: 4px 10px; font-size: 12px; text-decoration: none; }
+.atext a.aiui-connect { display: inline-block; text-decoration: none; margin-top: 4px; }
 .ap-composer { display: flex; gap: 8px; }
 .ap-composer input {
   flex: 1; min-width: 0; padding: 9px 16px; border-radius: 999px;

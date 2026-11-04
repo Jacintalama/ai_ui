@@ -247,19 +247,22 @@ SUGGEST_LIMIT = 3
 SUGGEST_FLOOR = 4
 
 
-def suggest(text, limit: int = SUGGEST_LIMIT) -> list:
+def suggest(text, limit: int = SUGGEST_LIMIT, pool: dict | None = None) -> list:
     """Skill names that fit an agent described by `text`, best first.
 
     For an agent made from the main chat with no skills named (Lukas,
     2026-10-31). Unlike search, a weak match is not offered: a skill handed
     to an agent is pasted into every one of its turns, so a wrong one costs
     on every message, not once.
+
+    `pool` is what may be suggested, by name. None means the built-in
+    catalogue; pass user_skills.merge(...) to include a person's own.
     """
     wanted = _words(text)
     if not wanted:
         return []
     scored = []
-    for skill in load_all().values():
+    for skill in (load_all() if pool is None else pool).values():
         n = _score(skill, wanted)
         if n >= SUGGEST_FLOOR:
             scored.append((n, skill["name"]))

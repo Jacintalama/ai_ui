@@ -37,6 +37,7 @@ import agent_todo
 import agent_events
 import agent_memory
 import agent_skills
+import skill_fit
 import skill_writer
 import user_skills
 import free_pool
@@ -671,6 +672,42 @@ async def find_skills(q: str = "", limit: int = 0) -> dict:
             "total": len(agent_skills.load_all())}
 
 
+@router.get("/skills/suggest")
+async def suggest_skills(user: CurrentUser = Depends(current_user)) -> dict:
+    """Which skills this person's connections make ready, and what
+    connecting more would add (2026-11-04, Lukas: suggest skills from what
+    the user has connected).
+
+    For the main chat's "which skills should I use?" through the Agent
+    Builder tool. `message` is the finished reply; its Connect links become
+    buttons in the main chat. The rest is the same facts as data.
+    """
+    connected = await _connected_providers(user.email)
+    own = await user_skills.mine(user.email)
+    pool = user_skills.merge(agent_skills.load_all(), own)
+    ov = skill_fit.overview(pool, connected)
+    mine_names = sorted({str(r.get("name") or "") for r in own} - {""})
+    return dict(ov, mine=mine_names,
+                message=skill_fit.overview_text(ov, mine=mine_names))
+
+
+@router.get("/skills/needs")
+async def skill_needs(skills: str = "",
+                      user: CurrentUser = Depends(current_user)) -> dict:
+    """Which of these skills wait on an app this person has not connected.
+
+    For the Agents page, which shows a Connect button above the message box
+    when the agent being talked to holds one (2026-11-04). Names come from
+    the agent's own row, so unknown ones are ignored rather than refused.
+    """
+    names = [n.strip() for n in (skills or "").split(",") if n.strip()]
+    if not names:
+        return {"needs": []}
+    pool = await _skill_pool(user.email)
+    _, gaps = skill_fit.split(names, pool, await _connected_providers(user.email))
+    return {"needs": skill_fit.needs_connect(gaps)}
+
+
 @router.get("/skills/body")
 async def skill_body(name: str = "") -> dict:
     """One skill's instructions, for an agent about to follow them.
@@ -1139,7 +1176,8 @@ def _proposal_is_live(code: str) -> bool:
 
 def proposal_text(name: str, role: str, access: str, instructions: str,
                   code: str, skills: list | None = None,
-                  unknown: list | None = None, suggested: bool = False) -> str:
+                  unknown: list | None = None, suggested: bool = False,
+                  gaps: dict | None = None) -> str:
     """What the person is asked to approve, in full.
 
     The instructions are shown WHOLE and never summarised. They are what the
@@ -1156,6 +1194,10 @@ def proposal_text(name: str, role: str, access: str, instructions: str,
         if suggested and skills else "")]
     if unknown:
         skill_lines.append("Not skills here, so left out: %s" % ", ".join(unknown))
+    # A skill whose app is not connected (2026-11-04). Suggested ones were
+    # left off and are offered; named ones stay and say what they need. The
+    # link becomes a Connect button in the main chat.
+    skill_lines += skill_fit.connect_lines(gaps or {}, kept=not suggested)
     return "\n".join([
         "Here is the agent I would create. Nothing has been made yet.",
         "",
@@ -1208,25 +1250,49 @@ def _agent_problem(name: str, instructions: str, access: str, mine: int) -> str:
     return ""
 
 
-def _skills_for(asked, role: str, instructions: str) -> tuple[list, list, bool]:
-    """(kept, unknown, suggested) for an agent being made.
+def _skills_for(asked, role: str, instructions: str, connected=None,
+                pool: dict | None = None) -> tuple[list, list, bool, dict]:
+    """(kept, unknown, suggested, gaps) for an agent being made.
 
     Nothing named means suggest from what the agent is for (Lukas,
     2026-10-31: it should know which skills that agent needs from what the
     person said). Named ones are checked against the catalogue, never
     trusted: a model names skills from memory, and one that does not exist
     is left out and said, not saved as a name nothing answers to.
+
+    Connections (2026-11-04, Lukas: suggest from what the person has
+    connected). A suggested skill whose app is not connected is left off,
+    where it would fail on every turn, and returned in `gaps` so the preview
+    can offer to connect it; ready ones further down the ranking take its
+    place. A named skill is kept either way, because the person asked for
+    it, and its gaps are said.
+
+    `connected` None means "not read", which is treated as nothing
+    connected: a Connect button nobody needed is a nag, a skill that cannot
+    run is the failure being fixed.
     """
+    known = agent_skills.load_all() if pool is None else pool
     if asked is None:
-        return agent_skills.suggest(" ".join([role or "", instructions])), [], True
-    known = agent_skills.load_all()
+        text = " ".join([role or "", instructions])
+        ranked = agent_skills.suggest(text, limit=10, pool=known)
+        ready, _ = skill_fit.split(ranked, known, connected)
+        _, gaps = skill_fit.split(ranked[:agent_skills.SUGGEST_LIMIT], known, connected)
+        return ready[:agent_skills.SUGGEST_LIMIT], [], True, gaps
     kept, unknown = [], []
     for raw in asked:
         name = str(raw or "").strip()
         if not name or name in kept or name in unknown:
             continue
         (kept if name in known else unknown).append(name)
-    return kept, unknown, False
+    _, gaps = skill_fit.split(kept, known, connected)
+    return kept, unknown, False, gaps
+
+
+async def _skill_pool(email: str) -> dict:
+    """Every skill this person can be given: the built-in ones and their
+    own (user_skills, which win on a name clash). Never raises: mine()
+    already falls back to none of their own."""
+    return user_skills.merge(agent_skills.load_all(), await user_skills.mine(email))
 
 
 async def _roster_for(email: str) -> list[dict]:
@@ -1273,15 +1339,19 @@ async def make_agent(body: MakeAgentIn, user: CurrentUser = Depends(current_user
     # It also matters more than it used to: the main chat's assistant runs on
     # Ask and its writes are held, but a model calling this tool natively
     # through Open WebUI has no such brake. This is that brake.
-    skills, unknown, suggested = _skills_for(body.skills, role or "", instructions)
+    connected = await _connected_providers(user.email)
+    pool = await _skill_pool(user.email)
+    skills, unknown, suggested, gaps = _skills_for(body.skills, role or "", instructions,
+                                                   connected, pool)
     code = _proposal_key(user.email, name, instructions, role or "", access, skills)
     if (body.confirm or "").strip() != code:
         _remember_proposal(code)
         return {"created": False, "confirm": code, "name": name, "role": role,
                 "access": access, "instructions": instructions, "skills": skills,
+                "needs_connect": skill_fit.needs_connect(gaps),
                 "message": proposal_text(name, role or "", access,
                                          instructions, code, skills, unknown,
-                                         suggested)}
+                                         suggested, gaps)}
     if not _proposal_is_live(code):
         raise HTTPException(status_code=400, detail=(
             "That confirmation has expired. Ask me to show you the agent "

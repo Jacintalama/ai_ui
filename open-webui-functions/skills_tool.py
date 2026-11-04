@@ -106,6 +106,36 @@ class Tools:
         return ("Follow these instructions for this task, in preference to "
                 f"your own general approach:\n\n{body}")
 
+    # --- which skills fit what they have connected (2026-11-04) ---------
+    # Lukas, 2026-11-03: "suggest skills based on the things that the user
+    # has connected". The service composes the reply, because only it knows
+    # the person's connections; its [Connect X](#aiui-connect:x) lines become
+    # buttons in the main chat.
+
+    async def suggest_skills(self, __user__: dict = {}) -> str:
+        """
+        Suggest the skills that fit the apps this person has connected
+        (Gmail, Calendar, Drive, a task tracker), and what connecting more
+        would add. Use when the user asks which skills to use, what skills
+        they could have, or what their connected apps let an agent do.
+
+        Show the reply to the user as it is written. Keep every
+        [Connect ...](#aiui-connect:...) line exactly as given: each one is a
+        button on their screen.
+
+        :return: The skills grouped by app, with Connect links for the rest.
+        """
+        email = str((__user__ or {}).get("email") or "").strip()
+        if not email:
+            return "I do not know who is asking, so I cannot suggest skills."
+        try:
+            r = await self._get("/agents/skills/suggest", {}, email)
+        except Exception:                                   # noqa: BLE001
+            return "Could not read your skills just now."
+        if r.status_code != 200:
+            return "Could not read your skills just now."
+        return (r.json() or {}).get("message") or "Could not read your skills just now."
+
     # --- writing one when nothing fits (2026-11-04) ----------------------
     # The platform ships 68 skills and, until this, somebody whose job none
     # of them covered needed a pull request and a deploy.

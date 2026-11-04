@@ -105,7 +105,21 @@
     if (!el || el.classList.contains("done")) return;
     if (typeof marked === "undefined" || typeof DOMPurify === "undefined") return;
     el.innerHTML = DOMPurify.sanitize(marked.parse(el.textContent));
+    connectButtons(el);
     el.classList.add("done");
+  }
+
+  // A Connect link in a reply (2026-11-04). The service writes
+  // [Connect Gmail](#aiui-connect:gmail) for the main chat, where
+  // integrations-ui.js makes it a button. Here it would be a link to a
+  // fragment that does nothing, so it becomes a #connections button,
+  // which the Agents page already opens its Connections panel for.
+  function connectButtons(el) {
+    var links = el.querySelectorAll('a[href^="#aiui-connect:"]');
+    for (var i = 0; i < links.length; i++) {
+      links[i].setAttribute("href", "#connections");
+      links[i].classList.add("btn", "aiui-connect");
+    }
   }
 
   function renderAll(el) {
