@@ -1042,6 +1042,41 @@
     <!-- Connecting an app used to mean leaving for a chat window and finding
          it in the plus menu. The tools an agent can use are decided here, so
          this is where connecting them belongs. -->
+    <div class="modal-overlay" id="newskill-overlay" hidden>
+      <div class="modal" id="newskill-modal" role="dialog" aria-modal="true"
+           aria-labelledby="newskill-title">
+        <h2 id="newskill-title">Write a new skill</h2>
+        <p class="lead">Describe the job in your own words. You get a draft to
+          read before anything is saved, and the skill is yours alone.</p>
+        <label class="field">
+          <span>The job</span>
+          <textarea id="newskill-job" rows="3" maxlength="400"
+                    placeholder="Chase an unpaid invoice: find it, work out how late it is, and draft a polite reminder"></textarea>
+        </label>
+        <div id="newskill-draft" hidden>
+          <label class="field">
+            <span>Name</span>
+            <input id="newskill-name" type="text" autocomplete="off">
+          </label>
+          <label class="field">
+            <span>What it does</span>
+            <textarea id="newskill-desc" rows="2"></textarea>
+          </label>
+          <label class="field">
+            <span>The instructions it follows</span>
+            <textarea id="newskill-body" rows="10"></textarea>
+          </label>
+          <div class="hint" id="newskill-warn" hidden></div>
+        </div>
+        <div class="hint" id="newskill-msg" hidden></div>
+        <div class="form-actions">
+          <button class="btn" type="button" id="newskill-cancel">Cancel</button>
+          <button class="btn primary" type="button" id="newskill-go">Write it</button>
+          <button class="btn primary" type="button" id="newskill-save" hidden>Save</button>
+        </div>
+      </div>
+    </div>
+
     <div class="modal-overlay" id="ap-clear-overlay" hidden>
       <div class="modal" id="ap-clear-modal" role="dialog" aria-modal="true"
            aria-labelledby="ap-clear-title">
@@ -1317,6 +1352,7 @@
             <div class="skill-controls">
               <input id="skill-search" type="search" autocomplete="off"
                      placeholder="Search skills" aria-label="Search skills">
+              <button class="btn" type="button" id="skill-new">+ New skill</button>
               <div class="skill-tags" id="skill-tags"></div>
             </div>
             <div class="skill-list" id="agent-skills"></div>
@@ -2431,20 +2467,63 @@
     // this setting keeps its "no opinion" state. Returning a default here
     // would write a level onto every agent the first time somebody edited
     // its name, and silently drop a full schedule to read only.
-    // The skill library, fetched once. It ships with the server and is the
-    // same list for everybody, so there is nothing per-user to refresh.
+    // The skill library, plus this person's own skills.
+    //
+    // It used to be the shipped library alone, and the comment here said
+    // there was nothing per-user to refresh. That stopped being true on
+    // 2026-11-04, when a person could write their own skill from the main
+    // chat: the chat wrote it, /skills/mine returned it, an agent could
+    // follow it, and this form never showed it, so it could not be ticked
+    // onto anybody. Half a feature.
     var SKILL_LIST = [];
+    //: Names this person wrote, so the list can mark them and the new-skill
+    //: flow can tick the one just written.
+    var MY_SKILLS = {};
 
     var skillFilter = { tag: "", query: "" };
 
     async function loadSkills() {
-      var wrap = document.getElementById("agent-skills");
+      // Both at once: one is a file on the server, the other a query, and
+      // neither needs the other.
+      var shipped = [];
+      var own = [];
       try {
-        var body = await getJson("/api/tasks/agents/skills");
-        SKILL_LIST = (body && body.skills) || [];
+        var two = await Promise.all([
+          getJson("/api/tasks/agents/skills"),
+          getJson("/api/tasks/agents/skills/mine").catch(function () {
+            // Their own skills failing must not cost them the library.
+            return null;
+          })
+        ]);
+        shipped = (two[0] && two[0].skills) || [];
+        own = (two[1] && two[1].skills) || [];
       } catch (e) {
-        SKILL_LIST = [];
+        shipped = [];
       }
+      MY_SKILLS = {};
+      own.forEach(function (s) { if (s && s.name) MY_SKILLS[s.name] = true; });
+      // Theirs wins on a clash, which is what user_skills.merge does on the
+      // server. One rule in two places would be two answers eventually.
+      //
+      // The shipped order is KEPT and a person's own skills are appended.
+      // Sorting the merged list by name was the obvious thing and was
+      // wrong: the server hands these over in a deliberate order and a
+      // browser test already said so, which is how this was caught.
+      var byName = {};
+      own.forEach(function (s) { if (s && s.name) byName[s.name] = s; });
+      SKILL_LIST = shipped.filter(function (s) { return s && s.name; })
+        .map(function (s) { return byName[s.name] || s; });
+      var already = {};
+      SKILL_LIST.forEach(function (s) { already[s.name] = true; });
+      own.forEach(function (s) {
+        if (s && s.name && !already[s.name]) SKILL_LIST.push(s);
+      });
+      drawSkills();
+      bindSkillControls();
+    }
+
+    function drawSkills() {
+      var wrap = document.getElementById("agent-skills");
       if (!SKILL_LIST.length) {
         // Said out loud rather than left as an empty box. An empty list looks
         // identical to a list that failed to load.
@@ -2464,14 +2543,18 @@
         row.setAttribute("data-tags", tags.join(" "));
         // Everything the search looks at, lower-cased once here rather than
         // on every keystroke across forty rows.
+        var mine = !!MY_SKILLS[s.name];
+        if (mine) row.setAttribute("data-mine", "1");
         row.setAttribute("data-text",
-          (s.name + " " + s.description + " " + tags.join(" ")).toLowerCase());
+          (s.name + " " + s.description + " " + tags.join(" ")
+            + (mine ? " yours" : "")).toLowerCase());
         row.innerHTML =
           '<div class="skill-row">' +
             '<input type="checkbox" id="skill-' + esc(s.name) + '">' +
             '<button type="button" class="skill-open" aria-expanded="false">' +
               '<span class="skill-name">' + esc(s.name) + "</span>" +
-              '<span class="skill-tagline">' + esc(tags.join(" \u00b7 "))
+              '<span class="skill-tagline">' + (mine ? "yours" + (tags.length ? " \u00b7 " : "") : "")
+                + esc(tags.join(" \u00b7 "))
                 + "</span>" +
               '<span class="skill-chev">\u203a</span>' +
             "</button>" +
@@ -2484,7 +2567,26 @@
       });
       drawSkillTags();
       applySkillFilter();
+    }
+
+    // Separate from drawing, because the list is redrawn whenever somebody
+    // writes a skill, and binding inside the draw would add a second copy of
+    // every listener each time.
+    var skillControlsBound = false;
+
+    function bindSkillControls() {
+      if (skillControlsBound) return;
+      skillControlsBound = true;
+      var wrap = document.getElementById("agent-skills");
       wrap.addEventListener("click", onSkillClick);
+      document.getElementById("skill-new")
+        .addEventListener("click", newSkillOpen);
+      document.getElementById("newskill-cancel")
+        .addEventListener("click", newSkillClose);
+      document.getElementById("newskill-go")
+        .addEventListener("click", newSkillDraft);
+      document.getElementById("newskill-save")
+        .addEventListener("click", newSkillSave);
       wrap.addEventListener("change", applySkillFilter);
       wrap.addEventListener("change", updateSkillsSummary);
       document.getElementById("skill-search")
@@ -2500,6 +2602,122 @@
           drawSkillTags();
           applySkillFilter();
         });
+    }
+
+    // ===== Writing a skill from this form =====
+    //
+    // The chat could already do this. This form could not, which left the
+    // one place a skill is actually USED unable to make one.
+    //
+    // Two steps on purpose, the same shape the chat uses: the draft is
+    // shown and editable before anything is saved. A skill is instructions
+    // an agent will follow unattended, so nobody should get one they have
+    // not read.
+    function newSkillSay(msg, bad) {
+      var el = document.getElementById("newskill-msg");
+      el.textContent = msg || "";
+      el.hidden = !msg;
+      el.style.color = bad ? "var(--danger, #e5534b)" : "";
+    }
+
+    function newSkillOpen() {
+      document.getElementById("newskill-job").value = "";
+      document.getElementById("newskill-draft").hidden = true;
+      document.getElementById("newskill-warn").hidden = true;
+      document.getElementById("newskill-save").hidden = true;
+      document.getElementById("newskill-go").hidden = false;
+      newSkillSay("");
+      document.getElementById("newskill-overlay").hidden = false;
+      document.getElementById("newskill-job").focus();
+    }
+
+    function newSkillClose() {
+      document.getElementById("newskill-overlay").hidden = true;
+    }
+
+    async function newSkillDraft() {
+      var job = document.getElementById("newskill-job").value.trim();
+      if (!job) {
+        newSkillSay("Say what the job is first.", true);
+        return;
+      }
+      var go = document.getElementById("newskill-go");
+      go.disabled = true;
+      newSkillSay("Writing a draft...");
+      try {
+        var r = await fetch("/api/tasks/agents/skills/draft", {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify({ job: job })
+        });
+        var body = await r.json().catch(function () { return {}; });
+        // FastAPI reports a refusal as `detail`, and both of these routes
+        // raise HTTPException rather than returning a field. Reading only
+        // `problem` would swallow every real reason, including the useful
+        // ones: the draft expired, or you are at your fifty.
+        if (!r.ok) {
+          newSkillSay(body.detail || body.problem
+                      || "That did not work. Try saying the job a different "
+                      + "way.", true);
+          return;
+        }
+        document.getElementById("newskill-name").value = body.name || "";
+        document.getElementById("newskill-desc").value = body.description || "";
+        document.getElementById("newskill-body").value = body.body || "";
+        var warn = document.getElementById("newskill-warn");
+        // The writer says when a draft leans on an app this person has not
+        // connected. Saving is still allowed: the skill is fine, it just
+        // cannot do everything yet.
+        warn.textContent = body.warning || "";
+        warn.hidden = !body.warning;
+        document.getElementById("newskill-draft").hidden = false;
+        go.hidden = true;
+        document.getElementById("newskill-save").hidden = false;
+        newSkillSay("Read it, change anything, then save.");
+      } catch (e) {
+        newSkillSay("Could not reach the server.", true);
+      } finally {
+        go.disabled = false;
+      }
+    }
+
+    async function newSkillSave() {
+      var name = document.getElementById("newskill-name").value.trim();
+      var save = document.getElementById("newskill-save");
+      save.disabled = true;
+      newSkillSay("Saving...");
+      try {
+        var r = await fetch("/api/tasks/agents/skills/mine", {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify({
+            name: name,
+            description: document.getElementById("newskill-desc").value.trim(),
+            body: document.getElementById("newskill-body").value
+          })
+        });
+        var body = await r.json().catch(function () { return {}; });
+        if (!r.ok) {
+          newSkillSay(body.detail || body.problem
+                      || "That could not be saved.", true);
+          return;
+        }
+        newSkillClose();
+        // Reload so the new one is in the list, then tick it: somebody who
+        // just wrote a skill for this agent wants it on this agent.
+        await loadSkills();
+        var box = document.getElementById("skill-" + (body.name || name));
+        if (box) {
+          box.checked = true;
+          applySkillFilter();
+          updateSkillsSummary();
+          box.scrollIntoView({ block: "center" });
+        }
+      } catch (e) {
+        newSkillSay("Could not reach the server.", true);
+      } finally {
+        save.disabled = false;
+      }
     }
 
     // Only one open at a time. Four open rows rebuild the wall of text this
