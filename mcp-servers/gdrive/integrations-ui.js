@@ -3772,19 +3772,49 @@
     return ids;
   }
 
+  // A MARKDOWN LINK REFERENCE DEFINITION, not an HTML comment.
+  //
+  // Open WebUI renders a message as markdown and escapes the HTML in it,
+  // so "<!-- aiui:build-done ... -->" was printed to the person, under
+  // every finished build, from the day the watcher shipped. Ralph saw it
+  // on his first real build (2026-11-04) and it looked like debris,
+  // because it was.
+  //
+  // "[name]: #id" is consumed by the markdown parser and produces no
+  // output at all, which is what a marker is supposed to do. It still
+  // sits in the message text, so it still survives a reload and another
+  // tab, which is the whole reason it lives there rather than in this
+  // page's memory.
   function aiuiBuildDoneMarker(id) {
+    return '[aiui-build-done]: #' + id;
+  }
+
+  // What the marker used to be. Still recognised, so a build already
+  // closed under the old shape is not reported a second time, and so the
+  // old text can be recognised wherever it is still sitting in somebody's
+  // history.
+  function aiuiLegacyBuildMarker(id) {
     return '<!-- aiui:build-done ' + id + ' -->';
   }
 
-  function aiuiIsClosed(chain, marker) {
+  // One marker or several. Several, because a marker's shape changed
+  // once and anything already written under the old one still counts as
+  // closed; reporting those builds again would post "is built" under
+  // every finished build in somebody's history.
+  function aiuiIsClosed(chain, markers) {
+    var want = (typeof markers === 'string') ? [markers] : (markers || []);
     for (var i = 0; i < chain.length; i++) {
-      if (chain[i] && String(chain[i].content || '').indexOf(marker) >= 0) return true;
+      var text = String((chain[i] && chain[i].content) || '');
+      for (var j = 0; j < want.length; j++) {
+        if (want[j] && text.indexOf(want[j]) >= 0) return true;
+      }
     }
     return false;
   }
 
   function aiuiBuildIsClosed(chain, id) {
-    return aiuiIsClosed(chain, aiuiBuildDoneMarker(id));
+    return aiuiIsClosed(chain, [aiuiBuildDoneMarker(id),
+                                aiuiLegacyBuildMarker(id)]);
   }
 
   // Mirrors routes_aiuibuilder._public_build_status and _preview_url, so the
@@ -3816,6 +3846,73 @@
   // not in the app's files at all. Anything that assembles the page
   // another way serves an app whose database silently does not work,
   // while the same app in a tab works fine.
+  // One place, because three things now sit under a reply: the build
+  // while it runs, the app when it is done, and a video when it is
+  // rendered. Three copies of "find the last message" would drift.
+  function aiuiPutUnderLastMessage(box) {
+    var rows = document.querySelectorAll('[id^="message-"]');
+    var last = rows.length ? rows[rows.length - 1] : null;
+    var slot = last && last.parentElement ? last.parentElement : null;
+    if (slot && slot.parentElement) slot.parentElement.insertBefore(box, slot.nextSibling);
+    else document.body.appendChild(box);
+  }
+
+  // The build itself, watchable in the chat (2026-11-04, Ralph: "it should
+  // inline in the chat should see the process or to watch instead of link
+  // only"). The reply carried a link to preview.html and nothing else, so
+  // watching a build meant leaving the conversation.
+  //
+  // It IS preview.html, in a frame. That page already draws the live
+  // build: the overlay, the progress bar, the status chip, the history.
+  // A second implementation of all that, kept in step with the first, is
+  // the kind of thing that is right for a week.
+  function aiuiBuildBoxId(id) { return 'aiui-build-' + id; }
+
+  function aiuiShowBuildInline(chatId, id) {
+    if (aiuiChatIdFromUrl() !== chatId) return;
+    if (document.getElementById(aiuiBuildBoxId(id))) return;
+
+    var box = document.createElement('div');
+    box.id = aiuiBuildBoxId(id);
+    box.style.cssText = 'margin:.5rem 0 1rem 3.75rem;max-width:46rem;'
+      + 'border:1px solid rgba(127,127,127,.3);border-radius:10px;overflow:hidden;';
+
+    var bar = document.createElement('div');
+    bar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;'
+      + 'gap:.5rem;padding:.4rem .6rem;font-size:.8rem;opacity:.75;';
+    var who = document.createElement('span');
+    who.textContent = 'Building';
+    var open = document.createElement('a');
+    open.href = '/tasks/static/preview.html?task=' + id;
+    open.target = '_blank';
+    open.rel = 'noopener';
+    open.textContent = 'Open in a new tab';
+    open.style.cssText = 'color:#8ab4f8;text-decoration:none;';
+    bar.appendChild(who);
+    bar.appendChild(open);
+
+    var frame = document.createElement('iframe');
+    // allow-same-origin because it is our own page on our own origin and
+    // it reads the signed-in token to watch the build. No
+    // allow-top-navigation: a page in a frame must not move the chat.
+    frame.setAttribute('sandbox', 'allow-scripts allow-forms allow-same-origin');
+    frame.title = 'Building';
+    frame.src = '/tasks/static/preview.html?task=' + id;
+    frame.style.cssText = 'display:block;width:100%;height:26rem;border:0;background:#111;';
+
+    box.appendChild(bar);
+    box.appendChild(frame);
+    aiuiPutUnderLastMessage(box);
+  }
+
+  function aiuiHideBuildInline(id) {
+    var box = document.getElementById(aiuiBuildBoxId(id));
+    // Taken away when the build settles: what replaces it is the app
+    // itself, and leaving a finished build's frame above it means the
+    // same thing twice.
+    if (box && box.parentElement) box.parentElement.removeChild(box);
+  }
+
   function aiuiShowAppInline(chatId, slug) {
     if (aiuiChatIdFromUrl() !== chatId) return;
     if (!/^[a-z0-9][a-z0-9-]{0,80}$/.test(String(slug || ''))) return;
@@ -3854,11 +3951,7 @@
     box.appendChild(bar);
     box.appendChild(frame);
 
-    var rows = document.querySelectorAll('[id^="message-"]');
-    var last = rows.length ? rows[rows.length - 1] : null;
-    var slot = last && last.parentElement ? last.parentElement : null;
-    if (slot && slot.parentElement) slot.parentElement.insertBefore(box, slot.nextSibling);
-    else document.body.appendChild(box);
+    aiuiPutUnderLastMessage(box);
   }
 
   function aiuiBuildLine(chatId, text) {
@@ -3888,18 +3981,19 @@
   // person's next message is being answered, writing would race Open
   // WebUI's own save of it.
   function aiuiCloseBuild(chatId, id, text) {
-    return aiuiCloseWith(chatId, aiuiBuildDoneMarker(id), text);
+    return aiuiCloseWith(chatId, [aiuiBuildDoneMarker(id),
+                                  aiuiLegacyBuildMarker(id)], text);
   }
 
   // The same write, for anything that watches something and reports once.
   // Generalised when the video watcher arrived rather than copied, because
   // two copies of "append a message to somebody's chat without racing Open
   // WebUI's own save" is two chances to get that wrong.
-  function aiuiCloseWith(chatId, marker, text) {
+  function aiuiCloseWith(chatId, markers, text) {
     return aiuiFetchChat(chatId).then(function (fresh) {
       var fh = fresh.chat.history;
       var chain = aiuiChainFromHistory(fh);
-      if (aiuiIsClosed(chain, marker)) return true;
+      if (aiuiIsClosed(chain, markers)) return true;
       var tail = chain[chain.length - 1];
       if (!tail || tail.role !== 'assistant' || tail.done !== true) return false;
       var newId = aiuiUuid();
@@ -3927,6 +4021,7 @@
       if (!task) return false;
       var text = aiuiBuildOutcome(task, id, location.origin);
       if (text) {
+        aiuiHideBuildInline(id);
         // Drawn on the way past, not after the write: closing can take
         // another tick or be done by another tab, and the person is
         // looking at the chat NOW.
@@ -3943,6 +4038,10 @@
       //
       // Minutes stay as the fallback, which is every build that predates
       // this and any build between steps.
+      // Still going, so put the build itself on screen. Drawn here and
+      // not when the watch starts, because by now the task has answered
+      // and is known to be a real build this person may see.
+      aiuiShowBuildInline(chatId, id);
       var mins = Math.max(1, Math.round((Date.now() - started) / 60000));
       var step = String((task && task.build_step_said) || '').trim();
       aiuiBuildLine(chatId, step
@@ -4021,8 +4120,12 @@
     return ids;
   }
 
+  // Invisible, for the same reason the build one is: Open WebUI escapes
+  // the HTML in a message, so an HTML comment is printed to the person.
+  // No legacy shape to recognise here, because this watcher has not been
+  // in anybody's hands long enough to have written one.
   function aiuiVideoDoneMarker(id) {
-    return '<!-- aiui:video-done ' + id + ' -->';
+    return '[aiui-video-done]: #' + id;
   }
 
   // Mirrors the video_status tool, so the page says what asking would say.
@@ -4063,11 +4166,7 @@
     el.style.cssText = 'display:block;width:100%;border-radius:10px;background:#000;';
     box.appendChild(el);
 
-    var rows = document.querySelectorAll('[id^="message-"]');
-    var last = rows.length ? rows[rows.length - 1] : null;
-    var slot = last && last.parentElement ? last.parentElement : null;
-    if (slot && slot.parentElement) slot.parentElement.insertBefore(box, slot.nextSibling);
-    else document.body.appendChild(box);
+    aiuiPutUnderLastMessage(box);
   }
 
   function aiuiPollVideo(chatId, id, started) {

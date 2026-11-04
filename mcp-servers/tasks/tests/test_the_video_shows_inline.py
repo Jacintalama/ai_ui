@@ -109,8 +109,15 @@ def test_a_video_is_reported_once():
     """Its own marker, not the build one, so a video and a build in the
     same chat cannot close each other."""
     src = _js()
-    assert "aiui:video-done" in src
-    assert "aiui:build-done" in src
+    # The markers became markdown link reference definitions on
+    # 2026-11-04, because Open WebUI escapes the HTML in a message and was
+    # printing the old HTML comment to the person under every finished
+    # build. What this test is about is unchanged: the two kinds are
+    # DISTINCT, so a video and a build in one chat cannot close each
+    # other.
+    assert "aiui-video-done" in src
+    assert "aiui-build-done" in src
+    assert "[aiui-video-done]: #" in src
 
 
 def test_both_watchers_share_one_write():
@@ -118,8 +125,8 @@ def test_both_watchers_share_one_write():
     save" is two chances to get that wrong."""
     src = _js()
     assert src.count("function aiuiCloseWith(") == 1
-    assert "return aiuiCloseWith(chatId, aiuiBuildDoneMarker(id), text);" in src
-    assert "return aiuiCloseWith(chatId, aiuiVideoDoneMarker(id), text);" in src
+    assert "aiuiCloseWith(chatId, [aiuiBuildDoneMarker(id)," in src
+    assert "aiuiCloseWith(chatId, aiuiVideoDoneMarker(id), text);" in src
 
 
 def test_the_scan_reads_the_chat_once():
