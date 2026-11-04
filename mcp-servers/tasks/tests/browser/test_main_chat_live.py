@@ -245,8 +245,12 @@ async def test_asking_which_skills_to_use_shows_a_connect_button(site):
         "purpose = 'tool_pick' and created_at >= :t", e=EMAIL, t=since)
     assert picks and "skills" in picks[-1].outcome.split(","), picks
     await page.wait_for_timeout(1000)          # the link scan runs on a timer
+    # The reply's own row, found the way _replies finds it. The last
+    # "message-" id on the page is "message-input-container", the box you
+    # type in, which is why this test first failed with the button on screen.
     buttons = await page.evaluate("""() => {
-        const rows = [...document.querySelectorAll('[id^="message-"]')];
+        const rows = [...document.querySelectorAll('[id^="message-"]')]
+            .filter(r => r.querySelector('button[aria-label="Read Aloud"]'));
         const last = rows[rows.length - 1];
         return [...last.querySelectorAll('.aiui-connect-inline button')]
             .map(b => b.textContent.trim());
