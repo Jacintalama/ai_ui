@@ -181,3 +181,34 @@ def overview_text(ov: dict, mine=None) -> str:
             free, "" if free == 1 else "s", "s" if free == 1 else "")]
     lines += ["", "Ask me to add any of these to an agent."]
     return "\n".join(lines)
+
+
+#: Words that mean an answer is talking about an app, per app. The tracker is
+#: named by any of the three as often as by the word itself.
+MENTIONS = {
+    "gmail": ("gmail",),
+    "calendar": ("calendar",),
+    "gdrive": ("drive",),
+    TRACKER: ("tracker", "trello", "clickup", "github"),
+}
+
+
+def missing_links(answer: str, connect: list) -> list:
+    """The `[Connect X](#aiui-connect:x)` lines an answer about skills should
+    carry and does not: for each app this person has not connected
+    (`connect`, as needs_connect gives it) that the answer names while
+    talking about connecting. In the order given.
+
+    Decided here, not by the model: live on 2026-11-04 the main chat's model
+    read suggest_skills, then wrote "There's a Connect button above" and
+    left the link out, so there was no button anywhere."""
+    text = str(answer or "").lower()
+    if "connect" not in text:
+        return []
+    out = []
+    for need in connect or []:
+        href = need.get("connect") or ""
+        words = MENTIONS.get(need.get("app"), ())
+        if href and href.lower() not in text and any(w in text for w in words):
+            out.append("[%s](%s)" % (need.get("button") or "Connect", href))
+    return out
