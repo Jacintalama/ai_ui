@@ -694,6 +694,50 @@ class SkillDraftIn(BaseModel):
     job: str = Field(min_length=1, max_length=skill_writer.MAX_JOB_CHARS + 1)
 
 
+#: A drafted skill, by code, until it is saved or forgotten. The CONTENT is
+#: held here, unlike the agent proposals above which hold only a timestamp
+#: and re-derive their code from what the confirm call sends back.
+#:
+#: The difference is the size of the thing. An agent's instructions are a
+#: paragraph a model can repeat exactly; a skill body is up to 4000
+#: characters, and a model asked to send it back verbatim will paraphrase
+#: it. Then the person approves one text and a different one is stored,
+#: which is the failure the preview exists to prevent.
+#:
+#: So the draft is kept and saved as drafted. Ten minutes: long enough to
+#: read a skill and answer, short enough that a code in an old transcript
+#: saves nothing later.
+_DRAFTS: dict = {}
+DRAFT_TTL_SECONDS = 600
+
+
+def _remember_draft(email: str, draft: dict) -> str:
+    now = time.time()
+    for code, (when, _e, _d) in list(_DRAFTS.items()):
+        if now - when > DRAFT_TTL_SECONDS:
+            _DRAFTS.pop(code, None)
+    code = hashlib.sha256(
+        ("".join([email, draft.get("name", ""), draft.get("body", "")])
+         + str(now)).encode("utf-8")).hexdigest()[:12]
+    _DRAFTS[code] = (now, email, dict(draft))
+    return code
+
+
+def _held_draft(email: str, code: str) -> dict | None:
+    """The draft this code stands for, for THIS person.
+
+    Keyed by code and checked against the email, so a code seen in somebody
+    else's transcript saves nothing into their account.
+    """
+    held = _DRAFTS.get(str(code or ""))
+    if not held:
+        return None
+    when, owner, draft = held
+    if owner != email or (time.time() - when) > DRAFT_TTL_SECONDS:
+        return None
+    return draft
+
+
 class SkillIn(BaseModel):
     #: No min_length, on purpose. The schema would answer an empty name
     #: with "String should have at least 1 character", which is true and
@@ -706,6 +750,9 @@ class SkillIn(BaseModel):
     #: "string too long", which says nothing about prompts.
     body: str = Field(default="", max_length=agent_skills.MAX_SKILL_CHARS * 4)
     tools: list[str] = []
+    #: The code a draft handed back. With it, the draft is saved exactly as
+    #: it was shown and the fields above are ignored.
+    confirm: str = Field(default="", max_length=64)
 
 
 @router.get("/skills/mine")
@@ -746,6 +793,7 @@ async def draft_skill(body: SkillDraftIn,
         raise HTTPException(status_code=422, detail=problem)
     draft["name"] = user_skills.clean_name(draft["name"])
     draft["warning"] = user_skills.tool_warning(draft["tools"], tools)
+    draft["confirm"] = _remember_draft(user.email, draft)
     return draft
 
 
@@ -775,14 +823,31 @@ async def save_my_skill(body: SkillIn,
                         user: CurrentUser = Depends(current_user)) -> dict:
     """Keep this skill. Validated here and not at draft time, because a
     draft is allowed to be wrong and a saved skill is not."""
-    name = user_skills.clean_name(body.name)
-    problem = user_skills.problem_with(name, body.description, body.body,
+    fields = body
+    if body.confirm:
+        held = _held_draft(user.email, body.confirm)
+        if held is None:
+            raise HTTPException(
+                status_code=422,
+                detail=("That draft has expired. Ask me to write the skill "
+                        "again and I will show you a fresh one."))
+        # Saved as DRAFTED, not as re-sent. A model asked to repeat 4000
+        # characters paraphrases them, and then the person approved one
+        # text while another was stored.
+        fields = SkillIn(name=held.get("name", ""),
+                         description=held.get("description", ""),
+                         body=held.get("body", ""),
+                         tools=list(held.get("tools") or []))
+        _DRAFTS.pop(body.confirm, None)
+
+    name = user_skills.clean_name(fields.name)
+    problem = user_skills.problem_with(name, fields.description, fields.body,
                                        agent_skills.MAX_SKILL_CHARS)
     if problem:
         raise HTTPException(status_code=422, detail=problem)
     try:
-        saved = await user_skills.save(user.email, name, body.description,
-                                       body.tools, body.body)
+        saved = await user_skills.save(user.email, name, fields.description,
+                                       fields.tools, fields.body)
     except user_skills.TooMany:
         raise HTTPException(
             status_code=409,
@@ -799,7 +864,7 @@ async def save_my_skill(body: SkillIn,
                  if isinstance(t, dict) and t.get("id")}
     except Exception:                                       # noqa: BLE001
         pass
-    saved["warning"] = user_skills.tool_warning(body.tools, tools)
+    saved["warning"] = user_skills.tool_warning(fields.tools, tools)
     return saved
 
 
