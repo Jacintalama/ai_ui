@@ -3753,6 +3753,77 @@
   // copy of the whole chat on the next message: a message the service wrote
   // behind its back could be wiped out. The cost is that nothing is posted
   // while the chat is closed; it catches up when the chat is opened again.
+  // ===== What a reply carries =====
+  //
+  // A reply is text, and the page has been reading things OUT of that
+  // text to know what the message is about: a preview.html link means a
+  // build to watch, and the sentence "Its id is <uuid>" means a video.
+  //
+  // The second one is the problem. It keys on a sentence a tool writes in
+  // English. Reword that sentence and video watching stops, with nothing
+  // failing and nothing saying so.
+  //
+  // So a reply may now declare what it carries, as a markdown link
+  // reference definition, which the parser consumes and does not render:
+  //
+  //     [aiui-artifact]: #app/nike-tshirt-landing-6430
+  //     [aiui-artifact]: #build/528f5422-5dea-4c5a-8638-8e919a01109b
+  //     [aiui-artifact]: #video/55785e0a-a4e4-4d4c-a2d5-5747c8899019
+  //
+  // Nothing writes those yet; the services still write prose. This is the
+  // reading half, so the writing half is one line wherever a reply is
+  // composed, and so the two scanners that exist become one contract with
+  // one place to change. The prose forms stay, because they are what every
+  // message already in somebody's history says.
+  // The id must START with a letter or a digit, so ".." cannot be one.
+  // It becomes part of a URL further down, and although the slug check
+  // there would refuse it, a parser that hands out ".." at all is one
+  // careless caller away from a traversal.
+  // The trailing lookahead makes an over-long id NO MATCH rather than a
+  // match of its first 120 characters. Truncating an id silently hands
+  // back a different one, which is worse than ignoring a marker nobody
+  // should have written.
+  var AIUI_ARTIFACT = /\[aiui-artifact\]: #(app|build|video)\/([A-Za-z0-9][A-Za-z0-9._-]{0,119})(?![A-Za-z0-9._-])/g;
+
+  //: A video job and a build task are both uuids; an app is a slug.
+  var AIUI_UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+
+  function aiuiArtifactsIn(content) {
+    var text = String(content || '');
+    var found = [];
+    function add(kind, id) {
+      if (!id) return;
+      // Belt and braces with the pattern above: a dot run anywhere in an
+      // id has no legitimate use and every traversal needs one.
+      if (id.indexOf('..') >= 0) return;
+      for (var i = 0; i < found.length; i++) {
+        if (found[i].kind === kind && found[i].id === id) return;
+      }
+      found.push({ kind: kind, id: id });
+    }
+
+    // Declared, and therefore trusted first.
+    AIUI_ARTIFACT.lastIndex = 0;
+    var m;
+    while ((m = AIUI_ARTIFACT.exec(text)) !== null) add(m[1], m[2]);
+
+    // Read out of the prose, for everything written before the marker
+    // existed. Each of these is a guess about wording, which is the whole
+    // reason the marker is better.
+    var link = new RegExp('/tasks/static/preview\\.html\\?task=(' + AIUI_UUID + ')', 'g');
+    while ((m = link.exec(text)) !== null) add('build', m[1]);
+    var vid = new RegExp('[Ii]ts id is (' + AIUI_UUID + ')', 'g');
+    while ((m = vid.exec(text)) !== null) add('video', m[1]);
+    return found;
+  }
+
+  function aiuiArtifactIds(content, kind) {
+    return aiuiArtifactsIn(content)
+      .filter(function (a) { return a.kind === kind; })
+      .map(function (a) { return a.id; });
+  }
+  // ===== End what a reply carries =====
+
   var AIUI_BUILD_LINK = /\/tasks\/static\/preview\.html\?task=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/g;
   var AIUI_BUILD_POLL_MS = 10000;
   var AIUI_BUILD_GIVE_UP_MS = 60 * 60 * 1000;
@@ -3765,14 +3836,7 @@
   var aiuiBuildLastLook = 0;
 
   function aiuiBuildIdsIn(content) {
-    var ids = [];
-    var text = String(content || '');
-    AIUI_BUILD_LINK.lastIndex = 0;
-    var m;
-    while ((m = AIUI_BUILD_LINK.exec(text)) !== null) {
-      if (ids.indexOf(m[1]) < 0) ids.push(m[1]);
-    }
-    return ids;
+    return aiuiArtifactIds(content, 'build');
   }
 
   // A MARKDOWN LINK REFERENCE DEFINITION, not an HTML comment.
@@ -4736,14 +4800,7 @@
   var aiuiVideoWatched = {};
 
   function aiuiVideoIdsIn(content) {
-    var ids = [];
-    var text = String(content || '');
-    AIUI_VIDEO_ID.lastIndex = 0;
-    var m;
-    while ((m = AIUI_VIDEO_ID.exec(text)) !== null) {
-      if (ids.indexOf(m[1]) < 0) ids.push(m[1]);
-    }
-    return ids;
+    return aiuiArtifactIds(content, 'video');
   }
 
   // Invisible, for the same reason the build one is: Open WebUI escapes
