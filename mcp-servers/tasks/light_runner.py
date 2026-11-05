@@ -32,9 +32,19 @@ logger = logging.getLogger("tasks.light_build")
 
 #: How many light builds may run at once. Its own ceiling, separate from
 #: the agent's one-at-a-time, because the whole point is that several
-#: people can build together. A cap still exists: a burst of these is
-#: small but not free, and nothing else would stop a hundred.
-CONCURRENCY = int(os.environ.get("LIGHT_BUILD_CONCURRENCY", "6"))
+#: people can build together.
+#:
+#: Measured on the server 2026-11-05: six started at the same moment all
+#: came back as usable pages in 44 to 55 seconds, and cost about 7MB in
+#: total, roughly 1.2MB each. The work happens at the model's end and
+#: this box only holds an open HTTP request, so memory is not what bounds
+#: this. What this number protects is the model bill and the provider's
+#: rate limit.
+#:
+#: Twelve covers every registered person on the platform with room spare
+#: and still bounds a runaway. Set in compose, so it can be changed in
+#: .env without touching code, and read at start, so it needs a restart.
+CONCURRENCY = int(os.environ.get("LIGHT_BUILD_CONCURRENCY", "12"))
 
 #: Which model writes the page.
 MODEL = os.environ.get("LIGHT_BUILD_MODEL", "claude-sonnet-5")

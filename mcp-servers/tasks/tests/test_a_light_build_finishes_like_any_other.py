@@ -177,16 +177,36 @@ def test_nothing_is_written_when_the_page_is_refused(monkeypatch, spy):
 
 def test_there_is_a_limit_on_how_many_run_at_once():
     """The point of the lane is that several run together. The point of
-    the cap is that a burst still cannot exhaust a 3.8GB box."""
+    the cap is that nothing runs away.
+
+    Measured on the server 2026-11-05: six at once cost about 7MB in
+    total, so this does not protect memory. It protects the model bill
+    and the provider's rate limit, which is why it is not simply
+    unbounded.
+    """
     assert light_runner.CONCURRENCY >= 2, "then it is not a parallel lane"
-    assert light_runner.CONCURRENCY <= 20, "too many to be safe on this box"
+    assert light_runner.CONCURRENCY <= 50, "nothing should run away"
 
 
-def test_the_cap_can_be_changed_without_a_deploy():
-    import os
-    assert "LIGHT_BUILD_CONCURRENCY" in open(
-        light_runner.__file__, encoding="utf-8").read()
-    assert os.environ.get("LIGHT_BUILD_CONCURRENCY") is None or True
+def test_it_covers_everybody_on_the_platform_at_once():
+    """Nine people were registered when this was written. A cap below
+    that would still refuse somebody while others build, which is the
+    bug this lane exists to fix."""
+    assert light_runner.CONCURRENCY >= 9
+
+
+def test_the_cap_is_settable_without_changing_code():
+    """So it can be tuned from .env on the server. It is read at start,
+    so it needs a restart, which is a deploy: that is a property worth
+    knowing rather than one to hide."""
+    src = open(light_runner.__file__, encoding="utf-8").read()
+    assert 'os.environ.get("LIGHT_BUILD_CONCURRENCY"' in src
+    import os.path
+    compose = os.path.join(os.path.dirname(light_runner.__file__),
+                           "..", "..", "docker-compose.unified.yml")
+    with open(compose, encoding="utf-8") as fh:
+        assert "LIGHT_BUILD_CONCURRENCY=${LIGHT_BUILD_CONCURRENCY:-" in fh.read(), (
+            "not exposed in compose, so it cannot be set without a code change")
 
 
 def test_the_slots_are_made_once(monkeypatch):
