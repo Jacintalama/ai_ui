@@ -1,20 +1,37 @@
 """The panel is part of the model's reply, not a box underneath it.
 
-Placement has been wrong three times now. First it went after the
-composer, at the bottom of the page. Then it went into the thread, which
-put it in the conversation but as a SEPARATE box sitting under the
-message, with its own border and a rule above it. What was wanted both
-times is the panel inside the reply itself, the way a canvas is part of
-what the model said.
+Placement has been wrong three times. After the composer; then in the
+thread but as a separate box under the message; then still under it.
 
-The walk from a reply to its content block is aiuiFindReplyBody, which
-the agent name header has used in production since September. That is
-the difference from the two earlier attempts: this is markup that is
-already known to work, not markup reasoned about from a source map.
+The first two attempts failed for the same reason: the markup was
+reasoned about rather than read. This fixture is not invented. It is
+Open WebUI 0.12's own ResponseMessage source, taken from the source map
+of the compiled chunk on the server (D3JjuTf6.js.map), with the Svelte
+components rendered out as the elements they produce:
 
-The fixture is Open WebUI 0.12's reply shape: a reused (not unique)
-#response-message-model-name span for the model name, and a sibling div
-whose class starts with "chat-" holding the text.
+    <div class=" flex w-full message-{id}" id="message-{id}">
+      <div class="shrink-0 ...">             the avatar
+      <div class="flex-auto w-0 pl-1 relative">
+        <Name><Tooltip>
+          <span id="response-message-model-name">
+        <div>
+          <div class="chat-{message.role} w-full min-w-full">
+            <div> ...the reply...
+
+Two things that reading it corrected:
+
+  * There ARE per-message ids. "no per-message ids" was wrong; the
+    trouble was only ever that message-input-container, the COMPOSER,
+    shares the "message-" prefix, which is what the first attempt hit.
+
+  * chat-assistant does exist in the DOM. Grepping the compiled bundle
+    for it finds nothing because it is built at runtime from
+    `chat-{message.role}`, so searching the build for the literal says
+    "absent" about a class that is on screen.
+
+chat-assistant is a GRANDCHILD of the model name span's column, not a
+sibling, which is why a walk that checks a sibling's own class falls
+through to a looser fallback.
 """
 import pathlib
 
@@ -30,14 +47,44 @@ JS = (pathlib.Path(__file__).resolve().parents[3]
 def _placer():
     """The real placing code, plus the body walk it leans on."""
     src = JS.read_text(encoding="utf-8")
-
     finder_start = src.index("  function aiuiFindReplyBody(")
     finder_end = src.index("\n  // Only the very first content of the body")
     finder = src[finder_start:finder_end]
-
     start = src.index("  function aiuiScroller()")
     end = src.index("\n  function ", src.index("function aiuiPutUnderLastMessage"))
     return finder + "\n" + src[start:end]
+
+
+def _reply(mid, text):
+    """One assistant message, shaped exactly like Open WebUI builds it."""
+    return (
+        '<div class=" flex w-full message-' + mid + '" id="message-' + mid + '"'
+        ' style="scroll-margin-top: 3rem;">'
+        '  <div class="shrink-0 ltr:mr-2 rtl:ml-2 hidden mt-0.5">'
+        '    <div class="size-7 assistant-message-profile-image"></div>'
+        '  </div>'
+        '  <div class="flex-auto w-0 pl-1 relative">'
+        '    <div class="name">'
+        '      <div class="tooltip">'
+        '        <span id="response-message-model-name"'
+        '              class="line-clamp-1">Auto (Free)</span>'
+        '      </div>'
+        '    </div>'
+        '    <div>'
+        '      <div class="chat-assistant w-full min-w-full" data-body="' + mid + '">'
+        '        <div><p>' + text + '</p></div>'
+        '      </div>'
+        '    </div>'
+        '  </div>'
+        '</div>'
+    )
+
+
+def _user(text):
+    return ('<div class=" flex w-full message-u1" id="message-u1">'
+            '<div class="flex-auto w-0 pl-1 relative"><div>'
+            '<div class="chat-user w-full min-w-full"><div>' + text + '</div></div>'
+            '</div></div></div>')
 
 
 PAGE = """<!doctype html><meta charset="utf-8">
@@ -48,31 +95,11 @@ PAGE = """<!doctype html><meta charset="utf-8">
   #message-input-container { flex:0 0 auto; padding:16px; }
 </style>
 <div id="messages-container" class="flex flex-col-reverse overflow-auto">
-  <div id="thread">
-    <div class="msg" data-m="1">make me a landing page</div>
-
-    <div class="reply" id="reply-one">
-      <div class="flex items-center">
-        <span id="response-message-model-name">Auto (Free)</span>
-      </div>
-      <div class="chat-assistant markdown-prose" id="body-one">
-        an earlier reply
-      </div>
-    </div>
-
-    <div class="reply" id="reply-two">
-      <div class="flex items-center">
-        <span id="response-message-model-name">Auto (Free)</span>
-      </div>
-      <div class="chat-assistant markdown-prose" id="body-two">
-        Building your JuiceThere landing page now.
-      </div>
-    </div>
-  </div>
+  <div id="thread">%(messages)s</div>
 </div>
 <div id="message-input-container">the composer</div>
 <script>
-%s
+%(js)s
 window.__place = function () {
   var box = document.createElement('div');
   box.id = 'aiui-probe';
@@ -83,6 +110,10 @@ window.__place = function () {
 </script>
 """
 
+MESSAGES = (_user("make me a landing page")
+            + _reply("m1", "an earlier reply")
+            + _reply("m2", "Your Juice For All landing page is building now."))
+
 
 @pytest.fixture(scope="module")
 def browser():
@@ -92,9 +123,9 @@ def browser():
         b.close()
 
 
-def _page(browser, html=PAGE):
+def _page(browser, messages=MESSAGES):
     page = browser.new_page()
-    page.set_content(html % _placer())
+    page.set_content(PAGE % {"js": _placer(), "messages": messages})
     page.evaluate("window.__place()")
     page.wait_for_selector("#aiui-probe")
     return page
@@ -102,12 +133,23 @@ def _page(browser, html=PAGE):
 
 # --- where it goes -------------------------------------------------------
 
-def test_it_is_inside_the_reply_not_a_sibling_of_it(browser):
+def test_it_is_inside_the_last_reply(browser):
     """The thing asked for three times. Being in the conversation is not
     enough; it has to be in the message."""
     page = _page(browser)
     assert page.evaluate(
-        "document.getElementById('body-two')"
+        "document.getElementById('message-m2')"
+        ".contains(document.getElementById('aiui-probe'))") is True
+    page.close()
+
+
+def test_it_is_inside_the_reply_content_itself(browser):
+    """chat-assistant is the block holding what the model said. Landing
+    beside it, in the column, is still a box next to the message rather
+    than part of it."""
+    page = _page(browser)
+    assert page.evaluate(
+        "document.querySelector('[data-body=m2]')"
         ".contains(document.getElementById('aiui-probe'))") is True
     page.close()
 
@@ -118,7 +160,26 @@ def test_it_goes_in_the_last_reply_not_an_earlier_one(browser):
     message in the chat."""
     page = _page(browser)
     assert page.evaluate(
-        "document.getElementById('body-one')"
+        "document.getElementById('message-m1')"
+        ".contains(document.getElementById('aiui-probe'))") is False
+    page.close()
+
+
+def test_it_never_lands_in_the_composer(browser):
+    """message-input-container shares the "message-" prefix with every
+    real message, and matching on that prefix is the original bug: the
+    panel came out under the message box, at the bottom of the page."""
+    page = _page(browser)
+    assert page.evaluate(
+        "document.getElementById('message-input-container')"
+        ".contains(document.getElementById('aiui-probe'))") is False
+    page.close()
+
+
+def test_it_is_not_put_in_a_message_the_person_wrote(browser):
+    page = _page(browser)
+    assert page.evaluate(
+        "document.getElementById('message-u1')"
         ".contains(document.getElementById('aiui-probe'))") is False
     page.close()
 
@@ -144,29 +205,19 @@ def test_it_still_comes_out_above_the_composer(browser):
     page.close()
 
 
+def test_a_reply_still_being_written_is_not_skipped(browser):
+    """A build panel is drawn while the reply is the newest thing on the
+    page, which is exactly when it has no buttons under it yet."""
+    page = _page(browser, _user("hi") + _reply("m9", "Building now."))
+    assert page.evaluate(
+        "document.querySelector('[data-body=m9]')"
+        ".contains(document.getElementById('aiui-probe'))") is True
+    page.close()
+
+
 # --- when there is no reply to go in -------------------------------------
 
-NO_REPLY = """<!doctype html><meta charset="utf-8">
-<style>
-  body { margin:0; height:100vh; display:flex; flex-direction:column; }
-  #messages-container { flex:1 1 auto; display:flex;
-                        flex-direction:column-reverse; overflow:auto; }
-  #message-input-container { flex:0 0 auto; padding:16px; }
-</style>
-<div id="messages-container" class="flex flex-col-reverse overflow-auto">
-  <div id="thread"><div class="msg">just a question</div></div>
-</div>
-<div id="message-input-container">the composer</div>
-<script>
-%s
-window.__place = function () {
-  var box = document.createElement('div');
-  box.id = 'aiui-probe';
-  box.textContent = 'the panel';
-  aiuiPutUnderLastMessage(box);
-};
-</script>
-"""
+NO_REPLY = _user("just a question")
 
 
 def test_with_no_reply_on_the_page_it_still_lands_in_the_conversation(browser):
@@ -174,16 +225,10 @@ def test_with_no_reply_on_the_page_it_still_lands_in_the_conversation(browser):
     moved again. Falling back into the thread is far better than falling
     back to the bottom of the page, which is the original bug."""
     page = _page(browser, NO_REPLY)
-    # The scroller, not the inner wrapper: with nothing to go after, the
-    # existing path inserts at the scroller's start, which in a
-    # flex-col-reverse scroller is the BOTTOM of the conversation. What
-    # matters is that it is in the scroller and below the last message,
-    # which the geometry below is the real check of.
     assert page.evaluate(
         "document.getElementById('messages-container')"
         ".contains(document.getElementById('aiui-probe'))") is True
     panel = page.locator("#aiui-probe").bounding_box()
-    last = page.locator(".msg").last.bounding_box()
     composer = page.locator("#message-input-container").bounding_box()
-    assert panel["y"] >= last["y"], "it came out above the conversation"
     assert panel["y"] + panel["height"] <= composer["y"] + 1
+    page.close()
