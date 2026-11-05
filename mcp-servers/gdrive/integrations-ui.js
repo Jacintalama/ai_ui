@@ -4021,13 +4021,46 @@
 
   // The last reply's own content block, or null.
   //
-  // #response-message-model-name is Open WebUI's id on the model name of a
-  // reply. It is reused on every reply rather than being unique, which is
-  // invalid HTML and is exactly why this takes the LAST one. The walk from
-  // the span to the body is aiuiFindReplyBody, which the agent name header
-  // has used in production since September: this is measured markup, not
-  // markup I guessed at, which is what the two earlier placements got wrong.
+  // Open WebUI 0.12 builds a message like this (its own ResponseMessage
+  // source, read from the source map of the compiled chunk on the
+  // server, not reasoned about):
+  //
+  //   <div class=" flex w-full message-{id}" id="message-{id}">
+  //     <div class="shrink-0 ...">                 the avatar
+  //     <div class="flex-auto w-0 pl-1 relative">  the column
+  //       <Name><Tooltip><span id="response-message-model-name">
+  //       <div>
+  //         <div class="chat-{message.role} w-full min-w-full">
+  //           <div> ...what the model said...
+  //
+  // So the block holding the reply is chat-assistant, and it is a
+  // GRANDCHILD of the column, not a sibling of the name. A walk that
+  // checks a sibling's own class lands in the column instead: inside the
+  // message, but beside what the model said rather than part of it,
+  // which is the difference Ralph has now pointed at three times.
+  //
+  // Two things reading that source corrected:
+  //
+  //   There ARE per-message ids. "no per-message ids" was wrong. The
+  //   only trouble was that message-input-container, the COMPOSER,
+  //   shares the "message-" prefix, which is what the first attempt hit.
+  //
+  //   chat-assistant IS in the DOM. Grepping the built bundle for it
+  //   finds nothing, because it is assembled at runtime from
+  //   'chat-' + message.role, so searching the build says "absent" about
+  //   a class that is on screen. That is what made this look unusable.
   function aiuiLastReplyBody() {
+    var thread = aiuiThread();
+    var scope = thread || document;
+
+    // Named, not walked. chat-user exists too, so this asks for the
+    // model's block rather than for whatever block happens to be last.
+    var bodies = scope.querySelectorAll('.chat-assistant');
+    if (bodies.length) return bodies[bodies.length - 1];
+
+    // The markup has moved. The walk from the model name still finds
+    // something inside the message, which is worse than the line above
+    // and much better than the bottom of the page.
     var spans = document.querySelectorAll('#response-message-model-name');
     for (var i = spans.length - 1; i >= 0; i--) {
       var body = aiuiFindReplyBody(spans[i]);
