@@ -49,6 +49,41 @@ STEPS = {
 }
 
 
+#: The steps a build walks through, in the order _run_execution runs them.
+#: Python keeps insertion order, so this IS the order of STEPS above, named
+#: here so the fact is asserted rather than assumed by anything reading it.
+ORDER = ("baseline", "building", "smoke", "autofix", "docs", "commit")
+
+#: Not part of that walk. "guard" means a change broke the app and is being
+#: undone; "asking" means the build stopped to ask something. Neither is a
+#: stage you pass through on the way to a finished app, and showing them in
+#: a list of what is still to come would promise every build a rollback.
+OUT_OF_BAND = ("guard", "asking")
+
+
+def steps_in_order() -> list:
+    """The walk, for a page that wants to draw all of it at once.
+
+    The wording lives HERE and is served, never copied into a page. There
+    are already two places that show a step to somebody (the chat and the
+    build view) and a third copy of these sentences would be a third place
+    to change and a third to fall out of step.
+    """
+    return [{"key": k, "said": STEPS[k]} for k in ORDER if k in STEPS]
+
+
+def reached(step: str) -> int:
+    """How far along the walk a build is, or -1 when it is not on it.
+
+    -1 for an unknown step and for the two out-of-band ones, so a caller
+    can tell "rolling back" from "somewhere in the middle".
+    """
+    try:
+        return ORDER.index(str(step or ""))
+    except ValueError:
+        return -1
+
+
 def wording(step: str) -> str:
     """The sentence for a step key, or the key itself if it is unknown.
 
