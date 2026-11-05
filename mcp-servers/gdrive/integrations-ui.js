@@ -3924,7 +3924,10 @@
     var why = String((task && task.result) || '').trim().slice(0, 500);
     var said;
     if (status === 'completed') {
-      said = slug + ' is built.\nOpen it here: ' + origin + '/tasks/preview-app/' + slug + '/';
+      // No link. The app itself runs in the reply, so a URL here is a
+      // second way to reach what is already on screen. The slug is
+      // declared below instead, which is what draws it.
+      said = slug + ' is built.';
       // Declared, not left to be read out of the sentence. The URL
       // above is recognised too, for every build written before
       // this, but a reply that says what it carries is the thing
