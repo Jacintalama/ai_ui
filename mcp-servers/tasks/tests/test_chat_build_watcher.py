@@ -117,10 +117,26 @@ def test_a_build_still_running_has_nothing_to_say(status):
     assert _outcome({"status": status, "built_app_slug": "shop"}) is None
 
 
-def test_a_finished_build_gives_the_link_to_the_app():
+def test_a_finished_build_names_the_app_instead_of_linking_it():
+    """It gave a preview URL until 2026-11-05. The app itself runs in the
+    reply now, so the link pointed at something already on screen. What
+    replaced it is a declaration the page reads to draw that app, so the
+    information is still carried, just not as something to click."""
     said = _outcome({"status": "completed", "built_app_slug": "shop"})
-    assert said.startswith("shop is built.\nOpen it here: https://x.test/tasks/preview-app/shop/")
+    assert said.startswith("shop is built.")
+    assert "http" not in said, said
+    assert "[aiui-artifact]: #app/shop" in said
     assert said.rstrip().endswith("[aiui-build-done]: #%s" % ID)
+
+
+def test_a_build_waiting_on_an_answer_still_says_where_to_answer():
+    """The one link kept on purpose. Everything else removed pointed at a
+    thing the reply already shows; this one is the only way to answer a
+    question the build stopped on, and the build panel is cleared by the
+    time this message is written."""
+    said = _outcome({"status": "awaiting_input", "built_app_slug": "shop",
+                     "result": "which colour?"})
+    assert "Answer it here: https://x.test/tasks/static/preview.html?task=" in said
 
 
 def test_the_marker_is_not_something_a_person_has_to_look_at():

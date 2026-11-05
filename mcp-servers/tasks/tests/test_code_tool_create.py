@@ -64,13 +64,19 @@ async def test_no_name_is_not_an_empty_name(tools):
     assert kwargs["name"] is None
 
 
-async def test_the_link_rides_on_its_own_line(tools):
-    """Same as apply_app_change: the panel draws a card for a link like this,
-    and a link buried in a sentence is a link nobody clicks."""
+async def test_the_build_is_declared_on_its_own_line(tools):
+    """This used to be the link riding on its own line, so the panel could
+    find it. The link is gone (2026-11-05): it pointed at something the
+    reply already shows. What the page reads is a declaration, and it
+    still has to start its own line, because a link reference definition
+    trailed onto a sentence is PRINTED to the person rather than
+    rendered away."""
     tools._call = AsyncMock(return_value=BUILT)
     said = await tools.create_app("a page", __user__=WHO)
-    assert any(line.strip().endswith(BUILT["url"])
-               for line in said.splitlines())
+    assert "http" not in said, said
+    lines = said.rstrip().splitlines()
+    assert lines[-1] == "[aiui-artifact]: #build/" + BUILT["task_id"]
+    assert lines[-2].strip() == ""
 
 
 async def test_it_says_the_build_takes_time(tools):

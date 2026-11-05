@@ -42,20 +42,30 @@ def _answers(tools, payload):
     tools._call = AsyncMock(return_value=payload)
 
 
-async def test_the_reply_carries_the_link_the_server_gave(tools):
+async def test_the_reply_says_which_build_the_server_started(tools):
+    """It carried the URL the server gave until 2026-11-05. The page now
+    shows the change happening and the finished site in the reply, so the
+    URL was a second way to see what is already on screen. What the page
+    needs is still here: WHICH build."""
     _answers(tools, {"slug": "shoe-site", "description": "new hero",
-                     "url": URL})
+                     "task_id": "t-9", "url": URL})
     said = await tools.apply_app_change("tok", __user__={"email": "o@e.com"})
-    assert URL in said
+    assert "http" not in said, said
+    assert "[aiui-artifact]: #build/t-9" in said
     assert "shoe-site" in said and "new hero" in said
 
 
-async def test_the_link_is_on_its_own_line(tools):
-    """So it survives being quoted back, and so the panel can find it: the
-    card is drawn from the answer's text, not from a field."""
-    _answers(tools, {"slug": "shoe-site", "description": "x", "url": URL})
+async def test_the_declaration_is_on_its_own_line(tools):
+    """Same reason the link had its own line: the panel is drawn from the
+    answer's TEXT, not from a field, so it has to survive being quoted
+    back. A link reference definition has a second reason: trailed onto a
+    sentence it is printed to the person instead of rendering away."""
+    _answers(tools, {"slug": "shoe-site", "description": "x",
+                     "task_id": "t-9", "url": URL})
     said = await tools.apply_app_change("tok", __user__={"email": "o@e.com"})
-    assert any(line.strip().endswith(URL) for line in said.splitlines())
+    lines = said.rstrip().splitlines()
+    assert lines[-1] == "[aiui-artifact]: #build/t-9"
+    assert lines[-2].strip() == ""
 
 
 @pytest.mark.parametrize("payload", [
@@ -83,7 +93,15 @@ async def test_it_still_says_what_is_happening(tools):
     assert "rolled back" in said
 
 
-async def test_the_model_is_told_to_pass_the_link_on(tools):
-    """The description is what the model reads before it calls this. Without
-    it the link arrives in the tool result and is paraphrased away."""
-    assert "link" in (tools.apply_app_change.__doc__ or "").lower()
+async def test_the_model_is_told_to_write_no_link(tools):
+    """The docstring is what the model reads before it calls this, and the
+    model writes the reply, so this is where it has to be said.
+
+    This test used to assert the opposite and asserted it as
+    `"link" in doc`, which kept passing once the docstring said "Do NOT
+    write a link": the word was still there while the instruction had
+    been reversed. Asserting the sentence, not the word."""
+    doc = " ".join((tools.apply_app_change.__doc__ or "").split())
+    assert "Do NOT write a link" in doc, doc
+    assert "[aiui-artifact]" in doc
+    assert "exactly as written" in doc

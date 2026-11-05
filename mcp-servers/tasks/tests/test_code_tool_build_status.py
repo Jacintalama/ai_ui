@@ -37,13 +37,17 @@ def tools():
     return _load().Tools()
 
 
-async def test_a_finished_build_hands_over_the_link(tools):
+async def test_a_finished_build_names_the_app_instead_of_linking_it(tools):
+    """It handed over a preview link until 2026-11-05. The app itself now
+    runs in the reply, so the slug is declared and there is nothing to
+    click through to."""
     tools._call = AsyncMock(return_value={
         "status": "completed", "slug": "thunder-2b68",
         "preview_url": "https://ai-ui.example/tasks/preview-app/thunder-2b68/"})
     said = await tools.build_status(TASK, __user__=WHO)
     assert "thunder-2b68 is built" in said
-    assert "https://ai-ui.example/tasks/preview-app/thunder-2b68/" in said
+    assert "http" not in said, said
+    assert said.rstrip().endswith("[aiui-artifact]: #app/thunder-2b68")
 
 
 async def test_a_failure_carries_the_reason_word_for_word(tools):
