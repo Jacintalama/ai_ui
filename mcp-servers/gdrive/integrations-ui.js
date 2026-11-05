@@ -3831,6 +3831,20 @@
     // written or wrapped.
     var any = new RegExp('[?&]task=(' + AIUI_UUID + ')', 'g');
     while ((m = any.exec(text)) !== null) add('build', m[1]);
+
+    // The FINISHED build's own URL, which names a slug and carries no
+    // task id at all.
+    //
+    // Ralph, 2026-11-05: a build finished and the chat showed a link
+    // and nothing else. Every pattern above wants a uuid, and "X is
+    // built. Open it here: /tasks/preview-app/X/" has none, so the one
+    // message that announces a finished app was the one message
+    // nothing could read. The panel was only ever drawn by the watcher
+    // at the moment it saw the build complete, so a reload, a second
+    // tab, or a build already closed all showed the bare link.
+    var appUrl = new RegExp(
+      '/tasks/preview-app/([a-z0-9][a-z0-9-]{0,80})', 'g');
+    while ((m = appUrl.exec(text)) !== null) add('app', m[1]);
     return found;
   }
 
@@ -3911,6 +3925,13 @@
     var said;
     if (status === 'completed') {
       said = slug + ' is built.\nOpen it here: ' + origin + '/tasks/preview-app/' + slug + '/';
+      // Declared, not left to be read out of the sentence. The URL
+      // above is recognised too, for every build written before
+      // this, but a reply that says what it carries is the thing
+      // that does not break when somebody rewords it.
+      if (task && task.built_app_slug) {
+        said += '\n\n[aiui-artifact]: #app/' + task.built_app_slug;
+      }
     } else if (status === 'awaiting_input') {
       said = slug + ' is waiting on an answer.' + (why ? '\n' + why : '')
         + '\nAnswer it here: ' + origin + '/tasks/static/preview.html?task=' + id;
@@ -3998,7 +4019,43 @@
     }
   }
 
+  // The last reply's own content block, or null.
+  //
+  // #response-message-model-name is Open WebUI's id on the model name of a
+  // reply. It is reused on every reply rather than being unique, which is
+  // invalid HTML and is exactly why this takes the LAST one. The walk from
+  // the span to the body is aiuiFindReplyBody, which the agent name header
+  // has used in production since September: this is measured markup, not
+  // markup I guessed at, which is what the two earlier placements got wrong.
+  function aiuiLastReplyBody() {
+    var spans = document.querySelectorAll('#response-message-model-name');
+    for (var i = spans.length - 1; i >= 0; i--) {
+      var body = aiuiFindReplyBody(spans[i]);
+      if (body) return body;
+    }
+    return null;
+  }
+
   function aiuiPutUnderLastMessage(box) {
+    // Inside the reply itself, which is where a person reads it. A box
+    // appended after the message is a separate thing sitting under the
+    // conversation; this is part of what the model said.
+    //
+    // Open WebUI rebuilds a message's content when it changes, so a panel
+    // put here can be thrown away. That is survivable and deliberate:
+    // every caller checks for its own id first and the scan runs again,
+    // so a discarded panel comes straight back.
+    var reply = aiuiLastReplyBody();
+    if (reply) {
+      // The avatar gutter is already applied by the reply itself, so the
+      // indent every panel carries for the thread would double up here.
+      // Cleared centrally, because six panels carry it and a seventh
+      // would forget.
+      box.style.marginLeft = '0';
+      box.style.paddingLeft = '0';
+      reply.appendChild(box);
+      return;
+    }
     var thread = aiuiThread();
     if (thread) {
       // The messages usually sit in one wrapper inside the scroller. Put
@@ -5054,6 +5111,18 @@
     for (var i = 0; i < steps.length; i++) {
       if (steps[i].key === at) { now = i; break; }
     }
+
+    // A build that has not said which step it is on yet is still a build
+    // that is running, and it is running the FIRST step. Saying nothing
+    // is happening, six times over, is both untrue and the thing Ralph
+    // saw on 2026-11-05: a minute in, every row read "Waiting".
+    //
+    // Only when the build has said NOTHING. A step we do not recognise
+    // means it is somewhere we cannot place, out of band on a guard or a
+    // question, and claiming it is back at step one would be a guess
+    // dressed up as progress.
+    if (now < 0 && !at) now = 0;
+
     return steps.map(function (s, i) {
       var state = 'waiting';
       if (now >= 0) state = (i < now) ? 'done' : (i === now ? 'working' : 'waiting');
@@ -5250,8 +5319,28 @@
     if (now - aiuiBuildLastLook < AIUI_BUILD_LOOK_MS) return;
     aiuiBuildLastLook = now;
     var thread = aiuiThread();
+    var html = thread ? thread.innerHTML : '';
+
+    // The apps this chat already says it has, drawn from the messages
+    // themselves rather than from a build we happen to be watching.
+    //
+    // This is deliberately BEFORE the early return below. The panel
+    // used to be drawn in one place only, the moment the watcher saw a
+    // build finish, so a finished build showed its app in exactly one
+    // tab and once: reload, and the build is closed, the watcher skips
+    // it, and the chat is a bare link again. The chat still says which
+    // app it built, so that is what this reads.
+    //
+    // It shares the look throttle above and the single innerHTML read,
+    // because this runs on a mutation observer and the thread can be
+    // long. aiuiShowAppInline is a no-op once its panel exists, so
+    // running every few seconds costs a scan and nothing else.
+    aiuiArtifactIds(html, 'app').forEach(function (slug) {
+      aiuiShowAppInline(chatId, slug);
+    });
+
     var fresh = [];
-    aiuiBuildIdsIn(thread ? thread.innerHTML : '').forEach(function (id) {
+    aiuiBuildIdsIn(html).forEach(function (id) {
       if (!aiuiBuildWatched[id] && fresh.indexOf(id) < 0) fresh.push(id);
     });
     if (!fresh.length) return;

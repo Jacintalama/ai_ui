@@ -135,9 +135,24 @@ def test_the_reload_check_notices_a_reply_growing():
 
 
 def test_the_scan_reads_the_conversation():
-    """It read the composer's markup, where a build link never appears."""
+    """It read the composer's markup, where a build link never appears.
+
+    Asserting what is READ rather than one spelling of it: the markup
+    this scans must come from aiuiThread() and from nowhere else. The
+    expression moved into a variable on 2026-11-05 when the app scan
+    started sharing the same read, and pinning the old spelling failed
+    while the behaviour was exactly right.
+    """
     src = _js()
-    assert "aiuiBuildIdsIn(thread ? thread.innerHTML : '')" in src
+    watcher = src[src.index("function aiuiWatchBuilds()"):]
+    watcher = watcher[:watcher.index("\n  }\n")]
+    assert "var thread = aiuiThread();" in watcher
+    assert "var html = thread ? thread.innerHTML : '';" in watcher
+    assert "aiuiBuildIdsIn(html)" in watcher
+    # Nothing else is read. document.body would pull in the composer,
+    # which is the bug this test exists for.
+    assert "document.body" not in watcher
+    assert ".innerHTML" not in watcher.replace("thread.innerHTML", "")
 
 
 # --- the choke point, so one browser test covers every panel --------------

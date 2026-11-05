@@ -130,6 +130,64 @@ def test_an_unknown_step_leaves_the_walk_alone():
     assert "if (now >= 0)" in src
 
 
+# --- what the rows actually come out as ----------------------------------
+#
+# Run through node, not read. Every test above this point asserts the
+# SOURCE of aiuiStepStates, and on 2026-11-05 all of them passed while a
+# build one minute in showed six rows of "Waiting", which is what Ralph
+# saw and is the opposite of what this panel is for.
+
+def _states(at):
+    import json
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        pytest.skip("node is not installed")
+    src = _js()
+    start = src.index("  function aiuiStepStates(")
+    end = src.index("\n  function ", start + 10)
+    steps = json.dumps([{"key": k, "said": k} for k in bp.ORDER])
+    script = (src[start:end] + "\nconsole.log(JSON.stringify("
+              "aiuiStepStates(" + steps + ", " + json.dumps(at) + ")"
+              ".map(function (r) { return r.state; })));")
+    out = subprocess.run(["node", "-e", script], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr[-600:]
+    return json.loads(out.stdout.strip())
+
+
+def test_a_build_that_has_not_said_anything_yet_is_on_its_first_step():
+    """A running build that has not reported a step is still running, and
+    it is running the first one. Six rows of "Waiting" a minute in reads
+    as a panel that is broken, and it was: every row said nothing was
+    happening while the agent was working."""
+    states = _states("")
+    assert states[0] == "working"
+    assert set(states[1:]) == {"waiting"}
+
+
+def test_a_step_it_has_reported_marks_everything_before_it_done():
+    states = _states("smoke")
+    at = bp.ORDER.index("smoke")
+    assert states[at] == "working"
+    assert set(states[:at]) == {"done"}
+    assert set(states[at + 1:]) == {"waiting"}
+
+
+def test_the_last_step_leaves_nothing_waiting():
+    states = _states(bp.ORDER[-1])
+    assert states[-1] == "working"
+    assert "waiting" not in states
+
+
+@pytest.mark.parametrize("out_of_band", list(bp.OUT_OF_BAND))
+def test_a_step_off_the_path_claims_no_progress_at_all(out_of_band):
+    """A build on "guard" is rolling back, near the END of its walk.
+    Showing step one as working there would be a guess dressed up as
+    progress, and it is the reason the empty case is handled by itself
+    rather than by "anything we cannot place"."""
+    assert set(_states(out_of_band)) == {"waiting"}
+
+
 def test_an_out_of_band_step_is_said_underneath():
     body = _fn("aiuiStepPanel")
     assert "!known && said" in body
