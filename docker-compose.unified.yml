@@ -335,6 +335,14 @@ services:
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - DATABASE_URL=postgresql://openwebui:${POSTGRES_PASSWORD:-openwebui-secret}@postgres:5432/openwebui
       - TASKS_ASSIGNEE_MAP=${TASKS_ASSIGNEE_MAP:-}
+      # How many simple sites may be built at the same moment. A light
+      # build is one model call and holds an open HTTP request: measured
+      # 2026-11-05, six at once cost about 7MB in total, so what this
+      # number protects is the model bill and the provider's rate limit,
+      # not the box. Set it here so it can be changed in .env without
+      # touching code; the agent lane is separate and stays at one,
+      # because that one really does peak at ~900MB.
+      - LIGHT_BUILD_CONCURRENCY=${LIGHT_BUILD_CONCURRENCY:-12}
       # Route the build agent through an Anthropic-compatible gateway
       # (OpenRouter) instead of Anthropic directly. All three unset = the stock
       # Anthropic API, byte-for-byte unchanged — this is a toggle, not a
