@@ -5120,17 +5120,32 @@
   // already show a step to somebody, this and the build view, and a third
   // copy of those sentences would be a third place to change and a third
   // to fall out of step with the pipeline that writes them.
-  var AIUI_STEPS = null;
-  var aiuiStepsAsked = false;
+  // One list per lane, because there are two walks and they are
+  // different lengths.
+  //
+  // A simple site is written by one model call and walks three steps in
+  // under a minute. The agent walks six over several minutes. Drawing
+  // the agent's six against a light build would show somebody a bar that
+  // is wrong about how much is left, which is the opposite of what this
+  // panel is for. The task says which lane it is on.
+  var AIUI_STEPS = {};
+  var aiuiStepsAsked = {};
 
-  function aiuiLoadSteps() {
-    if (aiuiStepsAsked) return Promise.resolve(AIUI_STEPS);
-    aiuiStepsAsked = true;
-    return fetch('/api/tasks/build-steps', { headers: aiuiAuthHeaders() })
+  function aiuiLaneOf(task) {
+    var lane = String((task && task.build_lane) || 'agent');
+    return lane === 'light' ? 'light' : 'agent';
+  }
+
+  function aiuiLoadSteps(lane) {
+    var key = lane === 'light' ? 'light' : 'agent';
+    if (aiuiStepsAsked[key]) return Promise.resolve(AIUI_STEPS[key]);
+    aiuiStepsAsked[key] = true;
+    return fetch('/api/tasks/build-steps?lane=' + encodeURIComponent(key),
+                 { headers: aiuiAuthHeaders() })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (body) {
-        AIUI_STEPS = (body && body.steps) || null;
-        return AIUI_STEPS;
+        AIUI_STEPS[key] = (body && body.steps) || null;
+        return AIUI_STEPS[key];
       }).catch(function () { return null; });
   }
 
@@ -5168,10 +5183,12 @@
 
   function aiuiStepPanel(chatId, task, mins) {
     if (aiuiChatIdFromUrl() !== chatId) return false;
-    if (!AIUI_STEPS || !AIUI_STEPS.length) return false;
+    // The walk THIS build is on, not whichever list was fetched first.
+    var steps = AIUI_STEPS[aiuiLaneOf(task)];
+    if (!steps || !steps.length) return false;
 
     var at = String((task && task.build_step) || '');
-    var rows = aiuiStepStates(AIUI_STEPS, at);
+    var rows = aiuiStepStates(steps, at);
     var el = document.getElementById('aiui-steps');
     if (!el) {
       el = document.createElement('div');
@@ -5327,7 +5344,7 @@
       // The embedded page stays as the fallback, for exactly the case the
       // list cannot cover: the labels could not be fetched. A build must
       // never go quiet because a list of words did not arrive.
-      aiuiLoadSteps().then(function () {
+      aiuiLoadSteps(aiuiLaneOf(task)).then(function () {
         if (aiuiStepPanel(chatId, task, mins)) {
           aiuiClearBuildLine();
           aiuiHideBuildInline(id);

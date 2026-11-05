@@ -46,6 +46,14 @@ STEPS = {
     "commit": "Saving the changes to version history",
     "guard": "The app broke, putting it back the way it was",
     "asking": "Waiting for an answer to a question",
+    # The light lane: a simple site, written by one model call rather than
+    # by an agent with a workspace. It has no baseline to take, nothing to
+    # autofix and no browser to open, so it walks three steps and not six.
+    # Showing somebody the agent's six for a build that finishes in under a
+    # minute would be a lie told in a progress bar.
+    "drafting": "Writing the page",
+    "proofing": "Making sure the page is finished and will load",
+    "filing": "Saving it to version history",
 }
 
 
@@ -54,6 +62,32 @@ STEPS = {
 #: here so the fact is asserted rather than assumed by anything reading it.
 ORDER = ("baseline", "building", "smoke", "autofix", "docs", "commit")
 
+#: The light lane's walk. A build is on one walk or the other, never both.
+LIGHT_ORDER = ("drafting", "proofing", "filing")
+
+#: Which walk a step belongs to. Derived from the step itself, so a task
+#: needs no new column to say which lane it is on and there is no
+#: migration to get wrong.
+AGENT_LANE = "agent"
+LIGHT_LANE = "light"
+
+
+def lane_of(step: str) -> str:
+    """The walk this step belongs to. Unknown steps read as the agent's,
+    which is the lane every build was on before the light one existed."""
+    return LIGHT_LANE if str(step or "") in LIGHT_ORDER else AGENT_LANE
+
+
+def order_for(lane: str) -> tuple:
+    return LIGHT_ORDER if str(lane or "") == LIGHT_LANE else ORDER
+
+
+def lane_of_name(lane: str) -> str:
+    """A lane name, normalised. Anything unrecognised is the agent's,
+    which is the walk every build was on before the light one existed, so
+    a typo in a query string shows a real list rather than nothing."""
+    return LIGHT_LANE if str(lane or "") == LIGHT_LANE else AGENT_LANE
+
 #: Not part of that walk. "guard" means a change broke the app and is being
 #: undone; "asking" means the build stopped to ask something. Neither is a
 #: stage you pass through on the way to a finished app, and showing them in
@@ -61,7 +95,7 @@ ORDER = ("baseline", "building", "smoke", "autofix", "docs", "commit")
 OUT_OF_BAND = ("guard", "asking")
 
 
-def steps_in_order() -> list:
+def steps_in_order(lane: str = AGENT_LANE) -> list:
     """The walk, for a page that wants to draw all of it at once.
 
     The wording lives HERE and is served, never copied into a page. There
@@ -69,17 +103,20 @@ def steps_in_order() -> list:
     build view) and a third copy of these sentences would be a third place
     to change and a third to fall out of step.
     """
-    return [{"key": k, "said": STEPS[k]} for k in ORDER if k in STEPS]
+    return [{"key": k, "said": STEPS[k]}
+            for k in order_for(lane) if k in STEPS]
 
 
-def reached(step: str) -> int:
+def reached(step: str, lane: str | None = None) -> int:
     """How far along the walk a build is, or -1 when it is not on it.
 
     -1 for an unknown step and for the two out-of-band ones, so a caller
     can tell "rolling back" from "somewhere in the middle".
     """
+    step = str(step or "")
+    walk = order_for(lane if lane is not None else lane_of(step))
     try:
-        return ORDER.index(str(step or ""))
+        return walk.index(step)
     except ValueError:
         return -1
 

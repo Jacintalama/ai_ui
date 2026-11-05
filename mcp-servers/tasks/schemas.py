@@ -63,6 +63,24 @@ class TaskOut(BaseModel):
 
     @computed_field
     @property
+    def build_lane(self) -> str:
+        """Which walk this build is on: "agent" or "light".
+
+        Derived from the step rather than stored, so there is no column
+        and no migration to get wrong, and so every build that finished
+        before the light lane existed reads as the agent's walk, which is
+        what it was on.
+
+        The page needs this because the two walks are different lengths.
+        A light build is three steps and finishes in under a minute;
+        drawing the agent's six against it would show somebody a progress
+        bar that is wrong about how much is left.
+        """
+        import build_progress
+        return build_progress.lane_of(self.build_step or "")
+
+    @computed_field
+    @property
     def user_prompt(self) -> str:
         """The user's original request, recovered from the wrapped description.
 

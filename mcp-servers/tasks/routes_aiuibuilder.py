@@ -20,6 +20,8 @@ from sqlalchemy import select, text, update
 import agent_jev
 import app_git
 import app_theme
+import light_build
+import light_runner
 from auth import CurrentUser, current_user
 from db import session
 from models import ProjectMember, PublishedApp, TaskExecution, TaskItem
@@ -406,18 +408,33 @@ async def _create_and_spawn_build(
 
     template_key = _normalize_template_key(template_key)
 
+    # Which lane. A simple site is one model call and a single file, so it
+    # does not spawn an agent, does not take the global lock, and several
+    # can run at once. Anything needing a backend, and anything built from
+    # a template (which is multi-file by definition), goes to the agent.
+    #
+    # Measured 2026-11-05: the agent peaks at ~900MB in a 1GB container,
+    # which is the whole reason the lock below exists, and 50 of the 51
+    # apps in this repo are static sites that never needed it.
+    needs_agent = light_build.needs_the_agent(description)
+    light = template_key is None and needs_agent is None
+
     meeting_id = uuid.uuid4()
     async with session() as s:
-        # Serialize the guard so two near-simultaneous builds can't both pass.
-        await s.execute(text("SELECT pg_advisory_xact_lock(hashtext('aiuibuilder:build'))"))
-        in_flight = (await s.execute(
-            select(TaskItem.id).where(
-                TaskItem.action_type == "BUILD",
-                TaskItem.status.in_(_LIVE_BUILD_STATES),
-            ).limit(1)
-        )).scalar_one_or_none()
-        if in_flight:
-            raise HTTPException(status_code=429, detail="A build is already running")
+        # The lock and the one-at-a-time rule are the AGENT's. A light
+        # build neither takes the lock nor is refused because somebody
+        # else's agent build is running, which is the point.
+        if not light:
+            # Serialize the guard so two near-simultaneous builds can't both pass.
+            await s.execute(text("SELECT pg_advisory_xact_lock(hashtext('aiuibuilder:build'))"))
+            in_flight = (await s.execute(
+                select(TaskItem.id).where(
+                    TaskItem.action_type == "BUILD",
+                    TaskItem.status.in_(_LIVE_BUILD_STATES),
+                ).limit(1)
+            )).scalar_one_or_none()
+            if in_flight:
+                raise HTTPException(status_code=429, detail="A build is already running")
 
         slug = await _unique_slug(s, seed)
         bound_description = _compose_build_description(slug, template_key, description)
@@ -448,6 +465,16 @@ async def _create_and_spawn_build(
         await s.refresh(item)
         await s.refresh(execution)
         task_id, exec_id = item.id, execution.id
+
+    if light:
+        # No skeleton: this lane writes ONE file, and an empty src/ and
+        # styles/ beside it would be folders nothing ever puts anything in.
+        _RUNNING[task_id] = {"task": None}
+        bg = asyncio.create_task(light_runner.run_light_build(
+            task_id, exec_id, slug=slug, app_name=_humanize_slug(slug),
+            description=description))
+        _RUNNING[task_id]["task"] = bg
+        return str(task_id), slug
 
     # Scaffold: copy the prebuilt base app when the template has one, else the
     # empty skeleton. Best-effort — the agent recreates the dir if this fails.
