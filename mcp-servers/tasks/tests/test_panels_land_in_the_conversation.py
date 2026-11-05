@@ -60,7 +60,9 @@ def test_the_thread_is_looked_for_in_more_than_one_way():
     which is the bug this file is about, shipped twice."""
     body = _fn("aiuiThread")
     assert "full-messages-container" in body
-    assert "getElementById('messages-container')" in body
+    # It asks the accessor now rather than naming the id itself, so that
+    # one rename lands in one place.
+    assert "aiuiScroller()" in body
 
 
 def test_a_reversed_column_is_not_simply_appended_to():
@@ -133,3 +135,77 @@ def test_the_scan_reads_the_conversation():
     """It read the composer's markup, where a build link never appears."""
     src = _js()
     assert "aiuiBuildIdsIn(thread ? thread.innerHTML : '')" in src
+
+
+# --- the choke point, so one browser test covers every panel --------------
+
+PANELS = ("aiuiShowBuildInline", "aiuiShowAppInline", "aiuiShowVideoInline",
+          "aiuiBuildLine", "aiuiTyping")
+
+
+def test_every_in_thread_panel_goes_through_the_one_placer():
+    """The point of the choke point: tests/browser/
+    test_the_panel_lands_in_the_thread_for_real.py drives ONE function in a
+    real browser and asserts the geometry. That only covers every panel for
+    as long as every panel goes through it.
+
+    A panel that places itself is a panel that browser test cannot see, and
+    placing-itself is exactly the bug that shipped twice.
+    """
+    src = _js()
+    for name in PANELS:
+        try:
+            body = _fn(name)
+        except ValueError:
+            continue    # not all of these exist on every branch
+        assert "aiuiPutUnderLastMessage(" in body, (
+            name + " does not use the shared placer")
+        for own in ("document.body.appendChild", "insertBefore("):
+            assert own not in body, (
+                "%s places itself with %s, so the browser test cannot see it"
+                % (name, own))
+
+
+def test_only_two_accessors_know_open_webuis_markup():
+    """messages-container, message-input-container and
+    full-messages-container are Open WebUI's names. They have moved once
+    already and will move again.
+
+    Checked BY POSITION, not by what a line looks like: allowing any line
+    that contains the lookup allows exactly the stray lookup this
+    forbids, which is how the first version of this test passed on one.
+
+    It earned its keep immediately. The split view had its own copy of
+    the lookup, so a rename would have broken moving the app beside the
+    chat as well, and fixing the placer alone would not have covered it.
+    """
+    src = _js()
+    lines = src.split(chr(10))
+    def span(name):
+        """A function's real line span, not a guessed window."""
+        at = src.index(name)
+        nxt = src.index(chr(10) + "  function ", at + 10)
+        return (len(src[:at].split(chr(10))) - 1,
+                len(src[:nxt].split(chr(10))) - 1)
+
+    allowed = [span("function aiuiScroller()"),
+               span("function aiuiComposer()"),
+               span("function aiuiThread()")]
+
+    for i, ln in enumerate(lines):
+        if ln.lstrip().startswith("//") or ln.lstrip().startswith("#"):
+            continue
+        if not any(k in ln for k in ("messages-container",
+                                     "message-input-container")):
+            continue
+        assert any(lo <= i <= hi for lo, hi in allowed), (
+            "Open WebUI's markup is named at line %d, outside the two "
+            "accessors: %s" % (i + 1, ln.strip()))
+
+
+def test_the_split_view_uses_those_accessors_too():
+    """It had its own copy until 2026-11-05."""
+    body = _fn("aiuiChatPane")
+    assert "aiuiScroller()" in body
+    assert "aiuiComposer()" in body
+    assert "getElementById(" not in body
