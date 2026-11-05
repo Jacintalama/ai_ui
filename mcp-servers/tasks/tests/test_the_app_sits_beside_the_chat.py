@@ -62,11 +62,19 @@ def test_its_height_is_put_back():
 def test_the_pane_is_found_rather_than_named():
     """Open WebUI's class names change between versions. The pane is
     reliably the nearest ancestor of the message list that also holds the
-    message box."""
+    message box.
+
+    It asked for the two ids directly until 2026-11-05, which meant a
+    rename broke the split view as well as the placer, in two places. It
+    asks the accessors now, and they are the only functions that know
+    those names.
+    """
     body = _fn("aiuiChatPane")
-    assert "messages-container" in body
-    assert "message-input-container" in body
+    assert "aiuiScroller()" in body
+    assert "aiuiComposer()" in body
     assert "node.contains(input)" in body
+    assert "getElementById(" not in body, (
+        "the split view is naming Open WebUI's markup again")
 
 
 def test_no_pane_means_no_split():

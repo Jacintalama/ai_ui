@@ -3950,6 +3950,20 @@
   // the conversation entirely (Ralph, 2026-11-04: "not below in the chat
   // please fix"), the reload check compared the composer against itself,
   // and the scan for build links read the composer's markup.
+  // The TWO ids Open WebUI gives us, named here and nowhere else.
+  //
+  // They have moved once already and will move again, and when they do
+  // this is the only place to change. A test asserts no other line in
+  // this file mentions them, which is how a second copy was found in the
+  // split view the day this was written.
+  function aiuiScroller() {
+    return document.getElementById('messages-container');
+  }
+
+  function aiuiComposer() {
+    return document.getElementById('message-input-container');
+  }
+
   function aiuiThread() {
     // Tried in order, because the exact id is not something to rely on.
     //
@@ -3966,7 +3980,7 @@
     // rather than by name so a rename cannot do this a third time.
     var named = document.getElementById('full-messages-container');
     if (named) return named;
-    return document.getElementById('messages-container');
+    return aiuiScroller();
   }
 
   // Whether the thread is laid out bottom-up. The chat view renders
@@ -4378,8 +4392,8 @@
   // pane is reliably the nearest ancestor of the message list that also
   // contains the message box.
   function aiuiChatPane() {
-    var msgs = document.getElementById('messages-container');
-    var input = document.getElementById('message-input-container');
+    var msgs = aiuiScroller();
+    var input = aiuiComposer();
     if (!msgs || !input) return null;
     var node = msgs.parentElement;
     while (node && !node.contains(input)) node = node.parentElement;
