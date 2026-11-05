@@ -5312,19 +5312,28 @@
       //
       // Minutes stay as the fallback, which is every build that predates
       // this and any build between steps.
-      // Still going, so put the build itself on screen. Drawn here and
-      // not when the watch starts, because by now the task has answered
-      // and is known to be a real build this person may see.
-      aiuiShowBuildInline(chatId, id);
       var mins = Math.max(1, Math.round((Date.now() - started) / 60000));
-      // The whole walk when the steps are known, and the one sentence when
-      // they are not. The list is strictly better, but a build must never
-      // go quiet because a list of labels could not be fetched.
+      // ONE view of a running build, not two.
+      //
+      // The step list and the embedded build page say the same thing, and
+      // showing both gave a reply a numbered list under a tall panel whose
+      // preview area is empty for the whole build. The list is the better
+      // of the two: it is compact, it says what every step is, and it says
+      // which one is happening now.
+      //
+      // The embedded page stays as the fallback, for exactly the case the
+      // list cannot cover: the labels could not be fetched. A build must
+      // never go quiet because a list of words did not arrive.
       aiuiLoadSteps().then(function () {
         if (aiuiStepPanel(chatId, task, mins)) {
           aiuiClearBuildLine();
+          aiuiHideBuildInline(id);
           return;
         }
+        // Drawn here and not when the watch starts, because by now the
+        // task has answered and is known to be a real build this person
+        // may see.
+        aiuiShowBuildInline(chatId, id);
         var step = String((task && task.build_step_said) || '').trim();
         aiuiBuildLine(chatId, step
           ? step + '. ' + mins + ' min so far.'
