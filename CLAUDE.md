@@ -132,6 +132,22 @@ and the script parses `['sha']`; writing a bare SHA breaks the next deploy.
 Note `.gitignore` and `webhook-handler/` are NOT in the watched list, so changes
 to them need a manual `scp` even when the script runs.
 
+### Deploys run from GitHub now (2026-11)
+Every push to the fork's `main` runs `.github/workflows/deploy.yml`: the
+unit and browser tests, then this same orchestrator on the server, then the
+healthz smoke. Merging a PR is deploying it. Three things learned the hard way:
+
+- **A red test on main stops every deploy after it.** On 2026-11-04 one stale
+  assertion from #110 held #110 to #113 back until #112 fixed the test.
+- **After a manual deploy, stamp `.deploy-state` with the FULL sha, as JSON.**
+  The job's server-edit sweep compares against it; a stale or short sha made
+  it refuse to deploy (2026-11-03).
+- **"ERROR: no .deploy-state on server" can mean SSH failed.** On 2026-11-04
+  15:05 to 15:32 UTC nothing from GitHub or the office reached the server
+  (port 22, 443 and ping all timed out from outside Cloudflare) while
+  internet scanners still did; the file was there all along. `ssh` the box
+  before believing the message, then re-run the job.
+
 ### Discord bot (webhook-handler) — NOT covered by the script
 The orchestrator script does **not** deploy `webhook-handler/`. Deploy it manually, one `scp` per changed file (`scp -r` silently skips files — never use it), then rebuild:
 ```bash
@@ -312,6 +328,26 @@ refused. The same seed call moves older agents over, keeping the model they
 had. The agents page and the office form pick `meta.llm` and always write
 `io.io` as the base. The IO pipe must be installed and enabled in Open WebUI,
 or a mentioned agent answers "Model not found".
+
+**Agents see a picture (2026-10-29, checked live 2026-11-05).** A picture
+attached on the Agents page or in the office goes to the agent itself for
+the round that answers it (`agent_attach.with_pictures`, held in memory,
+never stored); later turns read its description. A model that cannot see
+(the free fallback glm-4.7-flash) gets the words instead. Live check: a red
+square sent to Ada on glm-5.3-flash came back "Red" for $0.00012.
+
+**Skills from what a person has connected (2026-11-04).** `skill_fit.py`
+decides which apps a skill needs (gmail, calendar, gdrive from
+`allowed-tools`; a task tracker for the ten tracker skills) and which of
+those this person lacks (`routes_agents._connected_providers`). It drives
+the `/agents/make` preview, `GET /agents/skills/suggest` (the Skills tool's
+`suggest_skills`, picked by Jev from `TOOL_NOTES["skills"]`),
+`GET /agents/skills/needs` (the notice above the Agents page message box),
+and the Connect buttons. **The main chat's Connect button does not depend on
+the model**: the model dropped the link once ("There's a Connect button
+above") and `routes_agent_turn._with_connect_links` now puts it back under a
+skills answer that talks about connecting an app the person lacks. Live test:
+`test_asking_which_skills_to_use_shows_a_connect_button`.
 
 ### Automation: run an agent from outside (2026-10-27)
 `POST /api/tasks/agents/run` with `Authorization: Bearer iok_...` runs one of
