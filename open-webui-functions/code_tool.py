@@ -164,8 +164,15 @@ class Tools:
 
         Do not ask them to pick an existing app first. Do not ask for an
         approval code either; there is nothing yet to overwrite. Say what you
-        are building, build it, and give them the link in the result exactly
-        as it is written.
+        are building and build it.
+
+        Do NOT write a link or a URL of any kind. The page shows the build
+        as it happens and the finished site in the reply itself, so a link
+        is clutter pointing at something already on screen.
+
+        The result ends with a line starting "[aiui-artifact]". Copy that
+        line into your reply exactly as written, on its own line at the end.
+        It renders as nothing; it is how the page knows which build to show.
         """
         try:
             data = await self._call("POST", "/code/create",
@@ -179,11 +186,14 @@ class Tools:
                 + " now: " + (description or "").strip()
                 + ". It takes a few minutes, and it is smoke tested when it "
                   "finishes and rolled back automatically if it breaks.")
-        url = data.get("url") or ""
-        if url:
-            # Its own line, like apply_app_change: the panel draws a card for
-            # a link like this.
-            said += "\nWatch it here: " + url
+        # DECLARED, not linked. The page draws the build itself: the
+        # steps it is walking, and the site when it is done. A URL in the
+        # reply is a second way to see the same thing, and it is the worse
+        # one, so this says WHICH build in a line markdown renders as
+        # nothing at all.
+        task_id = str(data.get("task_id") or "")
+        if task_id:
+            said += "\n\n[aiui-artifact]: #build/" + task_id
         return said
 
     async def build_status(self, task_id: str, __user__: dict = {}) -> str:
@@ -204,9 +214,13 @@ class Tools:
         status = str(data.get("status") or "")
         slug = str(data.get("slug") or "the app")
         if status == "completed":
-            where = data.get("preview_url") or data.get("url") or ""
             said = slug + " is built."
-            return said + ("\nOpen it here: " + where if where else "")
+            # The app itself goes in the reply, so the slug is declared
+            # rather than a link offered to go and look at it elsewhere.
+            named = str(data.get("slug") or "")
+            if named:
+                said += "\n\n[aiui-artifact]: #app/" + named
+            return said
         if status == "failed":
             # The reason as the platform recorded it. Today that is often a
             # billing refusal from the model provider, which is something the
@@ -249,9 +263,12 @@ class Tools:
         code from propose_app_change. Only call this after they have
         actually agreed. The code works once.
 
-        The result carries a link to the app. Give them that link in your
-        reply, exactly as it is written, rather than telling them to go and
-        find it.
+        Do NOT write a link or a URL. The page shows the change happening
+        and the finished site in the reply itself.
+
+        The result ends with a line starting "[aiui-artifact]". Copy that
+        line into your reply exactly as written, on its own line at the end.
+        It renders as nothing; it is how the page knows which build to show.
         """
         try:
             data = await self._call("POST", "/code/apply",
@@ -264,10 +281,9 @@ class Tools:
                 + " is being changed: " + (data.get("description") or "")
                 + ". It is smoke tested afterwards and rolled back "
                   "automatically if it breaks.")
-        url = data.get("url") or ""
-        if url:
-            # Written on its own line so it survives being quoted back: the
-            # panel draws a card for a link like this, and the owner gets
-            # somewhere to click rather than the name of a page.
-            said += "\nOpen it here: " + url
+        # Declared, not linked, like create_app: a change is a build and
+        # the page walks it in the reply.
+        task_id = str(data.get("task_id") or "")
+        if task_id:
+            said += "\n\n[aiui-artifact]: #build/" + task_id
         return said

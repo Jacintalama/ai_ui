@@ -226,3 +226,31 @@ def test_the_sentences_are_escaped_on_the_way_in():
     esc = _fn("aiuiEscape")
     for ch in ("&amp;", "&lt;", "&gt;", "&quot;"):
         assert ch in esc
+
+
+# --- one view of a running build, not two --------------------------------
+
+def test_the_embedded_build_page_is_not_shown_beside_the_list():
+    """Both say the same thing. Showing both gave a reply a numbered list
+    under a tall panel whose preview area is empty for the whole build,
+    which is what Ralph was looking at when he asked for the interface to
+    be clean."""
+    src = _js()
+    poll = src[src.index("function aiuiPollBuild("):]
+    poll = poll[:poll.index("\n  }\n")]
+    drawn = poll.index("aiuiShowBuildInline(chatId, id);")
+    panel = poll.index("if (aiuiStepPanel(chatId, task, mins)) {")
+    assert panel < drawn, (
+        "the embedded build page is drawn before the list is tried, so "
+        "both are always on screen")
+    assert "aiuiHideBuildInline(id);" in poll[panel:drawn]
+
+
+def test_the_embedded_build_page_survives_as_the_fallback():
+    """A build must never go quiet because a list of labels could not be
+    fetched, so the old panel stays for exactly that case."""
+    src = _js()
+    poll = src[src.index("function aiuiPollBuild("):]
+    poll = poll[:poll.index("\n  }\n")]
+    # Once, and after the list has been tried and declined.
+    assert poll.count("aiuiShowBuildInline(chatId, id);") == 1
