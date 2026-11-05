@@ -18,6 +18,8 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select, text, update
 
 import agent_jev
+import app_git
+import app_theme
 from auth import CurrentUser, current_user
 from db import session
 from models import ProjectMember, PublishedApp, TaskExecution, TaskItem
@@ -829,3 +831,99 @@ async def rollback_built_app(slug: str, body: RollbackRequest, user: CurrentUser
         # Hold the lock across the rollback itself so nothing can start a
         # build/enhance on this slug mid-checkout.
         return await rollback_app_core(slug, body.sha, user.email)
+
+
+# ---------------------------------------------------------------------------
+# Appearance
+#
+# The panel in the chat changes an app's colours and type by writing the CSS
+# variables the app declares on :root. It can only move what the app
+# declares, which is why GET says plainly whether this app declares them and
+# the upgrade exists for the ones built before they were asked for.
+# ---------------------------------------------------------------------------
+
+class ThemeState(BaseModel):
+    tokens: list[dict]
+    values: dict[str, str]
+    missing: list[str]
+    themeable: bool
+
+
+class ThemeSave(BaseModel):
+    values: dict[str, str] = Field(..., min_length=1, max_length=40)
+
+
+@router.get("/{slug}/theme", response_model=ThemeState)
+async def read_app_theme(slug: str, user: CurrentUser = Depends(current_user)):
+    """What this app's appearance is set to, and whether it can be changed.
+
+    Owner-scoped like every other per-slug route here. `themeable` false is
+    a normal answer, not an error: it is every app built before the builder
+    was told to declare the tokens.
+    """
+    _validate_slug(slug)
+    async with session() as s:
+        await _require_role(s, slug, user.email, "owner",
+                            is_admin=getattr(user, "is_admin", False))
+    return ThemeState(**app_theme.state(slug))
+
+
+@router.put("/{slug}/theme", response_model=ThemeState)
+async def save_app_theme(slug: str, body: ThemeSave,
+                         user: CurrentUser = Depends(current_user)):
+    """Write these appearance values into the app's stylesheet and commit.
+
+    Every value is checked by `app_theme.value_problem` before anything is
+    written; a token value lands inside a stylesheet, so a value that could
+    close the rule would be arbitrary CSS in somebody's app. A rejected
+    value is a 400 and the file is left exactly as it was.
+    """
+    _validate_slug(slug)
+    async with session() as s:
+        await _require_role(s, slug, user.email, "owner",
+                            is_admin=getattr(user, "is_admin", False))
+
+    try:
+        written = app_theme.save(slug, body.values)
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err))
+    except OSError:
+        logger.exception("appearance: could not write the stylesheet for %s", slug)
+        raise HTTPException(status_code=500,
+                            detail="That could not be saved, try again")
+
+    # The history is the monorepo's log for apps/<slug>/, so an appearance
+    # change has to be a commit or it is invisible to the version list and
+    # cannot be rolled back. Fails open, like every other sweep: the change
+    # is already on disk and live, and a failed commit must not read as a
+    # failed save.
+    await app_git.sweep_app_commit(
+        slug, message=f"Appearance: {', '.join(written)}",
+        actor_email=user.email)
+
+    return ThemeState(**app_theme.state(slug))
+
+
+@router.post("/{slug}/theme/upgrade", response_model=BuildResponse,
+             status_code=201)
+async def make_app_themeable(slug: str,
+                             user: CurrentUser = Depends(current_user)):
+    """Lift an older app's existing palette into tokens, changing nothing else.
+
+    A normal enhance with a fixed prompt, so it is watched, committed and
+    rollback-able exactly like any other change. Refused when the app is
+    already themeable, because running it then would be an agent rewriting
+    a stylesheet for no reason.
+    """
+    _validate_slug(slug)
+    async with session() as s:
+        await _require_role(s, slug, user.email, "owner",
+                            is_admin=getattr(user, "is_admin", False))
+
+    if app_theme.is_themeable(app_theme.read_css(slug)):
+        raise HTTPException(status_code=409,
+                            detail="This app's appearance can already be changed")
+
+    task_id, out_slug = await _create_and_spawn_enhance(
+        user.email, slug, app_theme.upgrade_prompt())
+    return BuildResponse(task_id=task_id, slug=out_slug, status="running")

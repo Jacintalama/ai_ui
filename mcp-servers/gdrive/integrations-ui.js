@@ -3831,6 +3831,20 @@
     // written or wrapped.
     var any = new RegExp('[?&]task=(' + AIUI_UUID + ')', 'g');
     while ((m = any.exec(text)) !== null) add('build', m[1]);
+
+    // The FINISHED build's own URL, which names a slug and carries no
+    // task id at all.
+    //
+    // Ralph, 2026-11-05: a build finished and the chat showed a link
+    // and nothing else. Every pattern above wants a uuid, and "X is
+    // built. Open it here: /tasks/preview-app/X/" has none, so the one
+    // message that announces a finished app was the one message
+    // nothing could read. The panel was only ever drawn by the watcher
+    // at the moment it saw the build complete, so a reload, a second
+    // tab, or a build already closed all showed the bare link.
+    var appUrl = new RegExp(
+      '/tasks/preview-app/([a-z0-9][a-z0-9-]{0,80})', 'g');
+    while ((m = appUrl.exec(text)) !== null) add('app', m[1]);
     return found;
   }
 
@@ -3911,6 +3925,13 @@
     var said;
     if (status === 'completed') {
       said = slug + ' is built.\nOpen it here: ' + origin + '/tasks/preview-app/' + slug + '/';
+      // Declared, not left to be read out of the sentence. The URL
+      // above is recognised too, for every build written before
+      // this, but a reply that says what it carries is the thing
+      // that does not break when somebody rewords it.
+      if (task && task.built_app_slug) {
+        said += '\n\n[aiui-artifact]: #app/' + task.built_app_slug;
+      }
     } else if (status === 'awaiting_input') {
       said = slug + ' is waiting on an answer.' + (why ? '\n' + why : '')
         + '\nAnswer it here: ' + origin + '/tasks/static/preview.html?task=' + id;
@@ -3998,7 +4019,43 @@
     }
   }
 
+  // The last reply's own content block, or null.
+  //
+  // #response-message-model-name is Open WebUI's id on the model name of a
+  // reply. It is reused on every reply rather than being unique, which is
+  // invalid HTML and is exactly why this takes the LAST one. The walk from
+  // the span to the body is aiuiFindReplyBody, which the agent name header
+  // has used in production since September: this is measured markup, not
+  // markup I guessed at, which is what the two earlier placements got wrong.
+  function aiuiLastReplyBody() {
+    var spans = document.querySelectorAll('#response-message-model-name');
+    for (var i = spans.length - 1; i >= 0; i--) {
+      var body = aiuiFindReplyBody(spans[i]);
+      if (body) return body;
+    }
+    return null;
+  }
+
   function aiuiPutUnderLastMessage(box) {
+    // Inside the reply itself, which is where a person reads it. A box
+    // appended after the message is a separate thing sitting under the
+    // conversation; this is part of what the model said.
+    //
+    // Open WebUI rebuilds a message's content when it changes, so a panel
+    // put here can be thrown away. That is survivable and deliberate:
+    // every caller checks for its own id first and the scan runs again,
+    // so a discarded panel comes straight back.
+    var reply = aiuiLastReplyBody();
+    if (reply) {
+      // The avatar gutter is already applied by the reply itself, so the
+      // indent every panel carries for the thread would double up here.
+      // Cleared centrally, because six panels carry it and a seventh
+      // would forget.
+      box.style.marginLeft = '0';
+      box.style.paddingLeft = '0';
+      reply.appendChild(box);
+      return;
+    }
     var thread = aiuiThread();
     if (thread) {
       // The messages usually sit in one wrapper inside the scroller. Put
@@ -4481,6 +4538,323 @@
   }
   // ===== End app beside the chat =====
 
+  // ===== Appearance =====
+  //
+  // Colours, type and spacing, changed live and saved only when asked.
+  //
+  // This panel can only move what the APP declares. A site restyles
+  // instantly because its own stylesheet declares its palette as CSS
+  // variables on :root and this writes those variables on the iframe's
+  // root element; nothing is rebuilt and no file is touched until Save.
+  //
+  // Measured 2026-11-05: not one app in the repo declared a single CSS
+  // variable, because the builder had never been asked for them. That is
+  // why this panel has a second state at all: an app built before then
+  // gets an offer to be upgraded rather than sliders that move nothing.
+  //
+  // The token list is SERVED, never copied here, for the same reason the
+  // build steps are: one list, one place to change it.
+
+  var AIUI_FONTS = [
+    'system-ui, -apple-system, sans-serif',
+    'Georgia, serif',
+    '"Times New Roman", Times, serif',
+    '"Helvetica Neue", Helvetica, Arial, sans-serif',
+    '"Courier New", Courier, monospace',
+    'Verdana, Geneva, sans-serif',
+    '"Trebuchet MS", sans-serif',
+    'Palatino, "Palatino Linotype", serif'
+  ];
+
+  function aiuiThemeRoot(frame) {
+    // Same origin as the chat, so this is reachable. It can still be
+    // null while the app is loading, which is a normal state and not an
+    // error.
+    try {
+      var doc = frame && frame.contentDocument;
+      return (doc && doc.documentElement) || null;
+    } catch (e) { return null; }
+  }
+
+  function aiuiThemeSet(frame, name, value) {
+    var root = aiuiThemeRoot(frame);
+    if (!root) return false;
+    root.style.setProperty(name, value);
+    return true;
+  }
+
+  function aiuiThemeDrop(frame, names) {
+    var root = aiuiThemeRoot(frame);
+    if (!root) return;
+    for (var i = 0; i < names.length; i++) root.style.removeProperty(names[i]);
+  }
+
+  function aiuiAppearance(chatId, slug, frame) {
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'display:none;padding:.6rem .7rem;'
+      + 'border-top:1px solid rgba(127,127,127,.25);font-size:.85rem;';
+
+    var body = document.createElement('div');
+    wrap.appendChild(body);
+
+    var loaded = false;
+    var changed = {};          // only what this person actually moved
+    var touched = [];          // every name we wrote, so Reset can clear it
+
+    function say(text) {
+      body.textContent = '';
+      var line = document.createElement('div');
+      line.style.cssText = 'opacity:.7;';
+      line.textContent = text;
+      body.appendChild(line);
+    }
+
+    function row(label) {
+      var el = document.createElement('div');
+      el.style.cssText = 'display:flex;align-items:center;gap:.5rem;'
+        + 'margin:.3rem 0;';
+      var name = document.createElement('span');
+      name.textContent = label;
+      name.style.cssText = 'flex:0 0 9rem;opacity:.75;';
+      el.appendChild(name);
+      return el;
+    }
+
+    function control(tok, current) {
+      var el = row(tok.label);
+      var input;
+
+      if (tok.kind === 'color') {
+        input = document.createElement('input');
+        input.type = 'color';
+        // A colour input can only hold #rrggbb. An app whose value is
+        // rgb() or a shorthand still gets a working control; it just
+        // starts from the default rather than lying about the value.
+        input.value = /^#[0-9a-fA-F]{6}$/.test(current) ? current
+          : (/^#[0-9a-fA-F]{6}$/.test(tok['default']) ? tok['default'] : '#000000');
+        input.style.cssText = 'flex:0 0 auto;width:2.4rem;height:1.6rem;'
+          + 'padding:0;border:1px solid rgba(127,127,127,.35);'
+          + 'border-radius:6px;background:none;cursor:pointer;';
+      } else if (tok.kind === 'font') {
+        input = document.createElement('select');
+        var options = AIUI_FONTS.slice();
+        if (current && options.indexOf(current) < 0) options.unshift(current);
+        for (var i = 0; i < options.length; i++) {
+          var opt = document.createElement('option');
+          opt.value = options[i];
+          opt.textContent = options[i].replace(/["']/g, '').split(',')[0];
+          input.appendChild(opt);
+        }
+        input.value = current || tok['default'];
+        input.style.cssText = 'flex:1 1 auto;min-width:0;padding:.2rem .3rem;'
+          + 'border:1px solid rgba(127,127,127,.35);border-radius:6px;'
+          + 'background:transparent;color:inherit;font-size:.82rem;';
+      } else {
+        input = document.createElement('input');
+        input.type = 'range';
+        input.min = String(tok.low);
+        input.max = String(tok.high);
+        input.step = '0.05';
+        input.value = String(parseFloat(current) || parseFloat(tok['default']) || 1);
+        input.style.cssText = 'flex:1 1 auto;min-width:0;';
+      }
+
+      var shown = document.createElement('span');
+      shown.style.cssText = 'flex:0 0 3rem;text-align:right;opacity:.6;'
+        + 'font-size:.78rem;';
+      if (tok.kind === 'scale') shown.textContent = input.value;
+
+      function moved() {
+        var value = input.value;
+        changed[tok.name] = value;
+        if (touched.indexOf(tok.name) < 0) touched.push(tok.name);
+        if (tok.kind === 'scale') shown.textContent = value;
+        if (!aiuiThemeSet(frame, tok.name, value)) {
+          say('Wait for the app to finish loading, then open this again.');
+        }
+        dirty();
+      }
+      input.addEventListener('input', moved);
+      input.addEventListener('change', moved);
+
+      el.appendChild(input);
+      el.appendChild(shown);
+      return el;
+    }
+
+    var save, reset, status;
+
+    function dirty() {
+      var any = false;
+      for (var k in changed) { if (changed.hasOwnProperty(k)) { any = true; break; } }
+      if (save) save.disabled = !any;
+      if (reset) reset.disabled = !any;
+      if (status && any) status.textContent = 'Not saved yet';
+    }
+
+    function drawControls(state) {
+      body.textContent = '';
+      var hint = document.createElement('div');
+      hint.style.cssText = 'opacity:.6;margin-bottom:.45rem;font-size:.78rem;';
+      hint.textContent = 'Changes show straight away. Nothing is saved until '
+        + 'you press Save.';
+      body.appendChild(hint);
+
+      for (var i = 0; i < state.tokens.length; i++) {
+        var tok = state.tokens[i];
+        body.appendChild(control(tok, state.values[tok.name] || ''));
+      }
+
+      var feet = document.createElement('div');
+      feet.style.cssText = 'display:flex;align-items:center;gap:.45rem;'
+        + 'margin-top:.55rem;';
+
+      save = document.createElement('button');
+      save.type = 'button';
+      save.textContent = 'Save';
+      save.disabled = true;
+      save.style.cssText = 'padding:.3rem .7rem;border-radius:7px;'
+        + 'border:1px solid rgba(127,127,127,.4);background:transparent;'
+        + 'color:inherit;cursor:pointer;font-size:.82rem;';
+
+      reset = document.createElement('button');
+      reset.type = 'button';
+      reset.textContent = 'Put it back';
+      reset.disabled = true;
+      reset.style.cssText = save.style.cssText + 'opacity:.75;';
+
+      status = document.createElement('span');
+      status.style.cssText = 'opacity:.6;font-size:.78rem;';
+
+      reset.addEventListener('click', function () {
+        aiuiThemeDrop(frame, touched);
+        changed = {};
+        touched = [];
+        status.textContent = '';
+        loaded = false;          // redraw from the file on next open
+        load();
+      });
+
+      save.addEventListener('click', function () {
+        save.disabled = true;
+        status.textContent = 'Saving...';
+        fetch('/api/aiuibuilder/' + encodeURIComponent(slug) + '/theme', {
+          method: 'PUT',
+          headers: authHeaders(),
+          body: JSON.stringify({ values: changed })
+        }).then(function (r) {
+          return r.ok ? r.json() : r.json().then(function (j) {
+            throw new Error(j.detail || 'that could not be saved');
+          });
+        }).then(function (state) {
+          changed = {};
+          status.textContent = 'Saved';
+          dirty();
+          // The values are in the app's own stylesheet now, so our
+          // inline overrides are no longer the truth. Dropping them and
+          // re-fetching is what proves the save actually took.
+          //
+          // A cache-busted src, and not merely as a matter of style.
+          // Cloudflare rewrites this origin's no-cache to a four hour
+          // max-age, so asking the frame to load itself again can be
+          // handed the stylesheet as it was BEFORE the save: a save that
+          // worked, showing nothing. A new query string is a different
+          // URL to the cache. Same reason the change watcher does it
+          // this way.
+          //
+          // The other way of spelling this is deliberately not written
+          // anywhere above, comment included: a test forbids it in this
+          // file and a string match cannot tell a mention from a call.
+          aiuiThemeDrop(frame, touched);
+          touched = [];
+          frame.src = String(frame.src).split('?')[0]
+            + '?changed=' + Date.now();
+        }).catch(function (err) {
+          save.disabled = false;
+          status.textContent = String((err && err.message)
+                                      || 'That did not save.');
+        });
+      });
+
+      feet.appendChild(save);
+      feet.appendChild(reset);
+      feet.appendChild(status);
+      body.appendChild(feet);
+    }
+
+    function drawOffer() {
+      body.textContent = '';
+      var line = document.createElement('div');
+      line.style.cssText = 'opacity:.75;margin-bottom:.45rem;';
+      line.textContent = 'This app was built before appearance changes '
+        + 'existed, so it has no colours or fonts to move yet. I can lift '
+        + 'the palette it already has into settings, without changing how '
+        + 'it looks.';
+      body.appendChild(line);
+
+      var go = document.createElement('button');
+      go.type = 'button';
+      go.textContent = 'Make it changeable';
+      go.style.cssText = 'padding:.3rem .7rem;border-radius:7px;'
+        + 'border:1px solid rgba(127,127,127,.4);background:transparent;'
+        + 'color:inherit;cursor:pointer;font-size:.82rem;';
+      var how = document.createElement('span');
+      how.style.cssText = 'opacity:.6;font-size:.78rem;margin-left:.45rem;';
+
+      go.addEventListener('click', function () {
+        go.disabled = true;
+        how.textContent = 'Asking for that...';
+        fetch('/api/aiuibuilder/' + encodeURIComponent(slug) + '/theme/upgrade', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({})
+        }).then(function (r) {
+          return r.ok ? r.json() : r.json().then(function (j) {
+            throw new Error(j.detail || 'that could not be started');
+          });
+        }).then(function (made) {
+          how.textContent = 'Working on it. This takes a few minutes.';
+          // A normal build, so the watcher that already exists reports
+          // it and reloads the frame. Nothing here polls.
+          if (made && made.task_id) {
+            aiuiWatchChange(chatId, made.task_id, frame);
+            loaded = false;
+          }
+        }).catch(function (err) {
+          go.disabled = false;
+          how.textContent = String((err && err.message) || 'That did not work.');
+        });
+      });
+
+      body.appendChild(go);
+      body.appendChild(how);
+    }
+
+    function load() {
+      if (loaded) return;
+      say('Reading this app...');
+      fetch('/api/aiuibuilder/' + encodeURIComponent(slug) + '/theme', {
+        headers: authHeaders()
+      }).then(function (r) {
+        if (!r.ok) throw new Error('that could not be read');
+        return r.json();
+      }).then(function (state) {
+        loaded = true;
+        if (state && state.themeable) drawControls(state);
+        else drawOffer();
+      }).catch(function () {
+        say('I could not read this app just now.');
+      });
+    }
+
+    return {
+      el: wrap,
+      isOpen: function () { return wrap.style.display !== 'none'; },
+      close: function () { wrap.style.display = 'none'; },
+      open: function () { wrap.style.display = ''; load(); }
+    };
+  }
+
   function aiuiShowAppInline(chatId, slug) {
     if (aiuiChatIdFromUrl() !== chatId) return;
     if (!/^[a-z0-9][a-z0-9-]{0,80}$/.test(String(slug || ''))) return;
@@ -4631,6 +5005,19 @@
       });
     });
 
+    // Appearance: its own panel under the frame, like the pencil's.
+    var look = aiuiAppearance(chatId, slug, frame);
+    var paint = iconBtn('◐', 'Change the colours and type');
+    paint.addEventListener('click', function () {
+      if (look.isOpen()) {
+        look.close();
+        paint.style.opacity = '.6';
+        return;
+      }
+      look.open();
+      paint.style.opacity = '1';
+    });
+
     var grow = iconBtn('⤢', 'Show it beside the chat');
     var big = false;
     grow.addEventListener('click', function () {
@@ -4662,6 +5049,7 @@
     bar.appendChild(dot);
     bar.appendChild(name);
     bar.appendChild(note);
+    bar.appendChild(paint);
     bar.appendChild(grow);
     bar.appendChild(out);
 
@@ -4679,6 +5067,7 @@
     box.appendChild(chip);
     box.appendChild(frame);
     box.appendChild(ask);
+    box.appendChild(look.el);
     aiuiPutUnderLastMessage(box);
   }
   // ===== The whole walk, not just the step it is on =====
@@ -4722,6 +5111,18 @@
     for (var i = 0; i < steps.length; i++) {
       if (steps[i].key === at) { now = i; break; }
     }
+
+    // A build that has not said which step it is on yet is still a build
+    // that is running, and it is running the FIRST step. Saying nothing
+    // is happening, six times over, is both untrue and the thing Ralph
+    // saw on 2026-11-05: a minute in, every row read "Waiting".
+    //
+    // Only when the build has said NOTHING. A step we do not recognise
+    // means it is somewhere we cannot place, out of band on a guard or a
+    // question, and claiming it is back at step one would be a guess
+    // dressed up as progress.
+    if (now < 0 && !at) now = 0;
+
     return steps.map(function (s, i) {
       var state = 'waiting';
       if (now >= 0) state = (i < now) ? 'done' : (i === now ? 'working' : 'waiting');
@@ -4918,8 +5319,28 @@
     if (now - aiuiBuildLastLook < AIUI_BUILD_LOOK_MS) return;
     aiuiBuildLastLook = now;
     var thread = aiuiThread();
+    var html = thread ? thread.innerHTML : '';
+
+    // The apps this chat already says it has, drawn from the messages
+    // themselves rather than from a build we happen to be watching.
+    //
+    // This is deliberately BEFORE the early return below. The panel
+    // used to be drawn in one place only, the moment the watcher saw a
+    // build finish, so a finished build showed its app in exactly one
+    // tab and once: reload, and the build is closed, the watcher skips
+    // it, and the chat is a bare link again. The chat still says which
+    // app it built, so that is what this reads.
+    //
+    // It shares the look throttle above and the single innerHTML read,
+    // because this runs on a mutation observer and the thread can be
+    // long. aiuiShowAppInline is a no-op once its panel exists, so
+    // running every few seconds costs a scan and nothing else.
+    aiuiArtifactIds(html, 'app').forEach(function (slug) {
+      aiuiShowAppInline(chatId, slug);
+    });
+
     var fresh = [];
-    aiuiBuildIdsIn(thread ? thread.innerHTML : '').forEach(function (id) {
+    aiuiBuildIdsIn(html).forEach(function (id) {
       if (!aiuiBuildWatched[id] && fresh.indexOf(id) < 0) fresh.push(id);
     });
     if (!fresh.length) return;
