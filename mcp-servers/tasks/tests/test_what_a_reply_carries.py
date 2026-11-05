@@ -152,3 +152,47 @@ def test_an_empty_or_missing_message_is_not_an_error():
     content at all."""
     assert _found("") == []
     assert _node("console.log(JSON.stringify(aiuiArtifactsIn(null)))") == []
+
+
+# --- the shapes a real build actually answers in ---------------------------
+
+def test_an_approved_build_names_itself_with_task_id():
+    """Ralph, 2026-11-05: a build he approved showed NO panel at all. The
+    reply was prose, "is still building, give it a few minutes", and the
+    id was sitting in the message as task_id with nothing reading it.
+
+    This is the message he screenshotted.
+    """
+    said = ("IO wants to run:" + chr(10) + "build_status" + chr(10)
+            + "task_id: " + UUID + chr(10) + chr(10)
+            + "Reply yes to let it, or no to skip.")
+    assert _found(said) == [{"kind": "build", "id": UUID}]
+
+
+def test_a_task_id_with_odd_spacing_still_counts():
+    """It is written by a model, so the spacing is not ours to rely on."""
+    assert _ids("task_id:" + UUID, "build") == [UUID]
+    assert _ids("task_id :  " + UUID, "build") == [UUID]
+
+
+def test_any_preview_url_counts_however_it_is_wrapped():
+    """The old form matched one exact path. A link split across lines by
+    markdown, or pointing at a different host, carried the same id and
+    was ignored."""
+    assert _ids("see https://other.example/x/preview.html?task=" + UUID,
+                "build") == [UUID]
+    assert _ids("(/tasks/static/preview.html?foo=1&task=" + UUID + ")",
+                "build") == [UUID]
+
+
+def test_one_build_however_many_times_it_is_named():
+    """An approval message and a link in the same reply is one build, not
+    two watchers polling the same task."""
+    said = ("task_id: " + UUID + " and /tasks/static/preview.html?task=" + UUID)
+    assert _found(said) == [{"kind": "build", "id": UUID}]
+
+
+def test_prose_with_no_id_starts_nothing():
+    """"is still building, give it a few minutes" on its own must not
+    invent a build."""
+    assert _found("The second version is still building. Ask me again.") == []

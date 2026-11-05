@@ -3814,6 +3814,23 @@
     while ((m = link.exec(text)) !== null) add('build', m[1]);
     var vid = new RegExp('[Ii]ts id is (' + AIUI_UUID + ')', 'g');
     while ((m = vid.exec(text)) !== null) add('video', m[1]);
+
+    // "task_id: <uuid>", which is how a build names itself when it goes
+    // through an APPROVAL rather than answering with a link.
+    //
+    // Ralph, 2026-11-05: a build he approved showed no panel at all. The
+    // reply was prose, "is still building, give it a few minutes", with
+    // the id sitting in the message as task_id and nothing reading it.
+    // The panel only ever appeared for the one phrasing that happened to
+    // carry a preview link, which is the whole reason a reply should
+    // DECLARE what it carries rather than be read for it.
+    var tid = new RegExp('task_id\\s*:\\s*(' + AIUI_UUID + ')', 'g');
+    while ((m = tid.exec(text)) !== null) add('build', m[1]);
+
+    // And the bare "?task=<uuid>" of any preview URL, however it is
+    // written or wrapped.
+    var any = new RegExp('[?&]task=(' + AIUI_UUID + ')', 'g');
+    while ((m = any.exec(text)) !== null) add('build', m[1]);
     return found;
   }
 
