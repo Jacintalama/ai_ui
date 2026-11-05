@@ -38,11 +38,51 @@ def _fn(name):
 
 # --- the walk itself -------------------------------------------------------
 
-def test_every_step_is_either_on_the_walk_or_named_as_off_it():
+def test_every_step_is_either_on_a_walk_or_named_as_off_it():
     """A step added to STEPS and forgotten here would never be drawn, and
-    nothing else would notice."""
-    stray = set(bp.STEPS) - set(bp.ORDER) - set(bp.OUT_OF_BAND)
+    nothing else would notice.
+
+    There are two walks now. The agent's six, and the light lane's three
+    for a simple site written by one model call, which has no baseline to
+    take, nothing to autofix and no browser to open."""
+    stray = (set(bp.STEPS) - set(bp.ORDER) - set(bp.LIGHT_ORDER)
+             - set(bp.OUT_OF_BAND))
     assert not stray, stray
+
+
+def test_the_two_walks_do_not_share_a_step():
+    """A step on both walks could not say which one a build is on, and
+    lane_of is what decides which list a person is shown."""
+    assert not (set(bp.ORDER) & set(bp.LIGHT_ORDER))
+    for key in bp.LIGHT_ORDER:
+        assert bp.lane_of(key) == bp.LIGHT_LANE, key
+    for key in bp.ORDER:
+        assert bp.lane_of(key) == bp.AGENT_LANE, key
+
+
+def test_an_unknown_step_reads_as_the_agents_walk():
+    """Every build before the light lane existed was on the agent's walk,
+    and so is anything we do not recognise."""
+    assert bp.lane_of("") == bp.AGENT_LANE
+    assert bp.lane_of("something-new") == bp.AGENT_LANE
+
+
+def test_each_walk_is_served_whole_and_in_order():
+    assert [s["key"] for s in bp.steps_in_order()] == list(bp.ORDER)
+    assert [s["key"] for s in bp.steps_in_order(bp.LIGHT_LANE)] == list(
+        bp.LIGHT_ORDER)
+
+
+def test_how_far_along_is_measured_against_its_own_walk():
+    """"proofing" is the SECOND of three, not an unknown step. Measuring
+    it against the agent's six would read as -1 and the panel would show
+    a light build as having made no progress at all."""
+    assert bp.reached("drafting") == 0
+    assert bp.reached("proofing") == 1
+    assert bp.reached("filing") == 2
+    assert bp.reached("baseline") == 0
+    assert bp.reached("smoke") == 2
+    assert bp.reached("guard") == -1
 
 
 def test_the_walk_is_in_the_order_the_pipeline_runs_it():
@@ -92,12 +132,35 @@ def test_the_route_is_declared_before_the_one_that_eats_it():
             < src.index('@router.get("/{task_id}"'))
 
 
-def test_the_steps_are_fetched_once():
-    """The watcher polls every ten seconds for the length of a build. The
-    labels do not change between those polls."""
+def test_the_steps_are_fetched_once_per_walk():
+    """The watcher polls every ten seconds for the length of a build and
+    the labels do not change between polls.
+
+    Once PER LANE since 2026-11-05: there are two walks, the agent's six
+    and the light lane's three, so a single "already asked" flag would
+    fetch the first one and then serve it for the other lane too, showing
+    a three step build six rows.
+    """
     body = _fn("aiuiLoadSteps")
-    assert "aiuiStepsAsked" in body
-    assert "if (aiuiStepsAsked) return" in body
+    assert "if (aiuiStepsAsked[key]) return Promise.resolve(AIUI_STEPS[key]);" in body
+    assert "aiuiStepsAsked[key] = true;" in body
+    assert "'/api/tasks/build-steps?lane=' + encodeURIComponent(key)" in body
+
+
+def test_the_panel_draws_the_walk_the_build_is_actually_on():
+    """Not whichever list happened to be fetched first."""
+    src = _js()
+    panel = src[src.index("function aiuiStepPanel("):]
+    panel = panel[:panel.index("\n  }\n")]
+    assert "var steps = AIUI_STEPS[aiuiLaneOf(task)];" in panel
+    assert "aiuiStepStates(steps, at)" in panel
+
+
+def test_an_unknown_lane_reads_as_the_agents():
+    """Every build that finished before the light lane existed, and
+    anything a future version sends that this page does not know."""
+    body = _fn("aiuiLaneOf")
+    assert "return lane === 'light' ? 'light' : 'agent';" in body
 
 
 # --- what each step says ---------------------------------------------------

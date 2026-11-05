@@ -119,8 +119,15 @@ STATUS_BY_TAB: dict[str, list[str]] = {
 
 
 @router.get("/build-steps")
-async def build_steps() -> dict:
+async def build_steps(lane: str = "agent") -> dict:
     """The steps a build walks through, in order, in a person's words.
+
+    There are two walks. The agent's six, and the light lane's three for
+    a simple site written by one model call, which has no baseline to
+    take, nothing to autofix and no browser to open. A task says which
+    one it is on (`build_lane`), and the page asks for that one; an
+    unknown lane answers with the agent's, which is what every build
+    before the light lane was on.
 
     For a page that wants to draw the whole walk and mark how far along a
     build is, rather than showing the one step it is on.
@@ -136,7 +143,8 @@ async def build_steps() -> dict:
     session here would only mean the page cannot draw a list.
     """
     import build_progress
-    return {"steps": build_progress.steps_in_order()}
+    return {"lane": build_progress.lane_of_name(lane),
+            "steps": build_progress.steps_in_order(lane)}
 
 
 async def _get_owned_task(s, task_id: UUID, email: str,
