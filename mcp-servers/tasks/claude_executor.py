@@ -8,6 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import AsyncIterator, Literal
 
+import app_theme
+
 CLAUDE_WORKSPACE = os.environ.get("CLAUDE_WORKSPACE", "/workspace/ai_ui")
 EXECUTION_TIMEOUT_SECONDS = int(os.environ.get("TASKS_AI_TIMEOUT_SECONDS", "600"))
 
@@ -197,6 +199,7 @@ ALPINE.JS USAGE (your reactivity layer — use this instead of addEventListener 
     browser will fetch src/main.js, styles/main.css, src/components/*.js,
     etc., directly. No additional config needed.
 
+{theme_block}
 If your work modifies files, you MUST:
   1. Stage just the files you changed: `git add <path1> <path2> ...`
      (do NOT `git add -A` or `git add .` — only stage what you intentionally
@@ -428,6 +431,7 @@ def build_prompt(
     user_email: str = "",
 ) -> str:
     return PROMPT_TEMPLATE.format(
+        theme_block=app_theme.prompt_block(),
         description=description,
         action_type=action_type,
         priority=priority,
@@ -608,6 +612,7 @@ FILE LAYOUT (MANDATORY — create these folders BEFORE writing any files):
   • Static-only templates omit src/lib/supabase.js, src/lib/api.js, and
     schema.sql; everything else stays.
 
+{theme_block}
 GIT RULES:
   1. Stage just the files you changed: git add <path1> <path2> ...
      (do NOT git add -A or git add . — only stage what you intentionally edited)
@@ -908,6 +913,7 @@ def build_tdd_execute_prompt(
     else:
         error_block = ""
     return TDD_EXECUTE_PROMPT_TEMPLATE.format(
+        theme_block=app_theme.prompt_block(),
         description=description,
         action_type=action_type,
         priority=priority,
