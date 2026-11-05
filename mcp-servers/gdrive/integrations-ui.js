@@ -4586,6 +4586,122 @@
     box.appendChild(ask);
     aiuiPutUnderLastMessage(box);
   }
+  // ===== The whole walk, not just the step it is on =====
+  //
+  // The line under a reply said one thing: the step it was on, and the
+  // minutes. That is where the build is, and nothing about how much of
+  // the job is behind it or still to come.
+  //
+  // The step's own sentence is deliberately not quoted in this comment.
+  // A test forbids any of them appearing in this file, and a quotation
+  // is indistinguishable from a copy to anything reading the source.
+  //
+  // The steps and their wording are SERVED, never copied here. Two places
+  // already show a step to somebody, this and the build view, and a third
+  // copy of those sentences would be a third place to change and a third
+  // to fall out of step with the pipeline that writes them.
+  var AIUI_STEPS = null;
+  var aiuiStepsAsked = false;
+
+  function aiuiLoadSteps() {
+    if (aiuiStepsAsked) return Promise.resolve(AIUI_STEPS);
+    aiuiStepsAsked = true;
+    return fetch('/api/tasks/build-steps', { headers: aiuiAuthHeaders() })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (body) {
+        AIUI_STEPS = (body && body.steps) || null;
+        return AIUI_STEPS;
+      }).catch(function () { return null; });
+  }
+
+  // done | working | waiting, for every step, from the one the build says
+  // it is on.
+  //
+  // A step the build SKIPPED also reads as done: autofix only runs when
+  // the browser check found something, and the row carries only the step
+  // it is on, not the ones it passed. Saying "done" for a step that was
+  // not needed is a small lie; leaving it "waiting" while the build is
+  // three steps further on is a confusing one.
+  function aiuiStepStates(steps, at) {
+    var now = -1;
+    for (var i = 0; i < steps.length; i++) {
+      if (steps[i].key === at) { now = i; break; }
+    }
+    return steps.map(function (s, i) {
+      var state = 'waiting';
+      if (now >= 0) state = (i < now) ? 'done' : (i === now ? 'working' : 'waiting');
+      return { key: s.key, said: s.said, state: state };
+    });
+  }
+
+  function aiuiStepPanel(chatId, task, mins) {
+    if (aiuiChatIdFromUrl() !== chatId) return false;
+    if (!AIUI_STEPS || !AIUI_STEPS.length) return false;
+
+    var at = String((task && task.build_step) || '');
+    var rows = aiuiStepStates(AIUI_STEPS, at);
+    var el = document.getElementById('aiui-steps');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'aiui-steps';
+      el.style.cssText = 'margin:.4rem 0 .6rem 3.75rem;max-width:46rem;'
+        + 'border:1px solid rgba(127,127,127,.28);border-radius:12px;'
+        + 'padding:.6rem .75rem;font-size:.85rem;';
+      aiuiPutUnderLastMessage(el);
+    }
+
+    var done = 0;
+    var html = '';
+    rows.forEach(function (s, i) {
+      if (s.state === 'done') done += 1;
+      var pill = s.state === 'done' ? 'Done'
+               : (s.state === 'working' ? 'Working on it' : 'Waiting');
+      var colour = s.state === 'done' ? 'rgba(80,200,120,.18);color:#4ec37a'
+                 : (s.state === 'working' ? 'rgba(107,115,255,.22);color:#9aa2ff'
+                                          : 'rgba(127,127,127,.15);color:inherit');
+      html += '<div style="display:flex;gap:.5rem;align-items:baseline;'
+        + 'padding:.18rem 0;' + (s.state === 'waiting' ? 'opacity:.55;' : '')
+        + '"><span style="opacity:.5;min-width:1rem;">' + (i + 1) + '</span>'
+        + '<span style="flex:1 1 auto;">' + aiuiEscape(s.said) + '</span>'
+        + '<span style="flex:0 0 auto;font-size:.7rem;padding:.05rem .4rem;'
+        + 'border-radius:999px;white-space:nowrap;background:' + colour + ';">'
+        + pill + '</span></div>';
+    });
+
+    // Out of band: not a stage on the way to a finished app, so it is said
+    // underneath rather than drawn as one of the numbered steps.
+    var said = String((task && task.build_step_said) || '').trim();
+    var known = rows.some(function (s) { return s.key === at; });
+    if (at && !known && said) {
+      html += '<div style="margin-top:.35rem;font-size:.8rem;opacity:.8;">'
+        + aiuiEscape(said) + '</div>';
+    }
+
+    var pct = Math.round((done / rows.length) * 100);
+    html += '<div style="margin-top:.5rem;height:3px;border-radius:999px;'
+      + 'background:rgba(127,127,127,.2);overflow:hidden;">'
+      + '<div style="height:100%;width:' + pct + '%;background:#6b73ff;'
+      + 'transition:width .4s ease;"></div></div>'
+      + '<div style="margin-top:.3rem;font-size:.72rem;opacity:.5;">'
+      + mins + ' min so far</div>';
+    el.innerHTML = html;
+    return true;
+  }
+
+  function aiuiClearSteps() {
+    var el = document.getElementById('aiui-steps');
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+
+  // Every sentence here is ours and fixed, but it reaches innerHTML, and
+  // "ours today" is how an escaping hole starts.
+  function aiuiEscape(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  // ===== End the whole walk =====
+
   function aiuiBuildLine(chatId, text) {
     if (aiuiChatIdFromUrl() !== chatId) return;
     var el = document.getElementById('aiui-build-line');
@@ -4650,6 +4766,7 @@
       var text = aiuiBuildOutcome(task, id, location.origin);
       if (text) {
         aiuiHideBuildInline(id);
+        aiuiClearSteps();
         // Drawn on the way past, not after the write: closing can take
         // another tick or be done by another tab, and the person is
         // looking at the chat NOW.
@@ -4671,15 +4788,25 @@
       // and is known to be a real build this person may see.
       aiuiShowBuildInline(chatId, id);
       var mins = Math.max(1, Math.round((Date.now() - started) / 60000));
-      var step = String((task && task.build_step_said) || '').trim();
-      aiuiBuildLine(chatId, step
-        ? step + '. ' + mins + ' min so far.'
-        : 'Still building, ' + mins + ' min so far. '
-          + 'A message will appear here when it is done.');
+      // The whole walk when the steps are known, and the one sentence when
+      // they are not. The list is strictly better, but a build must never
+      // go quiet because a list of labels could not be fetched.
+      aiuiLoadSteps().then(function () {
+        if (aiuiStepPanel(chatId, task, mins)) {
+          aiuiClearBuildLine();
+          return;
+        }
+        var step = String((task && task.build_step_said) || '').trim();
+        aiuiBuildLine(chatId, step
+          ? step + '. ' + mins + ' min so far.'
+          : 'Still building, ' + mins + ' min so far. '
+            + 'A message will appear here when it is done.');
+      });
       return false;
     }).catch(function () { return false; }).then(function (finished) {
       if (finished || Date.now() - started > AIUI_BUILD_GIVE_UP_MS) {
         aiuiClearBuildLine();
+        aiuiClearSteps();
         return;
       }
       setTimeout(function () { aiuiPollBuild(chatId, id, started); }, AIUI_BUILD_POLL_MS);

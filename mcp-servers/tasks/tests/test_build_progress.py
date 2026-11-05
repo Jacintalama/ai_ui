@@ -181,10 +181,19 @@ def test_a_task_with_no_step_sends_an_empty_sentence():
     assert row.model_dump()["build_step_said"] == ""
 
 
-def test_the_page_reads_the_sentence_and_not_the_key():
+def test_the_page_shows_the_sentence_and_never_the_key():
     """Structural, because this file is vanilla JS with no harness. If the
-    page ever reads build_step directly it will print "smoke" at somebody
-    who asked for a website."""
+    page ever SHOWS build_step it will print "smoke" at somebody who asked
+    for a website.
+
+    Reading the key is allowed now, and matching on it is the point: the
+    step list asks which of the served steps a build is on, and that
+    comparison is by key. What it draws is the sentence that came with it.
+
+    So this asserts the key never reaches the screen, rather than that the
+    page never touches it, which is what it said until the step list was
+    built.
+    """
     import os
     import re
     js = os.path.join(os.path.dirname(__file__), "..", "..",
@@ -192,8 +201,21 @@ def test_the_page_reads_the_sentence_and_not_the_key():
     with open(js, encoding="utf-8") as fh:
         src = fh.read()
     assert "build_step_said" in src
-    assert not re.search(r"task\.build_step\b(?!_)", src), (
-        "the page is reading the raw key")
+    # Line by line, because a window of characters around the match can
+    # contain the very thing it is checking for: the first version of
+    # this passed on `var at = ''; el.textContent = task.build_step;`,
+    # since "var at =" was inside the window.
+    key = re.compile(r"task\.build_step\b(?!_)")
+    sinks = ("textContent", "innerHTML", "innerText", "appendChild",
+             "aiuiEscape", "aiuiBuildLine")
+    hits = [ln for ln in src.split(chr(10)) if key.search(ln)]
+    assert hits, "nothing reads the key, so the step list cannot match"
+    for ln in hits:
+        assert "var at = String((task && task.build_step)" in ln, (
+            "the key is read somewhere this test has not vetted: " + ln.strip())
+        for sink in sinks:
+            assert sink not in ln, (
+                "the raw key is on its way to the screen: " + ln.strip())
 
 
 def test_the_page_still_falls_back_to_minutes():

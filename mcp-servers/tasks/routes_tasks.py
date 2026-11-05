@@ -118,6 +118,27 @@ STATUS_BY_TAB: dict[str, list[str]] = {
 }
 
 
+@router.get("/build-steps")
+async def build_steps() -> dict:
+    """The steps a build walks through, in order, in a person's words.
+
+    For a page that wants to draw the whole walk and mark how far along a
+    build is, rather than showing the one step it is on.
+
+    The wording is NOT copied into any page. Two places already show a
+    step to somebody, the chat and the build view, and a third copy of
+    these sentences would be a third place to change and a third to fall
+    out of step with the pipeline. It is served from build_progress, which
+    is where routes_execution writes them from.
+
+    No authentication: it is the same handful of fixed sentences for
+    everybody, names nobody, and says nothing about any build. Requiring a
+    session here would only mean the page cannot draw a list.
+    """
+    import build_progress
+    return {"steps": build_progress.steps_in_order()}
+
+
 async def _get_owned_task(s, task_id: UUID, email: str,
                           is_admin: bool = False) -> TaskItem:
     """The task, if this caller may act on it.
