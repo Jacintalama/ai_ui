@@ -265,6 +265,68 @@ def test_the_name_is_kept_from_the_same_answer_as_the_steps():
     assert "AIUI_LANE_SAID[key] = (body && body.said)" in body
 
 
+# --- the page somebody watches while it runs -----------------------------
+
+PAGE = os.path.join(HERE, "..", "static", "preview.html")
+
+
+def test_each_lane_says_how_long_it_takes():
+    light = build_progress.lane_wait("light")
+    agent = build_progress.lane_wait("agent")
+    assert "minute" in light and "minutes" in agent
+    assert light != agent
+    assert "tests" not in light, (
+        "the light lane runs no tests, so it must not promise any")
+
+
+def test_the_task_carries_that_sentence():
+    """So the page can show it without knowing a single lane name."""
+    import schemas
+
+    out = _task_out(schemas, step="drafting")
+    assert out.build_lane == "light"
+    assert out.build_wait == build_progress.lane_wait("light")
+
+    out = _task_out(schemas, step="smoking")
+    assert out.build_lane == "agent"
+    assert out.build_wait == build_progress.lane_wait("agent")
+
+
+def _task_out(schemas, step):
+    import datetime as _dt
+    import uuid as _uuid
+    return schemas.TaskOut(
+        created_at=_dt.datetime(2026, 11, 6, 9, 0, 0),
+        id=_uuid.uuid4(), meeting_id=_uuid.uuid4(), action_type="BUILD",
+        description="a site", status="running", build_step=step,
+        assignee_name="alice", assignee_email="alice@x.com",
+        priority="NICE_TO_HAVE",
+    )
+
+
+def test_the_page_keeps_no_copy_of_either_sentence():
+    """It held one sentence for both lanes and promised every build two
+    to five minutes and a test run. 50 of the 51 apps in this repo are
+    plain sites, so it was wrong far more often than it was right."""
+    page = _read(PAGE)
+    for said in build_progress.LANE_WAIT.values():
+        assert said not in page, "wait wording copied into the page: " + said
+    assert "2–5 minutes" not in page and "2-5 minutes" not in page
+
+
+def test_the_page_says_it_on_every_poll_not_only_after_a_question():
+    """The sub line used to be set only on the way back from a question,
+    so a build that was never interrupted never showed the sentence."""
+    page = _read(PAGE)
+    assert "if (task.build_wait) $bovSub.textContent = task.build_wait;" in page
+
+
+def test_nothing_a_person_reads_on_that_page_uses_a_dash_for_punctuation():
+    page = _read(PAGE)
+    overlay = page[page.index('id="build-sub"'):][:600]
+    assert "—" not in overlay and "–" not in overlay
+
+
 # --- the chat text -------------------------------------------------------
 
 def test_the_build_tool_puts_the_sentence_in_the_reply():

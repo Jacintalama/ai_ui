@@ -81,6 +81,20 @@ class TaskOut(BaseModel):
 
     @computed_field
     @property
+    def build_wait(self) -> str:
+        """What to tell somebody watching this build, in their words.
+
+        Here for the same reason `build_step_said` is: the page held its
+        own sentence, and that sentence promised every build two to five
+        minutes and a test run. A plain site takes under a minute and
+        runs no tests, and 50 of the 51 apps in this repo are plain
+        sites, so the page was wrong far more often than it was right.
+        """
+        import build_progress
+        return build_progress.lane_wait(self.build_lane)
+
+    @computed_field
+    @property
     def user_prompt(self) -> str:
         """The user's original request, recovered from the wrapped description.
 

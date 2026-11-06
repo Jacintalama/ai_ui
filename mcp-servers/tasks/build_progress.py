@@ -98,6 +98,24 @@ LANE_SAID = {
 }
 
 
+#: How long this lane takes, for the overlay somebody watches while it
+#: runs. Served, not written into the page, which held one sentence for
+#: both lanes and promised every build two to five minutes and a test
+#: run: a plain site takes under a minute and runs no tests, and most
+#: builds are plain sites.
+LANE_WAIT = {
+    LIGHT_LANE: ("Sit tight. This is a plain site, written in one go, and "
+                 "it usually takes under a minute."),
+    AGENT_LANE: ("Sit tight. Creating files, writing code and running "
+                 "tests. This usually takes 2 to 5 minutes."),
+}
+
+
+def lane_wait(lane: str) -> str:
+    """What to tell somebody who is waiting on this lane."""
+    return LANE_WAIT[lane_of_name(lane)]
+
+
 def lane_said(lane: str) -> str:
     """The lane's name in a person's words.
 
