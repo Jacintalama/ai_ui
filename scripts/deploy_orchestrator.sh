@@ -67,7 +67,20 @@ if [[ -z "${PREVIOUS_SHA}" ]]; then
   # First deploy — everything is "changed"
   CHANGED=$(git ls-files | grep -E "${ORCH_PATH_PATTERN}" || true)
 else
-  CHANGED=$(git diff --name-only "${PREVIOUS_SHA}..${CURRENT_SHA}" | grep -E "${ORCH_PATH_PATTERN}" || true)
+  # --diff-filter=d EXCLUDES deletions (lowercase excludes, uppercase
+  # selects). This list is handed to rsync as files to SEND, so a path the
+  # commit deleted makes rsync exit 23 and takes the whole deploy with it:
+  #
+  #   rsync: [sender] link_stat ".../test_tasks_launcher.py" failed:
+  #          No such file or directory (2)
+  #
+  # That happened on 2026-11-06 and three deploys in a row failed on one
+  # deleted test file, while the merges looked fine from GitHub.
+  CHANGED=$(git diff --name-only --diff-filter=d "${PREVIOUS_SHA}..${CURRENT_SHA}" | grep -E "${ORCH_PATH_PATTERN}" || true)
+  # Deletions are REPORTED rather than copied. Nothing here removes them
+  # from the server, so the file lives on, and a stale module nobody
+  # mentioned is how a container keeps running code that left the repo.
+  DELETED=$(git diff --name-only --diff-filter=D "${PREVIOUS_SHA}..${CURRENT_SHA}" | grep -E "${ORCH_PATH_PATTERN}" || true)
 fi
 
 # Files that are NEVER deployed from the repo. The server's templates.py is
@@ -88,6 +101,13 @@ fi
 
 echo "  changed paths:"
 echo "${CHANGED}" | sed 's/^/    /'
+
+if [[ -n "${DELETED:-}" ]]; then
+  echo "  DELETED in the repo and LEFT ON THE SERVER:"
+  echo "${DELETED}" | sed 's/^/    /'
+  echo "    (not copied and not removed. Delete by hand if a stale one"
+  echo "     would be imported or served.)"
+fi
 
 echo "==> [2b] server-edit sweep"
 
