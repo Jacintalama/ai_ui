@@ -45,8 +45,15 @@ def test_the_request_asks_two_choice_questions_of_jev():
     assert set(kind["criteria"]) == {"answer", "job"}
     who = body["questions"]["who"]
     assert who["type"] == "choice"
+    # Plus an explicit "none of them" since 2026-11-06. Without it the
+    # question is a forced choice and Jev must name somebody: that is how
+    # a ClickUp request reached a video editing agent.
     assert who["criteria"] == {"Ava": "project manager", "Dev": "developer",
-                               "Vera": "researcher"}
+                               "Vera": "researcher",
+                               d.NOBODY: d.NOBODY_CRITERION}
+    assert list(who["criteria"])[-1] == d.NOBODY, (
+        "nobody should read as the answer when none of the names fit, so "
+        "it comes last")
 
 
 def test_the_state_holds_the_team_the_recent_lines_and_the_message():
@@ -71,8 +78,9 @@ def test_the_state_is_kept_short():
 def test_an_agent_with_no_role_is_a_team_member():
     body = d.build_request("hello there team", [],
                            [{"id": "a", "name": "A"}, {"id": "b", "name": "B"}])
-    assert body["questions"]["who"]["criteria"] == {"A": "team member",
-                                                     "B": "team member"}
+    assert body["questions"]["who"]["criteria"] == {
+        "A": "team member", "B": "team member",
+        d.NOBODY: d.NOBODY_CRITERION}
 
 
 def test_two_agents_with_one_name_cannot_be_told_apart():

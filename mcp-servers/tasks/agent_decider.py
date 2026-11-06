@@ -69,7 +69,23 @@ KIND_CRITERIA = {
     "job": "it needs several pieces of work by different team members",
 }
 WHO_INSTRUCTIONS = ("Which one team member is best placed to handle the new "
-                    "message?")
+                    "message, or nobody if none of them is a fit?")
+
+#: The answer meaning "none of them".
+#:
+#: 2026-11-06: Ralph asked the chat to create a ClickUp space and named
+#: nobody, and the chat answered "Cutter is answering...". Cutter edits
+#: video. The question offered only the agents' names, so there was no way
+#: to say none of them: a forced choice with nothing suitable returns the
+#: least bad one, and confidence was the only brake.
+#:
+#: Not a word an agent could be called. Somebody will name an agent
+#: "Nobody" eventually, and a sentinel that collides with a real name
+#: would route their message into the fallback for ever.
+NOBODY = "(nobody)"
+NOBODY_CRITERION = (
+    "no team member above is a fit for this, and the assistant should "
+    "handle it with the platform's own tools instead")
 #: A third question in the same call: Jev evaluates each question on its own
 #: against the same state, so it changes neither of the two above. Recorded
 #: and shown on the Debug page; nothing acts on it yet. Label, description.
@@ -162,8 +178,12 @@ def build_request(message: str, history: list[dict],
         "questions": {
             "kind": {"type": "choice", "instructions": KIND_INSTRUCTIONS,
                      "criteria": dict(KIND_CRITERIA)},
+            # NOBODY last, so it reads as the answer when none of the
+            # names above fits rather than as a first option.
             "who": {"type": "choice", "instructions": WHO_INSTRUCTIONS,
-                    "criteria": {a["name"].strip(): _role(a) for a in named}},
+                    "criteria": dict(
+                        [(a["name"].strip(), _role(a)) for a in named]
+                        + [(NOBODY, NOBODY_CRITERION)])},
             "urgency": {"type": "score", "instructions": URGENCY_INSTRUCTIONS,
                         "criteria": [desc for _, desc in URGENCY_LEVELS]},
         },
@@ -202,6 +222,16 @@ def read_answer(data, agents: list[dict]) -> Decision:
         if kind not in KIND_CRITERIA:
             raise ValueError(kind)
         who, wc = _choice(answers, "who")
+        if who == NOBODY:
+            # Jev looked and there was no fit. Said plainly, because a
+            # bare fallback reads as Jev being broken, and this is Jev
+            # working: the assistant takes it with the platform's tools.
+            return Decision(path=PATH_FALLBACK, kind=kind, kind_confidence=kc,
+                            agent_confidence=wc,
+                            reason="no agent is a fit for this",
+                            model=(data.get("model")
+                                   if isinstance(data.get("model"), str)
+                                   else None))
         by_name = {a["name"].strip(): a for a in _named(agents)}
         if who not in by_name:
             raise ValueError(who)
