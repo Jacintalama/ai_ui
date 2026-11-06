@@ -132,6 +132,12 @@ class BuildResponse(BaseModel):
     task_id: str
     slug: str
     status: str
+    #: Which lane this build took, and one sentence saying so. A plain
+    #: site is written in under a minute and anything needing login, a
+    #: database or a template goes to the full builder and takes several,
+    #: and the platform used to behave differently and say nothing.
+    lane: str = light_build.LANE_AGENT
+    note: str = ""
 
 
 class BuildStatusResponse(BaseModel):
@@ -416,8 +422,13 @@ async def _create_and_spawn_build(
     # Measured 2026-11-05: the agent peaks at ~900MB in a 1GB container,
     # which is the whole reason the lock below exists, and 50 of the 51
     # apps in this repo are static sites that never needed it.
-    needs_agent = light_build.needs_the_agent(description)
-    light = template_key is None and needs_agent is None
+    #
+    # `lane_for` is the only thing that decides this. Whatever tells the
+    # person which lane they got reads the same function, because a
+    # sentence that disagrees with the lane actually used is worse than
+    # saying nothing, which is what this did until 2026-11-06.
+    lane, _why = light_build.lane_for(description, template_key)
+    light = lane == light_build.LANE_LIGHT
 
     meeting_id = uuid.uuid4()
     async with session() as s:
@@ -617,11 +628,18 @@ async def list_build_templates(user: CurrentUser = Depends(current_user)):
 async def start_build(body: BuildRequest, user: CurrentUser = Depends(current_user)):
     """Fire a one-shot frontend-only build (optionally from a template)."""
     seed = body.name or body.description
+    # The same decision the build makes, from the same function and the
+    # same inputs: the key is normalised first because `blank` and
+    # `custom` mean no template, and reading them as one would promise
+    # several minutes for a build that takes under one.
+    lane, why = light_build.lane_for(
+        body.description, _normalize_template_key(body.template_key))
     task_id, slug = await _create_and_spawn_build(
         user.email, seed, body.description, template_key=body.template_key,
         attachment_text=body.attachment_text, attachment_name=body.attachment_name,
     )
-    return BuildResponse(task_id=task_id, slug=slug, status="running")
+    return BuildResponse(task_id=task_id, slug=slug, status="running",
+                         lane=lane, note=light_build.lane_note(lane, why))
 
 
 async def _load_owned_build(email: str, task_id: uuid.UUID) -> TaskItem | None:

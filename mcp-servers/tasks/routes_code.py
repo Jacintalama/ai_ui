@@ -21,6 +21,7 @@ from sqlalchemy import text
 import agent_activity
 import app_code_access
 import design_skill
+import light_build
 from app_code_access import CodeAccessError
 from code_proposals import (ProposalError, consume_proposal, create_proposal,
                             restore_proposal)
@@ -431,9 +432,14 @@ async def create(body: CreateIn,
     Whether an agent may call this at all is decided by its access level, the
     same as any other write.
 
-    The builder owns the rest: it makes the slug unique, refuses a second
-    build while one is running (429, which reaches the agent as the reason it
-    was refused), and smoke tests the result.
+    The builder owns the rest: it makes the slug unique and decides which
+    lane the build takes. A plain site is written in under a minute by one
+    model call, and several can run at once. Anything needing login, a
+    database or a template goes to the full builder, which runs one at a
+    time (429, which reaches the agent as the reason it was refused) and
+    smoke tests the result. The lane and a sentence saying which one come
+    back in the reply, because until 2026-11-06 the two behaved very
+    differently and the platform said nothing.
     """
     _require_internal(x_internal_secret)
     description = (body.description or "").strip()
@@ -444,6 +450,9 @@ async def create(body: CreateIn,
     # the job when there is no name. _make_slug handles the rest.
     seed = (body.name or "").strip() or description
     design = await _design_for(body.user_email, body.agent_id)
+    # Which lane, from the one function that decides it. This route has no
+    # template to pass, so the words are the whole input.
+    lane, why = light_build.lane_for(description)
     task_id, slug = await _spawn_build(body.user_email, seed, description,
                                        design_skill=design)
     # The agent is working until the build ends, not until this turn ends:
@@ -453,4 +462,5 @@ async def create(body: CreateIn,
     # This build, not the list of everything. Falls back to App Builder only
     # when there is no public address configured to build a link from.
     return {"task_id": task_id, "slug": slug,
+            "lane": lane, "note": light_build.lane_note(lane, why),
             "url": builder_url(task_id) or await app_url(slug)}

@@ -5130,6 +5130,10 @@
   // panel is for. The task says which lane it is on.
   var AIUI_STEPS = {};
   var aiuiStepsAsked = {};
+  // What to call the lane, served with its steps. Not written here: the
+  // reply itself says in words why a build took the slow lane, and two
+  // copies of that vocabulary is two places to change.
+  var AIUI_LANE_SAID = {};
 
   function aiuiLaneOf(task) {
     var lane = String((task && task.build_lane) || 'agent');
@@ -5145,6 +5149,7 @@
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (body) {
         AIUI_STEPS[key] = (body && body.steps) || null;
+        AIUI_LANE_SAID[key] = (body && body.said) || '';
         return AIUI_STEPS[key];
       }).catch(function () { return null; });
   }
@@ -5201,6 +5206,18 @@
 
     var done = 0;
     var html = '';
+
+    // Which lane, above the steps. A simple site walks three in under a
+    // minute and the full builder walks six over several, and until
+    // 2026-11-06 the only difference a person could see was that one of
+    // them seemed broken. Nothing is drawn when the name has not arrived.
+    var laneName = AIUI_LANE_SAID[aiuiLaneOf(task)] || '';
+    if (laneName) {
+      html += '<div style="font-size:.72rem;letter-spacing:.04em;'
+        + 'text-transform:uppercase;opacity:.5;margin-bottom:.4rem;">'
+        + aiuiEscape(laneName) + '</div>';
+    }
+
     rows.forEach(function (s, i) {
       if (s.state === 'done') done += 1;
       var pill = s.state === 'done' ? 'Done'

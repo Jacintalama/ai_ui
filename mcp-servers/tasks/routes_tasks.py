@@ -144,6 +144,9 @@ async def build_steps(lane: str = "agent") -> dict:
     """
     import build_progress
     return {"lane": build_progress.lane_of_name(lane),
+            # What to call the lane above the steps, served for the same
+            # reason the steps are: so the page keeps no copy of it.
+            "said": build_progress.lane_said(lane),
             "steps": build_progress.steps_in_order(lane)}
 
 

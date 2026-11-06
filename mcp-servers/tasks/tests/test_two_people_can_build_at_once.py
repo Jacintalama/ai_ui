@@ -46,7 +46,7 @@ def test_the_lane_is_decided_before_the_guard_is_consulted():
     """Deciding after would mean a light build was already refused by the
     time anyone asked whether it needed an agent."""
     body = _spawn()
-    decided = body.index("needs_agent = light_build.needs_the_agent(description)")
+    decided = body.index("light_build.lane_for(description, template_key)")
     guard = body.index("A build is already running")
     assert decided < guard
 
@@ -100,9 +100,17 @@ def test_a_light_build_gets_no_empty_folders():
 
 def test_a_template_build_keeps_the_agent():
     """A template is multi-file by definition, so it is not a job for a
-    lane that writes one file."""
-    body = _spawn()
-    assert "light = template_key is None and needs_agent is None" in body
+    lane that writes one file.
+
+    Asserted on the decision itself rather than on the line that reads
+    it: the decision moved into `lane_for` on 2026-11-06 so that whatever
+    tells the person which lane they got cannot disagree with the build.
+    """
+    lane, why = light_build.lane_for("a tidy portfolio", template_key="portfolio")
+    assert lane == "agent"
+    assert why
+    assert "light = lane == light_build.LANE_LIGHT" in _spawn(), (
+        "the build takes the light lane on something other than that decision")
 
 
 # --- the decision itself, end to end -------------------------------------
