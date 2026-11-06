@@ -704,7 +704,7 @@
         <div class="field">
           <label class="form-label" for="tpl-url">Your website link</label>
           <input type="url" class="form-input" id="tpl-url" placeholder="https://yoursite.com">
-          <span class="form-hint">We grab the screenshots for you — no upload needed.</span>
+          <span class="form-hint">We grab the screenshots for you, no upload needed.</span>
         </div>
         <div class="field">
           <label class="form-label" for="tpl-prompt">The template's script direction <span style="opacity:.6">(tweak it if you like)</span></label>
@@ -747,7 +747,7 @@
             <label class="form-label" for="create-capture-url">Your website link</label>
             <input type="url" class="form-input" id="create-capture-url"
                    placeholder="https://yoursite.com">
-            <span class="form-hint">We grab the screenshots for you — no upload needed.</span>
+            <span class="form-hint">We grab the screenshots for you, no upload needed.</span>
           </div>
 
           <div class="field">
@@ -759,7 +759,7 @@
           <div class="field" style="display:flex;align-items:center;gap:8px;">
             <input type="checkbox" id="anim-toggle" checked style="width:auto;">
             <label class="form-label" for="anim-toggle" style="margin:0;cursor:pointer;">
-              Animated <span style="opacity:.6">— kinetic text + motion instead of a slideshow</span>
+              Animated <span style="opacity:.6">(kinetic text and motion instead of a slideshow)</span>
             </label>
           </div>
 
@@ -1471,7 +1471,7 @@
         if (r.status === 400) msg = "That URL can't be captured.";
         else if (r.status === 502) msg = "Couldn't capture that site.";
         else if (r.status === 503) msg = "Site capture is disabled.";
-        else if (r.status === 504) msg = "Capture timed out — try again.";
+        else if (r.status === 504) msg = "Capture timed out, try again.";
         else { const t = await r.text(); msg = "Capture failed: " + t.slice(0, 160); }
         const err = new Error(msg); err.status = r.status; throw err;
       }

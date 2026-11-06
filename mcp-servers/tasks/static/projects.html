@@ -1178,11 +1178,11 @@
   <div id="history-modal" class="modal-backdrop" hidden>
     <div class="modal" style="max-width: 680px;">
       <div class="modal-header">
-        <h3>Version history — <span id="hm-slug"></span></h3>
+        <h3>Version history: <span id="hm-slug"></span></h3>
         <button type="button" class="close" data-close>×</button>
       </div>
       <div class="modal-body">
-        <div class="form-hint" style="margin-bottom:6px;">Each row is a build commit. Rollback creates a new commit on top — the old version stays in history.</div>
+        <div class="form-hint" style="margin-bottom:6px;">Each row is a build commit. Rollback creates a new commit on top and the old version stays in history.</div>
         <div id="hm-list" class="version-list">
           <div class="members-empty">Loading…</div>
         </div>
@@ -1277,7 +1277,7 @@
         <button type="button" class="close" data-close>×</button>
       </div>
       <div class="modal-body" style="overflow-y:auto; flex:1;">
-        <div class="form-hint" style="margin-bottom:14px;">Featured templates ship with a working base app — files land in your project the moment you click <em>Use this template</em>, then the AIUI Agent personalizes the copy and brand for you.</div>
+        <div class="form-hint" style="margin-bottom:14px;">Featured templates ship with a working base app. Files land in your project the moment you click <em>Use this template</em>, then the AIUI Agent personalizes the copy and brand for you.</div>
         <div class="filter-row" id="tg-filter-row" style="display:flex; gap:6px; margin-bottom:18px; flex-wrap:wrap;">
           <button type="button" class="filter-pill active" data-filter="all">All</button>
           <button type="button" class="filter-pill" data-filter="static">Static</button>
@@ -1301,7 +1301,7 @@
         <div>
           <label class="form-label" for="np-name">Project name</label>
           <input id="np-name" class="form-input" placeholder="my coffee shop" maxlength="60">
-          <div class="form-hint" id="np-name-hint">Spaces are fine — we'll convert them to hyphens. Leave blank to let AI pick one.</div>
+          <div class="form-hint" id="np-name-hint">Spaces are fine, we'll convert them to hyphens. Leave blank to let AI pick one.</div>
         </div>
         <div id="np-template-status" hidden style="display:flex; align-items:center; gap:10px; padding:10px 12px; background:var(--accent-soft); border:1px solid rgba(124,140,255,0.3); border-radius:var(--radius); font-size:13px; color:var(--text);">
           <span style="color:var(--accent); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.05em;">Template</span>
@@ -1323,7 +1323,7 @@
             <div class="np-dropzone-icon">⬆</div>
             <div class="np-dropzone-title">Drop your project files here</div>
             <div class="np-dropzone-sub">
-              Drag a folder or files (HTML, CSS, JS, images, fonts) — or
+              Drag a folder or files (HTML, CSS, JS, images, fonts), or
               <button type="button" class="np-link-btn" id="np-pick-files">choose files</button>
               ·
               <button type="button" class="np-link-btn" id="np-pick-folder">choose folder</button>
@@ -1658,7 +1658,7 @@
     // Live preview of the normalized slug under the input.
     const npNameHint = document.getElementById("np-name-hint");
     const _npNameDefaultHint =
-      "Spaces are fine — we'll convert them to hyphens. Leave blank to let AI pick one.";
+      "Spaces are fine, we'll convert them to hyphens. Leave blank to let AI pick one.";
     const npNameInput = document.getElementById("np-name");
     if (npNameInput && npNameHint) {
       npNameInput.addEventListener("input", () => {
@@ -1671,7 +1671,7 @@
         }
         if (!SLUG_RE.test(norm)) {
           npNameHint.textContent = norm
-            ? `URL would be: "${norm}" — needs at least 3 characters and must start with a letter or digit.`
+            ? `URL would be: "${norm}", which needs at least 3 characters and must start with a letter or digit.`
             : "Use letters, digits, spaces, or hyphens. At least 3 chars.";
           npNameHint.style.color = "var(--danger)";
         } else {
@@ -1713,7 +1713,7 @@
       const t = _templatesCache && _templatesCache.find((x) => x.key === npTemplate.value);
       if (t) {
         npTemplateStatus.hidden = false;
-        npTemplateStatusLabel.textContent = `${t.label} — ${t.description}`;
+        npTemplateStatusLabel.textContent = `${t.label}: ${t.description}`;
       } else {
         npTemplateStatus.hidden = true;
       }
@@ -1728,7 +1728,7 @@
           npStorageHint.textContent = "";
           npStorageHint.hidden = true;
         } else if (t.storage === "supabase") {
-          npStorageHint.textContent = "Uses Supabase — you'll connect a database in the next step.";
+          npStorageHint.textContent = "Uses Supabase, so you'll connect a database in the next step.";
           npStorageHint.hidden = false;
         } else {
           npStorageHint.textContent = "Frontend-only template (no database).";
@@ -1925,7 +1925,7 @@
     async function openPreviewModal(key) {
       pvCurrentKey = key;
       const tpl = _templatesCache && _templatesCache.find((x) => x.key === key);
-      pvTitle.textContent = "Preview — " + (tpl ? tpl.label : key);
+      pvTitle.textContent = "Preview: " + (tpl ? tpl.label : key);
       pvFrame.removeAttribute("srcdoc");
       pvFrame.hidden = true;
       pvLoading.style.display = "flex";
@@ -1999,7 +1999,7 @@
         npTemplateError.hidden = true;
         return true;
       } catch (err) {
-        npTemplateError.textContent = "Couldn't load templates — refresh the page or check your connection.";
+        npTemplateError.textContent = "Couldn't load templates. Refresh the page or check your connection.";
         npTemplateError.hidden = false;
         return false;
       }
@@ -2081,7 +2081,7 @@
       if (stagedOk.length > 0) {
         const stagedInvalid = npStagedFiles.filter(e => e.status === "invalid");
         if (stagedInvalid.length > 0) {
-          showToast(stagedInvalid.length + " file(s) are invalid — remove them or fix the names.", true);
+          showToast(stagedInvalid.length + " file(s) are invalid, remove them or fix the names.", true);
           return;
         }
         const totalBytes = stagedOk.reduce((s, e) => s + e.file.size, 0);
@@ -2162,7 +2162,7 @@
           } catch (_) {
             detail = await resp.text();
           }
-          throw new Error(`HTTP ${resp.status} — ${detail.slice(0, 300)}`);
+          throw new Error(`HTTP ${resp.status}: ${detail.slice(0, 300)}`);
         }
         const newTask = await resp.json();
         // If the backend gated us on Supabase, skip /execute — the chat in
@@ -2193,7 +2193,7 @@
               let detail = "";
               try { detail = (await ex.json()).detail || ""; }
               catch (_) { detail = (await ex.text()).slice(0, 200); }
-              kickoffError = `HTTP ${ex.status}${detail ? " — " + detail : ""}`;
+              kickoffError = `HTTP ${ex.status}${detail ? ": " + detail : ""}`;
             }
           } catch (e) {
             kickoffError = String(e && e.message ? e.message : e);
@@ -2848,7 +2848,7 @@
 
     function renderVersions(rows) {
       if (!rows.length) {
-        hmList.innerHTML = `<div class="members-empty">No versions yet — the first build hasn't been committed.</div>`;
+        hmList.innerHTML = `<div class="members-empty">No versions yet. The first build hasn't been committed.</div>`;
         return;
       }
       hmList.innerHTML = "";
@@ -2899,7 +2899,7 @@
     async function doRollback(sha) {
       if (!(await confirmModal({
         title: "Rollback to v" + sha.slice(0, 7) + "?",
-        body: `Rollback "${hmCurrentSlug}" to version ${sha.slice(0, 7)}.\n\nA new commit will be added on top — the old versions stay in history so you can come forward again.`,
+        body: `Rollback "${hmCurrentSlug}" to version ${sha.slice(0, 7)}.\n\nA new commit will be added on top and the old versions stay in history so you can come forward again.`,
         confirmText: "Rollback",
         confirmKind: "primary",
       }))) return;
@@ -2918,7 +2918,7 @@
         const res = await r.json();
         showToast(res.noop ? "Already at that version." : `Rolled back to ${sha.slice(0, 7)}.`);
         await refreshHistory();
-        load();  // refresh project cards — status may shift
+        load();  // refresh project cards, status may shift
       } catch (err) {
         showToast("Network error: " + err.message, true);
       }
