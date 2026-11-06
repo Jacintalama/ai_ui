@@ -110,6 +110,26 @@ PROXY_META_ABSENT: frozenset[str] = frozenset({
     "list_servers", "health_check", "refresh_cache",
 })
 
+#: What a model is told when it asks for a tool that is not there.
+#:
+#: 2026-11-06. The ClickUp catalogue was regenerated from ClickUp's own
+#: spec, so list_my_workspaces became get_authorized_teams. A chat already
+#: in progress kept calling the old name out of its own history and got
+#: "The tool X is not available", which Ralph saw relayed as "the
+#: execution route is not available". The model then spent all seven of
+#: its rounds retrying the same dead name.
+#:
+#: The proxy was right and the service was right. The only thing missing
+#: was a sentence saying what to do, so one turn could recover instead of
+#: ending in nothing. Any rename does this to every chat already open, so
+#: this is the common case rather than an edge one.
+NO_SUCH_TOOL = (
+    "There is no tool called {name}. Its name may have changed. To find "
+    "the right one, call search_tools with what you are trying to do, "
+    "then call_tool to run what it returns."
+)
+
+
 def never_ask_about(method_name) -> bool:
     """True when this call must not become a question for the owner.
 
@@ -790,10 +810,7 @@ async def execute_tool_call(
                 await _run_native(source, name, params, user_email, agent_id))
 
         if name in PROXY_META_ABSENT:
-            return outcome.failed(
-                "There is no tool called " + name + ". To find one, call "
-                "search_tools with what you are trying to do, then "
-                "call_tool to run what it returns.")
+            return outcome.failed(NO_SUCH_TOOL.format(name=name))
 
         if name in PROXY_META_METHODS:
             # Straight at the route, carrying the model's own arguments. These
@@ -815,8 +832,7 @@ async def execute_tool_call(
                 "You do not have access to the service behind the tool "
                 + name + ".")
         if response.status_code == 404:
-            return outcome.failed(
-                "The tool " + name + " is not available.")
+            return outcome.failed(NO_SUCH_TOOL.format(name=name))
         if response.status_code >= 400:
             return outcome.failed(
                 "The tool " + name + " could not be run this time.")
