@@ -119,6 +119,55 @@ async def fetch_openapi_from_tenant(tenant_id: str, endpoint: str, api_key: str)
     return None
 
 
+#: How deep to follow a chain of $refs before giving up. A schema that
+#: refers to itself is legal and mcpo emits them; without a ceiling this
+#: recurses until the process dies.
+_MAX_REF_DEPTH = 12
+
+
+def _inline_refs(node, components, _depth=0):
+    """A schema with its $refs replaced by what they point at.
+
+    describe_tools is how a model learns a tool's field names, and it used
+    to hand back whatever the server's OpenAPI said, which for every
+    mcpo-backed tool is
+
+        {"schema": {"$ref": "#/components/schemas/get_lists_form_model"}}
+
+    a pointer into a document the model does not have. So the model
+    guessed: it sent `board_id` where Trello wanted `boardId`, got
+    "-32602 boardId is required", and the chat reported that Trello was
+    not working. Every mcpo tool was shaped this way, which is why Trello
+    and ClickUp failed together while the servers written in this repo
+    were fine.
+
+    A ref that cannot be found is LEFT as it is rather than raised on. One
+    odd tool must not cost every other tool on that server: mcpo itself
+    asserts in this situation, and that is how seven connectors spent a
+    day crash-looping.
+
+    Returns new objects throughout; `components` belongs to the server's
+    spec and is read again for every other tool on it.
+    """
+    if _depth > _MAX_REF_DEPTH:
+        return node
+    if isinstance(node, list):
+        return [_inline_refs(x, components, _depth + 1) for x in node]
+    if not isinstance(node, dict):
+        return node
+
+    ref = node.get("$ref")
+    if isinstance(ref, str) and ref.startswith("#/components/schemas/"):
+        target = components.get(ref.rsplit("/", 1)[-1])
+        if isinstance(target, dict):
+            merged = {k: v for k, v in node.items() if k != "$ref"}
+            merged.update(target)
+            return _inline_refs(merged, components, _depth + 1)
+        return dict(node)        # unknown ref: leave it, do not raise
+
+    return {k: _inline_refs(v, components, _depth + 1) for k, v in node.items()}
+
+
 async def refresh_tools_cache():
     """Fetch and cache tools from all configured servers."""
     global TOOLS_CACHE, OPENAPI_SCHEMAS_CACHE
@@ -188,6 +237,9 @@ async def refresh_tools_cache():
 
         OPENAPI_SCHEMAS_CACHE[server_id] = openapi
 
+        # This server's own schema definitions, for inlining below.
+        _schemas = (openapi.get("components") or {}).get("schemas") or {}
+
         # Extract tools from OpenAPI paths
         tools_count = 0
         for path, methods in openapi.get("paths", {}).items():
@@ -206,9 +258,14 @@ async def refresh_tools_cache():
                         "tenant_id": server_id,
                         "tenant_name": server.display_name,
                         "description": spec.get("summary", spec.get("description", f"{server.display_name}: {original_name}")),
-                        "request_body": spec.get("requestBody", {}),
+                        # Inlined HERE, while this server's components
+                        # are still in hand. describe_tools answers from
+                        # this cache and has no way to resolve a ref later.
+                        "request_body": _inline_refs(
+                            spec.get("requestBody", {}), _schemas),
                         "responses": spec.get("responses", {}),
-                        "parameters": spec.get("parameters", [])
+                        "parameters": _inline_refs(
+                            spec.get("parameters", []), _schemas)
                     }
                     tools_count += 1
 
