@@ -233,10 +233,18 @@ def test_every_prompt_that_lays_out_an_app_asks_for_the_tokens():
         src = fh.read()
     lays_out = src.count("FILE LAYOUT (MANDATORY")
     assert lays_out >= 2, "the prompts moved; re-check this"
-    assert src.count("{theme_block}") == lays_out, (
+    # >= rather than ==: since 2026-11-06 the ENHANCE prompt carries a
+    # block too, and it lays out nothing. Every placeholder is filled
+    # below, from one of the two blocks, so none can raise KeyError.
+    assert src.count("{theme_block}") >= lays_out, (
         "a prompt lays out an app without asking for the theme tokens")
-    assert src.count("theme_block=app_theme.prompt_block()") == lays_out, (
+    filled = (src.count("theme_block=app_theme.prompt_block()")
+              + src.count("theme_block=app_theme.keep_block(slug)"))
+    assert filled == src.count("{theme_block}"), (
         "a placeholder is never filled, so .format would raise KeyError")
+    assert src.count("theme_block=app_theme.prompt_block()") == lays_out, (
+        "a prompt that lays out an app is not asking for the tokens at "
+        "build time")
 
 
 def test_both_prompts_carry_the_tokens_when_built():
