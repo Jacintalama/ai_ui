@@ -241,6 +241,18 @@ MIGRATION = os.path.join(os.path.dirname(__file__), "..", "migrations",
                          "001_init.sql")
 
 
+def _check_list(table: str, column: str):
+    """A CHECK (col IN (...)) list, read from the migration rather than
+    copied, so these cannot drift from the database."""
+    with open(MIGRATION, encoding="utf-8") as fh:
+        sql = fh.read()
+    start = sql.index("CREATE TABLE IF NOT EXISTS tasks." + table)
+    block = sql[start:sql.index(");", start)]
+    line = re.search(r"CHECK \(" + column + r" IN \(([^)]*)\)\)",
+                     block).group(1)
+    return {p.strip().strip("'") for p in line.split(",")}
+
+
 def _statuses_the_database_allows():
     """The CHECK constraint on tasks.executions.status, read from the
     migration rather than copied, so this cannot drift from it."""
@@ -302,7 +314,8 @@ def test_the_real_finish_sends_a_status_the_database_accepts(monkeypatch):
     # Real UUIDs: the columns are UUID, and a literal-bound compile of a
     # string there fails before it can tell us anything about the status.
     asyncio.run(light_runner._finish(_uuid.uuid4(), _uuid.uuid4(),
-                                     status="completed", result="done",
+                                     status="completed",
+                                     result="the site is ready",
                                      slug="bean-there"))
 
     on_the_execution = [s for s in sent if "executions" in s]
@@ -315,3 +328,16 @@ def test_the_real_finish_sends_a_status_the_database_accepts(monkeypatch):
             "the execution row is being sent a status the database will "
             "refuse: %s" % (statuses - allowed))
         assert "succeeded" in words
+
+    # The same class of mistake one column over. The task's own status
+    # has its own CHECK list, and this statement never ran on the live
+    # box because the execution write above raised first.
+    on_the_task = [s for s in sent if "items" in s]
+    assert on_the_task, "nothing was written to the task row"
+    allowed_items = _check_list("items", "status")
+    for sql in on_the_task:
+        words = set(re.findall(r"'([a-z_]+)'", sql))
+        assert "completed" in words
+        assert not (words & {"success", "succeeded"}), (
+            "the task row is being sent an execution's vocabulary")
+        assert (words & allowed_items) == {"completed"}
