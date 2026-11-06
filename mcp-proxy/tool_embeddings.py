@@ -424,11 +424,22 @@ async def prune_renamed_tools(pool: asyncpg.Pool, tools_cache) -> int:
                  for r in rows], live)
             if not stale:
                 return 0
-            deleted = await conn.fetch(
-                "DELETE FROM mcp_proxy.tool_embeddings "
-                "WHERE (server_id, tool_name) = ANY($1::record[]) "
-                "RETURNING tool_name",
-                [(s, t) for s, t in sorted(stale)])
+            # One statement per server rather than a list of pairs:
+            # asyncpg cannot send an anonymous composite, so
+            # "(server_id, tool_name) = ANY($1::record[])" fails with
+            # "input of anonymous composite types is not supported".
+            # Measured on the box 2026-11-06, after the pure decision had
+            # been tested and the SQL had not.
+            by_server: dict = {}
+            for server, tool in stale:
+                by_server.setdefault(server, []).append(tool)
+            deleted = []
+            for server, names_to_go in by_server.items():
+                deleted += await conn.fetch(
+                    "DELETE FROM mcp_proxy.tool_embeddings "
+                    "WHERE server_id = $1 AND tool_name = ANY($2::text[]) "
+                    "RETURNING tool_name",
+                    server, names_to_go)
         log(f"Pruned {len(deleted)} renamed or removed tools: "
             f"{sorted(t for _, t in stale)[:8]}")
         return len(deleted)

@@ -101,3 +101,55 @@ def test_the_decision_is_pure():
     for forbidden in ("await", "conn", "pool", "DELETE"):
         assert forbidden not in src, (
             "the decision touches the database: " + forbidden)
+
+
+# --- the SQL, which the pure tests never touched ------------------------
+
+def test_the_delete_does_not_send_an_anonymous_composite():
+    """The first version used
+
+        WHERE (server_id, tool_name) = ANY($1::record[])
+
+    and asyncpg answered "input of anonymous composite types is not
+    supported". Every test above passed, because they all test the pure
+    decision and none of them run the statement. It failed on the box,
+    silently, caught only by its own fail-open log.
+    """
+    import inspect
+
+    import tool_embeddings
+
+    src = inspect.getsource(tool_embeddings.prune_renamed_tools)
+    # The STATEMENT, not the comments: the comment above it names the
+    # broken form on purpose, so a whole-source search finds itself.
+    i = src.index("DELETE FROM")
+    statement = src[i:i + 220]
+    assert "record[]" not in statement, (
+        "asyncpg cannot send an anonymous composite; delete per server")
+    assert "server_id = $1 AND tool_name = ANY($2::text[])" in statement
+
+
+def test_the_delete_is_scoped_to_one_server_at_a_time():
+    """A statement that names only tool_name would delete another
+    server's tool of the same name."""
+    import inspect
+
+    import tool_embeddings
+
+    src = inspect.getsource(tool_embeddings.prune_renamed_tools)
+    i = src.index("DELETE FROM")
+    statement = src[i:i + 200]
+    assert "server_id = $1" in statement, statement
+
+
+def test_it_still_fails_open():
+    """An index with an extra row is worse than one that could not be
+    tidied. Neither is worth refusing to boot, and this is how the broken
+    query was survivable at all."""
+    import inspect
+
+    import tool_embeddings
+
+    src = inspect.getsource(tool_embeddings.prune_renamed_tools)
+    assert "except Exception" in src
+    assert "return 0" in src.split("except Exception")[1]
