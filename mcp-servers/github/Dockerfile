@@ -10,7 +10,7 @@ COPY --from=github-mcp /server/github-mcp-server /usr/local/bin/github-mcp-serve
 COPY --from=github-mcp /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
 # Install mcpo (MCP-to-OpenAPI wrapper)
-RUN pip install --no-cache-dir mcpo "mcp<2"
+RUN pip install --no-cache-dir mcpo "mcp<2" "fastapi<0.130"
 
 WORKDIR /app
 
