@@ -69,6 +69,44 @@ class Tool:
     #: Some vendors nest a write under a key. HubSpot wants
     #: {"properties": {...}}; everything else takes the fields flat.
     wrap_body: str = ""
+    #: Values sent when the caller did not give one.
+    #:
+    #: Not cosmetic. ClickUp requires `type` on a chat message and rejects
+    #: it without one, and the payload is built from the args that were
+    #: PASSED, so an "optional" field with a default in a comment is simply
+    #: absent and the call is a 400 after the person has approved it.
+    defaults: Dict[str, Any] = _dc_field(default_factory=dict)
+    #: A base URL for THIS tool only, replacing the provider's.
+    #:
+    #: ClickUp's chat lives on /api/v3 while everything else here is
+    #: /api/v2, and until 2026-11-06 there was no way to say so: every
+    #: request was `auth.base_url + path`, so chat was simply unreachable
+    #: and the chat told Ralph that ClickUp channels could not be made
+    #: through an API at all. They can; his account has five.
+    #:
+    #: Per tool rather than per provider on purpose. Moving the provider's
+    #: base to v3 would take list_tasks and create_task with it.
+    base: str = ""
+
+
+def _payload_for(tool: "Tool", args: Optional[Dict[str, Any]]) -> Optional[Dict]:
+    """The JSON body for a write, with the tool's defaults filled in.
+
+    Its own function so a test can read what would be sent without a
+    vendor, a connection or a network. The default is applied only when
+    the caller gave nothing, so a caller that means "post" keeps it.
+    """
+    if not tool.body:
+        return None
+    given = args or {}
+    out = {}
+    for key in tool.body:
+        value = given.get(key)
+        if value in (None, ""):
+            value = tool.defaults.get(key)
+        if value not in (None, ""):
+            out[key] = value
+    return {tool.wrap_body: out} if tool.wrap_body else out
 
 
 async def _secrets_for(email: str, provider: str) -> Dict[str, str]:
@@ -185,14 +223,9 @@ async def _call(provider_id: str, tool: Tool, email: str,
         if v not in (None, ""):
             params[param_name] = v
 
-    payload = None
-    if tool.body:
-        payload = {k: args[k] for k in tool.body
-                   if (args or {}).get(k) not in (None, "")}
-        if tool.wrap_body:
-            payload = {tool.wrap_body: payload}
+    payload = _payload_for(tool, args)
 
-    url = auth.base_url + path
+    url = (tool.base or auth.base_url) + path
     try:
         async with httpx.AsyncClient(timeout=VENDOR_TIMEOUT_SEC) as client:
             r = await client.request(tool.method, url, headers=auth.headers,
@@ -412,6 +445,11 @@ GITHUB_TOOLS = [
          keep=("login", "name", "html_url", "public_repos")),
 ]
 
+#: ClickUp's chat endpoints, which are not on the v2 base every other
+#: ClickUp tool here uses. Verified against ClickUp's own reference on
+#: 2026-11-06: POST /api/v3/workspaces/{workspace_id}/chat/channels.
+CLICKUP_V3 = "https://api.clickup.com/api/v3"
+
 CLICKUP_TOOLS = [
     Tool(name="list_my_workspaces",
          summary="List the ClickUp workspaces (teams) your account can see.",
@@ -451,6 +489,104 @@ CLICKUP_TOOLS = [
          method="GET", path="/user",
          unwrap=lambda d: d.get("user", {}),
          keep=("id", "username", "email")),
+
+    # --- structure: the places tasks live in -----------------------------
+    Tool(name="create_list",
+         summary="Create a new list inside one of your ClickUp spaces.",
+         method="POST", path="/space/{space_id}/list",
+         args={"space_id": ("string", "Space id from list_spaces", True),
+               "name": ("string", "List name", True),
+               "content": ("string", "What the list is for", False)},
+         body=("name", "content"),
+         keep=("id", "name", "task_count")),
+    Tool(name="list_folders",
+         summary="List the folders inside one ClickUp space, given the space id.",
+         method="GET", path="/space/{space_id}/folder",
+         args={"space_id": ("string", "Space id from list_spaces", True)},
+         unwrap=lambda d: d.get("folders", []),
+         keep=("id", "name", "task_count")),
+    Tool(name="create_folder",
+         summary="Create a new folder inside one of your ClickUp spaces.",
+         method="POST", path="/space/{space_id}/folder",
+         args={"space_id": ("string", "Space id from list_spaces", True),
+               "name": ("string", "Folder name", True)},
+         body=("name",),
+         keep=("id", "name")),
+    Tool(name="create_space",
+         summary="Create a new space in one of your ClickUp workspaces.",
+         method="POST", path="/team/{team_id}/space",
+         args={"team_id": ("string", "Workspace id from list_my_workspaces", True),
+               "name": ("string", "Space name", True)},
+         body=("name",),
+         keep=("id", "name", "private")),
+
+    # --- one task at a time ----------------------------------------------
+    Tool(name="get_task",
+         summary="Read one ClickUp task in full, given its id.",
+         method="GET", path="/task/{task_id}",
+         args={"task_id": ("string", "Task id from list_tasks", True)},
+         keep=("id", "name", "description", "status", "due_date", "url",
+               "assignees")),
+    Tool(name="update_task",
+         summary="Change the name, description or status of a ClickUp task.",
+         method="PUT", path="/task/{task_id}",
+         args={"task_id": ("string", "Task id from list_tasks", True),
+               "name": ("string", "New task title", False),
+               "description": ("string", "New description", False),
+               "status": ("string", "New status, as the list spells it", False)},
+         body=("name", "description", "status"),
+         keep=("id", "name", "status", "url")),
+    Tool(name="list_comments",
+         summary="Read the comments on one ClickUp task.",
+         method="GET", path="/task/{task_id}/comment",
+         args={"task_id": ("string", "Task id from list_tasks", True)},
+         unwrap=lambda d: d.get("comments", []),
+         keep=("id", "comment_text", "user", "date")),
+    Tool(name="add_comment",
+         summary="Add a comment to one of your ClickUp tasks.",
+         method="POST", path="/task/{task_id}/comment",
+         args={"task_id": ("string", "Task id from list_tasks", True),
+               "comment_text": ("string", "What the comment says", True)},
+         body=("comment_text",),
+         keep=("id", "date")),
+
+    # --- chat, which is the v3 API ---------------------------------------
+    #
+    # These are the reason Tool grew a `base`. ClickUp's chat endpoints are
+    # on /api/v3 while everything above is /api/v2, and the whole provider
+    # cannot move: list_tasks and create_task are v2 only.
+    Tool(name="list_chat_channels",
+         summary="List the chat channels in one of your ClickUp workspaces.",
+         method="GET", path="/workspaces/{workspace_id}/chat/channels",
+         base=CLICKUP_V3,
+         args={"workspace_id": ("string", "Workspace id from list_my_workspaces", True)},
+         unwrap=lambda d: d.get("data", d.get("channels", [])),
+         keep=("id", "name", "type", "visibility")),
+    Tool(name="create_chat_channel",
+         summary="Create a new chat channel in one of your ClickUp workspaces.",
+         method="POST", path="/workspaces/{workspace_id}/chat/channels",
+         base=CLICKUP_V3,
+         args={"workspace_id": ("string", "Workspace id from list_my_workspaces", True),
+               "name": ("string", "Channel name", True),
+               "description": ("string", "What the channel is for", False),
+               "visibility": ("string", "PUBLIC or PRIVATE, PUBLIC if unsaid", False)},
+         body=("name", "description", "visibility"),
+         keep=("id", "name", "visibility")),
+    Tool(name="send_chat_message",
+         summary="Post a message to one of your ClickUp chat channels.",
+         method="POST",
+         path="/workspaces/{workspace_id}/chat/channels/{channel_id}/messages",
+         base=CLICKUP_V3,
+         args={"workspace_id": ("string", "Workspace id from list_my_workspaces", True),
+               "channel_id": ("string", "Channel id from list_chat_channels", True),
+               "content": ("string", "What the message says", True),
+               # ClickUp requires this and rejects the message without it.
+               # Defaulted rather than asked for: "message" is what a person
+               # means, and "post" is a different thing in their UI.
+               "type": ("string", "message or post, message if unsaid", False)},
+         body=("content", "type"),
+         defaults={"type": "message"},
+         keep=("id", "date")),
 ]
 
 TRELLO_TOOLS = [
@@ -640,6 +776,9 @@ PROVIDER_TOOLS: Dict[str, List[Tool]] = {
     "hubspot": HUBSPOT_TOOLS,
     "zapier": ZAPIER_TOOLS,
 }
+
+#: Every tool of every provider, for checks that should hold everywhere.
+ALL_TOOLS_FLAT = [t for tools in PROVIDER_TOOLS.values() for t in tools]
 
 _TYPES = {"string": (str, ""), "integer": (int, 0), "boolean": (bool, False)}
 
