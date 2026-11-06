@@ -20,6 +20,7 @@ from dataclasses import dataclass
 __all__ = [
     "Token", "TOKENS", "names", "served", "prompt_block", "declared",
     "missing", "is_themeable", "value_problem", "rewrite", "upgrade_prompt",
+    "keep_block", "token_file", "page_path",
 ]
 
 
@@ -136,6 +137,61 @@ def prompt_block() -> str:
         "  3. The app must look finished and deliberate at the values you",
         "     ship. The tokens are for changing it later, not an excuse to",
         "     leave it generic.",
+    ]
+    return "\n".join(lines)
+
+
+def keep_block(slug: str) -> str:
+    """What to tell an agent CHANGING an app that already has tokens.
+
+    "" when the app has none, which is deliberate: an enhance is not the
+    place to force an upgrade, and demanding tokens would turn "fix this
+    typo" into a restyle of an app nobody asked to change. The upgrade
+    offer exists for that and is a button somebody presses.
+
+    Names the file the tokens are ACTUALLY in. `prompt_block` hardcodes
+    `styles/main.css`, which is right for a new agent build and wrong for
+    a one-file app, and that same assumption is what broke the appearance
+    panel and the upgrade offer on 2026-11-06.
+
+    The ENHANCE prompt said nothing about tokens until then, so an app
+    built with all 11 and using them throughout went to an agent that had
+    no idea they existed: "make the buttons green" came back as a
+    hardcoded colour, and the sliders then moved part of the page and not
+    the rest. Half-live sliders are worse than dead ones, because dead
+    ones are obvious.
+    """
+    css = read_css(slug)                        # raises on a bad slug
+    if not is_themeable(css):
+        return ""
+    # Relative to the app, so the agent is told "styles/main.css" rather
+    # than a bare "main.css" it has to go looking for. as_posix because
+    # this is a path in a prompt, not a path on this machine.
+    where = token_file(slug).relative_to(Path(_apps_root()) / slug).as_posix()
+    lines = [
+        "THEME TOKENS (this app's appearance is controlled by the platform,",
+        "and a change that bypasses them breaks that):",
+        "",
+        "  This app declares these CSS variables on :root in " + where + ":",
+        "",
+    ]
+    for t in TOKENS:
+        lines.append("    " + t.name)
+    lines += [
+        "",
+        "  1. KEEP that :root block, with all of those names, in that file.",
+        "     The appearance panel writes into it. Removing or renaming one",
+        "     takes a knob off the person who owns this app.",
+        "",
+        "  2. Any colour, font or corner radius in what you ADD or CHANGE",
+        "     must come from those variables, for example",
+        "     `color: var(--site-text)`. Do NOT hardcode a hex value, a",
+        "     Tailwind colour class or a font name, even in a small change.",
+        "     Hardcoding one leaves the sliders moving part of the page and",
+        "     not the rest, which is harder to spot than nothing moving.",
+        "",
+        "  3. If the request genuinely needs a colour none of them cover,",
+        "     say so in your completion message rather than inventing one.",
     ]
     return "\n".join(lines)
 

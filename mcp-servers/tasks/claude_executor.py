@@ -692,6 +692,8 @@ RULES (in priority order):
      or two sentences on what the app is for, "## What it does", "## How to
      run", "## Changelog". Stage it in the same commit as your code.
 
+{theme_block}
+
 WORKFLOW:
   1. If the request replaces a placeholder value (name, brand, copy):
      run `grep -rln "OLD_VALUE" apps/{slug}/` first, then Edit every
@@ -763,6 +765,11 @@ def build_enhance_prompt(
         slug=slug,
         user_request=user_request,
         error_context_block=err_block,
+        # "" unless this app actually has tokens. An enhance is not the
+        # place to force an upgrade, and this said nothing at all until
+        # 2026-11-06, so a change to a themeable app went to an agent
+        # that had no idea its appearance was controlled by anything.
+        theme_block=app_theme.keep_block(slug),
         supabase_block=_supabase_block(
             supabase_url, has_db_uri=has_db_uri, slug=slug, user_email=user_email
         ),
