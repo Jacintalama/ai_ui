@@ -75,6 +75,24 @@ async def _say(task_id, step: str) -> None:
                        exc_info=True)
 
 
+def _exec_status(status: str) -> str:
+    """The execution row's status, in the words the DATABASE allows.
+
+    Its column has a CHECK constraint (migrations/001_init.sql) listing
+    running, succeeded, failed and needs_input. This wrote "success"
+    between 2026-11-05 and 2026-11-06: an unlisted value raises, the
+    catch-all in `run_light_build` caught it, and every light build told
+    the person the page could not be built AFTER writing and committing a
+    perfectly good page.
+
+    Nothing caught it because `_finish` is stubbed in every unit test, by
+    design, and the only thing that runs this statement is a real build
+    against a real database. Hence the test that drives it with a session
+    that records rather than connects.
+    """
+    return "succeeded" if status == "completed" else "failed"
+
+
 async def _finish(task_id, execution_id, *, status: str, result: str,
                   slug: str | None) -> None:
     """Write the same final state the agent path writes."""
@@ -88,7 +106,7 @@ async def _finish(task_id, execution_id, *, status: str, result: str,
     async with session() as s:
         await s.execute(
             update(TaskExecution).where(TaskExecution.id == execution_id)
-            .values(status=("success" if status == "completed" else "failed"),
+            .values(status=_exec_status(status),
                     finished_at=datetime.utcnow()))
         await s.execute(
             update(TaskItem).where(TaskItem.id == task_id).values(**values))

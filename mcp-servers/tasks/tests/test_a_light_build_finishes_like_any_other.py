@@ -218,3 +218,100 @@ def test_the_slots_are_made_once(monkeypatch):
         return light_runner.slots() is light_runner.slots()
 
     assert asyncio.run(twice()) is True
+
+
+# --- the final write itself ----------------------------------------------
+#
+# Every test above stubs `_finish`, which is the point of them: they are
+# about what happens around the model call. That left the one statement
+# that ends a build unexercised, and it wrote "success" into a column
+# whose CHECK constraint allows "succeeded". So between 2026-11-05 and
+# 2026-11-06 every light build wrote its page, committed it, and then
+# told the person it could not be built.
+#
+# The page was fine. The sentence was a lie. Nothing caught it because
+# the only thing that runs that statement is a real build against a real
+# database, and I had measured the six concurrent builds by the pages
+# they produced rather than the rows they left.
+
+import os
+import re
+
+MIGRATION = os.path.join(os.path.dirname(__file__), "..", "migrations",
+                         "001_init.sql")
+
+
+def _statuses_the_database_allows():
+    """The CHECK constraint on tasks.executions.status, read from the
+    migration rather than copied, so this cannot drift from it."""
+    with open(MIGRATION, encoding="utf-8") as fh:
+        sql = fh.read()
+    start = sql.index("CREATE TABLE IF NOT EXISTS tasks.executions")
+    block = sql[start:sql.index(");", start)]
+    line = re.search(r"CHECK \(status IN \(([^)]*)\)\)", block).group(1)
+    return {p.strip().strip("'") for p in line.split(",")}
+
+
+def test_the_database_allows_succeeded_and_not_success():
+    """Guards the test below: if the constraint is ever relaxed, that one
+    stops proving anything and this says so."""
+    allowed = _statuses_the_database_allows()
+    assert "succeeded" in allowed
+    assert "success" not in allowed
+
+
+@pytest.mark.parametrize("status,want", [("completed", "succeeded"),
+                                         ("failed", "failed")])
+def test_the_execution_status_is_one_the_database_will_accept(status, want):
+    assert light_runner._exec_status(status) == want
+    assert want in _statuses_the_database_allows()
+
+
+def test_it_writes_the_same_word_the_agent_path_writes():
+    """Not a near miss. The agent path has written "succeeded" since the
+    first migration, and a second vocabulary for the same column is how
+    this went wrong."""
+    src = open(os.path.join(os.path.dirname(__file__), "..",
+                            "routes_execution.py"), encoding="utf-8").read()
+    assert '"completed": "succeeded",' in src
+    assert light_runner._exec_status("completed") == "succeeded"
+
+
+def test_the_real_finish_sends_a_status_the_database_accepts(monkeypatch):
+    """Drives the actual statement, with a session that records instead of
+    connecting. This is the test that was missing."""
+    sent = []
+
+    class FakeSession:
+        async def execute(self, stmt):
+            sent.append(str(stmt.compile(
+                compile_kwargs={"literal_binds": True})))
+
+        async def commit(self):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    import uuid as _uuid
+
+    monkeypatch.setattr(light_runner, "session", lambda: FakeSession())
+    # Real UUIDs: the columns are UUID, and a literal-bound compile of a
+    # string there fails before it can tell us anything about the status.
+    asyncio.run(light_runner._finish(_uuid.uuid4(), _uuid.uuid4(),
+                                     status="completed", result="done",
+                                     slug="bean-there"))
+
+    on_the_execution = [s for s in sent if "executions" in s]
+    assert on_the_execution, "nothing was written to the execution row"
+    allowed = _statuses_the_database_allows()
+    for sql in on_the_execution:
+        words = set(re.findall(r"'([a-z_]+)'", sql))
+        statuses = words & (allowed | {"success", "succeed", "ok", "done"})
+        assert statuses <= allowed, (
+            "the execution row is being sent a status the database will "
+            "refuse: %s" % (statuses - allowed))
+        assert "succeeded" in words
