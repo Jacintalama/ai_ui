@@ -130,3 +130,67 @@ def test_the_check_would_catch_an_unpinned_install(tmp_path):
     assert _installs(str(bad)), "the regex does not recognise an install"
     with pytest.raises(AssertionError):
         test_no_mcpo_install_is_left_unpinned(str(bad))
+
+
+# --- the pin has to survive the SHELL, not just appear in the file -------
+#
+# It did not, on 2026-11-06. The four compose connectors run their install
+# inside `bash -c "..."`, so writing the pin as "mcp<2" CLOSED the outer
+# double-quoted string and bash read `<2` as a redirect. What actually
+# ran was
+#
+#     pip3 install --break-system-packages mcpo mcp
+#
+# which installed the newest mcp, which is the thing the pin exists to
+# prevent. Every test above passed the whole time, because the text was
+# in the file exactly as expected.
+#
+# The three Dockerfiles were fine, because their RUN is not nested inside
+# another quoted string, which is exactly why those three recovered and
+# these four did not. That difference is what the text-matching tests
+# could not see.
+
+def _compose_services():
+    import yaml
+    with open(COMPOSE, encoding="utf-8") as fh:
+        return (yaml.safe_load(fh).get("services") or {})
+
+
+MCPO_SERVICES = ("mcp-filesystem", "mcp-clickup", "mcp-trello", "mcp-sonarqube")
+
+
+def test_those_four_services_are_still_the_ones_that_install_at_startup():
+    svcs = _compose_services()
+    for name in MCPO_SERVICES:
+        assert name in svcs, name
+        assert "mcpo" in (svcs[name].get("command") or ""), name
+
+
+@pytest.mark.parametrize("name", MCPO_SERVICES)
+def test_the_pins_are_single_quoted_so_the_outer_string_survives(name):
+    """These four run their install INSIDE `bash -c "..."`. Writing a pin
+    as "mcp<2" closes that outer double-quoted string, and what reaches
+    the container is
+
+        pip3 install --break-system-packages mcpo mcp
+
+    with the pins gone. Measured on the box 2026-11-06: docker inspect
+    showed the command truncated at exactly that point, pip reported
+    "Requirement already satisfied: mcp (2.3.0)", and all four kept
+    crash-looping while the three Dockerfile connectors recovered. The
+    Dockerfiles were fine because their RUN is not nested inside another
+    quoted string.
+
+    Single quotes are literal to every parser in the chain: the YAML
+    folded block, docker compose's command splitter, and bash. That is
+    the rule, and it is checked as a rule because modelling the three
+    parsers was wrong twice.
+    """
+    command = _compose_services()[name]["command"]
+    for pin in ("mcp<2", "fastapi<0.130"):
+        assert "'" + pin + "'" in command, (
+            "%s must be single-quoted in %s, or the outer bash -c string "
+            "swallows it" % (pin, name))
+        assert '"' + pin + '"' not in command, (
+            "%s is double-quoted in %s, which closes the bash -c string "
+            "and drops the pin" % (pin, name))
