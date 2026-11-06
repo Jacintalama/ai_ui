@@ -1295,6 +1295,60 @@ async def _none():
     return None
 
 
+def _mentioned(text, agents, route_only: bool) -> list[dict]:
+    """The agents this message actually addresses BY NAME.
+
+    `match_agents` returns every agent when a collective word appears
+    anywhere in the sentence, and in the main chat that is not a mention.
+    On 2026-11-06 Ralph typed "name the space aiui team", named nobody,
+    and nine agents answered, each running seven rounds of tool calls
+    before declining because they are read only.
+
+    Same complaint as 2026-10-28, when a general question was handed to
+    the Researcher. The fix then turned off the three rungs that reach an
+    agent without a mention and left this one on, because a collective
+    word looked like a mention. It is not one.
+
+    So in the main chat a collective word ALONE reaches nobody. A real
+    name still does everything it did, including "Ada and everyone",
+    which is a mention and keeps its meaning. The panel and the office are
+    untouched: asking the room is what those surfaces are for, and
+    `route_only` is what marks the main chat.
+
+    AGENTS_ANSWER_UNNAMED=1 puts the old behaviour back, the same one
+    switch as the earlier guard.
+    """
+    hay = text if isinstance(text, str) else ""
+    found = agent_routing.match_agents(hay, agents)
+    if not found or not route_only or _agents_may_take_unnamed():
+        return found
+    if not agent_routing.addresses_everyone(hay):
+        return found
+    # A collective word was used. It only counts when a real name was used
+    # too, which is what tells "Ada and everyone" from "aiui team".
+    return found if _named_outright(hay, agents) else []
+
+
+def _named_outright(text: str, agents) -> bool:
+    """True when an agent's own name appears, ignoring collective words.
+
+    Asked separately rather than by stripping the sentence, because a name
+    can sit anywhere and a stripped sentence changes the word boundaries
+    the matcher relies on.
+    """
+    for a in agents or []:
+        if not isinstance(a, dict):
+            continue
+        name = a.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        if agent_routing.match_agents(name.strip(), [a]):
+            if agent_routing._whole_word_hit(str(text).lower(),
+                                             name.strip().lower()):
+                return True
+    return False
+
+
 async def _jev_decision(body: ChatIn, text: str, agents: list[dict]) -> dict | None:
     """The agent Jev is sure should take this message, or None. Never
     raises: Jev is a bonus on top of a working chat."""
@@ -1845,7 +1899,8 @@ async def _route_chat(body: ChatIn, x_internal_secret: str = "") -> dict:
             turns = [{"agent": None, "answer": NOT_YOUR_AGENT, "notes": []}]
             return _reply(turns, queue=[], marker="")
     else:
-        named = agent_routing.match_agents(text, agents)
+        named = _mentioned(text, agents,
+                           route_only=bool(getattr(body, "route_only", False)))
 
     if named:
         # Naming agents switches rather than stacking: the LAST one named is
