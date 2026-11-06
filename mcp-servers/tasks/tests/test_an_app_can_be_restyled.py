@@ -195,8 +195,21 @@ def test_saving_nothing_is_refused_rather_than_committing_an_empty_change():
 
 # --- the way out for the 51 apps that predate this -----------------------
 
-def test_the_upgrade_asks_for_exactly_the_tokens_the_panel_writes():
-    said = T.upgrade_prompt()
+@pytest.mark.parametrize("layout", ["stylesheet", "one file"])
+def test_the_upgrade_asks_for_exactly_the_tokens_the_panel_writes(
+        layout, tmp_path, monkeypatch):
+    """Both layouts. The prompt takes the slug since 2026-11-06 because
+    WHERE the block goes depends on the app, and the tokens it asks for
+    must not depend on that."""
+    monkeypatch.setenv("APPS_ROOT", str(tmp_path))
+    app = tmp_path / "bean-there"
+    if layout == "stylesheet":
+        (app / "styles").mkdir(parents=True)
+        (app / "styles" / "main.css").write_text(".a{}", encoding="utf-8")
+    else:
+        app.mkdir(parents=True)
+        (app / "index.html").write_text("<html></html>", encoding="utf-8")
+    said = T.upgrade_prompt("bean-there")
     for n in T.names():
         assert n in said, f"the upgrade never asks for {n}"
     # Normalised, because where the prompt happens to wrap is not the
