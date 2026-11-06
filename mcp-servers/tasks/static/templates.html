@@ -263,7 +263,7 @@
   <div class="container">
     <div class="page-header">
       <h2>Pick a starting point</h2>
-      <p>Featured templates ship with a working base app — files land in your project the moment you click Use this template, then the AIUI Agent personalizes the copy and brand for you.</p>
+      <p>Featured templates ship with a working base app. Files land in your project the moment you click Use this template, then the AIUI Agent personalizes the copy and brand for you.</p>
     </div>
 
     <div class="filter-row" id="filter-row">
@@ -358,7 +358,7 @@
         render();
       } catch (e) {
         document.getElementById("grid").innerHTML =
-          '<div class="empty">Couldn\'t load templates — ' + escapeHtml(e.message || String(e)) + '</div>';
+          '<div class="empty">Couldn\'t load templates: ' + escapeHtml(e.message || String(e)) + '</div>';
       }
     }
 
