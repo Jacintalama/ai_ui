@@ -288,9 +288,53 @@ async def hold(email: str, agent_id: str, agent_name: str, pending: dict,
         return None
 
 
+def is_answerable(row) -> bool:
+    """True unless this question is about a call that cannot run.
+
+    2026-11-06. Ralph said yes to creating a ClickUp space and was told
+    "More than one question is waiting, so I did not guess which you
+    meant", with four rows listed. Two were `refresh_cache`, which does
+    not exist and 404s, so they could never be answered usefully and sat
+    in the queue making every later yes ambiguous.
+
+    `never_ask_about` stops new ones being created. This is about the ones
+    already in the table, and about any future method that stops existing.
+
+    The TTL is not the answer here. It is 24 hours on purpose, because an
+    automation fires when nobody is watching. These were hours old and
+    correctly unexpired; they were never answerable, which is a different
+    thing.
+
+    A row with no held calls is ANSWERABLE. Older rows and rows from other
+    surfaces carry none, and they are somebody's real question: a check
+    that cannot see inside a row must not throw it away.
+    """
+    import agent_tools
+
+    if not isinstance(row, dict):
+        return False
+    held = row.get("held")
+    calls = held.get("calls") if isinstance(held, dict) else None
+    if not isinstance(calls, list) or not calls:
+        return True
+    for call in calls:
+        fn = call.get("function") if isinstance(call, dict) else None
+        name = fn.get("name") if isinstance(fn, dict) else None
+        if not agent_tools.never_ask_about(name):
+            return True
+    return False
+
+
 async def pending_for(email: str) -> list[dict]:
+    """What is really waiting for this person.
+
+    Questions about calls that cannot run are left out rather than
+    deleted: the row is still the record of what an agent tried, and the
+    Agents page can still show it. It simply stops being counted as
+    something somebody has to answer.
+    """
     try:
-        return await _pending(email)
+        return [r for r in await _pending(email) if is_answerable(r)]
     except Exception:                                       # noqa: BLE001
         logger.warning("approvals could not be read", exc_info=True)
         return []
