@@ -970,5 +970,5 @@ async def make_app_themeable(slug: str,
                             detail="This app's appearance can already be changed")
 
     task_id, out_slug = await _create_and_spawn_enhance(
-        user.email, slug, app_theme.upgrade_prompt())
+        user.email, slug, app_theme.upgrade_prompt(slug))
     return BuildResponse(task_id=task_id, slug=out_slug, status="running")

@@ -140,20 +140,40 @@ def prompt_block() -> str:
     return "\n".join(lines)
 
 
-def upgrade_prompt() -> str:
+def upgrade_prompt(slug: str) -> str:
     """The enhance that makes an app built before today themeable.
 
     Deliberately narrow. The point is that the app looks the same
     afterwards, with its existing palette lifted into tokens, so somebody
     can press this without gambling their site on a redesign.
+
+    Takes the slug because WHERE the block goes depends on the app. This
+    named `styles/main.css` for every app until 2026-11-06, so an upgrade
+    on a one-file page would have created a stylesheet the page does not
+    load: sliders that move nothing, which is the failure this offer
+    exists to avoid.
     """
+    one_file = token_file(slug).suffix.lower() in (".html", ".htm")
+    if one_file:
+        where = [
+            "Read the app's existing colours, fonts and corner radii out of",
+            "its markup. Lift those EXISTING values into a :root block inside",
+            "the <style> block in index.html, which is this app's only file.",
+            "DO NOT create a stylesheet: this page does not load one, so a",
+            "stylesheet would change nothing. Use these exact names:",
+        ]
+    else:
+        where = [
+            "Read the app's existing colours, fonts and corner radii out of",
+            "its markup and stylesheet. Lift those EXISTING values into a",
+            ":root block at the top of styles/main.css using these exact",
+            "names:",
+        ]
     lines = [
         "Make this app's appearance changeable, WITHOUT changing how it",
         "currently looks.",
         "",
-        "Read the app's existing colours, fonts and corner radii out of its",
-        "markup and stylesheet. Lift those EXISTING values into a :root block",
-        "at the top of styles/main.css using these exact names:",
+    ] + where + [
         "",
     ]
     for t in TOKENS:
@@ -165,8 +185,8 @@ def upgrade_prompt() -> str:
         "current look, and use 1 for the three scales.",
         "",
         "Then replace the hardcoded colours, fonts and radii throughout the",
-        "markup and CSS with those tokens, wiring Tailwind to them with an",
-        "inline tailwind.config in <head> if the app uses Tailwind.",
+        "markup with those tokens, wiring Tailwind to them with an inline",
+        "tailwind.config in <head> if the app uses Tailwind.",
         "",
         "The finished app must render IDENTICALLY to how it renders now. Do",
         "not change the layout, the copy, the images or the design. This is a",
@@ -327,7 +347,7 @@ def _apps_root() -> str:
 
 
 def css_path(slug: str) -> Path:
-    """Where this app's stylesheet lives.
+    """Where this app's stylesheet lives, if it has one.
 
     The slug is re-checked here even though callers check it, because this
     is the function that turns a string into a filesystem path and a
@@ -338,18 +358,57 @@ def css_path(slug: str) -> Path:
     return Path(_apps_root()) / slug / "styles" / "main.css"
 
 
-def read_css(slug: str) -> str:
-    """The app's stylesheet, or '' if it has none.
+def page_path(slug: str) -> Path:
+    """The app's single page, for an app that is one file."""
+    if not _SLUG_RE.match(str(slug or "")):
+        raise ValueError("that is not an app name")
+    return Path(_apps_root()) / slug / "index.html"
 
-    An app with no stylesheet is simply not themeable yet, which is a
-    normal answer and not an error.
+
+def token_file(slug: str) -> Path:
+    """Where this app's tokens actually are.
+
+    Two layouts. The agent writes `styles/main.css` and links it, and 51
+    of the apps on the box are that shape. The light lane writes ONE
+    file, `index.html`, with the tokens in an inline `:root` block, and
+    that lane takes nearly every build now.
+
+    Until 2026-11-06 this only ever named the stylesheet, so a one-file
+    app read as having no tokens at all and the panel offered to upgrade
+    an app built thirty seconds earlier. Worse, the upgrade writes a
+    stylesheet that a one-file page does not load, which is sliders that
+    move nothing: the exact failure the upgrade offer exists to avoid.
+
+    The stylesheet wins when it exists, because a page that links one has
+    a `<link>` and no tokens of its own. An app with neither points at
+    where a stylesheet would go, so the upgrade path has a target and so
+    this never hands a caller None.
     """
+    sheet = css_path(slug)
+    if sheet.is_file():
+        return sheet
+    page = page_path(slug)
+    if page.is_file():
+        return page
+    return sheet
+
+
+def _read(path: Path) -> str:
     try:
-        return css_path(slug).read_text(encoding="utf-8")
+        return path.read_text(encoding="utf-8")
     except (FileNotFoundError, NotADirectoryError):
         return ""
     except OSError:
         return ""
+
+
+def read_css(slug: str) -> str:
+    """The text that holds this app's tokens, or '' if there is none.
+
+    An app with no tokens anywhere is simply not themeable yet, which is
+    a normal answer and not an error.
+    """
+    return _read(token_file(slug))
 
 
 def state(slug: str) -> dict:
@@ -365,13 +424,23 @@ def state(slug: str) -> dict:
 
 
 def save(slug: str, values: dict) -> list[str]:
-    """Write these token values into the app's stylesheet.
+    """Write these token values back into whichever file holds them.
 
     Returns the token names written. Raises ValueError on anything
     `value_problem` refuses, via `rewrite`.
+
+    A page with no `:root` block is REFUSED rather than rewritten.
+    `rewrite` prepends a block when it finds none, which is right for a
+    stylesheet and would put bare CSS in front of the doctype of
+    somebody's page. The route does not gate on `themeable` before
+    calling this, so the check belongs here.
     """
-    path = css_path(slug)
-    css = read_css(slug)
+    path = token_file(slug)
+    css = _read(path)
+    if path.suffix.lower() in (".html", ".htm") and _root_body(css) is None:
+        raise ValueError(
+            "this page has no appearance settings yet, so there is nothing "
+            "to change")
     out = rewrite(css, values)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(out, encoding="utf-8")
