@@ -28,11 +28,45 @@ import agent_approvals as A
 import agent_tools as T
 
 
-def _row(name, status="pending"):
-    return {"id": "r-" + name, "status": status, "agent_name": "Main chat",
-            "question": "This will run:\n  " + name + "\n\nReply yes to let "
-                        "it, or no to skip.",
-            "held": {"calls": [{"function": {"name": name, "arguments": "{}"}}]}}
+def _row(name, status="pending", with_held=False):
+    """A row shaped the way PRODUCTION produces it.
+
+    `row_of` is what every route and the page see, and it deliberately
+    leaves the held conversation out because it can carry the person's own
+    mail. The first version of this file built rows WITH held calls, which
+    production never produces: the check passed every test here and was a
+    no-op on the server, and the four stuck questions were still there
+    after it deployed.
+
+    The question text comes from the real builder rather than a copy, so a
+    change to its shape fails here instead of silently on the box.
+    """
+    import routes_agent_turn
+
+    question = routes_agent_turn.approval_question(
+        None, [{"function": {"name": name, "arguments": "{}"}}])
+    row = {"id": "r-" + name, "status": status, "agent_name": "Main chat",
+           "question": question}
+    if with_held:
+        row["held"] = {"calls": [{"function": {"name": name,
+                                               "arguments": "{}"}}]}
+    return row
+
+
+def test_the_row_this_file_builds_is_the_shape_routes_return():
+    """Guards every test below. A fixture carrying fields production does
+    not produce is testing something else."""
+    fields = set(_row("create_app"))
+    assert "question" in fields
+    assert "held" not in fields
+    assert A._tools_named_in(_row("create_app")["question"]) == ["create_app"]
+
+
+def test_the_held_calls_are_used_when_a_caller_has_them():
+    """Some callers do read the held conversation. When they do, that is
+    better evidence than the sentence."""
+    assert A.is_answerable(_row("refresh_cache", with_held=True)) is False
+    assert A.is_answerable(_row("create_app", with_held=True)) is True
 
 
 # --- the rule -----------------------------------------------------------
