@@ -8,7 +8,7 @@ USER root
 
 # Install mcpo for OpenAPI compatibility with mcp-proxy
 RUN apk add --no-cache python3 py3-pip && \
-    pip3 install --break-system-packages mcpo
+    pip3 install --break-system-packages mcpo "mcp<2"
 
 EXPOSE 8000
 
