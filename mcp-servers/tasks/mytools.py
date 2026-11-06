@@ -450,144 +450,29 @@ GITHUB_TOOLS = [
 #: 2026-11-06: POST /api/v3/workspaces/{workspace_id}/chat/channels.
 CLICKUP_V3 = "https://api.clickup.com/api/v3"
 
-CLICKUP_TOOLS = [
-    Tool(name="list_my_workspaces",
-         summary="List the ClickUp workspaces (teams) your account can see.",
-         method="GET", path="/team",
-         unwrap=lambda d: d.get("teams", []),
-         keep=("id", "name", "color")),
-    Tool(name="list_spaces",
-         summary="List the ClickUp spaces inside one workspace, given its id.",
-         method="GET", path="/team/{team_id}/space",
-         args={"team_id": ("string", "Workspace id from list_my_workspaces", True)},
-         unwrap=lambda d: d.get("spaces", []),
-         keep=("id", "name", "private")),
-    Tool(name="list_lists",
-         summary="List the ClickUp lists inside one space, given the space id.",
-         method="GET", path="/space/{space_id}/list",
-         args={"space_id": ("string", "Space id from list_spaces", True)},
-         unwrap=lambda d: d.get("lists", []),
-         keep=("id", "name", "task_count")),
-    Tool(name="list_tasks",
-         summary="List the tasks in one ClickUp list, given the list id.",
-         method="GET", path="/list/{list_id}/task",
-         query={"include_closed": "include_closed"},
-         args={"list_id": ("string", "List id from list_lists", True),
-               "include_closed": ("boolean", "Include finished tasks", False)},
-         unwrap=lambda d: d.get("tasks", []),
-         keep=("id", "name", "status", "due_date", "url", "assignees")),
-    Tool(name="create_task",
-         summary="Create a new task in one of your ClickUp lists.",
-         method="POST", path="/list/{list_id}/task",
-         args={"list_id": ("string", "List id from list_lists", True),
-               "name": ("string", "Task title", True),
-               "description": ("string", "Task description", False)},
-         body=("name", "description"),
-         keep=("id", "name", "url", "status")),
-    Tool(name="whoami",
-         summary="Show which ClickUp account is currently connected to your assistant.",
-         method="GET", path="/user",
-         unwrap=lambda d: d.get("user", {}),
-         keep=("id", "username", "email")),
+#: ClickUp is GENERATED from ClickUp's own OpenAPI specs, all 172
+#: operations, rather than hand-written. Six were written by hand and the
+#: chat told Ralph that ClickUp could not do the rest; it could, and a
+#: field name wrong by one character fails after somebody has approved the
+#: call. See tools/generate_clickup_tools.py.
+#:
+#: `whoami` is kept by hand because nothing in the spec answers "which
+#: account am I actually connected as", which is the first question when
+#: a connection is bound to the wrong person, and that happened on
+#: 2026-11-06.
+def _clickup_tools():
+    import clickup_generated
+    mine = Tool(name="whoami",
+                summary="Show which ClickUp account is currently connected "
+                        "to your assistant.",
+                method="GET", path="/user",
+                unwrap=lambda d: d.get("user", {}),
+                keep=("id", "username", "email"))
+    return [mine] + [t for t in clickup_generated.build(Tool)
+                     if t.name != "whoami"]
 
-    # --- structure: the places tasks live in -----------------------------
-    Tool(name="create_list",
-         summary="Create a new list inside one of your ClickUp spaces.",
-         method="POST", path="/space/{space_id}/list",
-         args={"space_id": ("string", "Space id from list_spaces", True),
-               "name": ("string", "List name", True),
-               "content": ("string", "What the list is for", False)},
-         body=("name", "content"),
-         keep=("id", "name", "task_count")),
-    Tool(name="list_folders",
-         summary="List the folders inside one ClickUp space, given the space id.",
-         method="GET", path="/space/{space_id}/folder",
-         args={"space_id": ("string", "Space id from list_spaces", True)},
-         unwrap=lambda d: d.get("folders", []),
-         keep=("id", "name", "task_count")),
-    Tool(name="create_folder",
-         summary="Create a new folder inside one of your ClickUp spaces.",
-         method="POST", path="/space/{space_id}/folder",
-         args={"space_id": ("string", "Space id from list_spaces", True),
-               "name": ("string", "Folder name", True)},
-         body=("name",),
-         keep=("id", "name")),
-    Tool(name="create_space",
-         summary="Create a new space in one of your ClickUp workspaces.",
-         method="POST", path="/team/{team_id}/space",
-         args={"team_id": ("string", "Workspace id from list_my_workspaces", True),
-               "name": ("string", "Space name", True)},
-         body=("name",),
-         keep=("id", "name", "private")),
 
-    # --- one task at a time ----------------------------------------------
-    Tool(name="get_task",
-         summary="Read one ClickUp task in full, given its id.",
-         method="GET", path="/task/{task_id}",
-         args={"task_id": ("string", "Task id from list_tasks", True)},
-         keep=("id", "name", "description", "status", "due_date", "url",
-               "assignees")),
-    Tool(name="update_task",
-         summary="Change the name, description or status of a ClickUp task.",
-         method="PUT", path="/task/{task_id}",
-         args={"task_id": ("string", "Task id from list_tasks", True),
-               "name": ("string", "New task title", False),
-               "description": ("string", "New description", False),
-               "status": ("string", "New status, as the list spells it", False)},
-         body=("name", "description", "status"),
-         keep=("id", "name", "status", "url")),
-    Tool(name="list_comments",
-         summary="Read the comments on one ClickUp task.",
-         method="GET", path="/task/{task_id}/comment",
-         args={"task_id": ("string", "Task id from list_tasks", True)},
-         unwrap=lambda d: d.get("comments", []),
-         keep=("id", "comment_text", "user", "date")),
-    Tool(name="add_comment",
-         summary="Add a comment to one of your ClickUp tasks.",
-         method="POST", path="/task/{task_id}/comment",
-         args={"task_id": ("string", "Task id from list_tasks", True),
-               "comment_text": ("string", "What the comment says", True)},
-         body=("comment_text",),
-         keep=("id", "date")),
-
-    # --- chat, which is the v3 API ---------------------------------------
-    #
-    # These are the reason Tool grew a `base`. ClickUp's chat endpoints are
-    # on /api/v3 while everything above is /api/v2, and the whole provider
-    # cannot move: list_tasks and create_task are v2 only.
-    Tool(name="list_chat_channels",
-         summary="List the chat channels in one of your ClickUp workspaces.",
-         method="GET", path="/workspaces/{workspace_id}/chat/channels",
-         base=CLICKUP_V3,
-         args={"workspace_id": ("string", "Workspace id from list_my_workspaces", True)},
-         unwrap=lambda d: d.get("data", d.get("channels", [])),
-         keep=("id", "name", "type", "visibility")),
-    Tool(name="create_chat_channel",
-         summary="Create a new chat channel in one of your ClickUp workspaces.",
-         method="POST", path="/workspaces/{workspace_id}/chat/channels",
-         base=CLICKUP_V3,
-         args={"workspace_id": ("string", "Workspace id from list_my_workspaces", True),
-               "name": ("string", "Channel name", True),
-               "description": ("string", "What the channel is for", False),
-               "visibility": ("string", "PUBLIC or PRIVATE, PUBLIC if unsaid", False)},
-         body=("name", "description", "visibility"),
-         keep=("id", "name", "visibility")),
-    Tool(name="send_chat_message",
-         summary="Post a message to one of your ClickUp chat channels.",
-         method="POST",
-         path="/workspaces/{workspace_id}/chat/channels/{channel_id}/messages",
-         base=CLICKUP_V3,
-         args={"workspace_id": ("string", "Workspace id from list_my_workspaces", True),
-               "channel_id": ("string", "Channel id from list_chat_channels", True),
-               "content": ("string", "What the message says", True),
-               # ClickUp requires this and rejects the message without it.
-               # Defaulted rather than asked for: "message" is what a person
-               # means, and "post" is a different thing in their UI.
-               "type": ("string", "message or post, message if unsaid", False)},
-         body=("content", "type"),
-         defaults={"type": "message"},
-         keep=("id", "date")),
-]
+CLICKUP_TOOLS = _clickup_tools()
 
 TRELLO_TOOLS = [
     Tool(name="list_my_boards",
