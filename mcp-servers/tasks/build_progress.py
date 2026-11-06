@@ -88,6 +88,43 @@ def lane_of_name(lane: str) -> str:
     a typo in a query string shows a real list rather than nothing."""
     return LIGHT_LANE if str(lane or "") == LIGHT_LANE else AGENT_LANE
 
+
+#: What to call each lane where somebody can see it. Two words, because
+#: this is a heading above the steps and the reason a build took the slow
+#: lane is said in full in the reply itself.
+LANE_SAID = {
+    LIGHT_LANE: "Simple site",
+    AGENT_LANE: "Full builder",
+}
+
+
+#: How long this lane takes, for the overlay somebody watches while it
+#: runs. Served, not written into the page, which held one sentence for
+#: both lanes and promised every build two to five minutes and a test
+#: run: a plain site takes under a minute and runs no tests, and most
+#: builds are plain sites.
+LANE_WAIT = {
+    LIGHT_LANE: ("Sit tight. This is a plain site, written in one go, and "
+                 "it usually takes under a minute."),
+    AGENT_LANE: ("Sit tight. Creating files, writing code and running "
+                 "tests. This usually takes 2 to 5 minutes."),
+}
+
+
+def lane_wait(lane: str) -> str:
+    """What to tell somebody who is waiting on this lane."""
+    return LANE_WAIT[lane_of_name(lane)]
+
+
+def lane_said(lane: str) -> str:
+    """The lane's name in a person's words.
+
+    Served rather than copied into a page, for the same reason the step
+    sentences are: there are two surfaces showing a build, and a second
+    copy of this is a second place to change.
+    """
+    return LANE_SAID[lane_of_name(lane)]
+
 #: Not part of that walk. "guard" means a change broke the app and is being
 #: undone; "asking" means the build stopped to ask something. Neither is a
 #: stage you pass through on the way to a finished app, and showing them in

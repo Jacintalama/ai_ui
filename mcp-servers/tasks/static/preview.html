@@ -2341,7 +2341,7 @@
 <div class="build-overlay" id="build-overlay" hidden>
   <div class="wand"></div>
   <h2 id="build-title">AIUI Agent is building your app…</h2>
-  <div class="sub" id="build-sub">Sit tight — creating files, writing code, and running tests. This usually takes 2–5 minutes.</div>
+  <div class="sub" id="build-sub">Sit tight. Getting your app started.</div>
   <div id="build-userprompt" hidden style="margin:8px auto 2px; max-width:640px; font-size:13px; opacity:0.85; font-style:italic; white-space:pre-wrap;"></div>
   <div class="phase-chip" id="build-phase">Starting up</div>
   <div class="progress-bar" id="build-progress"></div>
@@ -3356,8 +3356,13 @@
         // running). Don't clobber the failed-state copy set elsewhere.
         if ($bovTitle.textContent === "AIUI Agent has a question") {
           $bovTitle.textContent = "AIUI Agent is building your app…";
-          $bovSub.textContent = "Sit tight — creating files, writing code, and running tests. This usually takes 2–5 minutes.";
         }
+        // Which lane this build is actually on, in the service's words.
+        // Every poll, not only on the way back from a question: the sub
+        // line held one sentence for both lanes and promised every build
+        // two to five minutes and a test run, and a plain site takes
+        // under a minute and runs no tests.
+        if (task.build_wait) $bovSub.textContent = task.build_wait;
         _bovResetStructuredQuestions();
       }
 
@@ -3468,7 +3473,7 @@
       try {
         await apiFetch("POST", "/" + taskId + "/execute");
         $bovTitle.textContent = "AIUI Agent is building your app…";
-        $bovSub.textContent = "Sit tight — creating files, writing code, and running tests.";
+        $bovSub.textContent = "Sit tight. Getting your app started.";
       } catch (err) {
         $bovTitle.textContent = "⚠ Could not start";
         $bovSub.textContent = (err && err.message) || "Backend rejected the request.";

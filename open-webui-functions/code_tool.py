@@ -182,10 +182,19 @@ class Tools:
                                     agent_id=self._agent(__model__))
         except RuntimeError as exc:
             return self._message(exc)
+        # Which lane, in the service's words. A plain site is written in
+        # under a minute; anything needing login, a database or a template
+        # goes to the full builder and takes several. This reply used to
+        # promise every build a few minutes, a smoke test and an automatic
+        # rollback, which stopped being true for most of them the day the
+        # light lane shipped. The sentence is served so there is one copy.
+        note = str(data.get("note") or "").strip()
+        if not note:
+            note = ("It takes a few minutes, and it is smoke tested when it "
+                    "finishes and rolled back automatically if it breaks.")
         said = ("Building " + (data.get("slug") or "the app")
                 + " now: " + (description or "").strip()
-                + ". It takes a few minutes, and it is smoke tested when it "
-                  "finishes and rolled back automatically if it breaks.")
+                + ". " + note)
         # DECLARED, not linked. The page draws the build itself: the
         # steps it is walking, and the site when it is done. A URL in the
         # reply is a second way to see the same thing, and it is the worse

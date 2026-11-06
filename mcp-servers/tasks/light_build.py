@@ -27,7 +27,8 @@ from pathlib import Path
 import app_theme
 
 __all__ = [
-    "needs_the_agent", "page_prompt", "html_from", "page_problem",
+    "needs_the_agent", "lane_for", "lane_note", "LANE_LIGHT", "LANE_AGENT",
+    "page_prompt", "html_from", "page_problem",
     "write_site", "readme_for",
 ]
 
@@ -91,6 +92,62 @@ def needs_the_agent(description: str) -> str | None:
         if pattern.search(text):
             return why
     return None
+
+
+#: Lane names. The same two strings `build_progress` derives from a step,
+#: so a task on disk and a fresh decision agree on what to call it.
+LANE_LIGHT = "light"
+LANE_AGENT = "agent"
+
+#: A template is several files by definition, so it cannot take a lane
+#: that writes exactly one. Worth saying out loud because nothing in the
+#: person's own words predicts it: they asked for a portfolio and would
+#: otherwise be promised a minute and wait several.
+_TEMPLATE_WHY = ("This starts from a template, so it is being built by the "
+                 "full builder.")
+
+_LIGHT_NOTE = ("This is a plain site, so it is being written straight away "
+               "and should be ready in under a minute.")
+
+#: What the slow lane buys, said where the slowness is admitted. It used
+#: to be a fixed sentence in the chat tool, which promised every build a
+#: smoke test and an automatic rollback: the light lane has neither, so
+#: that sentence became untrue for most builds the day the lane shipped.
+_SLOW = (" That takes a few minutes, and the app is smoke tested when it "
+         "finishes and rolled back automatically if it breaks.")
+
+
+def lane_for(description: str,
+             template_key: str | None = None) -> tuple[str, str | None]:
+    """Which lane this request takes, and why when it is not the light one.
+
+    The ONE decider. The build and whatever tells the person about it both
+    read this, because a sentence that disagrees with the lane actually
+    used is worse than no sentence at all.
+
+    `template_key` must already be normalised: `blank` and `custom` mean
+    no template, and reading them as one here would send plain sites down
+    the slow lane.
+    """
+    why = needs_the_agent(description)
+    if why:
+        # What the person actually asked for beats "you picked a template"
+        # when both are true: it is the more useful of the two sentences.
+        return LANE_AGENT, why
+    if template_key:
+        return LANE_AGENT, _TEMPLATE_WHY
+    return LANE_LIGHT, None
+
+
+def lane_note(lane: str, why: str | None = None) -> str:
+    """One sentence for the person: which lane, and why if it is the slow one.
+
+    Never empty, for any lane name, because this lands in a chat reply and
+    an empty note renders as a blank line somebody has to interpret.
+    """
+    if str(lane or "") == LANE_LIGHT:
+        return _LIGHT_NOTE
+    return (why or _TEMPLATE_WHY) + _SLOW
 
 
 # ---------------------------------------------------------------------------
