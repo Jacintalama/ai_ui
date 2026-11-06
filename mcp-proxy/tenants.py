@@ -330,7 +330,20 @@ TIER3_SERVERS: Dict[str, MCPServerConfig] = {
         auth_type="bearer",
         api_key_env="MCP_API_KEY",  # mcpo uses MCP_API_KEY for auth
         description="Task and project management - tasks, projects, goals (177+ tools)",
-        enabled=bool(os.getenv("CLICKUP_API_TOKEN"))  # Auto-enable if ClickUp token is set
+        # OFF since 2026-11-06. Two reasons, and the second is the one that
+        # matters: this spends ONE CLICKUP_API_TOKEN for everybody, and that
+        # token belongs to a single teammate. GET /v2/user on it answers
+        # Lukas Herajt and the only workspace it can see is his personal
+        # one, so anything "created in ClickUp" through here lands in his
+        # account rather than the workspace of the person who asked. That
+        # is what happened: the chat reported a list created and nothing
+        # existed. (It was also crash-looping at the time, which is how the
+        # rest came to light, but a working version of this is still wrong.)
+        #
+        # `my-clickup` is the per-user replacement and was serving the whole
+        # time. Off by name rather than by the absence of a credential: the
+        # token is still set, because the container itself reads it.
+        enabled=False
     ),
     "trello": MCPServerConfig(
         server_id="trello",
