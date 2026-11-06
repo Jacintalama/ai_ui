@@ -110,6 +110,35 @@ PROXY_META_ABSENT: frozenset[str] = frozenset({
     "list_servers", "health_check", "refresh_cache",
 })
 
+def never_ask_about(method_name) -> bool:
+    """True when this call must not become a question for the owner.
+
+    Two kinds, and neither is an action on anything of theirs:
+
+      * a name no agent may call, which is a loop rather than a write.
+        Mia was shown asking to run ask_agents on "hi team" (2026-10-28).
+      * a name that does not exist. PROXY_META_ABSENT has recorded since
+        2026-09-14 that /meta/refresh_cache, /meta/health_check and
+        /meta/list_servers each 404.
+
+    Both are run straight through instead. The call comes back a refusal
+    the model can read and act on, and the person never sees it.
+
+    Ralph, 2026-11-06, shown "This will run: refresh_cache. Reply yes to
+    let it, or no to skip": "i said if run something like rfresh casche
+    make it automatic no more in chat or reply". He was being asked to
+    authorise a call that could not do anything, and the refusal only
+    arrived after he answered.
+
+    One function because two lists checked in two places drift, and the
+    drift is what put refresh_cache in front of him.
+    """
+    if not isinstance(method_name, str) or not method_name.strip():
+        return False
+    name = method_name.strip()
+    return name in METHODS_NO_AGENT_MAY_CALL or name in PROXY_META_ABSENT
+
+
 READ_METHODS: frozenset[str] = frozenset({
     "list_unread_emails", "list_important_emails", "list_recent_emails",
     "search_emails", "read_email",

@@ -36,6 +36,7 @@ import agent_jev
 import agent_memory
 import agent_routing
 from agent_tools import (ToolOutcome, arguments_of, execute_tool_call,
+                         never_ask_about,
                          is_write_call, is_write_tool,
                          METHODS_NO_AGENT_MAY_CALL)
 from owui_token import mint_owui_token, session_stamp_for
@@ -963,11 +964,14 @@ async def _chat(token: str, model: str, messages: list[dict],
                 # handed to _record_step as the record of what happened. The
                 # status is never read back off the sentence: see ToolOutcome.
                 outcome = ToolOutcome()
-                if name in METHODS_NO_AGENT_MAY_CALL:
-                    # Not a write to hold for approval: a loop. Fed back as
-                    # a refusal so the model answers some other way, and
-                    # never shown to the owner as a question (Mia asked to
-                    # run ask_agents on "hi team", 2026-10-28).
+                if never_ask_about(name):
+                    # Not a write to hold for approval. Either a loop, or a
+                    # name that does not exist at all. Fed back as a refusal
+                    # so the model answers some other way, and never shown
+                    # to the owner as a question: Mia asked to run
+                    # ask_agents on "hi team" (2026-10-28), and Ralph was
+                    # asked to approve refresh_cache, which 404s
+                    # (2026-11-06).
                     result = await execute_tool_call(call, user_email, tool_ids,
                                                      model, outcome=outcome)
                 elif is_write_call(name, probe) and not write_allowed:
