@@ -62,6 +62,7 @@ from db import (
 from tool_embeddings import (
     store_tool_embeddings,
     prune_stale_tools,
+    prune_renamed_tools,
     search_tools_by_query,
     get_embeddings_stats
 )
@@ -286,6 +287,11 @@ async def refresh_tools_cache():
             # answered this boot: a server that is up but momentarily failed to
             # list its tools must keep its rows.
             removed = await prune_stale_tools(pool, set(enabled_servers))
+            # And the tools a LIVE server no longer lists. Without this a
+            # rename leaves the old name searchable for ever: search
+            # offers it, describe_tools denies it, call_tool 404s, and the
+            # model picks it again next turn (2026-11-06).
+            removed += await prune_renamed_tools(pool, TOOLS_CACHE)
             if removed:
                 print(f"Pruned {removed} tools from servers no longer live")
         except Exception as e:

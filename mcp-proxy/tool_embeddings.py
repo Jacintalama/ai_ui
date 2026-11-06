@@ -352,6 +352,93 @@ def unknown_server_ids(indexed_server_ids, live_server_ids) -> set:
     return {sid for sid in (indexed_server_ids or ()) if sid not in live}
 
 
+def stale_tool_keys(indexed_rows, live_tools_by_server) -> set:
+    """Indexed (server, tool) pairs whose server no longer lists that tool.
+
+    unknown_server_ids answers "is this whole server gone". This answers
+    the other half: a server that is still here but no longer has that
+    tool.
+
+    2026-11-06. The ClickUp catalogue was regenerated from ClickUp's own
+    spec, so list_my_workspaces became get_authorized_teams.
+    describe_tools correctly said "Tool not found" and call_tool correctly
+    404'd, while search_tools went on OFFERING the old name, because the
+    embeddings table is upserted and never cleaned and pruning only ever
+    removed whole servers. my-clickup was still registered and enabled,
+    so its renamed tools stayed searchable. Ralph's fresh chat picked the
+    dead name five times and created nothing.
+
+    The existing guard is kept, and it is the important half: a server
+    that is up but momentarily failed to list its tools must keep every
+    row, or one bad boot empties the index and nobody has any tools. So a
+    server is pruned tool-by-tool ONLY when it actually listed tools this
+    boot. A server absent from the listing is left to unknown_server_ids,
+    because two rules answering one question is how this drifted.
+
+    Pure, like unknown_server_ids, so the destructive decision is made
+    and tested without a database.
+    """
+    live = live_tools_by_server if isinstance(live_tools_by_server, dict) else {}
+    out = set()
+    if not isinstance(indexed_rows, (list, tuple)):
+        return out
+    for row in indexed_rows:
+        if not isinstance(row, dict):
+            continue
+        server = row.get("server_id")
+        tool = row.get("tool_name")
+        if not server or not tool:
+            continue
+        names = live.get(server)
+        # Not listed this boot: say nothing about it.
+        if not names:
+            continue
+        if tool not in names:
+            out.add((server, tool))
+    return out
+
+
+async def prune_renamed_tools(pool: asyncpg.Pool, tools_cache) -> int:
+    """Drop index rows for tools their own server no longer lists.
+
+    The companion to prune_stale_tools, which only removes whole servers.
+    A server that RENAMES a tool keeps the old row without this, and
+    search goes on offering a name that describe_tools denies and
+    call_tool 404s. See stale_tool_keys for what happened.
+    """
+    live: dict = {}
+    for name, info in (tools_cache or {}).items():
+        if not isinstance(info, dict):
+            continue
+        server = info.get("tenant_id")
+        if server:
+            live.setdefault(server, set()).add(name)
+    if not live:
+        return 0
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT server_id, tool_name FROM mcp_proxy.tool_embeddings")
+            stale = stale_tool_keys(
+                [{"server_id": r["server_id"], "tool_name": r["tool_name"]}
+                 for r in rows], live)
+            if not stale:
+                return 0
+            deleted = await conn.fetch(
+                "DELETE FROM mcp_proxy.tool_embeddings "
+                "WHERE (server_id, tool_name) = ANY($1::record[]) "
+                "RETURNING tool_name",
+                [(s, t) for s, t in sorted(stale)])
+        log(f"Pruned {len(deleted)} renamed or removed tools: "
+            f"{sorted(t for _, t in stale)[:8]}")
+        return len(deleted)
+    except Exception as e:                                  # noqa: BLE001
+        # Never fatal. An index with an extra row is worse than one that
+        # could not be tidied, but neither is worth refusing to boot.
+        log(f"Could not prune renamed tools: {e}")
+        return 0
+
+
 async def prune_stale_tools(pool: asyncpg.Pool, live_server_ids) -> int:
     """Drop index rows whose server is gone or disabled. Returns rows removed.
 
