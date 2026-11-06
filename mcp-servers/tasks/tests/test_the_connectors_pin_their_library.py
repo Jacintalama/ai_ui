@@ -68,8 +68,8 @@ def test_compose_still_installs_mcpo_at_startup():
                              os.path.dirname(p)) + "/" + os.path.basename(p))
 def test_no_mcpo_install_is_left_unpinned(path):
     loose = [line.strip() for line in _installs(path)
-             if "mcp<" not in line and "mcp==" not in line
-             and "mcp<=" not in line]
+             if not any(t in line for t in ("mcp<", "mcp==", "mcp<="))
+             or "fastapi" not in line]
     assert not loose, (
         "mcpo is installed without pinning the mcp library, so this "
         "connector breaks on somebody else's release:\n  "
@@ -81,12 +81,45 @@ def test_no_mcpo_install_is_left_unpinned(path):
                              os.path.dirname(p)) + "/" + os.path.basename(p))
 def test_the_pin_keeps_mcp_below_2(path):
     """mcp 2.x is the release that renamed the symbol mcpo imports. The
-    pin is a ceiling rather than an exact version so security fixes in
-    the 1.x line still arrive.
+    pin is a ceiling rather than an exact version so fixes in the 1.x
+    line still arrive.
     """
     for line in _installs(path):
         assert "mcp<2" in line, (
             "the pin is not the one that was verified to work: " + line.strip())
+
+
+@pytest.mark.parametrize("path", [COMPOSE] + DOCKERFILES,
+                         ids=lambda p: os.path.basename(
+                             os.path.dirname(p)) + "/" + os.path.basename(p))
+def test_fastapi_is_pinned_too(path):
+    """A SECOND drift, underneath the first and only visible once the
+    first was fixed.
+
+    mcpo 0.0.20 passes `ssl_certfile` to `FastAPI(...)`, which only works
+    while FastAPI accepts unknown keyword arguments through `**extra`.
+    FastAPI dropped that between 0.129.2 and 0.149.0, so every rebuilt
+    connector traded
+
+      ImportError: cannot import name 'streamablehttp_client'
+
+    for
+
+      TypeError: FastAPI.__init__() got an unexpected keyword argument
+      'ssl_certfile'
+
+    and kept restarting. Fixing one pin at a time and redeploying is how
+    you find a stack of these one deploy apiece, which is the argument
+    for pinning the whole set at once.
+
+    Proven end to end on 2026-11-06, not just as a constructor call:
+    mcpo 0.0.20 with mcp 1.30.0 and fastapi 0.129.2 served 14 tools over
+    HTTP with a real MCP server behind it.
+    """
+    for line in _installs(path):
+        assert "fastapi<0.130" in line, (
+            "fastapi is unpinned, so mcpo breaks on FastAPI's next "
+            "release: " + line.strip())
 
 
 def test_the_check_would_catch_an_unpinned_install(tmp_path):
