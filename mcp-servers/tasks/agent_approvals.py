@@ -313,16 +313,50 @@ def is_answerable(row) -> bool:
 
     if not isinstance(row, dict):
         return False
+
     held = row.get("held")
     calls = held.get("calls") if isinstance(held, dict) else None
-    if not isinstance(calls, list) or not calls:
+    if isinstance(calls, list) and calls:
+        for call in calls:
+            fn = call.get("function") if isinstance(call, dict) else None
+            name = fn.get("name") if isinstance(fn, dict) else None
+            if not agent_tools.never_ask_about(name):
+                return True
+        return False
+
+    # No held calls to read. `row_of` deliberately leaves them out,
+    # because the held conversation can carry the person's own mail, and
+    # `row_of` is what every route and the page see. So the names come
+    # from the QUESTION, which approval_question built out of those same
+    # names: a header line, then each tool indented under it.
+    #
+    # Reading the question is not a shortcut around the held calls. It is
+    # the only thing a pending row carries, and the first version of this
+    # check looked at `held` alone, found nothing, and let every one of
+    # them through. It passed its tests because the tests built rows that
+    # production never produces.
+    names = _tools_named_in(row.get("question"))
+    if not names:
         return True
-    for call in calls:
-        fn = call.get("function") if isinstance(call, dict) else None
-        name = fn.get("name") if isinstance(fn, dict) else None
-        if not agent_tools.never_ask_about(name):
-            return True
-    return False
+    return any(not agent_tools.never_ask_about(n) for n in names)
+
+
+def _tools_named_in(question) -> list[str]:
+    """The tool names an approval question lists.
+
+    approval_question writes a header, then "  <tool name>" per call, then
+    arguments indented further under each. So a line with exactly two
+    leading spaces and no colon is a tool name.
+    """
+    out = []
+    for line in str(question or "").splitlines():
+        if not line.startswith("  ") or line.startswith("     "):
+            continue
+        text = line.strip()
+        if not text or ":" in text:
+            continue
+        out.append(text)
+    return out
 
 
 async def pending_for(email: str) -> list[dict]:
