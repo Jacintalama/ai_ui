@@ -180,7 +180,9 @@ def test_the_call_goes_to_the_right_vendor(app_and_creds):
     creds[("ralph@example.com", "github")] = {"token": "T"}
     creds[("ralph@example.com", "clickup")] = {"token": "T"}
     _post(app, "/github/list_my_repos", "ralph@example.com")
-    _post(app, "/clickup/list_my_workspaces", "ralph@example.com")
+    # ClickUp is generated from ClickUp's spec now, so the tools carry
+    # ClickUp's own operation names: list_my_workspaces was ours.
+    _post(app, "/clickup/get_authorized_teams", "ralph@example.com")
     assert "api.github.com" in calls[0]["url"]
     assert "api.clickup.com" in calls[1]["url"]
 
