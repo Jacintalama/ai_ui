@@ -4,7 +4,7 @@
 FROM node:20-slim
 
 RUN apt-get update && apt-get install -y python3 python3-pip curl --no-install-recommends \
-    && pip3 install --break-system-packages mcpo \
+    && pip3 install --break-system-packages mcpo "mcp<2" \
     && npm install -g @notionhq/notion-mcp-server \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 

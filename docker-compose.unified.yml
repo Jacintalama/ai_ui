@@ -1089,7 +1089,7 @@ services:
     restart: unless-stopped
     command: >
       bash -c "apt-get update && apt-get install -y python3 python3-pip curl --no-install-recommends &&
-               pip3 install --break-system-packages mcpo &&
+               pip3 install --break-system-packages mcpo "mcp<2" &&
                mcpo --host 0.0.0.0 --port 8001 --api-key $${MCP_API_KEY} -- npx -y @modelcontextprotocol/server-filesystem /data"
     environment:
       - MCP_API_KEY=${MCP_API_KEY:-mcp-secret-key}
@@ -1128,7 +1128,7 @@ services:
     restart: unless-stopped
     command: >
       bash -c "apt-get update && apt-get install -y python3 python3-pip curl --no-install-recommends &&
-               pip3 install --break-system-packages mcpo &&
+               pip3 install --break-system-packages mcpo "mcp<2" &&
                mcpo --host 0.0.0.0 --port 8000 --api-key $${MCP_API_KEY} -- npx -y @chykalophia/clickup-mcp-server"
     environment:
       - CLICKUP_API_TOKEN=${CLICKUP_API_TOKEN}
@@ -1149,7 +1149,7 @@ services:
     restart: unless-stopped
     command: >
       bash -c "apt-get update && apt-get install -y python3 python3-pip curl --no-install-recommends &&
-               pip3 install --break-system-packages mcpo &&
+               pip3 install --break-system-packages mcpo "mcp<2" &&
                mcpo --host 0.0.0.0 --port 8000 --api-key $${MCP_API_KEY} -- npx -y mcp-server-trello"
     environment:
       - TRELLO_API_KEY=${TRELLO_API_KEY}
@@ -1171,7 +1171,7 @@ services:
     restart: unless-stopped
     command: >
       bash -c "apt-get update && apt-get install -y python3 python3-pip curl --no-install-recommends &&
-               pip3 install --break-system-packages mcpo &&
+               pip3 install --break-system-packages mcpo "mcp<2" &&
                mcpo --host 0.0.0.0 --port 8000 --api-key $${MCP_API_KEY} -- npx -y @wallacewen/sonarqube-mcp-server"
     environment:
       - SONARQUBE_TOKEN=${SONARQUBE_TOKEN}
