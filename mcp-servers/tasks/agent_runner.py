@@ -35,7 +35,8 @@ import agent_handoff
 import agent_jev
 import agent_memory
 import agent_routing
-from agent_tools import (ToolOutcome, arguments_of, execute_tool_call,
+from agent_tools import (ToolOutcome, arguments_of, called_tool_name,
+                         execute_tool_call,
                          never_ask_about,
                          is_write_call, is_write_tool,
                          METHODS_NO_AGENT_MAY_CALL)
@@ -955,11 +956,16 @@ async def _chat(token: str, model: str, messages: list[dict],
                 fn = fn if isinstance(fn, dict) else {}
                 raw_name = fn.get("name")
                 name = raw_name.strip() if isinstance(raw_name, str) else ""
-                label = name or "an unnamed tool call"
                 # Arguments included, because call_tool's own name says nothing
                 # about what it runs: searching the web and creating a ClickUp
                 # task arrive here under the same name.
                 probe = arguments_of(call)
+                # For that same reason, what the OWNER is told has to name
+                # what was going to run. Measured 2026-11-09: a read only
+                # agent that tried a ClickUp write reported "Declined to run
+                # call_tool", which names nothing they can act on and is the
+                # same sentence for all ~200 proxy tools.
+                label = called_tool_name(name, probe) or "an unnamed tool call"
                 # Filled in by whichever branch below produces the result, and
                 # handed to _record_step as the record of what happened. The
                 # status is never read back off the sentence: see ToolOutcome.

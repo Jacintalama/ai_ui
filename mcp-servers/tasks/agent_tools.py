@@ -303,6 +303,100 @@ def is_write_call(method_name: str, params: dict | None = None) -> bool:
     return is_write_tool(inner)
 
 
+def called_tool_name(method_name: str, params: dict | None = None) -> str:
+    """Which tool the model actually asked for.
+
+    Every one of the proxy's roughly 200 tools is reached through
+    `call_tool`, so the name on the call says nothing about what was run.
+    is_write_call has read the inner name since 2026-11-06; every sentence
+    handed back on a failure has to as well, or the model is told about a
+    tool it never called and cannot act on the answer.
+
+    Falls back to the method name whenever there is nothing better, which
+    includes a `call_tool` nested in itself. Never raises: a malformed call
+    is exactly what this is for.
+    """
+    if method_name != "call_tool" or not isinstance(params, dict):
+        return method_name
+    inner = params.get("tool_name")
+    if not isinstance(inner, str) or not inner.strip():
+        return method_name
+    inner = inner.strip()
+    return method_name if inner == "call_tool" else inner
+
+
+def argument_complaint(body: str | None) -> str | None:
+    """Which arguments a rejection says were wrong, or None.
+
+    A 422 from the proxy carries the server's own validation complaint,
+    which names every field that was missing or the wrong type. Dropping it
+    is why one forgotten argument ends an agent's attempt: the model is
+    told the call failed and not what to change, so it either retries the
+    same call or tells its owner it cannot do the thing.
+
+    Only `loc` and `type`/`msg` are ever read out of the body. NOT `input`,
+    which echoes the arguments that were rejected, and not any other part
+    of it: a proxy error can carry the URL it called, and my-trello's
+    credential rides in that URL's query string. So what leaves here is
+    field names and reasons, by construction rather than by filtering.
+
+    Never raises. The body is whatever a failing service sent.
+    """
+    if not isinstance(body, str) or not body.strip():
+        return None
+    try:
+        outer = json.loads(body)
+    except Exception:                                       # noqa: BLE001
+        return None
+    detail = outer.get("detail") if isinstance(outer, dict) else outer
+    items = None
+    if isinstance(detail, list):
+        items = detail
+    elif isinstance(detail, str):
+        # The proxy's own sentence with the server's JSON body appended:
+        # "Server my-clickup returned: {"detail": [...]}"
+        start = detail.find("{")
+        if start == -1:
+            return None
+        try:
+            nested = json.loads(detail[start:])
+        except Exception:                                   # noqa: BLE001
+            return None
+        if isinstance(nested, dict):
+            nested = nested.get("detail")
+        if isinstance(nested, list):
+            items = nested
+    if not items:
+        return None
+
+    said = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        loc = item.get("loc")
+        field = None
+        if isinstance(loc, (list, tuple)):
+            for part in reversed(loc):
+                if isinstance(part, str) and part not in ("body", "query",
+                                                          "path", "header"):
+                    field = part
+                    break
+        if not field:
+            continue
+        why = item.get("type") or item.get("msg")
+        why = why if isinstance(why, str) and why.strip() else "wrong"
+        said.append("%s (%s)" % (field, why.strip()))
+    if not said:
+        return None
+    # Same field named twice by two complaints says nothing twice.
+    seen, unique = set(), []
+    for one in said:
+        if one not in seen:
+            seen.add(one)
+            unique.append(one)
+    return ", ".join(unique)
+
+
 def is_write_tool(method_name: str) -> bool:
     """True when calling this method could change something.
 
@@ -827,20 +921,36 @@ async def execute_tool_call(
                 json={"tool_name": name, "arguments": params},
                 headers={"X-User-Email": user_email},
                 timeout=TOOL_TIMEOUT_SECONDS)
+        # Which tool to name from here on. Every proxy tool arrives wrapped
+        # in call_tool, so `name` is the runner and says nothing the model
+        # can act on. Measured on production 2026-11-09: a renamed ClickUp
+        # tool answered "There is no tool called call_tool", sending the
+        # model to look up the one name search_tools never returns.
+        asked = called_tool_name(name, params)
         if response.status_code == 403:
             return outcome.refused(
                 "You do not have access to the service behind the tool "
-                + name + ".")
+                + asked + ".")
         if response.status_code == 404:
-            return outcome.failed(NO_SUCH_TOOL.format(name=name))
+            return outcome.failed(NO_SUCH_TOOL.format(name=asked))
         if response.status_code >= 400:
+            wrong = argument_complaint(getattr(response, "text", None))
+            if wrong:
+                return outcome.failed(
+                    "The tool " + asked + " was called with the wrong "
+                    "arguments: " + wrong + ". Call it again with those "
+                    "fixed.")
             return outcome.failed(
-                "The tool " + name + " could not be run this time.")
+                "The tool " + asked + " could not be run this time.")
         payload = response.json()
         return outcome.ok(
             payload if isinstance(payload, str) else json.dumps(payload))
     except Exception:                                       # noqa: BLE001
         # Never surface the exception text: an httpx error carries the URL.
+        # The NAME is safe and is the one thing the model needs, and for a
+        # proxy call it is inside the arguments, not on the call. `params`
+        # is resolved above this try and is always a dict.
         logger.error("tool call %s failed", name, exc_info=True)
         return outcome.failed(
-            "The tool " + name + " could not be run this time.")
+            "The tool " + called_tool_name(name, params)
+            + " could not be run this time.")
