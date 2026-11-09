@@ -283,3 +283,16 @@ def test_saving_a_page_somewhere_does_need_permission():
     assert agent_tools.is_write_tool("web-search_web_save_to_kb")
     assert agent_tools.is_write_call(
         "call_tool", {"tool_name": "web-search_web_save_to_kb"})
+
+
+def test_asking_how_a_build_or_a_video_is_going_is_a_read():
+    """Neither name has a verb the classifier knows, so both fell through to
+    write. Measured live 2026-11-09: saying yes to a build stopped again on
+    "IO wants to run: build_status. Reply yes to let it", permission to look
+    at whether the thing just approved had finished."""
+    for name in ("build_status", "video_status"):
+        assert not is_write_tool(name), name
+        assert not agent_tools.is_write_call(name, {"task_id": "x"}), name
+    # Starting one spends money and still asks.
+    assert is_write_tool("make_video")
+    assert is_write_tool("create_app")

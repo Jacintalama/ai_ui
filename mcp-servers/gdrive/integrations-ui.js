@@ -4891,11 +4891,13 @@
     };
   }
 
-  function aiuiShowAppInline(chatId, slug) {
+  function aiuiShowAppInline(chatId, slug, messageId) {
     if (aiuiChatIdFromUrl() !== chatId) return;
     if (!/^[a-z0-9][a-z0-9-]{0,80}$/.test(String(slug || ''))) return;
     var id = 'aiui-app-' + slug;
     if (document.getElementById(id)) return;
+    var inReply = aiuiReplyFor(id, messageId);
+    if (inReply === undefined) return;
 
     // The app's OWN published URL. main.py::serve_published_app injects
     // the project's Supabase url and anon key AT REQUEST TIME, so they
@@ -5104,7 +5106,8 @@
     box.appendChild(frame);
     box.appendChild(ask);
     box.appendChild(look.el);
-    aiuiPutUnderLastMessage(box);
+    if (inReply) aiuiPutInReply(box, inReply);
+    else aiuiPutUnderLastMessage(box);
   }
   // ===== The whole walk, not just the step it is on =====
   //
@@ -5315,6 +5318,8 @@
       tail.childrenIds = (tail.childrenIds || []).concat([newId]);
       fh.currentId = newId;
       return aiuiSaveChat(chatId, { history: fh }).then(function () {
+        // The message just written is what declares the app.
+        aiuiSavedRead.force = true;
         if (aiuiChatIdFromUrl() === chatId) aiuiSoftReload(chatId);
         return true;
       }, function () { return false; });
@@ -5391,6 +5396,154 @@
   // From the page scan, at most once every few seconds. Reads the rendered
   // rows first, which costs nothing, and fetches the stored chat only when
   // a build link it is not already watching turns up.
+  // ===== What the saved messages declare =====
+  //
+  // A declared artifact is a markdown link reference definition, on
+  // purpose: the parser consumes it and the person never sees it. That
+  // means it is never in the rendered page either, so a scan of the page
+  // can only find nothing. Measured live 2026-11-09: the saved message held
+  // "[aiui-artifact]: #app/<slug>", the page held neither that nor a
+  // preview link, and the chat said "is built." with nothing to look at.
+  // It had worked only while replies still carried a link (#127 and #129
+  // removed the last one).
+  //
+  // So this reads the saved chat. One fetch when the thread has changed
+  // and then held still, because a thread still streaming is not saved
+  // yet. What it found is kept and drawn again on every scan, because Open
+  // WebUI rebuilds a message when it changes and throws our panel away.
+  var aiuiSavedRead = { chat: '', key: '', last: '', busy: false, force: false,
+                        chain: null, apps: [], videos: [] };
+  var aiuiVideoJobs = {};
+  var aiuiReplyWaits = {};
+
+  // Each app the chat declares, with the last message to mention it, so
+  // its panel sits in the reply that announced it.
+  function aiuiSavedApps(chain) {
+    var where = {}, order = [];
+    (chain || []).forEach(function (m) {
+      if (!m || m.role !== 'assistant') return;
+      aiuiArtifactIds(m.content, 'app').forEach(function (slug) {
+        if (!(slug in where)) order.push(slug);
+        where[slug] = m.id;
+      });
+    });
+    return order.map(function (slug) {
+      return { slug: slug, messageId: where[slug] };
+    });
+  }
+
+  // Each finished video, with the message that closed it.
+  function aiuiSavedVideos(chain) {
+    var out = [], seen = {};
+    (chain || []).forEach(function (m) {
+      if (!m || m.role !== 'assistant') return;
+      aiuiVideoIdsIn(m.content).forEach(function (id) {
+        if (seen[id]) return;
+        seen[id] = true;
+        var marker = aiuiVideoDoneMarker(id);
+        var closing = chain.filter(function (c) {
+          return c && String(c.content || '').indexOf(marker) >= 0;
+        })[0];
+        if (closing) out.push({ id: id, messageId: closing.id });
+      });
+    });
+    return out;
+  }
+
+  // The reply a panel belongs to: the element, null for "whichever reply is
+  // last", or undefined for "not on screen yet, ask again on the next scan".
+  // Three scans of waiting, so a row that never appears still gets its
+  // panel somewhere.
+  function aiuiReplyFor(key, messageId) {
+    if (!messageId) return null;
+    var row = document.getElementById('message-' + messageId);
+    var body = row ? row.querySelector('.chat-assistant') : null;
+    if (body) return body;
+    aiuiReplyWaits[key] = (aiuiReplyWaits[key] || 0) + 1;
+    return aiuiReplyWaits[key] > 3 ? null : undefined;
+  }
+
+  function aiuiPutInReply(box, body) {
+    // The reply already has the avatar gutter, as in aiuiPutUnderLastMessage.
+    box.style.marginLeft = '0';
+    box.style.paddingLeft = '0';
+    body.appendChild(box);
+  }
+
+  function aiuiDrawSavedVideo(chatId, video) {
+    if (video.id in aiuiVideoJobs) {
+      if (aiuiVideoJobs[video.id]) {
+        aiuiShowVideoInline(chatId, aiuiVideoJobs[video.id], video.id, video.messageId);
+      }
+      return;
+    }
+    // Asked once per video per page, however many scans there are.
+    aiuiVideoJobs[video.id] = null;
+    fetch('/api/video-jobs/' + video.id, { headers: aiuiAuthHeaders() }).then(function (r) {
+      return r.ok ? r.json() : null;
+    }).then(function (job) {
+      if (!job || String(job.status || '') !== 'done') return;
+      aiuiVideoJobs[video.id] = job;
+      aiuiShowVideoInline(chatId, job, video.id, video.messageId);
+    }).catch(function () { /* the closing message still says it is ready */ });
+  }
+
+  function aiuiDrawSaved(chatId) {
+    var s = aiuiSavedRead;
+    if (s.chat !== chatId || !s.chain) return;
+    s.apps.forEach(function (a) { aiuiShowAppInline(chatId, a.slug, a.messageId); });
+    s.videos.forEach(function (v) { aiuiDrawSavedVideo(chatId, v); });
+  }
+
+  function aiuiWatchSavedBuilds(chatId, chain) {
+    var nowS = Math.floor(Date.now() / 1000);
+    chain.forEach(function (m) {
+      if (!m || m.role !== 'assistant') return;
+      aiuiBuildIdsIn(m.content).forEach(function (id) {
+        if (aiuiBuildWatched[id]) return;
+        aiuiBuildWatched[id] = true;
+        if (aiuiBuildIsClosed(chain, id)) return;
+        if (nowS - Number(m.timestamp || 0) > AIUI_BUILD_RECENT_S) return;
+        aiuiPollBuild(chatId, id, Number(m.timestamp) * 1000 || Date.now());
+      });
+    });
+  }
+
+  function aiuiReadSaved(chatId, html) {
+    var s = aiuiSavedRead;
+    if (s.chat !== chatId) {
+      s.chat = chatId;
+      s.key = s.last = '';
+      s.chain = null;
+      s.apps = [];
+      s.videos = [];
+      s.force = true;
+    }
+    aiuiDrawSaved(chatId);
+    var key = String(html.length);
+    var settled = s.force || key === s.last;
+    s.last = key;
+    if (!settled || s.busy || (key === s.key && !s.force)) return Promise.resolve();
+    s.busy = true;
+    s.force = false;
+    return aiuiFetchChat(chatId).then(function (data) {
+      s.busy = false;
+      if (s.chat !== chatId) return;
+      s.key = key;
+      s.chain = aiuiChainFromHistory(data.chat.history);
+      var chain = s.chain;
+      s.apps = aiuiSavedApps(chain);
+      s.videos = aiuiSavedVideos(chain);
+      aiuiDrawSaved(chatId);
+      aiuiWatchVideos(chain, chatId);
+      aiuiWatchSavedBuilds(chatId, chain);
+    }, function () {
+      s.busy = false;
+      s.force = true;
+    });
+  }
+  // ===== End what the saved messages declare =====
+
   function aiuiWatchBuilds() {
     var chatId = aiuiChatIdFromUrl();
     if (!chatId) return;
@@ -5418,6 +5571,10 @@
       aiuiShowAppInline(chatId, slug);
     });
 
+    // Before the early return below, because a chat with nothing new on
+    // screen is exactly the chat whose panel needs drawing.
+    aiuiReadSaved(chatId, html);
+
     var fresh = [];
     aiuiBuildIdsIn(html).forEach(function (id) {
       if (!aiuiBuildWatched[id] && fresh.indexOf(id) < 0) fresh.push(id);
@@ -5426,9 +5583,6 @@
     fresh.forEach(function (id) { aiuiBuildWatched[id] = true; });
     aiuiFetchChat(chatId).then(function (data) {
       var chain = aiuiChainFromHistory(data.chat.history);
-      // The same chat, already fetched. A second poller fetching it again
-      // would double the cost of a scan for nothing.
-      aiuiWatchVideos(chain, chatId);
       var nowS = Math.floor(Date.now() / 1000);
       fresh.forEach(function (id) {
         if (aiuiBuildIsClosed(chain, id)) return;
@@ -5488,7 +5642,7 @@
     return said + '\n\n' + aiuiVideoDoneMarker(id);
   }
 
-  function aiuiShowVideoInline(chatId, job, id) {
+  function aiuiShowVideoInline(chatId, job, id, messageId) {
     if (aiuiChatIdFromUrl() !== chatId) return;
     var src = String((job && job.share_url) || '');
     // Ours, and only ours. The src goes into a media element, and a link
@@ -5496,6 +5650,8 @@
     if (src.indexOf(location.origin + '/api/video-jobs/') !== 0) return;
     var box_id = 'aiui-video-' + id;
     if (document.getElementById(box_id)) return;
+    var inReply = aiuiReplyFor(box_id, messageId);
+    if (inReply === undefined) return;
 
     var box = document.createElement('div');
     box.id = box_id;
@@ -5507,7 +5663,8 @@
     el.style.cssText = 'display:block;width:100%;border-radius:10px;background:#000;';
     box.appendChild(el);
 
-    aiuiPutUnderLastMessage(box);
+    if (inReply) aiuiPutInReply(box, inReply);
+    else aiuiPutUnderLastMessage(box);
   }
 
   function aiuiPollVideo(chatId, id, started) {
@@ -5557,6 +5714,9 @@
   linkifyConnectButtons();
   wireAiuiConnectLinks();
   wireAiuiAgentNameHeaders();
+  // The scan above runs on a page mutation, and a thread that has finished
+  // changing produces none, so the last change could go unread for ever.
+  setInterval(aiuiWatchBuilds, AIUI_BUILD_LOOK_MS + 250);
 
   console.log('[AIUI] Integrations UI v16-connect-your-own loaded');
 })();
