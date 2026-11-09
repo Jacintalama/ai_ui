@@ -61,7 +61,11 @@ fi
 
 echo "==> [2/6] compute changed paths"
 
-ORCH_PATH_PATTERN='^(mcp-servers/|api-gateway/|Caddyfile$|docker-compose\.unified\.yml$|scripts/)'
+# mcp-proxy/ joined this on 2026-11-09. It is a TOP LEVEL directory, so
+# nothing in it had ever deployed itself: PRs #139, #142, #149 and #150 all
+# shipped by hand and its image was three days old when that was noticed.
+# Hand-shipping is also what blocks the sweep below, so the two were one bug.
+ORCH_PATH_PATTERN='^(mcp-servers/|mcp-proxy/|api-gateway/|Caddyfile$|docker-compose\.unified\.yml$|scripts/)'
 
 if [[ -z "${PREVIOUS_SHA}" ]]; then
   # First deploy — everything is "changed"
@@ -126,6 +130,24 @@ if [[ -n "${PREVIOUS_SHA}" && "${ORCH_OVERWRITE_SERVER_EDITS:-0}" -ne 1 ]]; then
     if ! git cat-file -e "${PREVIOUS_SHA}:${path}" 2>/dev/null; then continue; fi
     want="$(git show "${PREVIOUS_SHA}:${path}" | tr -d '\r' | sha256sum | cut -d' ' -f1)"
     have="$(${SSH} "test -f '${ORCH_PATH}/${path}' && tr -d '\r' < '${ORCH_PATH}/${path}' | sha256sum | cut -d' ' -f1 || echo missing")"
+    # Already holding the version this deploy would WRITE, so the rsync is
+    # a no-op for it and there is nothing to lose: you cannot destroy
+    # somebody's work by writing bytes that are already there.
+    #
+    # That is exactly what a file deployed BY HAND looks like. When a
+    # deploy fails I ship the merged file myself, so the box ends up with
+    # the repo's newer version while .deploy-state still names the old
+    # commit; the sweep then reads it as an edit on the box and refuses, so
+    # ONE failure blocks every later deploy until a person intervenes.
+    # Measured 2026-11-09: three days with nothing deployed, eight runs and
+    # no success, and a hash sweep of all 1208 watched files found 3
+    # differing, every one the repo being ahead, no teammate edit anywhere.
+    #
+    # This weakens nothing. A teammate's own edit does not coincidentally
+    # equal the repo's new version, so the comparison below still catches
+    # it.
+    want_now="$(git show "${CURRENT_SHA}:${path}" | tr -d '\r' | sha256sum | cut -d' ' -f1)"
+    if [[ "${have}" == "${want_now}" ]]; then continue; fi
     if [[ "${have}" != "missing" && "${have}" != "${want}" ]]; then
       EDITED_ON_SERVER+="    ${path}"$'\n'
     fi
@@ -156,6 +178,7 @@ while IFS= read -r path; do
     mcp-servers/dashboard/*)     SERVICES[mcp-dashboard]=1 ;;
     mcp-servers/excel-creator/*) SERVICES[mcp-excel-creator]=1 ;;
     mcp-servers/io-mcp-wrappers/*) ;;  # agent-side only, not a compose service
+    mcp-proxy/*)                 SERVICES[mcp-proxy]=1 ;;
     api-gateway/*)               SERVICES[api-gateway]=1 ;;
     Caddyfile)                   SERVICES[caddy]=1 ;;
     docker-compose.unified.yml)  SERVICES[ALL]=1 ;;
