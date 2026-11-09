@@ -479,11 +479,31 @@ async def test_flusher_sends_trailing_silence_after_speech_stops():
 
     bot._audio_interface = _flusher_iface(cb, last_fwd=time.monotonic() - 1.0)
     task = asyncio.create_task(bot._turn_end_flusher())
-    await asyncio.sleep(0.35)
+
+    # Waits for the chunks rather than guessing how long a tick takes. The
+    # flusher sends 5 per 0.1s tick, so a fixed 0.35s had a fair margin and
+    # was not failing, but it is the one shape in this suite that can fail
+    # on a slow machine and blame the flusher for it. On 2026-11-09 a fixed
+    # 0.2s in the agent chat queue tests did exactly that: the product code
+    # was correct, the clock was not, and the failure message accused the
+    # one thing that had not happened.
+    #
+    # "closes fast" is the real requirement, so it is asserted as elapsed
+    # time instead of being hidden inside the sleep. Separating "did it
+    # happen" from "was it quick" means a failure says which one broke.
+    started = time.monotonic()
+    while len(sent) < 5 and time.monotonic() - started < 3.0:
+        await asyncio.sleep(0.01)
+    took = time.monotonic() - started
+
     bot._session_active = False
     task.cancel()
     assert len(sent) >= 5, "trailing silence must flow so the turn closes fast"
     assert all(c == vb.SILENCE_CHUNK_16K for c in sent)
+    # One tick is 0.1s. A whole second to produce five chunks means the
+    # trailing silence is not keeping up with realtime and the turn will
+    # feel slow to close, which is the thing this test is about.
+    assert took < 1.0, "five chunks took %.2fs, too slow to close a turn" % took
 
 
 async def test_flusher_caps_total_silence():
