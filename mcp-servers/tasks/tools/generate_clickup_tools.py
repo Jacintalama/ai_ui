@@ -41,7 +41,7 @@ import json
 import keyword
 import re
 import sys
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 #: Fields worth keeping per kind of object. Picked by hand because the
 #: spec's response schemas are mostly untyped, and because the point is to
@@ -174,9 +174,14 @@ def _resolve(node: Any, components: Dict, depth: int = 0) -> Any:
 def _type_of(schema: Dict) -> str:
     t = schema.get("type")
     if t in ("string", "boolean", "integer", "number", "array", "object"):
+        # An array stays an array. Collapsing it to "string" is what told a
+        # model that `assignees` was free text, so on 2026-11-09 it sent an
+        # email address where ClickUp wanted [252150963], the task was
+        # created unassigned, and Ralph had to approve a second call to fix
+        # it. An object still reads as a string: that is a separate shape
+        # and no tool has needed it yet.
         return {"integer": "integer", "number": "number",
-                "boolean": "boolean"}.get(t, "string" if t == "string"
-                                          else "string")
+                "boolean": "boolean", "array": "array"}.get(t, "string")
     any_of = schema.get("anyOf") or schema.get("oneOf") or []
     for option in any_of:
         if isinstance(option, dict) and option.get("type") not in (None, "null"):
@@ -184,7 +189,8 @@ def _type_of(schema: Dict) -> str:
     return "string"
 
 
-def _describe(schema: Dict, fallback: str = "") -> str:
+def _describe(schema: Dict, fallback: str = "",
+              shape: Optional[Dict] = None) -> str:
     """What one argument is, including the values it will accept.
 
     The enum matters. ClickUp declares type as one of message or post,
@@ -192,13 +198,41 @@ def _describe(schema: Dict, fallback: str = "") -> str:
     value and gets a 400 after somebody approved the call. Dropping the
     enum was throwing away the most useful half of the spec.
     """
-    d = schema.get("description") or schema.get("title") or fallback
+    d = schema.get("description") or schema.get("title") or ""
     text = " ".join(str(d).split())[:140]
     choices = schema.get("enum")
     if isinstance(choices, list) and 0 < len(choices) <= 12:
         shown = ", ".join(str(c) for c in choices if c is not None)
         if shown:
             text = text.rstrip(".") + ". One of: " + shown
+    # What goes IN the list, for the same reason the enum is carried. In
+    # the v2 spec 20 body fields are arrays and 8 of them have no
+    # description at all, so each was presented to the model as a plain
+    # string described by repeating its own name. `assignees` is the one
+    # that cost Ralph two approvals on 2026-11-09.
+    # A QUERY parameter keeps its description on the parameter and its type
+    # one level down, under `schema`, so the two do not live together and
+    # the caller says where the shape is. Body fields pass neither and read
+    # from themselves. Seven of get_filtered_team_tasks's filters are
+    # arrays, and without this they read as plain strings.
+    kind = shape if isinstance(shape, dict) else schema
+    if kind.get("type") == "array":
+        items = kind.get("items")
+        item_type = items.get("type") if isinstance(items, dict) else None
+        said = {"integer": "A list of whole numbers.",
+                "number": "A list of numbers.",
+                "boolean": "A list of true or false values.",
+                "object": "A list of objects."}.get(
+                    item_type, "A list of text values.")
+        # FIRST, not appended. ClickUp's descriptions run long and the cap
+        # below is what the model sees; appended, the shape was the part
+        # that got cut off, which is the one fact it cannot guess.
+        text = said + (" " + text if text else "")
+    # The fallback is the field's own name, which tells a model nothing it
+    # cannot already read. It is a last resort, not the first choice, so it
+    # applies only when neither the spec nor the shape said anything.
+    if not text:
+        text = " ".join(str(fallback).split())[:140]
     return text[:200]
 
 
@@ -275,7 +309,8 @@ def operations(spec: Dict, version: str) -> List[Dict]:
                 required = (bool(param.get("required")) or where == "path"
                             or bool(already and already[2]))
                 args[arg] = (_type_of(schema),
-                             _describe(param, str(pname)), required)
+                             _describe(param, str(pname), shape=schema),
+                             required)
                 if where == "query":
                     query[str(pname)] = arg
 
