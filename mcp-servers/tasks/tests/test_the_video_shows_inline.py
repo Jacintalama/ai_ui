@@ -88,9 +88,11 @@ def test_it_does_not_fetch_the_whole_film_to_show_a_frame():
 
 
 def test_only_a_finished_video_is_shown():
-    src = _js()
-    assert re.search(r"if \(String\(job\.status \|\| ''\) === 'done'\)"
-                     r" aiuiShowVideoInline", src)
+    """It is drawn from one place now, the saved read, and only when the job
+    says done."""
+    body = _section("aiuiDrawSavedVideo")
+    assert "String(job.status || '') !== 'done') return" in body
+    assert "aiuiShowVideoInline" not in _section("aiuiPollVideo")
 
 
 # --- the watching ----------------------------------------------------------

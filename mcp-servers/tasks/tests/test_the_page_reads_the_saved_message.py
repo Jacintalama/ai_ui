@@ -294,6 +294,53 @@ def test_a_video_really_rendering_says_so():
     assert line == "Rendering the video, 2 min so far."
 
 
+def test_a_finished_video_is_not_drawn_before_its_closing_message():
+    """Opening a chat, the poller can finish before any reply is on screen,
+    and the fallback then is the end of the page, under the message box.
+    Measured on the live site 2026-11-09: the player sat there with the
+    closing message saying "is ready" and no way to reach it. The saved read
+    draws it, in the closing message, once that message exists."""
+    got = _node(r"""
+    var shown = [], closes = [];
+    aiuiShowVideoInline = function () { shown.push(1); };
+    aiuiCloseWith = function (c, m, t) { closes.push(t); return Promise.resolve(true); };
+    theJob = {status: 'done', title: 'Tour', output_available: true,
+              share_url: location.origin + '/api/video-jobs/abc'};
+    aiuiPollVideo('chat-1', 'v1', Date.now());
+    await tick(); await tick();
+    console.log(JSON.stringify({shown: shown.length, closes: closes}));""",
+                overrides=POLL_OVERRIDES)
+    assert got == {"shown": 0,
+                   "closes": ["Tour is ready.\n\n[aiui-video-done]: #v1"]}
+
+
+LINE_OVERRIDES = r"""
+var made = [], reply = null;
+function aiuiLastReplyBody() { return reply; }
+function aiuiThread() { return {querySelector: function () { return null; }, appendChild: function () {}}; }
+function aiuiPutUnderLastMessage(el) { made.push(el); }
+document.createElement = function () { return {style: {}}; };
+"""
+
+
+def test_the_waiting_line_waits_for_the_reply_to_be_on_screen():
+    """The same race as the player: drawn at the end of the page it is
+    never seen, and it is never moved because it already exists."""
+    got = _node(r"""
+    aiuiBuildLine('chat-1', 'Waiting to start rendering, 1 min so far.');
+    console.log(JSON.stringify(made.length));""", overrides=LINE_OVERRIDES)
+    assert got == 0
+
+
+def test_the_waiting_line_is_drawn_once_the_reply_is_there():
+    got = _node(r"""
+    reply = {};
+    aiuiBuildLine('chat-1', 'Waiting to start rendering, 1 min so far.');
+    console.log(JSON.stringify(made.map(function (e) { return e.textContent; })));""",
+                overrides=LINE_OVERRIDES)
+    assert got == ["Waiting to start rendering, 1 min so far."]
+
+
 def _source():
     with open(JS, encoding="utf-8") as fh:
         return fh.read()
