@@ -171,7 +171,11 @@ class Tools:
                 "a few minutes.")
         if isinstance(ahead, int) and ahead > 0:
             said += " There are %d ahead of it." % ahead
-        return said + "\nAsk me for the video and I will check on it. Its id is " + job_id
+        # Declared as well as said: the page follows a video by this line,
+        # which markdown hides, and the sentence stays for the chats already
+        # written with it.
+        return (said + "\nAsk me for the video and I will check on it. Its id is "
+                + job_id + "\n\n[aiui-artifact]: #video/" + job_id)
 
     async def video_status(self, job_id: str, __user__: dict = {}) -> str:
         """
