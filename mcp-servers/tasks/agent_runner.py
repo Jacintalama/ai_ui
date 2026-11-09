@@ -25,6 +25,7 @@ import httpx
 
 import agent_access
 import agent_activity
+import agent_artifacts
 import agent_approvals
 import agent_attach
 import agent_brief
@@ -694,6 +695,16 @@ def strip_reasoning(text):
     return out.strip()
 
 
+def _finished(answer: str, convo: list[dict]) -> str:
+    """The answer a turn ends on. In the main chat it keeps whatever the
+    tools declared (agent_artifacts), so a build or a video can be followed
+    however the model worded its reply. Only there: Discord and Slack have
+    no markdown that hides the line, so it would be printed to the person."""
+    if not agent_activity.in_main_chat():
+        return answer
+    return agent_artifacts.carried(answer, convo)
+
+
 async def _chat(token: str, model: str, messages: list[dict],
                 tool_ids: list[str] | None, user_email: str,
                 tool_mode: str | None,
@@ -936,7 +947,7 @@ async def _chat(token: str, model: str, messages: list[dict],
                     # on, rather than passing through a model name they never
                     # chose and an HTTP status code.
                     return ROUTER_EXHAUSTED, notes
-                return esc.with_note(content), notes
+                return _finished(esc.with_note(content), convo), notes
 
             rounds += 1
             convo.append({"role": "assistant", "content": content,
@@ -1081,7 +1092,7 @@ async def _chat(token: str, model: str, messages: list[dict],
         if final and _router_gave_up(final):
             return ROUTER_EXHAUSTED, notes
     notes.append(RAN_OUT_OF_ROUNDS % limit)
-    return esc.with_note(final or content), notes
+    return _finished(esc.with_note(final or content), convo), notes
 
 
 def _messages_for(sched) -> list[dict]:

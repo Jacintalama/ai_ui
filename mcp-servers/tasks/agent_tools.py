@@ -197,6 +197,12 @@ READ_METHODS: frozenset[str] = frozenset({
     # answered with a request for permission to read a list (live,
     # 2026-11-04).
     "suggest_skills",
+    # The same fall-through: "status" is no kind of verb. Both only say how
+    # something already started is getting on. Unpinned, saying yes to a
+    # build stopped again on "IO wants to run: build_status. Reply yes to let
+    # it", permission to look at the thing just approved (live, 2026-11-09).
+    "build_status",
+    "video_status",
     # Fetching a public web page changes nothing of the owner's, so both of
     # these are reads, and a researcher that has to ask permission before
     # reading a page is a researcher nobody uses.
