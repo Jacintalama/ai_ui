@@ -127,6 +127,19 @@
         headers: { Authorization: "Bearer " + token },
       });
       if (!r.ok) return null;
+      // Open WebUI answers a wrong or MOVED path under /api/ with its own
+      // index.html and HTTP 200 (measured on production 2026-11-09), so
+      // r.ok is true and r.json() throws "Unexpected token '<'". Here that
+      // is caught below and the person is simply treated as signed out,
+      // which is the same symptom as a dead session and sends anyone
+      // looking in the wrong direction entirely.
+      var ct = (r.headers && r.headers.get && r.headers.get("content-type")) || "";
+      if (ct.indexOf("json") === -1) {
+        console.warn("[AIUI tasks] /api/v1/auths/ -> " + r.status + " "
+                     + (ct || "no content type")
+                     + ", not JSON. That route has probably moved.");
+        return null;
+      }
       _cachedAuth = await r.json();
       console.log("[AIUI tasks] auth:", _cachedAuth.email, "role:", _cachedAuth.role);
       return _cachedAuth;

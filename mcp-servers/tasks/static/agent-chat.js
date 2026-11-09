@@ -390,12 +390,38 @@
     return h;
   }
 
+  //: Open WebUI answers a wrong or MOVED path under /api/ with its own
+  //: index.html and HTTP 200. Measured on production 2026-11-09:
+  //:
+  //:   /api/v1/nonexistent  200 text/html  <!doctype html><html lang="en">
+  //:
+  //: So r.ok is true, r.json() throws "Unexpected token '<'", and the two
+  //: readers below swallow it in their .catch and silently fall back to
+  //: the site voice. Both already treat a bad answer as the empty one, so
+  //: this keeps that and says it once in the console, which is the only
+  //: way a route renamed by an upgrade is findable at all.
+  //:
+  //: This file is injected into Open WebUI, not a module, so it cannot
+  //: import the office's expectJson and carries its own copy. A test
+  //: keeps the two honest.
+  function jsonOrEmpty(r, url) {
+    var ct = (r.headers && r.headers.get && r.headers.get("content-type")) || "";
+    if (!r.ok) return {};
+    if (ct.indexOf("json") === -1) {
+      console.warn("[AIUI] " + url + " -> " + r.status + " "
+                   + (ct || "no content type")
+                   + ", not JSON. That route has probably moved.");
+      return {};
+    }
+    return r.json();
+  }
+
   //: The voice Read Aloud uses, from the site's own config. Open WebUI's
   //: speech endpoint needs it named; its own page sends it the same way.
   function voiceId() {
     if (!VOICE_ID) {
       VOICE_ID = fetch("/api/config", { headers: authHeaders() })
-        .then(function (r) { return r.ok ? r.json() : {}; })
+        .then(function (r) { return jsonOrEmpty(r, "/api/config"); })
         .then(function (c) {
           return (c && c.audio && c.audio.tts && c.audio.tts.voice) || "";
         })
@@ -414,7 +440,7 @@
       // Paged at 30, like the office's loadAgents.
       AGENT_VOICES = (function more(page, seen, got) {
         return fetch("/api/v1/models/list?page=" + page, { headers: authHeaders() })
-          .then(function (r) { return r.ok ? r.json() : {}; })
+          .then(function (r) { return jsonOrEmpty(r, "/api/v1/models/list"); })
           .then(function (body) {
             var items = (body && Array.isArray(body.items)) ? body.items : [];
             items.forEach(function (m) {
