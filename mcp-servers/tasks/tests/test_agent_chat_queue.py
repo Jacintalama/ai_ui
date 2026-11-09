@@ -320,9 +320,29 @@ async def _walk_away_mid_round(monkeypatch, s, saved, during=None):
     person does while the round is still in flight."""
     import asyncio
 
+    # The browser navigates away once the round is really at the agent AND
+    # whatever else the person did has actually happened. That used to be a
+    # fixed 0.2s sleep in `receive`, which made every test in this file a
+    # race against however long the work inside `during` takes on the
+    # machine running it.
+    #
+    # 2026-11-09: on Windows the clear plus two sends overran 0.2s, so the
+    # round was cancelled before the new round could claim the room, and
+    # test_a_cancelled_round_leaves_a_cleared_rooms_new_round_alone failed
+    # saying "the old round released the new round's claim" when the new
+    # round had never claimed it. Traced by watching every write to the
+    # flag: the old round never touched it, so the generation guard was
+    # doing its job and the clock was the whole problem. It passed on Linux
+    # CI, which is how a wall-clock assumption hides.
+    #
+    # A longer sleep would only move the race, so the disconnect waits for
+    # this instead of guessing.
+    at_the_agent = asyncio.Event()
+
     async def hangs(email, agent, history, names=(), **kw):
         if during is not None:
             await during()
+        at_the_agent.set()
         await asyncio.Event().wait()
 
     async def slow_save(email, sess):
@@ -344,9 +364,10 @@ async def _walk_away_mid_round(monkeypatch, s, saved, during=None):
         sent.append(message)
 
     async def receive():
-        # Long enough for the round to reach the agent, then the browser
-        # navigates away.
-        await asyncio.sleep(0.2)
+        # Waits for the round to reach the agent rather than sleeping a
+        # guessed interval. The timeout is a backstop so a genuinely stuck
+        # round fails loudly instead of hanging the suite.
+        await asyncio.wait_for(at_the_agent.wait(), timeout=10)
         return {"type": "http.disconnect"}
 
     scope = {"type": "http", "asgi": {"spec_version": "2.3"}, "headers": []}
@@ -462,13 +483,28 @@ async def test_a_cancelled_round_leaves_a_cleared_rooms_new_round_alone(
     s = store.get_session(_User.email)
     await _send("belongs to the old room")
 
+    claimed = {}
+
     async def clear_and_carry_on():
         await chat.agent_chat_clear(user=_User())
         await _send("first in the new room")
+        # Recorded BEFORE the old round is cancelled, so a failure below
+        # says which half broke. Without this the test read "the old round
+        # released the new round's claim" when in fact the new round had
+        # never claimed the room, and that sent me looking at the
+        # generation guard, which was correct all along (2026-11-09).
+        claimed["streaming"] = s.streaming
+        claimed["generation"] = s.generation
         await _send("queued in the new room")
 
     await _walk_away_mid_round(monkeypatch, s, [], during=clear_and_carry_on)
 
+    assert claimed.get("streaming") is True, (
+        "the NEW round never claimed the room, so nothing here tests the "
+        "guard: " + repr(claimed))
+    assert s.generation == claimed["generation"], (
+        "the generation moved after the new round claimed, so the guard is "
+        "being asked the wrong question")
     assert s.streaming is True, "the old round released the new round's claim"
     assert s.queued == ["queued in the new room"], s.queued
     assert len(s.queued_turn_ids) == 1
