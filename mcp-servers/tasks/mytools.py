@@ -665,7 +665,13 @@ PROVIDER_TOOLS: Dict[str, List[Tool]] = {
 #: Every tool of every provider, for checks that should hold everywhere.
 ALL_TOOLS_FLAT = [t for tools in PROVIDER_TOOLS.values() for t in tools]
 
-_TYPES = {"string": (str, ""), "integer": (int, 0), "boolean": (bool, False)}
+#: A declared type a model can act on. `array` is here because the ClickUp
+#: catalogue carries real array fields now: declaring one a string is what
+#: let a model send an email address where ClickUp wanted [252150963]
+#: (2026-11-09). A type missing from this map reads as a string, which is
+#: why "number" is absent and harmless: ClickUp's ids arrive as text.
+_TYPES = {"string": (str, ""), "integer": (int, 0), "boolean": (bool, False),
+          "array": (list, None)}
 
 
 def _model_for(provider_id: str, tool: Tool):
