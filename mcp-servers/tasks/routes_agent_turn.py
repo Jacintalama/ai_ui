@@ -907,11 +907,65 @@ MAX_ARG_CHARS = 120
 MAX_ARGS_SHOWN = 5
 
 
+#: How much of a description a plain question shows: all of a normal one,
+#: while a pasted essay still cannot bury the question under it.
+MAX_PLAIN_CHARS = 600
+REPLY_YES_OR_NO = "Reply yes to let it, or no to skip."
+
+
+def _plain_question(agent_name: str, calls) -> str | None:
+    """Starting a build or a video, asked as a sentence, or None.
+
+    These two spend money and are what most people are asked first, and
+    their raw form read "create_app / description: Tip calculator ... number
+    of people to s". Only ever one call, because a sentence about one of two
+    would hide the other, and every word past the opening comes from the
+    call's own arguments, so it cannot describe something else.
+    """
+    if not isinstance(calls, list) or len(calls) != 1:
+        return None
+    call = calls[0] if isinstance(calls[0], dict) else {}
+    fn = call.get("function")
+    fn = fn if isinstance(fn, dict) else {}
+    raw = fn.get("arguments")
+    try:
+        args = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(args, dict):
+        return None
+
+    def said(key: str) -> str:
+        return " ".join(str(args.get(key) or "").split())[:MAX_PLAIN_CHARS]
+
+    tool = fn.get("name")
+    if tool == "create_app" and said("description"):
+        opening = ("%s wants to build this app." % agent_name) if agent_name             else "Build this app?"
+        details = [said("name"), said("description")]
+    elif tool == "make_video" and said("url"):
+        opening = (("%s wants to make a video of %s." % (agent_name, said("url")))
+                   if agent_name else "Make a video of %s?" % said("url"))
+        details = [said("title"), said("description")]
+    else:
+        return None
+    lines = [opening, ""] + [d for d in details if d]
+    if lines[-1]:
+        lines.append("")
+    lines.append(REPLY_YES_OR_NO)
+    return "\n".join(lines)
+
+
 def approval_question(agent_name: str, calls) -> str:
     """What the agent wants to do, in its own terms: the tool's name and
     arguments, not a phrase written per tool, which would be wrong somewhere
     and be wrong exactly where somebody approves the wrong thing. The IO
-    pipe's wording, here since Auto renders what this service sends."""
+    pipe's wording, here since Auto renders what this service sends.
+
+    `_plain_question` is the exception, for the two calls that start paid
+    work, and it is built from the arguments rather than written per case."""
+    plain = _plain_question(agent_name, calls)
+    if plain is not None:
+        return plain
     # No name means the assistant asking for itself in the main chat, where
     # the person named nobody. "This agent wants to run" is as wrong there as
     # a robot and a bold IO over the answer: it invents a third party out of
@@ -952,7 +1006,7 @@ def approval_question(agent_name: str, calls) -> str:
     if len(lines) == 1:
         lines.append("  something it did not name")
     lines.append("")
-    lines.append("Reply yes to let it, or no to skip.")
+    lines.append(REPLY_YES_OR_NO)
     return "\n".join(lines)
 
 
