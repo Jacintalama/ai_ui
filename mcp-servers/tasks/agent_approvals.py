@@ -63,7 +63,11 @@ def clean_tool(tool) -> str:
 def rule_problem(tool: str, decision: str, when_contains: str = "") -> str:
     """What is wrong with a rule, or "". Sentences for the page."""
     if not clean_tool(tool):
-        return "Name the tool the rule is about, such as send_email or create_*."
+        # A proxy example on purpose: `my-clickup_*` is the shape that
+        # covers one connected service, and nothing else here says it is
+        # allowed, so it was unguessable.
+        return ("Name the tool the rule is about, such as send_email, or "
+                "my-clickup_* for everything in ClickUp.")
     if decision not in DECISIONS:
         return "A rule either allows or denies."
     if len(str(when_contains or "")) > MAX_RULE_TEXT:
@@ -83,8 +87,30 @@ def rule_decision(rules: list[dict], tool: str, args) -> dict | None:
     """The first rule that answers this call, or None. Deny wins over
     allow when both match: a person who wrote "never delete" meant it even
     if another rule allows everything."""
-    name = clean_tool(tool)
-    if not name:
+    # Imported here rather than at the top because this module is low level
+    # and is imported early by the routes; agent_tools is not. One decision
+    # in one place: that function is also what is_write_call and every
+    # failure sentence use to find the real name.
+    from agent_tools import called_tool_name
+
+    # Both the name the loop sees and the tool it actually runs. Every one
+    # of the proxy's ~200 tools arrives as `call_tool` with the real name
+    # inside its arguments, so matching only the outer name meant a rule
+    # naming the tool never fired for anything, and the only rule that did
+    # fire covered web search, Trello, GitHub and deleting a ClickUp space
+    # together. Measured 2026-11-09: 46 approvals asked, 0 rules written.
+    #
+    # The outer name still matches, on purpose. A rule written `call_tool`
+    # is a blanket over the proxy today, and somebody who wrote it with
+    # deny meant to stop proxy writes: narrowing that to nothing would be a
+    # safety regression in the one direction that matters.
+    names = []
+    inner = called_tool_name(tool, args if isinstance(args, dict) else None)
+    for candidate in (tool, inner):
+        cleaned = clean_tool(candidate)
+        if cleaned and cleaned not in names:
+            names.append(cleaned)
+    if not names:
         return None
     text = None
     hits = []
@@ -92,7 +118,8 @@ def rule_decision(rules: list[dict], tool: str, args) -> dict | None:
         if not isinstance(rule, dict):
             continue
         pattern = clean_tool(rule.get("tool"))
-        if not pattern or not fnmatch.fnmatchcase(name, pattern):
+        if not pattern or not any(fnmatch.fnmatchcase(n, pattern)
+                                  for n in names):
             continue
         needle = str(rule.get("when_contains") or "").strip().lower()
         if needle:
