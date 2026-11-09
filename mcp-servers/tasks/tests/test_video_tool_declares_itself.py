@@ -37,6 +37,34 @@ def test_the_reply_declares_the_video_on_a_line_of_its_own():
         "[aiui-artifact]: #video/" + JOB]
 
 
+def test_a_job_just_queued_is_not_said_to_be_rendering():
+    """All that has happened when the tool answers is that the job joined
+    the queue, and the worker leaves it there while the server is short of
+    memory."""
+    said = asyncio.run(_tool().make_video(
+        url="https://example.com", __user__={"email": "r@example.com"}))
+    assert "rendering" not in said.lower()
+    assert "in the queue" in said
+    assert "in this chat" in said
+
+
+def test_the_model_is_told_the_same():
+    """The docstring is what a model reads, and it was telling it to say
+    rendering whatever the tool answered."""
+    doc = " ".join(_tool().make_video.__doc__.split())
+    assert "Tell them it is rendering" not in doc
+    assert "Tell them it is queued" in doc
+
+
+def test_the_skill_says_the_same():
+    skill = os.path.join(os.path.dirname(__file__), "..", "agent_skills",
+                         "make-a-video", "SKILL.md")
+    with open(skill, encoding="utf-8") as fh:
+        text = fh.read()
+    assert "Say it is rendering" not in text
+    assert "Say it is in the queue" in text
+
+
 def test_the_older_sentence_is_still_written():
     """Chats already saved were read by it, and the page still reads it."""
     said = asyncio.run(_tool().make_video(

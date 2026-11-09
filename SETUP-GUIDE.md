@@ -109,7 +109,7 @@ docker compose -f docker-compose.unified.yml logs -f
 docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 ```
 
-You should see: `caddy`, `api-gateway`, `webhook-handler`, `n8n`, `mcp-proxy`, `open-webui`, `admin-portal`, `postgres`, `redis`, `mcp-github`, `mcp-filesystem`, `mcp-clickup`, `mcp-trello`, `mcp-sonarqube`, `mcp-excel`, `mcp-dashboard`
+You should see: `caddy`, `api-gateway`, `webhook-handler`, `n8n`, `mcp-proxy`, `open-webui`, `admin-portal`, `postgres`, `redis`, `mcp-github`, `mcp-filesystem`, `mcp-trello`, `mcp-sonarqube`, `mcp-excel`, `mcp-dashboard`
 
 ---
 

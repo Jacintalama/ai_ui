@@ -13,7 +13,7 @@ metadata:
 1. `make_video` with the address of the site and a title they would
    recognise. The platform captures the pages itself, so nothing has to be
    uploaded and no screenshots are needed from them.
-2. Say it is rendering and roughly where it is in the queue.
+2. Say it is in the queue and will appear in the chat when it is finished.
 3. `video_status` when they ask again, and give them the link once it is
    done.
 

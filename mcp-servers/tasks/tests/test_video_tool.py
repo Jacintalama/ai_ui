@@ -62,7 +62,7 @@ async def test_it_films_the_site_and_queues_it(tools):
     ]
     assert seen[1]["body"]["url"] == SITE
     assert all(c["email"] == "owner@example.com" for c in seen)
-    assert "rendering" in said and JOB in said
+    assert "in the queue" in said and JOB in said
 
 
 async def test_nothing_is_uploaded_and_nothing_is_asked_for(tools):

@@ -120,7 +120,7 @@ class Tools:
     async def make_video(self, url: str, title: str = "",
                          description: str = "", __user__: dict = {}) -> str:
         """
-        Make a short narrated video of a website and start it rendering.
+        Make a short narrated video of a website and queue it for rendering.
 
         Give the address of a page that is publicly reachable. The platform
         opens the site itself and captures the pages, so the person does not
@@ -129,8 +129,9 @@ class Tools:
         `description` is optional. Left empty, the video is scripted from what
         the pages actually show, which is usually better than a guess.
 
-        Rendering takes minutes. Tell them it is rendering and use
-        video_status when they ask again; do not describe what is in the
+        It waits in a queue and then renders, which takes minutes. Tell them
+        it is queued and will appear in this chat when it is finished, and
+        use video_status when they ask again; do not describe what is in the
         video, because you have not seen it.
         """
         email = self._email(__user__)
@@ -167,8 +168,11 @@ class Tools:
             return queued
 
         ahead = (queued or {}).get("queue_position")
-        said = ("Filming " + address + " now, and it is rendering. This takes "
-                "a few minutes.")
+        # Only the queue has happened by now. The worker holds a job while
+        # the server is short of memory, so "rendering" would be a guess.
+        said = ("The video of " + address + " is in the queue. It will appear "
+                "in this chat when it is finished, which can take several "
+                "minutes.")
         if isinstance(ahead, int) and ahead > 0:
             said += " There are %d ahead of it." % ahead
         # Declared as well as said: the page follows a video by this line,

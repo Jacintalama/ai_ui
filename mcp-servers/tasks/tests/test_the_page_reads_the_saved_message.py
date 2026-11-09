@@ -72,10 +72,10 @@ def _section():
     return js[start:end]
 
 
-def _node(script):
+def _node(script, overrides=OVERRIDES):
     if not shutil.which("node"):
         pytest.skip("node is not installed")
-    body = (STUBS + _section() + OVERRIDES
+    body = (STUBS + _section() + overrides
             + "\n(async function () {\n" + script
             + "\n})().catch(function (e) { console.log('THREW ' + e.stack); process.exit(1); });")
     with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as fh:
@@ -231,6 +231,67 @@ def test_a_finished_video_comes_back_in_its_closing_message():
     console.log(JSON.stringify({shown: videoShown[0], asked: jobFetches.length}));""" % {"v": VIDEO})
     assert got["shown"] == [VIDEO, "b"]
     assert got["asked"] == 1, "the job is asked for once, not on every scan"
+
+
+def test_the_closing_message_leaves_out_the_link_when_the_player_shows():
+    """The player sits in this reply, so the address was only a very long
+    line above it, with its token printed for anyone to read."""
+    got = _node(r"""
+    console.log(JSON.stringify(aiuiVideoOutcome({status: 'done', title: 'Tour',
+      output_available: true,
+      share_url: location.origin + '/api/video-jobs/abc/share?token=t'}, 'v1')));""")
+    assert got == "Tour is ready.\n\n[aiui-video-done]: #v1"
+
+
+def test_the_closing_message_keeps_the_link_when_the_player_cannot_show():
+    """A share link on another host never reaches the player, so the link
+    is the only way left to the video."""
+    got = _node(r"""
+    console.log(JSON.stringify(aiuiVideoOutcome({status: 'done', title: 'Tour',
+      output_available: true, share_url: 'https://elsewhere.test/v.mp4'}, 'v1')));""")
+    assert "Watch it here: https://elsewhere.test/v.mp4" in got
+
+
+POLL_OVERRIDES = r"""
+var lines = [], theJob = null;
+function aiuiBuildLine(chatId, text) { lines.push(text); }
+function aiuiClearBuildLine() {}
+function aiuiCloseWith() { return Promise.resolve(true); }
+function aiuiShowVideoInline() {}
+function fetch() { return Promise.resolve({ok: true, status: 200, json: function () { return Promise.resolve(theJob); }}); }
+function tick() { return new Promise(function (r) { setTimeout(r, 0); }); }
+AIUI_VIDEO_GIVE_UP_MS = -1;
+"""
+
+
+def _line_for(job):
+    """What the real poller says about a job, through the real poller."""
+    got = _node(r"""
+    theJob = %s;
+    aiuiPollVideo('chat-1', 'v1', Date.now() - 120000);
+    await tick(); await tick();
+    console.log(JSON.stringify(lines));""" % json.dumps(job),
+                overrides=POLL_OVERRIDES)
+    assert len(got) == 1, got
+    return got[0]
+
+
+def test_a_video_waiting_with_nothing_ahead_is_not_said_to_be_rendering():
+    """The worker leaves a job queued while the server is short of memory,
+    with nothing ahead of it."""
+    line = _line_for({"status": "queued", "queue_position": 0})
+    assert "Rendering" not in line
+    assert line.startswith("Waiting to start rendering")
+
+
+def test_a_video_behind_others_says_how_many():
+    line = _line_for({"status": "queued", "queue_position": 2})
+    assert line == "Waiting to render, 2 ahead of it."
+
+
+def test_a_video_really_rendering_says_so():
+    line = _line_for({"status": "rendering"})
+    assert line == "Rendering the video, 2 min so far."
 
 
 def _source():

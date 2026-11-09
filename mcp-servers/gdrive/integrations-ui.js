@@ -5599,7 +5599,7 @@
   }
   // ===== Video watcher =====
   //
-  // make_video answers in seconds with "it is rendering ... Its id is
+  // make_video answers in seconds with "it is in the queue ... Its id is
   // <id>" and then renders for minutes. Until now the chat said nothing
   // more unless somebody asked for it by that id, which is the same gap
   // the build watcher closed above and is closed the same way.
@@ -5623,7 +5623,16 @@
     return '[aiui-video-done]: #' + id;
   }
 
-  // Mirrors the video_status tool, so the page says what asking would say.
+  // The address a player may load, or '' when this video cannot be played
+  // here. Ours, and only ours: the src goes into a media element, and a link
+  // from a row is not a reason to fetch somebody else's host.
+  function aiuiVideoPlayableSrc(job) {
+    var src = String((job && job.share_url) || '');
+    return src.indexOf(location.origin + '/api/video-jobs/') === 0 ? src : '';
+  }
+
+  // Mirrors the video_status tool, so the page says what asking would say,
+  // less the link when the player is sitting in this very reply.
   function aiuiVideoOutcome(job, id) {
     var status = String((job && job.status) || '');
     if (status !== 'done' && status !== 'failed') return null;
@@ -5632,6 +5641,8 @@
     if (status === 'failed') {
       var why = String((job && job.error) || '').trim().slice(0, 300);
       said = title + ' failed.' + (why ? ' ' + why : '');
+    } else if (job && job.output_available && aiuiVideoPlayableSrc(job)) {
+      said = title + ' is ready.';
     } else if (job && job.output_available && job.share_url) {
       said = title + ' is ready.\nWatch it here: ' + String(job.share_url);
     } else {
@@ -5644,10 +5655,8 @@
 
   function aiuiShowVideoInline(chatId, job, id, messageId) {
     if (aiuiChatIdFromUrl() !== chatId) return;
-    var src = String((job && job.share_url) || '');
-    // Ours, and only ours. The src goes into a media element, and a link
-    // from a row is not a reason to fetch somebody else's host.
-    if (src.indexOf(location.origin + '/api/video-jobs/') !== 0) return;
+    var src = aiuiVideoPlayableSrc(job);
+    if (!src) return;
     var box_id = 'aiui-video-' + id;
     if (document.getElementById(box_id)) return;
     var inReply = aiuiReplyFor(box_id, messageId);
@@ -5667,6 +5676,19 @@
     else aiuiPutUnderLastMessage(box);
   }
 
+  // The worker leaves a job queued while the server is short of memory,
+  // with nothing ahead of it, so an empty queue does not mean rendering.
+  function aiuiVideoProgress(job, mins) {
+    var ahead = job.queue_position;
+    if (typeof ahead === 'number' && ahead > 0) {
+      return 'Waiting to render, ' + ahead + ' ahead of it.';
+    }
+    if (String(job.status || '') === 'queued') {
+      return 'Waiting to start rendering, ' + mins + ' min so far.';
+    }
+    return 'Rendering the video, ' + mins + ' min so far.';
+  }
+
   function aiuiPollVideo(chatId, id, started) {
     fetch('/api/video-jobs/' + id, { headers: aiuiAuthHeaders() }).then(function (r) {
       if (r.status === 403 || r.status === 404) return 'stop';
@@ -5680,10 +5702,7 @@
         return aiuiCloseWith(chatId, aiuiVideoDoneMarker(id), text);
       }
       var mins = Math.max(1, Math.round((Date.now() - started) / 60000));
-      var ahead = job.queue_position;
-      aiuiBuildLine(chatId, (typeof ahead === 'number' && ahead > 0)
-        ? 'Waiting to render, ' + ahead + ' ahead of it.'
-        : 'Rendering the video, ' + mins + ' min so far.');
+      aiuiBuildLine(chatId, aiuiVideoProgress(job, mins));
       return false;
     }).catch(function () { return false; }).then(function (finished) {
       if (finished || Date.now() - started > AIUI_VIDEO_GIVE_UP_MS) {
