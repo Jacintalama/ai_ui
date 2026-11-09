@@ -11,9 +11,31 @@ export function authHeaders() {
   return h;
 }
 
+// A wrong or MOVED path under /api/ is answered with Open WebUI's own
+// index.html and HTTP 200. Measured on production 2026-11-09:
+//
+//   /api/v1/nonexistent    200 text/html   <!doctype html><html lang="en">
+//   /tasks/api/nonexistent 404 application/json
+//
+// So r.ok is TRUE, r.json() then throws V8's "Unexpected token '<',
+// "<!DOCTYPE "... is not valid JSON", and that string is what reaches the
+// screen. It names neither the call nor the cause, which is why the red
+// toast Ralph saw sat untraced: by HTTP's reckoning the request succeeded,
+// so no amount of checking r.ok can catch it. Only the content type tells
+// the truth. Our own routes answer JSON correctly; the exposure is this
+// code calling Open WebUI's API, which an upgrade can rename under us.
+export function expectJson(r, url) {
+  var ct = (r && r.headers && r.headers.get && r.headers.get("content-type")) || "";
+  if (ct.indexOf("json") === -1) {
+    throw new Error(url + " -> " + r.status + " " + (ct || "no content type")
+                    + ", not JSON. That route has probably moved.");
+  }
+}
+
 export async function getJson(url) {
   var r = await fetch(url, { headers: authHeaders(), credentials: "include" });
   if (!r.ok) throw new Error(url + " -> " + r.status);
+  expectJson(r, url);
   return r.json();
 }
 

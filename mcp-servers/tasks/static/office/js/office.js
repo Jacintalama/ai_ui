@@ -11,7 +11,7 @@
 import { S, nameOf } from "./state.js";
 import { initNewAgent } from "./newagent.js";
 import { initDock, drawDock, openChat, pruneDock, TEAM } from "./dock.js";
-import { getJson, esc, ago, saying, authHeaders } from "./util.js";
+import { getJson, expectJson, esc, ago, saying, authHeaders } from "./util.js";
 import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
   from "./agent.js";
 
@@ -2067,6 +2067,10 @@ import { PALETTES, ownPalette, paletteOf, colourOf, pickColour, robot, face }
     var r = await fetch(MODELS_API + "/model?id=" + encodeURIComponent(id),
                         { headers: authHeaders(), credentials: "include" });
     if (!r.ok) throw new Error("model " + r.status);
+    // Open WebUI answers a moved /api/ path with index.html and 200, so
+    // r.ok is not enough (see expectJson). Without this the whole row
+    // would be read as HTML and written back over the agent's tools.
+    expectJson(r, MODELS_API + "/model");
     var row = await r.json();
     row.meta = Object.assign({}, row.meta || {}, { access: on ? "all" : "ask" });
     var w = await fetch(MODELS_API + "/model/update?id=" + encodeURIComponent(id),
