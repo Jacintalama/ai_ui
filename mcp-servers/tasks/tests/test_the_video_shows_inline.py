@@ -1,6 +1,6 @@
 """A finished video plays in the chat, instead of being asked after.
 
-make_video answers in seconds with "it is rendering ... Its id is <id>"
+make_video answers in seconds with "it is in the queue ... Its id is <id>"
 and then renders for minutes. The chat said nothing more unless somebody
 asked for it by that id, which is the gap the build watcher closed and
 this closes the same way.
@@ -70,9 +70,11 @@ def test_saving_it_deliberately_still_gets_a_name():
 def test_only_our_own_host_is_ever_played():
     """The src comes from a row and goes into a media element. A link in a
     row is not a reason to fetch somebody else's host."""
+    only_ours = _section("aiuiVideoPlayableSrc")
+    assert "location.origin + '/api/video-jobs/'" in only_ours
+    assert "indexOf(" in only_ours and "=== 0 ? src : ''" in only_ours
     body = _section("aiuiShowVideoInline")
-    assert "location.origin + '/api/video-jobs/'" in body
-    assert "indexOf(" in body and "!== 0) return" in body
+    assert "aiuiVideoPlayableSrc(job)" in body and "if (!src) return" in body
 
 
 def test_it_is_drawn_once_per_video():

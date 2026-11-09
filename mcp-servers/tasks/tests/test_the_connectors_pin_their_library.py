@@ -59,7 +59,7 @@ def test_compose_still_installs_mcpo_at_startup():
     """If this stops being true the connectors were rebuilt as images,
     which is the better answer, and this file should be revisited."""
     found = _installs(COMPOSE)
-    assert len(found) == 4, (
+    assert len(found) == 3, (
         "the mcpo services in compose changed shape; re-read this file")
 
 
@@ -156,10 +156,12 @@ def _compose_services():
         return (yaml.safe_load(fh).get("services") or {})
 
 
-MCPO_SERVICES = ("mcp-filesystem", "mcp-clickup", "mcp-trello", "mcp-sonarqube")
+# mcp-clickup left compose on 2026-11-09: off by name in tenants.py since
+# 11-06, and my-clickup is what serves ClickUp.
+MCPO_SERVICES = ("mcp-filesystem", "mcp-trello", "mcp-sonarqube")
 
 
-def test_those_four_services_are_still_the_ones_that_install_at_startup():
+def test_those_services_are_still_the_ones_that_install_at_startup():
     svcs = _compose_services()
     for name in MCPO_SERVICES:
         assert name in svcs, name
@@ -168,7 +170,7 @@ def test_those_four_services_are_still_the_ones_that_install_at_startup():
 
 @pytest.mark.parametrize("name", MCPO_SERVICES)
 def test_the_pins_are_single_quoted_so_the_outer_string_survives(name):
-    """These four run their install INSIDE `bash -c "..."`. Writing a pin
+    """These run their install INSIDE `bash -c "..."`. Writing a pin
     as "mcp<2" closes that outer double-quoted string, and what reaches
     the container is
 
