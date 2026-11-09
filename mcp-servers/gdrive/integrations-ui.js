@@ -5275,6 +5275,10 @@
     if (aiuiChatIdFromUrl() !== chatId) return;
     var el = document.getElementById('aiui-build-line');
     if (!el) {
+      // A chat just opened can answer its first poll before any reply is
+      // on screen, and a line put at the end of the page is never seen and
+      // never moved. The next poll draws it.
+      if (!aiuiLastReplyBody()) return;
       el = document.createElement('div');
       el.id = 'aiui-build-line';
       el.style.cssText = 'padding:.25rem 0 .75rem 3.75rem;opacity:.65;font-size:.9rem;';
@@ -5698,7 +5702,10 @@
       if (!job) return false;
       var text = aiuiVideoOutcome(job, id);
       if (text) {
-        if (String(job.status || '') === 'done') aiuiShowVideoInline(chatId, job, id);
+        // The player comes from the saved read that this sets off, in the
+        // closing message. Drawn here, on a chat just opened, it went to
+        // the end of the page under the message box, because no reply was
+        // on screen yet, and it was never moved.
         return aiuiCloseWith(chatId, aiuiVideoDoneMarker(id), text);
       }
       var mins = Math.max(1, Math.round((Date.now() - started) / 60000));
