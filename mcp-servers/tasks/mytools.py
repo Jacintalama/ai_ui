@@ -671,7 +671,7 @@ ALL_TOOLS_FLAT = [t for tools in PROVIDER_TOOLS.values() for t in tools]
 #: (2026-11-09). A type missing from this map reads as a string, which is
 #: why "number" is absent and harmless: ClickUp's ids arrive as text.
 _TYPES = {"string": (str, ""), "integer": (int, 0), "boolean": (bool, False),
-          "array": (list, None)}
+          "array": (list, None), "object": (dict, None)}
 
 
 def _model_for(provider_id: str, tool: Tool):

@@ -174,19 +174,27 @@ def _resolve(node: Any, components: Dict, depth: int = 0) -> Any:
 def _type_of(schema: Dict) -> str:
     t = schema.get("type")
     if t in ("string", "boolean", "integer", "number", "array", "object"):
-        # An array stays an array. Collapsing it to "string" is what told a
-        # model that `assignees` was free text, so on 2026-11-09 it sent an
-        # email address where ClickUp wanted [252150963], the task was
-        # created unassigned, and Ralph had to approve a second call to fix
-        # it. An object still reads as a string: that is a separate shape
-        # and no tool has needed it yet.
+        # An array stays an array, and so does an object. Collapsing either
+        # to "string" is what told a model that `assignees` was free text.
+        # On 2026-11-09 create_task's version, an array of ids, got an
+        # email address; update_task's version, an object {add, rem}, got
+        # the right dict three times and could not pass a field declared
+        # str. The two are genuinely different shapes one operation apart,
+        # so this has to come from the spec rather than from the name.
         return {"integer": "integer", "number": "number",
-                "boolean": "boolean", "array": "array"}.get(t, "string")
+                "boolean": "boolean", "array": "array",
+                "object": "object"}.get(t, "string")
     any_of = schema.get("anyOf") or schema.get("oneOf") or []
     for option in any_of:
         if isinstance(option, dict) and option.get("type") not in (None, "null"):
             return _type_of(option)
     return "string"
+
+
+#: How many of an object's keys are named in its description. Enough to
+#: show the shape, not so many that `features` (nine of them) crowds out
+#: the sentence ClickUp wrote.
+OBJECT_KEYS_SHOWN = 6
 
 
 def _describe(schema: Dict, fallback: str = "",
@@ -198,6 +206,12 @@ def _describe(schema: Dict, fallback: str = "",
     value and gets a 400 after somebody approved the call. Dropping the
     enum was throwing away the most useful half of the spec.
     """
+    # The title is the field name in prose ("Assignees"), used only when
+    # ClickUp wrote no description. Once a shape sentence is produced it
+    # adds nothing, and "...add, rem required. Assignees" reads like a
+    # generated string rather than a sentence, so `from_title` drops it
+    # in that case and keeps it otherwise.
+    from_title = not schema.get("description") and bool(schema.get("title"))
     d = schema.get("description") or schema.get("title") or ""
     text = " ".join(str(d).split())[:140]
     choices = schema.get("enum")
@@ -227,7 +241,29 @@ def _describe(schema: Dict, fallback: str = "",
         # FIRST, not appended. ClickUp's descriptions run long and the cap
         # below is what the model sees; appended, the shape was the part
         # that got cut off, which is the one fact it cannot guess.
-        text = said + (" " + text if text else "")
+        text = said + ("" if from_title
+                       else (" " + text if text else ""))
+    elif kind.get("type") == "object":
+        # Which keys, and which of them cannot be left out. 18 body fields
+        # in v2 are objects and 13 of those have no description, so each
+        # read as a bare string named after itself: `features` with nine
+        # required sub-fields, `tag` with name, tag_fg and tag_bg.
+        props = kind.get("properties")
+        names = ([n for n in props if isinstance(n, str)][:OBJECT_KEYS_SHOWN]
+                 if isinstance(props, dict) else [])
+        required = kind.get("required")
+        required = ([r for r in required if isinstance(r, str)]
+                    if isinstance(required, (list, tuple)) else [])
+        if names:
+            said = "An object with " + ", ".join(names)
+            shown = [r for r in required if r in names][:OBJECT_KEYS_SHOWN]
+            if shown:
+                said += "; " + ", ".join(shown) + " required"
+            said += "."
+        else:
+            said = "An object."
+        text = said + ("" if from_title
+                       else (" " + text if text else ""))
     # The fallback is the field's own name, which tells a model nothing it
     # cannot already read. It is a last resort, not the first choice, so it
     # applies only when neither the spec nor the shape said anything.
