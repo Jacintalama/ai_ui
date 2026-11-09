@@ -3588,7 +3588,23 @@
           // When it last looked, and why it could not. A rule that has
           // quietly stopped looking is otherwise indistinguishable from a
           // rule nobody has emailed.
-          if (byEmail && (a.checked_at || a.last_error)) {
+          //
+          // The presence of the fields IS the signal, rather than the
+          // trigger being email. The server attaches checked_at and
+          // last_error only for the triggers something polls, and it has
+          // sent them for Trello since 2026-11-03 (routes_automations
+          // ._cursors_for reads both cursor tables). This guard was still
+          // `byEmail &&`, so for a Trello rule the sentence was computed,
+          // stored, sent over the wire and dropped here.
+          //
+          // Measured 2026-11-09: Ralph's only automation had been dead six
+          // days with last_error "Your Trello connection was rejected",
+          // written every minute, and the page showed a healthy-looking
+          // rule. That is exactly the failure the comment above says this
+          // line exists to prevent. Reading the fields rather than the
+          // trigger also means the next polled trigger needs no change
+          // here.
+          if (a.checked_at || a.last_error) {
             var checked = document.createElement("div");
             checked.className = "auto-rule-last";
             checked.textContent = a.last_error
