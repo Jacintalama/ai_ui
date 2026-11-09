@@ -237,6 +237,24 @@ else
       ${SSH} "cd ${ORCH_PATH} && docker compose -f docker-compose.unified.yml restart caddy"
     else
       ${SSH} "cd ${ORCH_PATH} && docker compose -f docker-compose.unified.yml up -d --build ${svc}"
+      if [[ "${svc}" == "tasks" ]]; then
+        # mcp-proxy caches each backing server's OpenAPI in TOOLS_CACHE
+        # when IT boots, and never re-reads a server rebuilt underneath
+        # it. The whole my-* family, 210 tools, is served by `tasks`, so
+        # without this a tool's new shape never reaches a model.
+        #
+        # Measured 2026-11-09: PR #159 changed ClickUp's `assignees` from
+        # a string to an array, the deploy went green, the container had
+        # the new definition, and mcp-proxy still told every model
+        # "string". A correct container, a green deploy, and a fix that
+        # did nothing.
+        #
+        # A restart, not a rebuild: mcp-proxy's own image has not
+        # changed, and rebuilding it on every tasks deploy would add
+        # minutes to every deploy for nothing.
+        echo "  tasks was rebuilt, so mcp-proxy must re-read its tools"
+        ${SSH} "cd ${ORCH_PATH} && docker compose -f docker-compose.unified.yml restart mcp-proxy"
+      fi
     fi
   done
 fi
