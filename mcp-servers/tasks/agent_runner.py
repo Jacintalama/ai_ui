@@ -37,7 +37,7 @@ import agent_jev
 import agent_memory
 import agent_routing
 from agent_tools import (ToolOutcome, arguments_of, called_tool_name,
-                         execute_tool_call,
+                         execute_tool_call, tools_for_message,
                          never_ask_about,
                          is_write_call, is_write_tool,
                          METHODS_NO_AGENT_MAY_CALL)
@@ -685,6 +685,11 @@ _THINK_BLOCK = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.S | re.I)
 _THINK_OPEN = re.compile(r"</?think(?:ing)?>\s*", re.I)
 
 
+#: Seam. The turn's tool hint, so a test can drive the loop without a proxy
+#: and so the lookup can be replaced without touching this file.
+_tools_for_message = tools_for_message
+
+
 def strip_reasoning(text):
     """`text` without its <think> blocks, or `text` as it was when it is
     not a string."""
@@ -751,6 +756,24 @@ async def _chat(token: str, model: str, messages: list[dict],
     for the caller to write with the run.
     """
     convo = list(messages)
+    # What this message needs, found before the model is asked anything.
+    #
+    # Only for the proxy. Every other tool is declared to the model
+    # directly, so there is nothing to discover; the proxy hides roughly
+    # 300 behind a search, and finding one costs a whole round trip per
+    # step. Measured 2026-11-09: five of a turn's seven rounds went on
+    # search_tools and describe_tools before any work, so a four step job
+    # could not finish whatever the person typed. This says the same thing
+    # for the price of two HTTP calls, which the turn does not count.
+    #
+    # A hint. It never restricts: search_tools is still there and is named
+    # in the hint, nothing about access or approvals changes, and any
+    # failure returns "" so the turn runs exactly as it did before.
+    if "server:mcp-proxy" in (tool_ids or []):
+        hint = await _tools_for_message(
+            user_email, agent_routing.last_user_text(convo))
+        if hint:
+            convo = [{"role": "system", "content": hint}] + convo
     notes: list[str] = []
     mode = tool_mode or agent_access.MODE_READ_ONLY
     # This person's standing approval rules, read the first time a write

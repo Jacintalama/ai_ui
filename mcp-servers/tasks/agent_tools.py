@@ -309,6 +309,130 @@ def is_write_call(method_name: str, params: dict | None = None) -> bool:
     return is_write_tool(inner)
 
 
+#: How many matching tools a turn is handed, and how much of each. The hint
+#: sits in front of the conversation and is re-posted on every round, so it
+#: is bounded by count rather than allowed to grow with the catalogue.
+HINT_TOOLS = 6
+HINT_DESC_CHARS = 90
+HINT_CHARS = 1400
+#: Short on purpose. This runs before the model is asked anything, so a slow
+#: proxy would show up as the turn being slow to start. It is a hint: losing
+#: it costs rounds, and waiting for it costs the person.
+HINT_TIMEOUT_SECONDS = 12
+
+
+def _required_of(tool) -> list:
+    """The fields a described tool cannot be called without.
+
+    describe_tools answers with the whole JSON schema, which is most of
+    what makes it worth a round trip to read. Only the required names come
+    out of here.
+    """
+    body = tool.get("request_body") if isinstance(tool, dict) else None
+    if not isinstance(body, dict):
+        return []
+    schema = (((body.get("content") or {}).get("application/json") or {})
+              .get("schema") or {})
+    if not isinstance(schema, dict):
+        return []
+    options = schema.get("anyOf") or schema.get("oneOf") or [schema]
+    if not isinstance(options, (list, tuple)):
+        return []
+    for option in options:
+        if isinstance(option, dict) and option.get("properties"):
+            required = option.get("required")
+            if isinstance(required, (list, tuple)):
+                return [r for r in required if isinstance(r, str) and r]
+            return []
+    return []
+
+
+def tool_hint(found, described) -> str:
+    """What to put in front of a turn so it need not go looking.
+
+    Measured 2026-11-09: five of a turn's seven rounds went on
+    search_tools and describe_tools before any work, because discovery is
+    sequential (search, read, describe, read, call) and every step is a
+    whole round trip with the model. This says the same thing in no rounds
+    at all.
+
+    A hint, never a restriction: search_tools stays available and is named
+    here for the case where none of these fit. Empty when there is nothing
+    to say, because an empty block in front of every turn is noise on
+    every turn. Never raises; both arguments come off the wire.
+    """
+    rows = found if isinstance(found, (list, tuple)) else []
+    needs = {}
+    for one in (described if isinstance(described, (list, tuple)) else []):
+        if not isinstance(one, dict):
+            continue
+        name = one.get("tool_name")
+        if isinstance(name, str) and name.strip():
+            needs[name.strip()] = _required_of(one)
+
+    lines = []
+    for row in rows[:HINT_TOOLS]:
+        if not isinstance(row, dict):
+            continue
+        name = row.get("tool_name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        name = name.strip()
+        said = " ".join(str(row.get("description") or "").split())
+        line = "  " + name + ((" - " + said[:HINT_DESC_CHARS]) if said else "")
+        wanted = needs.get(name)
+        if wanted:
+            line += "\n     needs: " + ", ".join(wanted)
+        lines.append(line)
+    if not lines:
+        return ""
+    return ("These tools match what is being asked. Run one with call_tool, "
+            "passing tool_name and arguments. Only call search_tools if none "
+            "of them fit.\n" + "\n".join(lines))[:HINT_CHARS]
+
+
+async def tools_for_message(user_email: str, text: str,
+                            limit: int = HINT_TOOLS) -> str:
+    """Ask the proxy once what this message needs, before the model runs.
+
+    One search and one describe, made by us. They cost HTTP calls, which
+    the turn does not count, instead of round trips, which it does.
+
+    Never raises and never blocks the turn: any failure returns "" and the
+    turn behaves exactly as it did before this existed.
+    """
+    text = " ".join(str(text or "").split())
+    if not text:
+        return ""
+    try:
+        response = await _post_json(
+            _proxy_url() + "/meta/search_tools",
+            json={"query": text[:400], "limit": limit},
+            headers={"X-User-Email": user_email},
+            timeout=HINT_TIMEOUT_SECONDS)
+        if response.status_code >= 400:
+            return ""
+        found = (response.json() or {}).get("results") or []
+        names = [f.get("tool_name") for f in found
+                 if isinstance(f, dict)
+                 and isinstance(f.get("tool_name"), str)]
+        described = []
+        if names:
+            second = await _post_json(
+                _proxy_url() + "/meta/describe_tools",
+                json={"tool_names": names[:limit]},
+                headers={"X-User-Email": user_email},
+                timeout=HINT_TIMEOUT_SECONDS)
+            if second.status_code < 400:
+                described = (second.json() or {}).get("tools") or []
+        return tool_hint(found, described)
+    except Exception:                                       # noqa: BLE001
+        # Never the exception text: an httpx error carries the URL.
+        logger.warning("could not look up the tools for this message",
+                       exc_info=True)
+        return ""
+
+
 def called_tool_name(method_name: str, params: dict | None = None) -> str:
     """Which tool the model actually asked for.
 
