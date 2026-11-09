@@ -924,12 +924,28 @@ def approval_question(agent_name: str, calls) -> str:
         fn = fn if isinstance(fn, dict) else {}
         name = fn.get("name")
         name = name.strip() if isinstance(name, str) and name.strip() else "an unnamed tool"
-        lines.append("  " + name)
         raw = fn.get("arguments")
         try:
             args = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
         except (ValueError, TypeError):
             args = {}
+        # Every proxy tool arrives wrapped in call_tool, so unwrapped this
+        # question read "Vera wants to run: call_tool", with what she
+        # actually wanted a line below under a key called tool_name and the
+        # real arguments collapsed into one truncated dict. The name here is
+        # the whole point of the question.
+        if isinstance(args, dict):
+            inner_name = args.get("tool_name")
+            if name == "call_tool" and isinstance(inner_name, str) and inner_name.strip():
+                name = inner_name.strip()
+                inner_args = args.get("arguments")
+                if isinstance(inner_args, str):
+                    try:
+                        inner_args = json.loads(inner_args)
+                    except (ValueError, TypeError):
+                        inner_args = {}
+                args = inner_args if isinstance(inner_args, dict) else {}
+        lines.append("  " + name)
         if isinstance(args, dict):
             for k, v in list(args.items())[:MAX_ARGS_SHOWN]:
                 lines.append("     %s: %s" % (k, str(v)[:MAX_ARG_CHARS]))
