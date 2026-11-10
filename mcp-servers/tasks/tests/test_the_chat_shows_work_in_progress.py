@@ -267,3 +267,39 @@ def test_the_side_view_fits_on_open_and_on_resize_and_lets_go_on_close():
     assert "window.removeEventListener('resize'" in closed
     assert "s.frame.style.transform = ''" in closed
     assert "s.frame.style.width = '100%'" in closed
+
+
+# --- seen on the live site, 2026-11-10 ------------------------------------------
+
+def test_the_footer_says_the_step_the_video_is_on():
+    """Live, a video writing its script showed step 2 working over a footer
+    saying "Rendering the video"."""
+    got = _node(r"""
+    console.log(JSON.stringify({
+      scripting: aiuiVideoProgress({status: 'scripting'}, 2),
+      rendering: aiuiVideoProgress({status: 'rendering'}, 3),
+      voicing: aiuiVideoProgress({status: 'voicing'}, 3),
+      collecting: aiuiVideoProgress({status: 'collecting'}, 1),
+      queued: aiuiVideoProgress({status: 'queued', queue_position: 0}, 1)}));""")
+    assert got == {"scripting": "Writing the script, 2 min so far.",
+                   "rendering": "Rendering the video, 3 min so far.",
+                   "voicing": "Rendering the video, 3 min so far.",
+                   "collecting": "Waiting to start rendering, 1 min so far.",
+                   "queued": "Waiting to start rendering, 1 min so far."}
+
+
+def test_the_panels_keep_their_padding_inside_a_reply():
+    """aiuiPutUnderLastMessage clears a box's left padding (it is built for
+    boxes that carry the thread's indent), so a panel's own padding must
+    live on an inner element. Live, the text sat against the border."""
+    got = _node(r"""
+    reply = new El('div'); document.body.appendChild(reply);
+    aiuiPutUnderLastMessage = function (el) { el.style.marginLeft = '0'; el.style.paddingLeft = '0'; reply.appendChild(el); };
+    aiuiVideoPanel('chat-1', 'v1', {status: 'queued'}, 1);
+    AIUI_STEPS.agent = [{key: 'plan', said: 'Planning'}];
+    aiuiStepPanel('chat-1', {build_lane: 'agent', build_step: 'plan'}, 1);
+    console.log(JSON.stringify({
+      video: document.getElementById('aiui-video-steps-v1').innerHTML.slice(0, 60),
+      build: document.getElementById('aiui-steps').innerHTML.slice(0, 60)}));""")
+    for html in got.values():
+        assert html.startswith('<div style="padding:.6rem .75rem;">'), html
