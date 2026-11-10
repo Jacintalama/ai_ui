@@ -242,3 +242,33 @@ async def find_list(get: Getter, args: Optional[Dict[str, Any]] = None) -> Dict:
         out["note"] = ("No list, folder or space is called that. The names "
                        "above are what this account actually has.")
     return out
+
+
+async def resolve_list(name: Any, get: Getter):
+    """One list id for a name, or a sentence saying why there isn't one.
+
+    This is the half that gets used. Measured on the box the day
+    find_list shipped: it is ranked FIRST for "which ClickUp list is
+    Project 1", and nowhere in the top eight for "create a task in
+    Project 1", because tool search matches the person's own words and
+    their words are "create a task". So the lookup also has to live
+    where the model already lands, which is the argument of the call it
+    did find.
+
+    Returns (list_id, None) or (None, sentence). Never guesses between
+    two lists of the same name: putting a task somewhere nobody named is
+    not discovered until somebody goes looking for it.
+    """
+    found = await find_list(get, {"name": name})
+    if not found.get("ok"):
+        return None, found.get("error") or "That list could not be looked up."
+    items = found.get("items") or []
+    if len(items) == 1:
+        return items[0]["list_id"], None
+    if not items:
+        names = ", ".join(found.get("available") or [])
+        return None, ("There is no list called %r. The lists in this "
+                      "account are: %s." % (str(name), names or "none I can see"))
+    where = "; ".join(i.get("path") or str(i.get("name")) for i in items)
+    return None, ("More than one of those matches %r: %s. Which one?"
+                  % (str(name), where))
