@@ -26,7 +26,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Header, HTTPException
 from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 import agent_access
 import agent_attach
@@ -838,6 +838,66 @@ async def _clear_choice(key: str) -> None:
 
 #: Seam, so a turn can be driven without a database.
 _choice_seam = _read_choice
+
+
+#: Open WebUI's composer menu writes the person's pick onto the CHAT, in
+#: `params.tool_approval_mode` (Chat.svelte, handleToolApprovalModeChange
+#: -> updateChatById). public."chat" is its own table and has no model
+#: here, which is why this is SQL; routes_knowledge_graph reads the same
+#: table the same way.
+_COMPOSER_MODE_SQL = text(
+    "SELECT chat->'params'->>'tool_approval_mode' AS mode "
+    'FROM public."chat" WHERE id = :chat_id')
+
+
+async def _read_composer_choice(chat_id: str) -> str | None:
+    """What this chat picked in Open WebUI's own composer menu, as one of
+    our choices, or None when nobody has picked. Never raises.
+
+    Read from the chat row rather than from the turn's metadata on
+    purpose. The metadata carries `full` whenever the platform has
+    nothing to say, so taking it at face value would have stopped every
+    main chat asking the moment this deployed. See
+    agent_access.choice_from_approval_mode.
+
+    Fails toward None, which is today's behaviour, never toward the
+    widest option: a database that will not answer must not quietly stop
+    a chat asking.
+    """
+    try:
+        async with session() as s:
+            mode = (await s.execute(
+                _COMPOSER_MODE_SQL, {"chat_id": chat_id})).scalar_one_or_none()
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not read the composer's approval mode",
+                       exc_info=True)
+        return None
+    return agent_access.choice_from_approval_mode(mode)
+
+
+#: Seam, as above.
+_composer_seam = _read_composer_choice
+
+
+async def _choice_for(body: "ChatIn") -> str | None:
+    """How much this chat asks before it acts.
+
+    The composer's menu first, because it is the control the person can
+    SEE: a visible control that an invisible one overrules is a bug, not
+    a preference. Our own route answers when the composer has nothing to
+    say, which is how `manual` stays reachable at all, their menu having
+    only two items, and how a surface that has no composer keeps a
+    choice.
+
+    One function because BOTH chat routes need it, and the alternative is
+    what this codebase has done twice before: the same decision written
+    in two places, where fixing one leaves the other open. It was already
+    that way for a day: the streamed route, which is the one the main
+    chat actually calls, read no choice at all.
+    """
+    return (await _composer_seam(body.chat_id)
+            or await _choice_seam(_choice_key(body.chat_id,
+                                              body.user_email)))
 
 
 async def _clear_pin(key: str) -> None:
@@ -1850,9 +1910,7 @@ async def chat(body: ChatIn,
     with agent_activity.main_chat():
         # Read once here, not per agent: a room round runs every
         # named agent over the same message.
-        token = _choice_for_turn.set(
-            await _choice_seam(_choice_key(body.chat_id,
-                                           body.user_email)))
+        token = _choice_for_turn.set(await _choice_for(body))
         try:
             return await _chat_inner(body, x_internal_secret)
         finally:
@@ -1879,11 +1937,16 @@ async def _chat_events(body: ChatIn, x_internal_secret: str):
     done = object()
 
     async def work():
+        # Read here rather than in the caller: a task gets its own copy of
+        # the context, so a token set outside it could not be reset from
+        # in here, and this is the context _chat_inner actually runs in.
+        token = _choice_for_turn.set(await _choice_for(body))
         try:
             with agent_activity.main_chat(), \
                     agent_progress.reporting_to(queue.put_nowait):
                 return await _chat_inner(body, x_internal_secret)
         finally:
+            _choice_for_turn.reset(token)
             queue.put_nowait(done)
 
     task = asyncio.create_task(work())
