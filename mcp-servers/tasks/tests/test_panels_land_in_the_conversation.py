@@ -103,10 +103,10 @@ def test_the_lines_do_not_place_themselves():
     """The typing line and the build line each had their own copy of the
     broken placement. Two copies is two things to fix next time."""
     src = _js()
-    # Three now: the typing line, the build line, and the step list. The
-    # count is the point of the test, so it is raised deliberately rather
-    # than relaxed to "at least".
-    assert src.count("aiuiPutUnderLastMessage(el);") == 3
+    # Four now: the typing line, the build line, the step list, and the
+    # video's step list (2026-11-10). The count is the point of the test, so
+    # it is raised deliberately rather than relaxed to "at least".
+    assert src.count("aiuiPutUnderLastMessage(el);") == 4
     for name in ("aiuiBuildLine", "aiuiTyping"):
         try:
             body = _fn(name)

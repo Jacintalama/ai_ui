@@ -255,6 +255,10 @@ def test_the_closing_message_keeps_the_link_when_the_player_cannot_show():
 POLL_OVERRIDES = r"""
 var lines = [], theJob = null;
 function aiuiBuildLine(chatId, text) { lines.push(text); }
+// Since 2026-11-10 a waiting video draws a step panel, whose last line is
+// this sentence; the panel itself is tested in
+// test_the_chat_shows_work_in_progress.py.
+function aiuiVideoPanel(chatId, id, job, mins) { lines.push(aiuiVideoProgress(job, mins)); return true; }
 function aiuiClearBuildLine() {}
 function aiuiCloseWith() { return Promise.resolve(true); }
 function aiuiShowVideoInline() {}

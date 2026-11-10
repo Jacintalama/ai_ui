@@ -4135,6 +4135,7 @@
   function aiuiShowBuildInline(chatId, id) {
     if (aiuiChatIdFromUrl() !== chatId) return;
     if (document.getElementById(aiuiBuildBoxId(id))) return;
+    if (!aiuiLastReplyBody()) return;
 
     var box = document.createElement('div');
     box.id = aiuiBuildBoxId(id);
@@ -4493,12 +4494,48 @@
     return node;
   }
 
+  // How wide a site is laid out in the side panel. The panel is half the
+  // window, about 700 px on a laptop, which is under most sites' breakpoint,
+  // so they showed their phone layout with a hamburger menu (2026-11-10,
+  // Lukas). Laid out at this width and scaled down, an app shows the layout
+  // a computer gets.
+  var AIUI_DESKTOP_W = 1280;
+
+  // {width, height, scale} for a frame in a holder of this size; width and
+  // height 0 and scale 1 mean "fill it as it is".
+  function aiuiDesktopFit(holderW, holderH) {
+    if (!holderW || holderW >= AIUI_DESKTOP_W) {
+      return { width: 0, height: 0, scale: 1 };
+    }
+    var scale = holderW / AIUI_DESKTOP_W;
+    return { width: AIUI_DESKTOP_W, height: Math.round(holderH / scale), scale: scale };
+  }
+
+  function aiuiFitDesktop(frame, holder) {
+    var fit = aiuiDesktopFit(holder.clientWidth, holder.clientHeight);
+    if (fit.scale === 1) {
+      frame.style.width = '100%';
+      frame.style.height = '100%';
+      frame.style.transform = '';
+      frame.style.transformOrigin = '';
+      return;
+    }
+    frame.style.width = fit.width + 'px';
+    frame.style.height = fit.height + 'px';
+    frame.style.transform = 'scale(' + fit.scale + ')';
+    frame.style.transformOrigin = '0 0';
+  }
+
   function aiuiSplitClose() {
     if (!aiuiSplit) return;
     var s = aiuiSplit;
     aiuiSplit = null;
+    if (s.onResize) window.removeEventListener('resize', s.onResize);
     // Home first, so the app is never parentless even for a tick.
     if (s.home && s.frame) {
+      s.frame.style.transform = '';
+      s.frame.style.transformOrigin = '';
+      s.frame.style.width = '100%';
       s.frame.style.height = s.homeHeight;
       s.home.appendChild(s.frame);
     }
@@ -4549,7 +4586,7 @@
     head.appendChild(shut);
 
     var holder = document.createElement('div');
-    holder.style.cssText = 'flex:1 1 auto;min-height:0;';
+    holder.style.cssText = 'flex:1 1 auto;min-height:0;overflow:hidden;';
 
     var home = frame.parentNode;
     var homeHeight = frame.style.height;
@@ -4558,6 +4595,9 @@
     panel.appendChild(head);
     panel.appendChild(holder);
     document.body.appendChild(panel);
+    aiuiFitDesktop(frame, holder);
+    function onResize() { aiuiFitDesktop(frame, holder); }
+    window.addEventListener('resize', onResize);
 
     var panePad = pane.style.paddingRight;
     pane.style.paddingRight = '50vw';
@@ -4569,8 +4609,40 @@
 
     aiuiSplit = { panel: panel, frame: frame, home: home, bar: bar,
                   chip: chip, pane: pane, panePad: panePad,
-                  homeHeight: homeHeight, onKey: onKey };
+                  homeHeight: homeHeight, onKey: onKey, onResize: onResize };
     return true;
+  }
+  // A dark cover saying the app is loading, over `frame` inside `holder`,
+  // gone when the frame's page has loaded. Still there after a while means
+  // the page is slow or broken, and it says where else to look.
+  var AIUI_COVER_SLOW_MS = 25000;
+
+  function aiuiCoverWhileLoading(holder, frame) {
+    aiuiMotion();
+    var cover = document.createElement('div');
+    cover.style.cssText = 'position:absolute;inset:0;display:flex;'
+      + 'flex-direction:column;align-items:center;justify-content:center;'
+      + 'gap:.6rem;background:#141416;color:#cfcfd4;font-size:.85rem;';
+    cover.textContent = 'Loading the app';
+    var track = document.createElement('div');
+    track.style.cssText = 'width:9rem;height:3px;border-radius:999px;'
+      + 'background:rgba(127,127,127,.25);overflow:hidden;';
+    var bar = document.createElement('div');
+    bar.className = 'aiui-sliding';
+    bar.style.cssText = 'height:100%;background:#6b73ff;border-radius:999px;';
+    track.appendChild(bar);
+    cover.appendChild(track);
+    holder.appendChild(cover);
+    function gone() {
+      if (cover.parentNode) cover.parentNode.removeChild(cover);
+    }
+    frame.addEventListener('load', gone);
+    setTimeout(function () {
+      if (!cover.parentNode) return;
+      cover.firstChild.textContent = 'Still loading. If nothing appears, '
+        + 'open it in a new tab.';
+    }, AIUI_COVER_SLOW_MS);
+    return cover;
   }
   // ===== End app beside the chat =====
 
@@ -5101,9 +5173,17 @@
     frame.style.cssText = 'display:block;width:100%;height:' + AIUI_APP_H
       + ';border:0;background:#fff;';
 
+    // The frame sits in a holder so a cover can lie over it until the app's
+    // page has loaded. Until then the panel was a blank white box
+    // (2026-11-10, Lukas: "it needs an embed, which takes time").
+    var stage = document.createElement('div');
+    stage.style.cssText = 'position:relative;';
+    stage.appendChild(frame);
+    aiuiCoverWhileLoading(stage, frame);
+
     box.appendChild(bar);
     box.appendChild(chip);
-    box.appendChild(frame);
+    box.appendChild(stage);
     box.appendChild(ask);
     box.appendChild(look.el);
     if (inReply) aiuiPutInReply(box, inReply);
@@ -5199,6 +5279,8 @@
     var rows = aiuiStepStates(steps, at);
     var el = document.getElementById('aiui-steps');
     if (!el) {
+      if (!aiuiLastReplyBody()) return false;
+      aiuiMotion();
       el = document.createElement('div');
       el.id = 'aiui-steps';
       el.style.cssText = 'margin:.4rem 0 .6rem 3.75rem;max-width:46rem;'
@@ -5221,21 +5303,8 @@
         + aiuiEscape(laneName) + '</div>';
     }
 
-    rows.forEach(function (s, i) {
-      if (s.state === 'done') done += 1;
-      var pill = s.state === 'done' ? 'Done'
-               : (s.state === 'working' ? 'Working on it' : 'Waiting');
-      var colour = s.state === 'done' ? 'rgba(80,200,120,.18);color:#4ec37a'
-                 : (s.state === 'working' ? 'rgba(107,115,255,.22);color:#9aa2ff'
-                                          : 'rgba(127,127,127,.15);color:inherit');
-      html += '<div style="display:flex;gap:.5rem;align-items:baseline;'
-        + 'padding:.18rem 0;' + (s.state === 'waiting' ? 'opacity:.55;' : '')
-        + '"><span style="opacity:.5;min-width:1rem;">' + (i + 1) + '</span>'
-        + '<span style="flex:1 1 auto;">' + aiuiEscape(s.said) + '</span>'
-        + '<span style="flex:0 0 auto;font-size:.7rem;padding:.05rem .4rem;'
-        + 'border-radius:999px;white-space:nowrap;background:' + colour + ';">'
-        + pill + '</span></div>';
-    });
+    rows.forEach(function (s) { if (s.state === 'done') done += 1; });
+    html += aiuiStepRows(rows);
 
     // Out of band: not a stage on the way to a finished app, so it is said
     // underneath rather than drawn as one of the numbered steps.
@@ -5260,6 +5329,46 @@
   function aiuiClearSteps() {
     var el = document.getElementById('aiui-steps');
     if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+
+  // The numbered rows with their Done / Working on it / Waiting pills, for
+  // a build and for a video alike. The pill of the step in progress pulses,
+  // so a panel that has not changed for a minute still reads as alive
+  // (2026-11-10, Lukas: "some nicer loading thing").
+  function aiuiStepRows(rows) {
+    var html = '';
+    rows.forEach(function (s, i) {
+      var pill = s.state === 'done' ? 'Done'
+               : (s.state === 'working' ? 'Working on it' : 'Waiting');
+      var colour = s.state === 'done' ? 'rgba(80,200,120,.18);color:#4ec37a'
+                 : (s.state === 'working' ? 'rgba(107,115,255,.22);color:#9aa2ff'
+                                          : 'rgba(127,127,127,.15);color:inherit');
+      html += '<div style="display:flex;gap:.5rem;align-items:baseline;'
+        + 'padding:.18rem 0;' + (s.state === 'waiting' ? 'opacity:.55;' : '')
+        + '"><span style="opacity:.5;min-width:1rem;">' + (i + 1) + '</span>'
+        + '<span style="flex:1 1 auto;">' + aiuiEscape(s.said) + '</span>'
+        + '<span' + (s.state === 'working' ? ' class="aiui-working"' : '')
+        + ' style="flex:0 0 auto;font-size:.7rem;padding:.05rem .4rem;'
+        + 'border-radius:999px;white-space:nowrap;background:' + colour + ';">'
+        + pill + '</span></div>';
+    });
+    return html;
+  }
+
+  // One stylesheet for the motion in these panels, added once. Off for
+  // anybody whose system asks for less motion.
+  function aiuiMotion() {
+    if (document.getElementById('aiui-motion')) return;
+    var st = document.createElement('style');
+    st.id = 'aiui-motion';
+    st.textContent = '@keyframes aiui-pulse{0%,100%{opacity:1}50%{opacity:.45}}'
+      + '@keyframes aiui-slide{0%{transform:translateX(-100%)}'
+      + '100%{transform:translateX(250%)}}'
+      + '.aiui-working{animation:aiui-pulse 1.6s ease-in-out infinite;}'
+      + '.aiui-sliding{width:40%;animation:aiui-slide 1.6s ease-in-out infinite;}'
+      + '@media (prefers-reduced-motion: reduce){'
+      + '.aiui-working,.aiui-sliding{animation:none;}}';
+    (document.head || document.body).appendChild(st);
   }
 
   // Every sentence here is ours and fixed, but it reaches innerHTML, and
@@ -5371,6 +5480,11 @@
       // list cannot cover: the labels could not be fetched. A build must
       // never go quiet because a list of words did not arrive.
       aiuiLoadSteps(aiuiLaneOf(task)).then(function () {
+        // Nothing until a reply is on screen. A chat just opened can answer
+        // its first poll before any reply is drawn, and a panel put then
+        // went to the end of the page and stayed there (2026-11-10, Lukas:
+        // "it sometimes didn't show up"). The next poll draws it.
+        if (!aiuiLastReplyBody()) return;
         if (aiuiStepPanel(chatId, task, mins)) {
           aiuiClearBuildLine();
           aiuiHideBuildInline(id);
@@ -5693,6 +5807,66 @@
     return 'Rendering the video, ' + mins + ' min so far.';
   }
 
+  // The three things a video goes through, in the words of somebody
+  // waiting for one. The worker's own stages are queued, scripting and
+  // rendering; voicing happens inside rendering, so it is that row.
+  var AIUI_VIDEO_STEPS = [
+    { key: 'queued', said: 'In the queue' },
+    { key: 'scripting', said: 'Writing the script' },
+    { key: 'rendering', said: 'Recording the voice and rendering' }
+  ];
+
+  function aiuiVideoSteps(job) {
+    var status = String((job && job.status) || 'queued');
+    if (status === 'voicing') status = 'rendering';
+    var at = 0;
+    for (var i = 0; i < AIUI_VIDEO_STEPS.length; i++) {
+      if (AIUI_VIDEO_STEPS[i].key === status) { at = i; break; }
+    }
+    return AIUI_VIDEO_STEPS.map(function (s, i) {
+      return { key: s.key, said: s.said,
+               state: i < at ? 'done' : (i === at ? 'working' : 'waiting') };
+    });
+  }
+
+  function aiuiVideoPanelId(id) { return 'aiui-video-steps-' + id; }
+
+  // Where a video is, as the build panel shows a build (2026-11-10, Lukas:
+  // "some nicer loading thing for the user"). Before this the chat showed
+  // one grey line. False, drawing nothing, while no reply is on screen.
+  function aiuiVideoPanel(chatId, id, job, mins) {
+    if (aiuiChatIdFromUrl() !== chatId) return false;
+    var el = document.getElementById(aiuiVideoPanelId(id));
+    if (!el) {
+      if (!aiuiLastReplyBody()) return false;
+      aiuiMotion();
+      el = document.createElement('div');
+      el.id = aiuiVideoPanelId(id);
+      el.style.cssText = 'margin:.4rem 0 .6rem 3.75rem;max-width:46rem;'
+        + 'border:1px solid rgba(127,127,127,.28);border-radius:12px;'
+        + 'padding:.6rem .75rem;font-size:.85rem;';
+      aiuiPutUnderLastMessage(el);
+    }
+    el.innerHTML = '<div style="font-size:.72rem;letter-spacing:.04em;'
+      + 'text-transform:uppercase;opacity:.5;margin-bottom:.4rem;">'
+      + 'Making the video</div>'
+      + aiuiStepRows(aiuiVideoSteps(job))
+      // No percentage exists for a render, so the bar moves rather than
+      // pretending to fill.
+      + '<div style="margin-top:.5rem;height:3px;border-radius:999px;'
+      + 'background:rgba(127,127,127,.2);overflow:hidden;">'
+      + '<div class="aiui-sliding" style="height:100%;background:#6b73ff;'
+      + 'border-radius:999px;"></div></div>'
+      + '<div style="margin-top:.3rem;font-size:.72rem;opacity:.6;">'
+      + aiuiEscape(aiuiVideoProgress(job, mins)) + '</div>';
+    return true;
+  }
+
+  function aiuiClearVideoPanel(id) {
+    var el = document.getElementById(aiuiVideoPanelId(id));
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+
   function aiuiPollVideo(chatId, id, started) {
     fetch('/api/video-jobs/' + id, { headers: aiuiAuthHeaders() }).then(function (r) {
       if (r.status === 403 || r.status === 404) return 'stop';
@@ -5706,14 +5880,15 @@
         // closing message. Drawn here, on a chat just opened, it went to
         // the end of the page under the message box, because no reply was
         // on screen yet, and it was never moved.
+        aiuiClearVideoPanel(id);
         return aiuiCloseWith(chatId, aiuiVideoDoneMarker(id), text);
       }
       var mins = Math.max(1, Math.round((Date.now() - started) / 60000));
-      aiuiBuildLine(chatId, aiuiVideoProgress(job, mins));
+      aiuiVideoPanel(chatId, id, job, mins);
       return false;
     }).catch(function () { return false; }).then(function (finished) {
       if (finished || Date.now() - started > AIUI_VIDEO_GIVE_UP_MS) {
-        aiuiClearBuildLine();
+        aiuiClearVideoPanel(id);
         return;
       }
       setTimeout(function () { aiuiPollVideo(chatId, id, started); }, AIUI_VIDEO_POLL_MS);
