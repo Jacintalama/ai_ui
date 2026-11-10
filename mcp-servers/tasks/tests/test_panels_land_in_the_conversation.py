@@ -9,10 +9,9 @@ The cause is one selector. Open WebUI 0.12 renders the thread as:
     <div id="messages-container" class="... flex flex-col-reverse ...">
       <div id="full-messages-container"> ...the messages... </div>
 
-There are no per-message ids in this version. The only element whose id
-starts with "message-" is "message-input-container", the COMPOSER. So
-'[id^="message-"]' matched the input box and nothing else, and five
-places relied on it:
+The only element whose id starts with "message-" AND is not a message is
+"message-input-container", the COMPOSER. So '[id^="message-"]' matched
+the input box, and five places relied on it:
 
 - the typing line and the build line were inserted after the composer
 - every panel went there too, outside the conversation
@@ -22,6 +21,20 @@ places relied on it:
   none
 
 Checked against the running Open WebUI bundle rather than guessed.
+
+CORRECTION, 2026-11-10. This file used to open by stating that there are
+no per-message ids in this version. That is wrong, and it was wrong when
+written: the ids are there, as
+tests/browser/test_the_panel_lands_inside_the_reply.py records from Open
+WebUI's own ResponseMessage source, and aiuiReplyFor has resolved
+'message-' + id since. The real finding was always narrower, that the
+COMPOSER shares the prefix, and the guard below is kept for that alone.
+
+The wrong half cost something. Believing there was no way to name a
+message is why a panel was only ever placed under the LAST reply, which
+is the bug Ralph reported on 2026-11-10 with a screenshot: a landing page
+panel sitting under a reply about a ClickUp task. See
+tests/browser/test_the_panel_stays_in_its_own_reply.py.
 """
 import os
 import re
@@ -45,8 +58,12 @@ def _fn(name):
     return src[start:min(e for e in ends if e != -1)]
 
 
-def test_nothing_looks_for_a_per_message_id_any_more():
-    """Only the comment that explains why may mention it."""
+def test_no_selector_matches_the_composer_by_its_prefix():
+    """A bare '[id^="message-"]' matches message-input-container, which is
+    the bug this file is about, shipped twice. Naming ONE message by its
+    own id is fine and is how a panel reaches the reply that announced it
+    (aiuiReplyFor, aiuiMessageRowOf); scooping up everything with that
+    prefix is not. Only the comment that explains why may mention it."""
     src = _js()
     code = "\n".join(l for l in src.splitlines()
                      if not l.lstrip().startswith("//"))
