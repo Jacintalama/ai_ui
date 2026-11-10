@@ -34,7 +34,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import httpx
 from fastapi import Depends, FastAPI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import connections as C
 from auth import current_user, CurrentUser
@@ -909,22 +909,35 @@ _TYPES = {"string": (str, ""), "integer": (int, 0), "boolean": (bool, False),
 
 def _model_for(provider_id: str, tool: Tool):
     """A pydantic model per tool, so the generated OpenAPI names each argument
-    and mcp-proxy hands the model a real schema instead of a free-form blob."""
-    fields = {}
+    and mcp-proxy hands the model a real schema instead of a free-form blob.
+
+    **The description goes in the schema (2026-11-10).** It used to be
+    unpacked here and thrown away, so every word written for a model about
+    an argument was lost on the way out: that an assignee may be a name or
+    an email, that a status is the column as the list names it, that a
+    list_id may be the list's name. The model was handed a field name and
+    a type. mcp-proxy caches this document and `describe_tools` serves it,
+    so this is the only channel there is, and a lookup nothing announces
+    is a lookup nothing uses.
+
+    It survived because every test for that wording asserted
+    `tool.args[field][1]`, which was right all along. Nothing read what
+    was served. See test_the_model_is_told_what_an_argument_means.py,
+    which goes through the HTTP surface for that reason.
+
+    `Field(...)` marks a field required while still putting a value in the
+    class namespace, which is what lets a required field carry a
+    description too. The old code had to leave required fields out of the
+    namespace entirely, and that is why they could not have one.
+    """
     annotations = {}
+    ns: Dict[str, Any] = {}
     for name, (kind, desc, required) in (tool.args or {}).items():
-        py, default = _TYPES.get(kind, (str, ""))
-        if required:
-            annotations[name] = py
-            fields[name] = ...
-        else:
-            annotations[name] = Optional[py]
-            fields[name] = None
-    ns = {"__annotations__": annotations}
-    ns.update({k: v for k, v in fields.items() if v is not ...})
-    for k, v in fields.items():
-        if v is ...:
-            ns.pop(k, None)
+        py, _unused = _TYPES.get(kind, (str, ""))
+        annotations[name] = py if required else Optional[py]
+        ns[name] = Field(... if required else None,
+                         description=str(desc or "").strip() or None)
+    ns["__annotations__"] = annotations
     return type(provider_id.title() + tool.name.title().replace("_", "") + "Args",
                 (BaseModel,), ns)
 
