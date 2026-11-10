@@ -16,6 +16,7 @@ References:
   - fastembed: Lightweight Python embeddings (BAAI/bge-small-en-v1.5, 384-dim)
 """
 
+import hashlib
 import os
 import asyncpg
 from typing import Dict, List, Any, Optional
@@ -23,6 +24,12 @@ from typing import Dict, List, Any, Optional
 # Embedding model config
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 EMBEDDING_DIM = 384
+
+# How many texts the model is handed at once. onnxruntime keeps the memory a
+# batch needed, so the batch size sets what this process holds for the rest of
+# its life. Measured 2026-11-10 with the server's versions on the 336 real tool
+# texts: 617 MB at fastembed's default of 256, 243 MB at 32, 207 MB at 8.
+EMBED_BATCH = max(1, int(os.getenv("EMBED_BATCH", "32")))
 
 # Lazy-loaded embedding model
 _embedding_model = None
@@ -64,12 +71,40 @@ def generate_embedding(text: str) -> Optional[List[float]]:
 
 
 def generate_embeddings_batch(texts: List[str]) -> List[List[float]]:
-    """Generate embedding vectors for multiple texts."""
+    """Generate embedding vectors for multiple texts, EMBED_BATCH at a time."""
     model = get_embedding_model()
     if not model:
         return []
 
-    return [emb.tolist() for emb in model.embed(texts)]
+    return [emb.tolist() for emb in model.embed(texts, batch_size=EMBED_BATCH)]
+
+
+def tool_text(tool_name: str, tool_info: Dict[str, Any]) -> str:
+    """What one tool is embedded as.
+
+    Format: "create_task - Create a new task in the workspace (server: ClickUp)".
+    Unchanged from before, so the vectors already stored still match it.
+    """
+    original_name = tool_info.get("original_name", tool_name)
+    description = tool_info.get("description", "")
+    server_name = tool_info.get("tenant_name", tool_info.get("tenant_id", ""))
+    return f"{original_name} - {description} (server: {server_name})"
+
+
+def text_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def needing_embedding(texts: Dict[str, str],
+                      stored: Dict[str, Optional[str]]) -> List[str]:
+    """The tools whose vector is missing, or was made from other text.
+
+    Every start used to embed all of them (2026-11-10: 336 tools, every start,
+    while the table already held a vector for each). A row written before the
+    hash existed has none, so it is embedded once more and then remembered.
+    """
+    return sorted(name for name, text in texts.items()
+                  if stored.get(name) != text_hash(text))
 
 
 async def ensure_embeddings_table(pool: asyncpg.Pool):
@@ -98,6 +133,12 @@ async def ensure_embeddings_table(pool: asyncpg.Pool):
         except Exception as e:
             # ivfflat index creation fails on empty tables, that's OK
             log(f"Index creation note: {e}")
+        # Which text each vector was made from, so a start can tell what
+        # changed instead of embedding everything again (2026-11-10).
+        await conn.execute("""
+            ALTER TABLE mcp_proxy.tool_embeddings
+            ADD COLUMN IF NOT EXISTS text_hash TEXT
+        """)
 
 
 async def store_tool_embeddings(
@@ -111,38 +152,62 @@ async def store_tool_embeddings(
 
     await ensure_embeddings_table(pool)
 
-    # Build text representations for embedding
-    tool_texts = []
-    tool_entries = []
-
+    texts: Dict[str, str] = {}
+    entries: Dict[str, Dict[str, Any]] = {}
     for tool_name, tool_info in tools_cache.items():
-        # Create a rich text representation combining name and description
-        original_name = tool_info.get("original_name", tool_name)
-        description = tool_info.get("description", "")
-        server_name = tool_info.get("tenant_name", tool_info.get("tenant_id", ""))
-
-        # Format: "create_task - Create a new task in the workspace (server: ClickUp)"
-        text = f"{original_name} - {description} (server: {server_name})"
-
-        tool_texts.append(text)
-        tool_entries.append({
-            "tool_name": tool_name,
+        texts[tool_name] = tool_text(tool_name, tool_info)
+        entries[tool_name] = {
             "server_id": tool_info.get("tenant_id", ""),
-            "display_name": original_name,
-            "description": description
-        })
+            "display_name": tool_info.get("original_name", tool_name),
+            "description": tool_info.get("description", ""),
+        }
 
-    # Generate embeddings in batch
-    log(f"Generating embeddings for {len(tool_texts)} tools...")
-    embeddings = generate_embeddings_batch(tool_texts)
+    # What the table already holds a vector for, and for which text.
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT tool_name, text_hash FROM mcp_proxy.tool_embeddings "
+            "WHERE embedding IS NOT NULL")
+    stored_hashes = {r["tool_name"]: r["text_hash"] for r in rows}
+    todo = needing_embedding(texts, stored_hashes)
+    log(f"Embedding {len(todo)} of {len(texts)} tools (the rest are unchanged)")
 
-    if not embeddings:
-        log("Failed to generate embeddings (fastembed not available?)")
-        # Still store tool metadata without embeddings for keyword fallback
-        stored = 0
-        async with pool.acquire() as conn:
-            for entry in tool_entries:
-                try:
+    vectors: Dict[str, List[float]] = {}
+    if todo:
+        embeddings = generate_embeddings_batch([texts[n] for n in todo])
+        if not embeddings:
+            # Metadata is still written below, so keyword search keeps working,
+            # and the old hash stays, so the next start tries again.
+            log("Failed to generate embeddings (fastembed not available?)")
+        elif len(embeddings) != len(todo):
+            log(f"Embedding count mismatch: {len(embeddings)} vs {len(todo)} tools")
+        else:
+            vectors = dict(zip(todo, embeddings))
+
+    stored = 0
+    async with pool.acquire() as conn:
+        for tool_name, entry in entries.items():
+            try:
+                if tool_name in vectors:
+                    vec_str = "[" + ",".join(str(x) for x in vectors[tool_name]) + "]"
+                    await conn.execute("""
+                        INSERT INTO mcp_proxy.tool_embeddings
+                            (tool_name, server_id, display_name, description,
+                             embedding, text_hash, updated_at)
+                        VALUES ($1, $2, $3, $4, $5::vector, $6, NOW())
+                        ON CONFLICT (tool_name) DO UPDATE SET
+                            server_id = $2,
+                            display_name = $3,
+                            description = $4,
+                            embedding = $5::vector,
+                            text_hash = $6,
+                            updated_at = NOW()
+                    """,
+                        tool_name, entry["server_id"], entry["display_name"],
+                        entry["description"], vec_str, text_hash(texts[tool_name])
+                    )
+                else:
+                    # Unchanged, or not embeddable this time: the vector and
+                    # its hash are left exactly as they were.
                     await conn.execute("""
                         INSERT INTO mcp_proxy.tool_embeddings
                             (tool_name, server_id, display_name, description, updated_at)
@@ -153,49 +218,14 @@ async def store_tool_embeddings(
                             description = $4,
                             updated_at = NOW()
                     """,
-                        entry["tool_name"],
-                        entry["server_id"],
-                        entry["display_name"],
+                        tool_name, entry["server_id"], entry["display_name"],
                         entry["description"]
                     )
-                    stored += 1
-                except Exception as e:
-                    log(f"Error storing metadata for {entry['tool_name']}: {e}")
-        log(f"Stored {stored}/{len(tool_entries)} tool metadata (no embeddings)")
-        return stored
-
-    if len(embeddings) != len(tool_entries):
-        log(f"Embedding count mismatch: {len(embeddings)} vs {len(tool_entries)} tools")
-        return 0
-
-    # Store in database
-    stored = 0
-    async with pool.acquire() as conn:
-        for entry, embedding in zip(tool_entries, embeddings):
-            try:
-                vec_str = "[" + ",".join(str(x) for x in embedding) + "]"
-                await conn.execute("""
-                    INSERT INTO mcp_proxy.tool_embeddings
-                        (tool_name, server_id, display_name, description, embedding, updated_at)
-                    VALUES ($1, $2, $3, $4, $5::vector, NOW())
-                    ON CONFLICT (tool_name) DO UPDATE SET
-                        server_id = $2,
-                        display_name = $3,
-                        description = $4,
-                        embedding = $5::vector,
-                        updated_at = NOW()
-                """,
-                    entry["tool_name"],
-                    entry["server_id"],
-                    entry["display_name"],
-                    entry["description"],
-                    vec_str
-                )
                 stored += 1
             except Exception as e:
-                log(f"Error storing {entry['tool_name']}: {e}")
+                log(f"Error storing {tool_name}: {e}")
 
-    log(f"Stored {stored}/{len(tool_entries)} tool embeddings")
+    log(f"Stored {stored}/{len(entries)} tools, {len(vectors)} newly embedded")
     return stored
 
 
