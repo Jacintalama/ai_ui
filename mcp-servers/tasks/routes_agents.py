@@ -749,6 +749,28 @@ async def suggest_skills(user: CurrentUser = Depends(current_user)) -> dict:
                 message=skill_fit.overview_text(ov, mine=mine_names))
 
 
+@router.get("/skills/for")
+async def skills_for_new_agent(role: str = "", instructions: str = "",
+                               user: CurrentUser = Depends(current_user)) -> dict:
+    """The skills that fit an agent described like this, for the agents
+    page to tick on a new agent (2026-11-10, Lukas: new agents should pick
+    the ones relevant to them from the description).
+
+    The same picking the main chat uses when it makes an agent: Jev, then
+    the keyword match, then left off when its app is not connected, with
+    those returned as needs_connect for a Connect button."""
+    text = " ".join([role.strip(), instructions.strip()]).strip()
+    if not text:
+        return {"skills": [], "needs_connect": [], "said": ""}
+    connected = await _connected_providers(user.email)
+    pool = await _skill_pool(user.email)
+    ranked = await agent_skills.pick_for(user.email, text, pool)
+    skills, _unknown, _suggested, gaps = _skills_for(None, role, instructions,
+                                                     connected, pool, ranked=ranked)
+    return {"skills": skills, "needs_connect": skill_fit.needs_connect(gaps),
+            "said": "Suggested from the description" if skills else ""}
+
+
 @router.get("/skills/needs")
 async def skill_needs(skills: str = "",
                       user: CurrentUser = Depends(current_user)) -> dict:
@@ -1219,12 +1241,21 @@ def _proposal_key(email: str, name: str, instructions: str,
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
 
 
-def _remember_proposal(code: str) -> None:
+#: The skills each live proposal showed. Picked skills come from Jev, asked
+#: once for the preview and again for the confirm, and an answer near the cut
+#: can differ between the two; the person approved what they were shown.
+_PROPOSAL_SKILLS: dict = {}
+
+
+def _remember_proposal(code: str, skills: list | None = None) -> None:
     now = time.time()
     for old, when in list(_PROPOSALS.items()):
         if now - when > PROPOSAL_TTL_SECONDS:
             _PROPOSALS.pop(old, None)
+            _PROPOSAL_SKILLS.pop(old, None)
     _PROPOSALS[code] = now
+    if skills is not None:
+        _PROPOSAL_SKILLS[code] = list(skills)
 
 
 def _proposal_is_live(code: str) -> bool:
@@ -1309,7 +1340,8 @@ def _agent_problem(name: str, instructions: str, access: str, mine: int) -> str:
 
 
 def _skills_for(asked, role: str, instructions: str, connected=None,
-                pool: dict | None = None) -> tuple[list, list, bool, dict]:
+                pool: dict | None = None,
+                ranked: list | None = None) -> tuple[list, list, bool, dict]:
     """(kept, unknown, suggested, gaps) for an agent being made.
 
     Nothing named means suggest from what the agent is for (Lukas,
@@ -1331,8 +1363,13 @@ def _skills_for(asked, role: str, instructions: str, connected=None,
     """
     known = agent_skills.load_all() if pool is None else pool
     if asked is None:
-        text = " ".join([role or "", instructions])
-        ranked = agent_skills.suggest(text, limit=10, pool=known)
+        # `ranked` is agent_skills.pick_for's answer (Jev, then keywords),
+        # worked out by the caller because it is a network call and this is
+        # not async. Absent, the keyword match, as before.
+        if ranked is None:
+            text = " ".join([role or "", instructions])
+            ranked = agent_skills.suggest(text, limit=10, pool=known)
+        ranked = [name for name in ranked if name in known]
         ready, _ = skill_fit.split(ranked, known, connected)
         _, gaps = skill_fit.split(ranked[:agent_skills.SUGGEST_LIMIT], known, connected)
         return ready[:agent_skills.SUGGEST_LIMIT], [], True, gaps
@@ -1399,11 +1436,18 @@ async def make_agent(body: MakeAgentIn, user: CurrentUser = Depends(current_user
     # through Open WebUI has no such brake. This is that brake.
     connected = await _connected_providers(user.email)
     pool = await _skill_pool(user.email)
-    skills, unknown, suggested, gaps = _skills_for(body.skills, role or "", instructions,
-                                                   connected, pool)
+    asked, ranked = body.skills, None
+    confirming = (body.confirm or "").strip()
+    if asked is None and confirming in _PROPOSAL_SKILLS and _proposal_is_live(confirming):
+        asked = list(_PROPOSAL_SKILLS[confirming])
+    elif asked is None:
+        ranked = await agent_skills.pick_for(
+            user.email, " ".join([role or "", instructions]), pool)
+    skills, unknown, suggested, gaps = _skills_for(asked, role or "", instructions,
+                                                   connected, pool, ranked=ranked)
     code = _proposal_key(user.email, name, instructions, role or "", access, skills)
-    if (body.confirm or "").strip() != code:
-        _remember_proposal(code)
+    if confirming != code:
+        _remember_proposal(code, skills)
         return {"created": False, "confirm": code, "name": name, "role": role,
                 "access": access, "instructions": instructions, "skills": skills,
                 "needs_connect": skill_fit.needs_connect(gaps),
@@ -1415,6 +1459,7 @@ async def make_agent(body: MakeAgentIn, user: CurrentUser = Depends(current_user
             "That confirmation has expired. Ask me to show you the agent "
             "again and I will write it out fresh."))
     _PROPOSALS.pop(code, None)
+    _PROPOSAL_SKILLS.pop(code, None)
 
     user_id = await _owui_user_id_for(user.email)
     if not user_id:

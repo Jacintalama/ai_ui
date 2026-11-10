@@ -270,6 +270,35 @@ def suggest(text, limit: int = SUGGEST_LIMIT, pool: dict | None = None) -> list:
     return [name for _n, name in scored[:max(1, int(limit))]]
 
 
+async def _jev_pick(email: str, text: str, skills: list):
+    """Seam: Jev's picks for `text` among [(name, description), ...]."""
+    import agent_jev
+    return await agent_jev.pick_skills(email, text, skills)
+
+
+async def pick_for(email: str, text, pool: dict | None = None) -> list:
+    """Skill names that fit an agent described by `text`, best first.
+
+    Jev judges every skill against the description in one call; when it
+    cannot be asked, or is sure of none, the keyword match answers, as it
+    did before (2026-11-10). Measured that day on production: for "keep our
+    ClickUp tasks up to date, move tasks between columns" the keyword match
+    offered only meeting-to-tasks, Jev daily-standup, task-from-conversation
+    and sprint-health. Never raises."""
+    known = load_all() if pool is None else pool
+    skills = [(name, (skill or {}).get("description") or "")
+              for name, skill in known.items()]
+    try:
+        picked = await _jev_pick(email, str(text or ""), skills)
+    except Exception:                                       # noqa: BLE001
+        picked = None
+    if picked:
+        picked = [name for name in picked if name in known]
+    if not picked:
+        return suggest(text, limit=10, pool=known)
+    return picked
+
+
 def body_of(name) -> str | None:
     """One skill's instructions, or None.
 

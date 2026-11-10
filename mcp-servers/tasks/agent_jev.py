@@ -41,6 +41,7 @@ PURPOSE_ROLLBACK = "rollback_version"
 PURPOSE_REPLY = "reply_answers"
 PURPOSE_RELEASE = "release"
 PURPOSE_TOOLS = "tool_pick"
+PURPOSE_SKILLS = "skill_pick"
 
 #: Where each check acts. A Choice (plain question, rollback version) and the
 #: release yes act at or above their cut; the reflection and reply checks act
@@ -55,7 +56,12 @@ CUTS = {PURPOSE_PLAIN: 0.6, PURPOSE_ROLLBACK: 0.6, PURPOSE_RELEASE: 0.6,
         # Measured 2026-10-27, 14 labelled messages x 2 runs: no needed tool
         # missed at 0.8 or below; one step of margin. A missed tool breaks
         # the answer, an extra one costs a few tokens (9 extras at 0.75).
-        PURPOSE_TOOLS: 0.75}
+        PURPOSE_TOOLS: 0.75,
+        # 2026-11-10, six sample agents on production: every skill a person
+        # would want for the agent scored 0.78 or more, and the ones scored
+        # 0.60 to 0.72 were plausible extras. A skill is pasted into every
+        # turn of the agent, so an extra costs on every message.
+        PURPOSE_SKILLS: 0.75}
 
 
 def cut(purpose: str) -> float:
@@ -623,3 +629,56 @@ async def pick_tools(email: str, text: str, tools: list[str],
     answers = await ask_many(email, PURPOSE_TOOLS, state, questions,
                              outcome=outcome)
     return None if answers is None else picked(answers)
+
+
+# --- a new agent's skills (2026-11-10) -------------------------------------
+
+#: How much of a skill's description goes into its question.
+SKILL_DESC_CHARS = 200
+
+
+def skills_request(text: str, skills: list) -> tuple[str, dict]:
+    """One Noul per skill, ids s0, s1, ... in the order given. `skills` is
+    [(name, description), ...]."""
+    questions = {}
+    for i, (name, desc) in enumerate(skills):
+        said = " ".join(str(desc or "").split())[:SKILL_DESC_CHARS]
+        questions[f"s{i}"] = {
+            "type": "noul",
+            "instructions": f"Would an agent described like this use the skill "
+                            f"'{name}': {said}",
+            "criteria": {
+                "true": "the skill is part of the work this agent is "
+                        "described as doing",
+                "false": "the skill is for some other kind of work",
+            }}
+    return "A new agent is described as:\n" + _clip(text), questions
+
+
+async def pick_skills(email: str, text: str, skills: list) -> list[str] | None:
+    """The skills Jev is sure fit an agent described by `text`, surest first:
+    [] when none, None when Jev could not be asked or answered unreadably
+    (the caller then falls back to the keyword match). Never raises.
+
+    Lukas, 2026-11-10: new agents should "select which ones are relevant for
+    him based on the description"."""
+    skills = [(str(n), d) for n, d in skills or [] if n]
+    if not skills or not str(text or "").strip():
+        return []
+    state, questions = skills_request(text, skills)
+    least = cut(PURPOSE_SKILLS)
+
+    def ranked(answers: dict) -> list[str]:
+        scored = [(a.value, skills[int(q[1:])][0]) for q, a in answers.items()
+                  if a.value >= least]
+        scored.sort(key=lambda pair: (-pair[0], pair[1]))
+        return [name for _v, name in scored]
+
+    def outcome(answers: dict) -> tuple[str, float | None]:
+        chosen = ranked(answers)
+        top = max((a.value for a in answers.values()), default=None)
+        return (",".join(chosen) or "none"), top
+
+    answers = await ask_many(email, PURPOSE_SKILLS, state, questions,
+                             outcome=outcome)
+    return None if answers is None else ranked(answers)
