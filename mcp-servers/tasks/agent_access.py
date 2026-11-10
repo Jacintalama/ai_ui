@@ -110,6 +110,38 @@ def _chosen(choice) -> str | None:
         else None
 
 
+#: What Open WebUI's own composer menu calls the two postures it offers
+#: (InputMenu.svelte in 0.12.0, behind `chat.tool_permissions.enable`).
+#: Its menu is the control Ralph asked for, so these are the words that
+#: actually arrive from a person; ours above are what they mean here.
+APPROVAL_ASK = "ask"
+APPROVAL_FULL = "full"
+
+_FROM_APPROVAL_MODE = {APPROVAL_ASK: CHAT_AUTO, APPROVAL_FULL: CHAT_SKIP}
+
+
+def choice_from_approval_mode(mode) -> str | None:
+    """Open WebUI's composer menu, read as one of our own choices.
+
+    Their menu has two items and no third, so CHAT_MANUAL is not
+    reachable from there and is left to our own route.
+
+    Anything else, including None, reads as "nobody has chosen". That
+    matters more here than in `_chosen`, and it is why the CALLER must
+    hand this the value off the CHAT row rather than off the turn's
+    metadata: `main.py` writes `full` into the metadata whenever it has
+    nothing to say (the feature off, an automation, a channel), while
+    `handleToolApprovalModeChange` writes the chat's own
+    `params.tool_approval_mode` only when somebody clicks. The key being
+    there at all is the record of intent.
+
+    Never raises.
+    """
+    if not isinstance(mode, str):
+        return None
+    return _FROM_APPROVAL_MODE.get(mode.strip().lower())
+
+
 def rules_apply(choice) -> bool:
     """Whether a standing rule may answer in this person's place.
 
