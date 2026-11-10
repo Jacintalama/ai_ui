@@ -165,14 +165,45 @@ def resolve_status(value: Any, statuses: List[Dict[str, Any]]) -> Tuple[Optional
 Get = Callable[[str, Optional[Dict[str, Any]]], Awaitable[Any]]
 
 
+def needs_list_lookup(value: Any) -> bool:
+    """True when a list_id is a name rather than an id.
+
+    ClickUp's ids are digits and a person says "Project 1", so the shape
+    of the value is the whole test, the same way needs_lookup reads an
+    assignee. Blank is not a name: there is nothing to look up and a
+    walk would return every list in the account as a suggestion.
+    """
+    if isinstance(value, bool):
+        return False
+    text = str(value if value is not None else "").strip()
+    return bool(text) and not text.isdigit()
+
+
 async def prepare(tool_name: str, args: Dict[str, Any], get: Get) -> Tuple[Dict[str, Any], Optional[str]]:
     """The arguments ClickUp should receive, or a reason to send nothing.
 
-    Reads only what it needs: the workspace members when an assignee is not
-    already an id, and the list's statuses when a status is given."""
+    Reads only what it needs: the list when its name was given instead of
+    its id, the workspace members when an assignee is not already an id,
+    and the list's statuses when a status is given."""
+    args = dict(args or {})
+
+    # A list named rather than numbered, for ANY tool that takes one.
+    # On the argument and not on create_task, because "show me the tasks
+    # in Project 1" is the same dead end as creating one, and because a
+    # per-tool list would go stale against 174 generated tools.
+    #
+    # First, so the status lookup below reads /list/<the real id> rather
+    # than /list/Project 1, finds the columns, and stops sending the
+    # person's own word for ClickUp to refuse.
+    if needs_list_lookup(args.get("list_id")):
+        import clickup_find
+        value, problem = await clickup_find.resolve_list(args["list_id"], get)
+        if problem:
+            return args, problem
+        args["list_id"] = value
+
     if tool_name not in ("create_task", "update_task"):
         return args, None
-    args = dict(args or {})
     for_update = tool_name == "update_task"
 
     assignees = args.get("assignees")

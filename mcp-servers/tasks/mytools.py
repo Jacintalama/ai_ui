@@ -666,10 +666,32 @@ _CLICKUP_ARG_SAYS = {
 }
 
 
+#: Said on EVERY ClickUp tool that takes a list_id, because the prepare
+#: step looks a name up now (clickup_people.needs_list_lookup).
+#:
+#: A model is told only what the argument description says, and ClickUp's
+#: own spec gives this one the description "list_id", which says nothing.
+#: Measured on the box the day find_list shipped: tool search ranks it
+#: FIRST for "which ClickUp list is Project 1" and nowhere in the top
+#: eight for "create a task in Project 1", because the search text is the
+#: person's own words. So the tool the model does find has to be the one
+#: that accepts the name, and it has to say so here.
+#:
+#: On every such tool rather than a hand-picked few: there are 174 of
+#: them, generated, and a list of names would go stale on the next
+#: regeneration without failing anything.
+_LIST_ID_SAYS = ("The list. Either its ClickUp list id, or the list's NAME "
+                 "as the person said it, like 'Project 1'. A name is looked "
+                 "up for you, so there is no need to find the id first.")
+
+
 def _clickup_said(tool: "Tool") -> "Tool":
     from dataclasses import replace
     summary = _CLICKUP_SUMMARIES.get(tool.name, tool.summary)
     args = dict(tool.args or {})
+    if "list_id" in args:
+        kind, _old, required = args["list_id"]
+        args["list_id"] = (kind, _LIST_ID_SAYS, required)
     for (name, field), said in _CLICKUP_ARG_SAYS.items():
         if name == tool.name and field in args:
             kind, _old, required = args[field]
