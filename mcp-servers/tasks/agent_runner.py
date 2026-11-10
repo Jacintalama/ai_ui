@@ -713,6 +713,7 @@ def _finished(answer: str, convo: list[dict]) -> str:
 async def _chat(token: str, model: str, messages: list[dict],
                 tool_ids: list[str] | None, user_email: str,
                 tool_mode: str | None,
+                use_rules: bool = True,
                 refusal_reason: str = "this schedule is set to read only",
                 max_iterations: int = MAX_TOOL_ITERATIONS,
                 timeout: float = HTTP_TIMEOUT_SECONDS,
@@ -1020,7 +1021,13 @@ async def _chat(token: str, model: str, messages: list[dict],
                     # to our own domain", "never delete". Read once per
                     # turn, and only for a turn that may ask at all.
                     ruled = None
-                    if mode == agent_access.MODE_ASK:
+                    # `use_rules` is false when the person chose
+                    # "manually approve" for this conversation: they
+                    # want to see each one go by, so a rule they wrote
+                    # earlier does not answer in their place. It is not
+                    # a safety control, it is a preference, and it only
+                    # ever means MORE asking.
+                    if use_rules and mode == agent_access.MODE_ASK:
                         if rules is None:
                             rules = await _standing_rules(user_email)
                         ruled = agent_approvals.rule_decision(rules, name, probe)

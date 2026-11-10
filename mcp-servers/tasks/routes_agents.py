@@ -451,6 +451,64 @@ async def tools_for_email(email: str) -> dict:
     return {"tools": tools}
 
 
+class ChatChoiceIn(BaseModel):
+    """What this conversation chose about approvals."""
+    chat_id: str = Field(min_length=1)
+    #: One of agent_access.CHAT_CHOICES, or "" to go back to no choice.
+    #: Validated there rather than here, so the page and the service cannot
+    #: drift on what the values are.
+    choice: str = ""
+
+
+@router.get("/chat-mode/{chat_id}")
+async def read_chat_mode(chat_id: str,
+                         user: CurrentUser = Depends(current_user)) -> dict:
+    """What this chat chose, and what it may choose.
+
+    The choices come from the service rather than being written into the
+    page, so adding or renaming one is a change in a single place.
+    """
+    import agent_access
+    import routes_agent_turn as rt
+    chosen = await rt._choice_seam(rt._choice_key(chat_id, user.email))
+    return {"choice": chosen or "",
+            "default": agent_access.CHAT_AUTO,
+            "choices": [
+                {"value": agent_access.CHAT_MANUAL,
+                 "label": "Manually approve",
+                 "detail": "Ask me every time, even where a rule of mine "
+                           "would have answered."},
+                {"value": agent_access.CHAT_AUTO,
+                 "label": "Automatically approve",
+                 "detail": "My standing rules answer what they cover. "
+                           "Anything else still asks."},
+                {"value": agent_access.CHAT_SKIP,
+                 "label": "Skip all approvals",
+                 "detail": "Never ask me in this chat. An agent with a "
+                           "lower access level still keeps it."},
+            ]}
+
+
+@router.post("/chat-mode")
+async def set_chat_mode(body: ChatChoiceIn,
+                        user: CurrentUser = Depends(current_user)) -> dict:
+    """Remember it for this conversation, scoped to this person.
+
+    An unrecognised value clears the choice rather than being stored, so
+    the page can send "" to go back to the default and a stale page can
+    never store something the service does not understand.
+    """
+    import agent_access
+    import routes_agent_turn as rt
+    key = rt._choice_key(body.chat_id, user.email)
+    chosen = agent_access._chosen(body.choice)
+    if chosen is None:
+        await rt._clear_choice(key)
+        return {"choice": ""}
+    await rt._write_choice(key, chosen)
+    return {"choice": chosen}
+
+
 @router.get("/todo")
 async def todo(user: CurrentUser = Depends(current_user)) -> dict:
     """What this person's agents still have to do, and what just finished.
