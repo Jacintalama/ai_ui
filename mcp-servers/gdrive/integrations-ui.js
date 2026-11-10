@@ -5285,12 +5285,16 @@
       el.id = 'aiui-steps';
       el.style.cssText = 'margin:.4rem 0 .6rem 3.75rem;max-width:46rem;'
         + 'border:1px solid rgba(127,127,127,.28);border-radius:12px;'
-        + 'padding:.6rem .75rem;font-size:.85rem;';
+        + 'font-size:.85rem;';
       aiuiPutUnderLastMessage(el);
     }
 
     var done = 0;
-    var html = '';
+    // The padding lives on an inner element. aiuiPutUnderLastMessage sets
+    // a box's own paddingLeft to 0, because it is built for boxes that
+    // carry the thread's indent, and live the text sat against the border
+    // (2026-11-10).
+    var html = '<div style="padding:.6rem .75rem;">';
 
     // Which lane, above the steps. A simple site walks three in under a
     // minute and the full builder walks six over several, and until
@@ -5321,7 +5325,7 @@
       + '<div style="height:100%;width:' + pct + '%;background:#6b73ff;'
       + 'transition:width .4s ease;"></div></div>'
       + '<div style="margin-top:.3rem;font-size:.72rem;opacity:.5;">'
-      + mins + ' min so far</div>';
+      + mins + ' min so far</div></div>';
     el.innerHTML = html;
     return true;
   }
@@ -5801,10 +5805,16 @@
     if (typeof ahead === 'number' && ahead > 0) {
       return 'Waiting to render, ' + ahead + ' ahead of it.';
     }
-    if (String(job.status || '') === 'queued') {
-      return 'Waiting to start rendering, ' + mins + ' min so far.';
+    // The same step the panel marks. Live on 2026-11-10 a video writing its
+    // script showed that step working over "Rendering the video".
+    var status = String(job.status || '');
+    if (status === 'scripting') {
+      return 'Writing the script, ' + mins + ' min so far.';
     }
-    return 'Rendering the video, ' + mins + ' min so far.';
+    if (status === 'rendering' || status === 'voicing') {
+      return 'Rendering the video, ' + mins + ' min so far.';
+    }
+    return 'Waiting to start rendering, ' + mins + ' min so far.';
   }
 
   // The three things a video goes through, in the words of somebody
@@ -5844,10 +5854,13 @@
       el.id = aiuiVideoPanelId(id);
       el.style.cssText = 'margin:.4rem 0 .6rem 3.75rem;max-width:46rem;'
         + 'border:1px solid rgba(127,127,127,.28);border-radius:12px;'
-        + 'padding:.6rem .75rem;font-size:.85rem;';
+        + 'font-size:.85rem;';
       aiuiPutUnderLastMessage(el);
     }
-    el.innerHTML = '<div style="font-size:.72rem;letter-spacing:.04em;'
+    // Padding inside: aiuiPutUnderLastMessage clears a box's own left
+    // padding, and live the text sat against the border.
+    el.innerHTML = '<div style="padding:.6rem .75rem;">'
+      + '<div style="font-size:.72rem;letter-spacing:.04em;'
       + 'text-transform:uppercase;opacity:.5;margin-bottom:.4rem;">'
       + 'Making the video</div>'
       + aiuiStepRows(aiuiVideoSteps(job))
@@ -5858,7 +5871,7 @@
       + '<div class="aiui-sliding" style="height:100%;background:#6b73ff;'
       + 'border-radius:999px;"></div></div>'
       + '<div style="margin-top:.3rem;font-size:.72rem;opacity:.6;">'
-      + aiuiEscape(aiuiVideoProgress(job, mins)) + '</div>';
+      + aiuiEscape(aiuiVideoProgress(job, mins)) + '</div></div>';
     return true;
   }
 
