@@ -1345,6 +1345,10 @@
             <span class="skill-toggle-count" id="skills-chosen">None chosen</span>
             <span class="skill-toggle-act" id="skills-act">Choose skills</span>
           </button>
+          <div class="hint" id="skills-suggested" hidden>
+            <span id="skills-suggested-said"></span>
+            <button class="btn" type="button" id="skills-suggest-again">Suggest again</button>
+          </div>
           <div id="skills-panel" hidden>
             <div class="hint">Ready-made instructions for one kind of job. Tick
               one and the agent follows it whenever that job comes up, instead
@@ -2589,6 +2593,10 @@
         .addEventListener("click", newSkillSave);
       wrap.addEventListener("change", applySkillFilter);
       wrap.addEventListener("change", updateSkillsSummary);
+      // A tick by hand is the person's choice; suggestions stop.
+      wrap.addEventListener("change", function () { skillsTouched = true; });
+      document.getElementById("skills-suggest-again")
+        .addEventListener("click", function () { suggestSkills(true); });
       document.getElementById("skill-search")
         .addEventListener("input", function (e) {
           skillFilter.query = e.target.value.trim().toLowerCase();
@@ -3012,8 +3020,54 @@
         String(document.getElementById("agent-instructions").value.length);
     }
 
+    // Skills picked for a NEW agent from what it is for (2026-11-10, Lukas:
+    // "having new agents select which ones are relevant for him based on
+    // the description"). Asked when the instructions box is left, and only
+    // while the person has not ticked a skill themselves: their choice is
+    // never overwritten unless they press Suggest again.
+    var skillsTouched = false;
+    var skillsAskedFor = "";
+
+    async function suggestSkills(force) {
+      if (editingId) return;
+      if (skillsTouched && !force) return;
+      var role = document.getElementById("agent-role").value.trim();
+      var instructions = document.getElementById("agent-instructions").value.trim();
+      if (!instructions) return;
+      var asked = role + "\n" + instructions;
+      if (!force && asked === skillsAskedFor) return;
+      skillsAskedFor = asked;
+      var body;
+      try {
+        body = await getJson("/api/tasks/agents/skills/for?role="
+          + encodeURIComponent(role) + "&instructions="
+          + encodeURIComponent(instructions));
+      } catch (e) {
+        return;
+      }
+      // The form may have moved on while this was asked.
+      if (editingId || (skillsTouched && !force)) return;
+      var picks = (body && body.skills) || [];
+      setSkills(picks);
+      skillsTouched = false;
+      var said = picks.length
+        ? "Suggested from the description: " + picks.join(", ")
+          + ". Untick any you do not want."
+        : "No skill clearly fits this description yet.";
+      var needs = (body && body.needs_connect) || [];
+      if (needs.length) {
+        said += " Connecting " + needs.map(function (n) { return n.label; })
+          .join(" or ") + " would add more.";
+      }
+      document.getElementById("skills-suggested-said").textContent = said;
+      document.getElementById("skills-suggested").hidden = false;
+    }
+
     function openForm(agent) {
       editingId = agent ? agent.id : null;
+      skillsTouched = false;
+      skillsAskedFor = "";
+      document.getElementById("skills-suggested").hidden = true;
       document.getElementById("form-title").textContent =
         agent ? "Edit agent" : "New agent";
       document.getElementById("agent-name").value = agent ? agent.name : "";
@@ -3395,6 +3449,8 @@
       document.getElementById("agent-save").addEventListener("click", save);
       document.getElementById("agent-instructions")
         .addEventListener("input", updateChars);
+      document.getElementById("agent-instructions")
+        .addEventListener("blur", function () { suggestSkills(false); });
       document.getElementById("agent-search")
         .addEventListener("input", function (ev) {
           state.query = ev.target.value || "";
