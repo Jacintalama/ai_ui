@@ -879,6 +879,52 @@ async def _read_composer_choice(chat_id: str) -> str | None:
 _composer_seam = _read_composer_choice
 
 
+#: The same menu writes the pick onto the PERSON as well as onto the chat
+#: (Chat.svelte's handleToolApprovalModeChange calls updateUserSettings
+#: right after updateChatById), and `settings` is a JSON column on Open
+#: WebUI's own user table.
+_ACCOUNT_MODE_SQL = text(
+    "SELECT settings->'ui'->'params'->>'tool_approval_mode' AS mode "
+    'FROM public."user" WHERE email = :email')
+
+
+async def _read_account_choice(user_email: str | None) -> str | None:
+    """What this person picked for themselves, or None. Never raises.
+
+    Why this exists, found 2026-11-10: `InputMenu.svelte` declares
+    `export let toolApprovalMode = 'full'` and Chat.svelte resolves it to
+    `full` unless something says `ask`, so the menu reads "Full access"
+    the moment the feature is on, while only a CLICK ever writes the chat
+    row. Ralph's account said `full` and his chat row said nothing, so the
+    control on his screen said one thing and the platform did another. The
+    module this feeds calls that class of thing a bug in its own
+    docstring, and it is the same bug read from the other side.
+
+    Deliberately NOT a platform default. It answers for one address, from
+    a value that person's own click wrote, so somebody who has never
+    touched the menu is still asked. The turn's metadata stays unread,
+    for the reason `_read_composer_choice` gives.
+
+    Fails toward None, like the chat row: a database that will not answer
+    must never be the reason a chat stops asking.
+    """
+    if not user_email:
+        return None
+    try:
+        async with session() as s:
+            mode = (await s.execute(
+                _ACCOUNT_MODE_SQL, {"email": user_email})).scalar_one_or_none()
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not read the account's approval mode",
+                       exc_info=True)
+        return None
+    return agent_access.choice_from_approval_mode(mode)
+
+
+#: Seam, as above.
+_account_seam = _read_account_choice
+
+
 async def _choice_for(body: "ChatIn") -> str | None:
     """How much this chat asks before it acts.
 
@@ -889,6 +935,14 @@ async def _choice_for(body: "ChatIn") -> str | None:
     only two items, and how a surface that has no composer keeps a
     choice.
 
+    The person's own account setting answers last, and only when neither
+    of those has anything to say. That order is the point: a pick made in
+    THIS chat, by either control, is specific to this chat and must beat a
+    default that applies to all of them. It is read at all because the
+    composer shows the account value while only a click writes the chat
+    row, so without this the menu says "Full access" and the platform
+    asks anyway.
+
     One function because BOTH chat routes need it, and the alternative is
     what this codebase has done twice before: the same decision written
     in two places, where fixing one leaves the other open. It was already
@@ -897,7 +951,8 @@ async def _choice_for(body: "ChatIn") -> str | None:
     """
     return (await _composer_seam(body.chat_id)
             or await _choice_seam(_choice_key(body.chat_id,
-                                              body.user_email)))
+                                              body.user_email))
+            or await _account_seam(body.user_email))
 
 
 async def _clear_pin(key: str) -> None:

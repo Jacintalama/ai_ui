@@ -156,8 +156,12 @@ async def test_with_nothing_in_the_composer_our_own_choice_still_counts(
     async def _stored(key):
         return A.CHAT_MANUAL
 
+    async def _none(_):
+        return None
+
     monkeypatch.setattr(R, "_composer_seam", _composer)
     monkeypatch.setattr(R, "_choice_seam", _stored)
+    monkeypatch.setattr(R, "_account_seam", _none)
     await R.chat(_Body(), x_internal_secret="s")
     assert seams["choice"] == A.CHAT_MANUAL
 
@@ -169,6 +173,7 @@ async def test_nobody_has_chosen_anything_is_todays_behaviour(
 
     monkeypatch.setattr(R, "_composer_seam", _none)
     monkeypatch.setattr(R, "_choice_seam", _none)
+    monkeypatch.setattr(R, "_account_seam", _none)
     await R.chat(_Body(), x_internal_secret="s")
     assert seams["choice"] is None
 
@@ -181,7 +186,11 @@ async def test_the_pick_is_read_for_the_chat_the_message_is_in(
         asked["chat_id"] = chat_id
         return None
 
+    async def _none(_):
+        return None
+
     monkeypatch.setattr(R, "_composer_seam", _composer)
+    monkeypatch.setattr(R, "_account_seam", _none)
     await R.chat(_Body(chat_id="chat-42"), x_internal_secret="s")
     assert asked["chat_id"] == "chat-42"
 
@@ -251,8 +260,12 @@ async def test_a_streamed_turn_falls_back_to_our_own_choice(
     async def _stored(key):
         return A.CHAT_MANUAL
 
+    async def _none(_):
+        return None
+
     monkeypatch.setattr(R, "_composer_seam", _composer)
     monkeypatch.setattr(R, "_choice_seam", _stored)
+    monkeypatch.setattr(R, "_account_seam", _none)
     async for _ in R._chat_events(_Body(), "s"):
         pass
     assert seams["choice"] == A.CHAT_MANUAL
@@ -271,10 +284,211 @@ async def test_both_routes_read_the_choice_the_same_way(monkeypatch):
     async def _inner(body, secret):
         return {"turns": []}
 
+    async def _none(_):
+        return None
+
     monkeypatch.setattr(R, "_composer_seam", _composer)
+    monkeypatch.setattr(R, "_account_seam", _none)
     monkeypatch.setattr(R, "_chat_inner", _inner)
     monkeypatch.setattr(R, "_require_internal", lambda secret: None)
     await R.chat(_Body(chat_id="one"), x_internal_secret="s")
     async for _ in R._chat_events(_Body(chat_id="two"), "s"):
         pass
     assert asked == ["one", "two"]
+
+
+# --- the account's own setting, when this chat has no pick -------------
+#
+# Found 2026-11-10 from a screenshot. Ralph asked "where is the option
+# auto approve" after being asked twice for one ClickUp task. Both sides
+# measured on the box:
+#
+#   chat 7f92c5ef...  Landing Page AIUI   tool_approval_mode: (null)
+#   user ralphbenitez32@gmail.com         tool_approval_mode: full
+#
+# InputMenu.svelte declares `export let toolApprovalMode = 'full'` and
+# Chat.svelte resolves it to 'full' unless something says 'ask', so his
+# menu was ALREADY reading "Full access" while the platform asked anyway,
+# because only a click writes the chat row. That is the bug
+# `with_chat_choice` names in its own docstring, inverted: a visible
+# control saying one thing while an invisible one does another.
+#
+# The account setting is a real record of intent, written by that same
+# click through updateUserSettings, and it is what the menu displays. So
+# it answers when the chat itself has nothing to say. It stays the
+# narrowest thing that could have been read: per account, never platform
+# wide, and the turn's metadata is still consulted nowhere.
+
+
+async def test_the_account_setting_answers_when_this_chat_has_no_pick(
+        monkeypatch, seams):
+    async def _composer(chat_id):
+        return None
+
+    async def _stored(key):
+        return None
+
+    async def _account(email):
+        return A.CHAT_SKIP
+
+    monkeypatch.setattr(R, "_composer_seam", _composer)
+    monkeypatch.setattr(R, "_choice_seam", _stored)
+    monkeypatch.setattr(R, "_account_seam", _account)
+    await R.chat(_Body(), x_internal_secret="s")
+    assert seams["choice"] == A.CHAT_SKIP
+
+
+async def test_a_pick_in_this_chat_beats_the_account_setting(
+        monkeypatch, seams):
+    """Choosing "Ask for approval" in one chat has to hold there even when
+    the account says full access, or the per-chat menu is decoration."""
+    async def _composer(chat_id):
+        return A.CHAT_AUTO
+
+    async def _account(email):
+        return A.CHAT_SKIP
+
+    monkeypatch.setattr(R, "_composer_seam", _composer)
+    monkeypatch.setattr(R, "_account_seam", _account)
+    await R.chat(_Body(), x_internal_secret="s")
+    assert seams["choice"] == A.CHAT_AUTO
+
+
+async def test_our_own_choice_for_this_chat_beats_the_account_setting(
+        monkeypatch, seams):
+    """`manual` is per chat and unreachable from their two-item menu, so a
+    global default must not quietly undo it."""
+    async def _composer(chat_id):
+        return None
+
+    async def _stored(key):
+        return A.CHAT_MANUAL
+
+    async def _account(email):
+        return A.CHAT_SKIP
+
+    monkeypatch.setattr(R, "_composer_seam", _composer)
+    monkeypatch.setattr(R, "_choice_seam", _stored)
+    monkeypatch.setattr(R, "_account_seam", _account)
+    await R.chat(_Body(), x_internal_secret="s")
+    assert seams["choice"] == A.CHAT_MANUAL
+
+
+async def test_the_setting_is_read_for_whoever_sent_the_message(
+        monkeypatch, seams):
+    """Nine people share this platform. Reading the wrong row would hand
+    one person's posture to somebody else."""
+    asked = {}
+
+    async def _composer(chat_id):
+        return None
+
+    async def _stored(key):
+        return None
+
+    async def _account(email):
+        asked["email"] = email
+        return None
+
+    monkeypatch.setattr(R, "_composer_seam", _composer)
+    monkeypatch.setattr(R, "_choice_seam", _stored)
+    monkeypatch.setattr(R, "_account_seam", _account)
+    await R.chat(_Body(user_email="her@example.com"), x_internal_secret="s")
+    assert asked["email"] == "her@example.com"
+
+
+async def test_the_streamed_route_reads_the_account_too(monkeypatch, seams):
+    """The streamed route is the one the main chat really calls, and it
+    has already been the one left behind once."""
+    async def _composer(chat_id):
+        return None
+
+    async def _stored(key):
+        return None
+
+    async def _account(email):
+        return A.CHAT_SKIP
+
+    monkeypatch.setattr(R, "_composer_seam", _composer)
+    monkeypatch.setattr(R, "_choice_seam", _stored)
+    monkeypatch.setattr(R, "_account_seam", _account)
+    async for _ in R._chat_events(_Body(), "s"):
+        pass
+    assert seams["choice"] == A.CHAT_SKIP
+
+
+# --- reading the account row -------------------------------------------
+
+class _Rows:
+    """A session that answers one scalar, the way the real one does."""
+
+    def __init__(self, value):
+        self.value = value
+        self.params = None
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def execute(self, _sql, params=None):
+        self.params = params
+        return self
+
+    def scalar_one_or_none(self):
+        return self.value
+
+
+@pytest.mark.parametrize("saved,expected", [
+    ("full", A.CHAT_SKIP),
+    ("ask", A.CHAT_AUTO),
+    (None, None),
+    ("", None),
+    ("read_only", None),
+])
+async def test_what_the_account_row_says_becomes_our_choice(
+        monkeypatch, saved, expected):
+    """Same mapping as the chat row, so the two cannot disagree about
+    what a word means."""
+    rows = _Rows(saved)
+    monkeypatch.setattr(R, "session", lambda: rows)
+    assert await R._read_account_choice("him@example.com") == expected
+
+
+async def test_the_account_row_is_looked_up_by_the_address_given(monkeypatch):
+    rows = _Rows("full")
+    monkeypatch.setattr(R, "session", lambda: rows)
+    await R._read_account_choice("Him@Example.com")
+    assert rows.params == {"email": "Him@Example.com"}
+
+
+async def test_an_account_row_that_cannot_be_read_is_no_choice(monkeypatch):
+    """Same direction as the chat row: an outage must not stop a chat
+    asking."""
+    class _Boom:
+        async def __aenter__(self):
+            raise RuntimeError("no database")
+
+        async def __aexit__(self, *a):
+            return False
+
+    monkeypatch.setattr(R, "session", lambda: _Boom())
+    assert await R._read_account_choice("him@example.com") is None
+
+
+async def test_no_address_is_not_looked_up_at_all(monkeypatch):
+    """A surface with nobody behind it must not match a row."""
+    def _never():
+        raise AssertionError("asked the database with no address")
+
+    monkeypatch.setattr(R, "session", _never)
+    assert await R._read_account_choice("") is None
+    assert await R._read_account_choice(None) is None
+
+
+def test_the_account_setting_still_cannot_widen_a_named_agent():
+    """It goes through the same ceiling as every other control, so a
+    global default cannot hand an agent more than its owner allowed."""
+    assert A.with_chat_choice(
+        A.MODE_READ_ONLY, A.CHAT_SKIP, A.LEVEL_READ) == A.MODE_READ_ONLY
