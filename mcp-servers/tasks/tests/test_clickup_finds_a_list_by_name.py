@@ -41,11 +41,20 @@ SPACES = [
     {"id": "1301320000002694", "name": "Team Space"},
     {"id": "1301320000002851", "name": "aiui tema"},
 ]
+#: ClickUp puts a PLACEHOLDER folder on a list that is in no folder,
+#: named "hidden" (probed 2026-11-10). Reading a list's own `folder` key
+#: would therefore report "AIUI > Team Space > hidden > Project 1" as the
+#: place to put the task, so the folder here comes from the folder that
+#: was walked, never from the list.
+_HIDDEN = {"id": "1301320000003387", "name": "hidden", "hidden": True,
+           "access": True}
 TEAM_SPACE_LISTS = [
-    {"id": "1301320000003389", "name": "Project 2", "task_count": 0},
-    {"id": "1301320000003388", "name": "Project 1", "task_count": 3},
+    {"id": "1301320000003389", "name": "Project 2", "task_count": 0,
+     "folder": _HIDDEN},
+    {"id": "1301320000003388", "name": "Project 1", "task_count": 3,
+     "folder": _HIDDEN},
     {"id": "1301320000003390", "name": "Get Started with ClickUp",
-     "task_count": 7},
+     "task_count": 7, "folder": _HIDDEN},
 ]
 
 
@@ -169,11 +178,17 @@ def test_a_folderless_list_is_found_at_all(clickup):
 
 def test_the_answer_says_where_the_list_lives(clickup):
     """Two spaces can hold a list of the same name, so an id on its own
-    does not let anybody confirm the right one was picked."""
+    does not let anybody confirm the right one was picked.
+
+    `folder is None` is the assertion that matters: ClickUp hands back a
+    placeholder folder called "hidden" on a list that is in no folder,
+    and repeating it would tell somebody their task goes in
+    "AIUI > Team Space > hidden > Project 1"."""
     item = clickup({"name": "Project 1"})[0]["items"][0]
     assert item["space"] == "Team Space"
     assert item["folder"] is None
     assert item["path"] == "AIUI > Team Space > Project 1"
+    assert "hidden" not in item["path"]
 
 
 # --- matching ------------------------------------------------------------
