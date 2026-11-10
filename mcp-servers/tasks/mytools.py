@@ -645,7 +645,35 @@ def _clickup_tools():
 #: wording (2026-11-10). Tool search reads the summary, and "move this to
 #: done" or "assign it to Ralph" has to find update_task. The assignee wording
 #: is true because clickup_people looks names and emails up before the call.
+#:
+#: create_task carries the assignee wording as well, and that is not a
+#: duplicate. Measured on the box for Ralph's own sentence, "create a
+#: ClickUp task called Buy milk 7 in Project 1 and assign it to ralph":
+#:
+#:     create_task 0.7623, add_task_to_list, add_guest_to_task,
+#:     create_task_comment, create_checklist
+#:       -> update_task offered: False
+#:
+#: update_task says "assign" and is not returned; create_task says nothing
+#: about it and is always returned, because the search matches the whole
+#: sentence and his begins "create a ClickUp task called". So the model
+#: created the task unassigned, reported with perfect accuracy that it had
+#: no tool to assign anybody, and when pressed made a SECOND task with the
+#: same name. Rewording update_task to climb the ranking was considered and
+#: rejected, the same as when find_list hit this wall: it is guessing at a
+#: ranking function. The wording goes on the tool the model already lands on.
+#:
+#: It also NAMES update_task, because a model whose search returned neither
+#: has no other way to learn that changing a task is possible at all.
 _CLICKUP_SUMMARIES = {
+    "create_task": "Create a new task. Assign people in the SAME call with "
+                   "assignees, which takes a person's name, their email or "
+                   "their ClickUp id and looks it up, and set its column "
+                   "with status: there is no need to create the task first "
+                   "and change it afterwards. If the task ALREADY exists "
+                   "and you only need to change it, use update_task "
+                   "instead, or the list ends up with two tasks of the "
+                   "same name.",
     "update_task": "Update a task: move it to another column (status), assign "
                    "or unassign people, rename it, or change its due date or "
                    "priority.",
