@@ -4967,9 +4967,25 @@
     if (aiuiChatIdFromUrl() !== chatId) return;
     if (!/^[a-z0-9][a-z0-9-]{0,80}$/.test(String(slug || ''))) return;
     var id = 'aiui-app-' + slug;
-    if (document.getElementById(id)) return;
     var inReply = aiuiReplyFor(id, messageId);
     if (inReply === undefined) return;
+
+    // Already drawn. It may be in the wrong reply: either from before
+    // this chat knew which message announced the app, or because
+    // aiuiPollBuild draws on the way past, before the closing message
+    // that declares it has been written. Once the right reply is on the
+    // page, move it there rather than leaving it in somebody else's
+    // message.
+    //
+    // Moving a node with an iframe in it reloads that iframe, so the app
+    // flickers once. That happens at most once per panel and is a far
+    // smaller thing than a landing page sitting under a reply about a
+    // shopping list.
+    var drawn = document.getElementById(id);
+    if (drawn) {
+      if (inReply && !inReply.contains(drawn)) aiuiPutInReply(drawn, inReply);
+      return;
+    }
 
     // The app's OWN published URL. main.py::serve_published_app injects
     // the project's Supabase url and anon key AT REQUEST TIME, so they
@@ -5536,7 +5552,6 @@
   var aiuiSavedRead = { chat: '', key: '', last: '', busy: false, force: false,
                         chain: null, apps: [], videos: [] };
   var aiuiVideoJobs = {};
-  var aiuiReplyWaits = {};
 
   // Each app the chat declares, with the last message to mention it, so
   // its panel sits in the reply that announced it.
@@ -5577,12 +5592,80 @@
   // Three scans of waiting, so a row that never appears still gets its
   // panel somewhere.
   function aiuiReplyFor(key, messageId) {
+    // null means "no particular reply", which every caller turns into the
+    // last one. undefined means "the right one is not on the page yet",
+    // which means draw nothing and look again.
+    //
+    // It used to count three looks and then answer null. Ralph,
+    // 2026-11-10: a landing page panel was sitting under a reply about a
+    // ClickUp task, fifteen messages below the one that announced it. The
+    // message had simply not painted yet, and a burst from the mutation
+    // observer spends three looks in milliseconds, so "not yet" was read
+    // as "never" and the panel was planted in whatever the conversation
+    // had got to since. Not drawing yet is recoverable, the scan runs
+    // again every few seconds; drawing it inside somebody else's message
+    // is not.
     if (!messageId) return null;
     var row = document.getElementById('message-' + messageId);
     var body = row ? row.querySelector('.chat-assistant') : null;
-    if (body) return body;
-    aiuiReplyWaits[key] = (aiuiReplyWaits[key] || 0) + 1;
-    return aiuiReplyWaits[key] > 3 ? null : undefined;
+    return body || undefined;
+  }
+
+  //: The message row a node sits in, found by walking up.
+  //
+  //: Deliberately not closest('[id^="message-"]'). That prefix also
+  //: matches message-input-container, the COMPOSER, which is the bug this
+  //: page shipped twice, and a blanket test forbids the selector anywhere
+  //: in this file so that it cannot come back by a different route.
+  function aiuiMessageRowOf(node) {
+    for (var up = node; up; up = up.parentElement) {
+      if (String(up.id || '').indexOf('message-') === 0) return up;
+    }
+    return null;
+  }
+
+  //: The id out of a message row, or '' for anything that is not one.
+  //
+  //: The composer is still refused by name, because walking up from a
+  //: .chat-assistant should never reach it and a guard that only holds
+  //: while an assumption holds is worth having.
+  function aiuiMessageIdOf(row) {
+    var id = row ? String(row.id || '') : '';
+    if (id.indexOf('message-') !== 0) return '';
+    var rest = id.slice(8);
+    return rest === 'input-container' ? '' : rest;
+  }
+
+  //: Which assistant message announced each app, read one message at a
+  //: time so a slug is never separated from the reply it belongs to.
+  //
+  //: This replaces a scan of the whole thread's innerHTML as one blob.
+  //: A blob cannot say which message anything came from, so everything it
+  //: found was placed by the fallback above, by construction. It also
+  //: could not tell a declaration from an echo: a panel's own iframe src
+  //: carries the slug, so once a panel was in the wrong message the scan
+  //: kept finding it there and agreeing. The EARLIEST message naming an
+  //: app is the one that announced it, so the first wins.
+  //
+  //: Only .chat-assistant, so a link somebody pasted in their own message
+  //: is not the platform saying it built something.
+  function aiuiAppsDeclaredIn(thread) {
+    var out = [];
+    if (!thread) return out;
+    var seen = {};
+    var bodies = thread.querySelectorAll('.chat-assistant');
+    for (var i = 0; i < bodies.length; i++) {
+      var body = bodies[i];
+      var mid = aiuiMessageIdOf(aiuiMessageRowOf(body));
+      if (!mid) continue;
+      var slugs = aiuiArtifactIds(body.innerHTML, 'app');
+      for (var j = 0; j < slugs.length; j++) {
+        if (seen[slugs[j]]) continue;
+        seen[slugs[j]] = true;
+        out.push({ slug: slugs[j], messageId: mid });
+      }
+    }
+    return out;
   }
 
   function aiuiPutInReply(box, body) {
@@ -5689,8 +5772,8 @@
     // because this runs on a mutation observer and the thread can be
     // long. aiuiShowAppInline is a no-op once its panel exists, so
     // running every few seconds costs a scan and nothing else.
-    aiuiArtifactIds(html, 'app').forEach(function (slug) {
-      aiuiShowAppInline(chatId, slug);
+    aiuiAppsDeclaredIn(thread).forEach(function (a) {
+      aiuiShowAppInline(chatId, a.slug, a.messageId);
     });
 
     // Before the early return below, because a chat with nothing new on

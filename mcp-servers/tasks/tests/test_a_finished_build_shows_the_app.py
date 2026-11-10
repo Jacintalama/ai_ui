@@ -150,11 +150,21 @@ def test_a_finished_build_declares_its_app():
 # --- it is drawn from the chat, not only when a build completes ----------
 
 def test_the_app_is_drawn_from_what_the_chat_says():
+    """Still read from the messages themselves rather than only from a
+    build we happen to be watching, which is what this test was for.
+
+    The scan it used to name read the whole thread as ONE innerHTML blob
+    and drew with no message id, so every panel it found was placed under
+    whatever reply was last. That was Ralph's 2026-11-10 bug: a landing
+    page under a reply about a ClickUp task. It reads one message at a
+    time now, so a slug keeps the reply it came from. See
+    tests/browser/test_the_panel_stays_in_its_own_reply.py."""
     src = _js()
     watcher = src[src.index("function aiuiWatchBuilds()"):]
     watcher = watcher[:watcher.index("\n  }\n")]
-    assert "aiuiArtifactIds(html, 'app').forEach(function (slug) {" in watcher
-    assert "aiuiShowAppInline(chatId, slug);" in watcher
+    assert "aiuiAppsDeclaredIn(thread).forEach(function (a) {" in watcher
+    assert "aiuiShowAppInline(chatId, a.slug, a.messageId);" in watcher
+    assert "aiuiArtifactIds(html, 'app')" not in watcher
 
 
 def test_it_is_drawn_before_the_watcher_gives_up_on_a_closed_build():
@@ -164,7 +174,7 @@ def test_it_is_drawn_before_the_watcher_gives_up_on_a_closed_build():
     src = _js()
     watcher = src[src.index("function aiuiWatchBuilds()"):]
     watcher = watcher[:watcher.index("\n  }\n")]
-    drawn = watcher.index("aiuiArtifactIds(html, 'app')")
+    drawn = watcher.index("aiuiAppsDeclaredIn(thread)")
     gives_up = watcher.index("if (!fresh.length) return;")
     assert drawn < gives_up, (
         "the app is drawn after the early return, so a finished build "
