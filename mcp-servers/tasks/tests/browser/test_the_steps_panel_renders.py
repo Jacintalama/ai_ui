@@ -39,8 +39,11 @@ def _panel_code():
         start = src.index("  function " + name + "(")
         return src[start:src.index("\n  }\n", start) + 5]
 
+    # aiuiStepRows and aiuiMotion since 2026-11-10: the rows are shared with
+    # the video's panel, and the step in progress moves.
     return "\n".join(fn(n) for n in ("aiuiLaneOf", "aiuiStepStates",
-                                     "aiuiStepPanel", "aiuiEscape"))
+                                     "aiuiStepPanel", "aiuiStepRows",
+                                     "aiuiMotion", "aiuiEscape"))
 
 
 def _page(page, *, lane, step, light_name="Simple site",
@@ -54,6 +57,7 @@ def _page(page, *, lane, step, light_name="Simple site",
       function aiuiPutUnderLastMessage(box) {
         document.getElementById('thread').appendChild(box);
       }
+      function aiuiLastReplyBody() { return document.getElementById('thread'); }
       %s
       window.draw = function (lane, step) {
         return aiuiStepPanel('chat-1', { build_lane: lane, build_step: step }, 2);
@@ -141,6 +145,7 @@ def test_a_step_sentence_is_text_even_if_it_arrives_as_markup(page):
       function aiuiPutUnderLastMessage(box) {
         document.getElementById('thread').appendChild(box);
       }
+      function aiuiLastReplyBody() { return document.getElementById('thread'); }
       %s
       aiuiStepPanel('chat-1', { build_lane: 'agent', build_step: 'writing' }, 1);
     """ % _panel_code())
