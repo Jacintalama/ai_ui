@@ -169,7 +169,9 @@ def _vendor_said(r, creds: Dict[str, str]) -> str:
         return ""
     message = ""
     if isinstance(payload, dict):
-        message = str(payload.get("message") or payload.get("error") or "")
+        # ClickUp puts its reason in "err" (2026-11-10).
+        message = str(payload.get("message") or payload.get("error")
+                      or payload.get("err") or "")
     message = " ".join(c for c in message.split() if c)
     message = "".join(c for c in message if c.isprintable())[:MAX_VENDOR_NOTE]
     if not message:
@@ -179,6 +181,48 @@ def _vendor_said(r, creds: Dict[str, str]) -> str:
         if len(v) >= 8 and v in message:
             return ""
     return " " + message
+
+
+async def _prepared(prepare, tool: "Tool", args: Dict[str, Any], auth,
+                    provider_id: str):
+    """Run a provider's prepare step with reads made as this person.
+
+    A read that fails returns None to the step, which then decides; it never
+    raises, so a lookup that could not be made is never why a call failed."""
+    async with httpx.AsyncClient(timeout=VENDOR_TIMEOUT_SEC) as client:
+        async def get(path: str, extra: Optional[Dict[str, Any]] = None):
+            params = dict(auth.params)
+            params.update({k: v for k, v in (extra or {}).items() if v not in (None, "")})
+            try:
+                r = await client.request("GET", auth.base_url + path,
+                                         headers=auth.headers,
+                                         params=params or None, json=None)
+            except Exception as e:                          # noqa: BLE001
+                logger.warning("mytools: %s lookup unreachable (%s)",
+                               provider_id, type(e).__name__)
+                return None
+            if r.status_code >= 400:
+                return None
+            try:
+                return r.json()
+            except Exception:                               # noqa: BLE001
+                return None
+        try:
+            return await prepare(tool.name, args, get)
+        except Exception as e:                              # noqa: BLE001
+            logger.warning("mytools: %s prepare failed (%s)", provider_id,
+                           type(e).__name__)
+            return args, None
+
+
+def _clickup_prepare(tool_name, args, get):
+    import clickup_people
+    return clickup_people.prepare(tool_name, args, get)
+
+
+#: Per provider, a step between the model's arguments and the vendor. Only
+#: ClickUp has one (2026-11-10): people by name or email, columns as said.
+PREPARE = {"clickup": _clickup_prepare}
 
 
 async def _call(provider_id: str, tool: Tool, email: str,
@@ -196,6 +240,12 @@ async def _call(provider_id: str, tool: Tool, email: str,
     except ValueError:
         return _err("Your " + label + " connection is incomplete. Reconnect it "
                     "from Connections.")
+
+    prepare = PREPARE.get(provider_id)
+    if prepare:
+        args, problem = await _prepared(prepare, tool, args, auth, provider_id)
+        if problem:
+            return _err(problem)
 
     path = tool.path
     for key, value in (args or {}).items():
@@ -247,9 +297,13 @@ async def _call(provider_id: str, tool: Tool, email: str,
                     + _vendor_said(r, creds))
     if r.status_code >= 400:
         # Never r.text: vendors echo the request, credential included.
+        # _vendor_said repeats the vendor's own reason only when no part of
+        # the credential is in it. Without it the model read "returned an
+        # error (400)" and had nothing to correct (ClickUp, 2026-11-10).
         logger.warning("mytools: %s %s returned %s", provider_id, tool.name,
                        r.status_code)
-        return _err(label + " returned an error (" + str(r.status_code) + ").")
+        return _err(label + " returned an error (" + str(r.status_code) + ")."
+                    + _vendor_said(r, creds))
 
     try:
         data = r.json()
@@ -468,8 +522,46 @@ def _clickup_tools():
                 method="GET", path="/user",
                 unwrap=lambda d: d.get("user", {}),
                 keep=("id", "username", "email"))
-    return [mine] + [t for t in clickup_generated.build(Tool)
+    return [mine] + [_clickup_said(t) for t in clickup_generated.build(Tool)
                      if t.name != "whoami"]
+
+
+#: What the two everyday ClickUp writes tell a model, over the generated
+#: wording (2026-11-10). Tool search reads the summary, and "move this to
+#: done" or "assign it to Ralph" has to find update_task. The assignee wording
+#: is true because clickup_people looks names and emails up before the call.
+_CLICKUP_SUMMARIES = {
+    "update_task": "Update a task: move it to another column (status), assign "
+                   "or unassign people, rename it, or change its due date or "
+                   "priority.",
+}
+_CLICKUP_ARG_SAYS = {
+    ("create_task", "assignees"):
+        "A list of the people to assign: their ClickUp user id (a whole "
+        "number), their email or their name. Names and emails are looked up.",
+    ("update_task", "assignees"):
+        "An object with add and rem, each a list of people: their ClickUp "
+        "user id, their email or their name. Either may be left out.",
+    ("create_task", "status"):
+        "The column to put it in, as the list names it, for example to do "
+        "or in progress.",
+    ("update_task", "status"):
+        "The column to move it to, as the list names it, for example in "
+        "progress or complete. Done also means the list's last column.",
+}
+
+
+def _clickup_said(tool: "Tool") -> "Tool":
+    from dataclasses import replace
+    summary = _CLICKUP_SUMMARIES.get(tool.name, tool.summary)
+    args = dict(tool.args or {})
+    for (name, field), said in _CLICKUP_ARG_SAYS.items():
+        if name == tool.name and field in args:
+            kind, _old, required = args[field]
+            args[field] = (kind, said, required)
+    if summary == tool.summary and args == (tool.args or {}):
+        return tool
+    return replace(tool, summary=summary, args=args)
 
 
 CLICKUP_TOOLS = _clickup_tools()
