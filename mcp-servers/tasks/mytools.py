@@ -87,6 +87,18 @@ class Tool:
     #: Per tool rather than per provider on purpose. Moving the provider's
     #: base to v3 would take list_tasks and create_task with it.
     base: str = ""
+    #: A tool that answers with SEVERAL vendor calls instead of one.
+    #:
+    #: Every tool here maps to a single endpoint, which is right while the
+    #: vendor has an endpoint for the question. ClickUp has none for "which
+    #: list is called Project 1", so answering it means climbing the tree,
+    #: and climbing it one model round per rung is what produced "Stopped
+    #: after 7 rounds of tool use" (2026-11-10). The walk belongs on this
+    #: side of the loop.
+    #:
+    #: Signature is `run(get, args)`, where `get(path)` does one
+    #: authenticated GET as this person. `method` and `path` are unused.
+    run: Optional[Callable[..., Any]] = None
 
 
 def _payload_for(tool: "Tool", args: Optional[Dict[str, Any]]) -> Optional[Dict]:
@@ -183,6 +195,31 @@ def _vendor_said(r, creds: Dict[str, str]) -> str:
     return " " + message
 
 
+async def _read_once(client, auth, provider_id: str, path: str,
+                     extra: Optional[Dict[str, Any]] = None,
+                     base: str = ""):
+    """One authenticated GET as this person, as the vendor answered it.
+
+    Shared by the two things that read before they answer: a provider's
+    prepare step, and a composite tool's walk. Those two want opposite
+    things from a failure, which is why this hands back the response
+    rather than deciding, but the request itself is written once.
+    """
+    params = dict(auth.params)
+    params.update({k: v for k, v in (extra or {}).items()
+                   if v not in (None, "")})
+    try:
+        return await client.request("GET", (base or auth.base_url) + path,
+                                    headers=auth.headers,
+                                    params=params or None, json=None)
+    except Exception as e:                                  # noqa: BLE001
+        # The exception text can carry the URL, and some vendors take the
+        # credential in the query string. Log the type, never the message.
+        logger.warning("mytools: %s read unreachable (%s)", provider_id,
+                       type(e).__name__)
+        return None
+
+
 async def _prepared(prepare, tool: "Tool", args: Dict[str, Any], auth,
                     provider_id: str):
     """Run a provider's prepare step with reads made as this person.
@@ -191,17 +228,8 @@ async def _prepared(prepare, tool: "Tool", args: Dict[str, Any], auth,
     raises, so a lookup that could not be made is never why a call failed."""
     async with httpx.AsyncClient(timeout=VENDOR_TIMEOUT_SEC) as client:
         async def get(path: str, extra: Optional[Dict[str, Any]] = None):
-            params = dict(auth.params)
-            params.update({k: v for k, v in (extra or {}).items() if v not in (None, "")})
-            try:
-                r = await client.request("GET", auth.base_url + path,
-                                         headers=auth.headers,
-                                         params=params or None, json=None)
-            except Exception as e:                          # noqa: BLE001
-                logger.warning("mytools: %s lookup unreachable (%s)",
-                               provider_id, type(e).__name__)
-                return None
-            if r.status_code >= 400:
+            r = await _read_once(client, auth, provider_id, path, extra)
+            if r is None or r.status_code >= 400:
                 return None
             try:
                 return r.json()
@@ -225,6 +253,79 @@ def _clickup_prepare(tool_name, args, get):
 PREPARE = {"clickup": _clickup_prepare}
 
 
+def _unreachable(label: str) -> str:
+    return "Could not reach " + label + " just now. Try again in a moment."
+
+
+def _refusal(r, label: str, creds: Dict[str, str], provider_id: str,
+             tool_name: str) -> str:
+    """The sentence for a vendor's refusal, or "" when it did not refuse.
+
+    One function because two kinds of tool need the same words now: a
+    single-call tool, and a composite one making several calls of its
+    own. A second copy would drift, and it would drift in error text,
+    which is the part nobody re-reads.
+    """
+    if r.status_code in (401, 403):
+        return ("Your " + label + " credential was rejected. It may have "
+                "expired or lack permission. Reconnect it from Connections.")
+    if r.status_code == 404:
+        return label + " could not find that." + _vendor_said(r, creds)
+    if r.status_code >= 400:
+        # Never r.text: vendors echo the request, credential included.
+        # _vendor_said repeats the vendor's own reason only when no part of
+        # the credential is in it. Without it the model read "returned an
+        # error (400)" and had nothing to correct (ClickUp, 2026-11-10).
+        logger.warning("mytools: %s %s returned %s", provider_id, tool_name,
+                       r.status_code)
+        return (label + " returned an error (" + str(r.status_code) + ")."
+                + _vendor_said(r, creds))
+    return ""
+
+
+class _VendorRefused(Exception):
+    """A vendor said no in the middle of a composite tool's own walk.
+
+    It carries the sentence already worded for the person, so the walk
+    needs to know nothing about HTTP status codes and cannot invent a
+    second vocabulary for the same failures.
+    """
+
+
+async def _run_composite(provider_id: str, tool: Tool, auth,
+                         creds: Dict[str, str], label: str,
+                         args: Dict[str, Any]) -> dict:
+    """Run a tool that answers with several vendor calls.
+
+    Everything a single-call tool gets stays the same: this person's own
+    credential and nobody else's, the vendor's own words only where they
+    are safe to repeat, and a sentence rather than a status code when it
+    fails.
+
+    Unlike a prepare step, a failure here is fatal and says so. There is
+    no single call behind this tool to fall back to: the walk IS the
+    answer, so a walk that could not be made has no answer to give.
+    """
+    async with httpx.AsyncClient(timeout=VENDOR_TIMEOUT_SEC) as client:
+        async def get(path: str, extra: Optional[Dict[str, Any]] = None):
+            r = await _read_once(client, auth, provider_id, path, extra,
+                                 base=tool.base)
+            if r is None:
+                raise _VendorRefused(_unreachable(label))
+            problem = _refusal(r, label, creds, provider_id, tool.name)
+            if problem:
+                raise _VendorRefused(problem)
+            try:
+                return r.json()
+            except Exception:                               # noqa: BLE001
+                return {}
+
+        try:
+            return await tool.run(get, args)
+        except _VendorRefused as e:
+            return _err(str(e))
+
+
 async def _call(provider_id: str, tool: Tool, email: str,
                 args: Dict[str, Any]) -> dict:
     label = (C.provider(provider_id) or C.Provider).label if C.provider(
@@ -240,6 +341,13 @@ async def _call(provider_id: str, tool: Tool, email: str,
     except ValueError:
         return _err("Your " + label + " connection is incomplete. Reconnect it "
                     "from Connections.")
+
+    # Before prepare, because prepare exists to fix up the arguments of a
+    # call to one endpoint, and a composite tool has no such call behind
+    # it to fix up.
+    if tool.run:
+        return await _run_composite(provider_id, tool, auth, creds, label,
+                                    args)
 
     prepare = PREPARE.get(provider_id)
     if prepare:
@@ -285,25 +393,11 @@ async def _call(provider_id: str, tool: Tool, email: str,
         # in the query string. Log the type, never the message.
         logger.warning("mytools: %s unreachable (%s)", provider_id,
                        type(e).__name__)
-        return _err("Could not reach " + label + " just now. Try again in a "
-                    "moment.")
+        return _err(_unreachable(label))
 
-    if r.status_code in (401, 403):
-        return _err("Your " + label + " credential was rejected. It may have "
-                    "expired or lack permission. Reconnect it from "
-                    "Connections.")
-    if r.status_code == 404:
-        return _err(label + " could not find that."
-                    + _vendor_said(r, creds))
-    if r.status_code >= 400:
-        # Never r.text: vendors echo the request, credential included.
-        # _vendor_said repeats the vendor's own reason only when no part of
-        # the credential is in it. Without it the model read "returned an
-        # error (400)" and had nothing to correct (ClickUp, 2026-11-10).
-        logger.warning("mytools: %s %s returned %s", provider_id, tool.name,
-                       r.status_code)
-        return _err(label + " returned an error (" + str(r.status_code) + ")."
-                    + _vendor_said(r, creds))
+    problem = _refusal(r, label, creds, provider_id, tool.name)
+    if problem:
+        return _err(problem)
 
     try:
         data = r.json()
@@ -515,6 +609,7 @@ CLICKUP_V3 = "https://api.clickup.com/api/v3"
 #: a connection is bound to the wrong person, and that happened on
 #: 2026-11-06.
 def _clickup_tools():
+    import clickup_find
     import clickup_generated
     mine = Tool(name="whoami",
                 summary="Show which ClickUp account is currently connected "
@@ -522,8 +617,28 @@ def _clickup_tools():
                 method="GET", path="/user",
                 unwrap=lambda d: d.get("user", {}),
                 keep=("id", "username", "email"))
-    return [mine] + [_clickup_said(t) for t in clickup_generated.build(Tool)
-                     if t.name != "whoami"]
+    #: Every ClickUp write takes an id and ClickUp has no endpoint that
+    #: takes a name, so this is the one tool here that is not a single
+    #: call. See clickup_find for what it costs and why that is worth it.
+    finder = Tool(
+        name="find_list",
+        summary="Find a ClickUp list by name and give back its list id, "
+                "with the space and folder it sits in. Use this FIRST "
+                "whenever somebody names where something goes, like 'in "
+                "Project 1', and you need an id to create a task or read "
+                "tasks, because ClickUp's other endpoints only take ids. "
+                "One call searches every space, every folder and the "
+                "lists that are in no folder.",
+        method="POST", path="",
+        args={"name": ("string", "The list, folder or space name as the "
+                       "person said it, like 'Project 1'", True),
+              "workspace_id": ("string", "Search only this workspace. "
+                               "Optional, and all of them otherwise",
+                               False)},
+        run=clickup_find.find_list)
+    return [mine, finder] + [_clickup_said(t)
+                             for t in clickup_generated.build(Tool)
+                             if t.name not in ("whoami", "find_list")]
 
 
 #: What the two everyday ClickUp writes tell a model, over the generated
@@ -565,6 +680,10 @@ def _clickup_said(tool: "Tool") -> "Tool":
 
 
 CLICKUP_TOOLS = _clickup_tools()
+
+#: By name, because a test or a route that wants one tool should not have
+#: to scan 174 of them to say which.
+CLICKUP_TOOLS_BY_NAME = {t.name: t for t in CLICKUP_TOOLS}
 
 TRELLO_TOOLS = [
     Tool(name="list_my_boards",
