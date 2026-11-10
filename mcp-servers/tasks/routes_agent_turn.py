@@ -107,6 +107,16 @@ class ResumeIn(BaseModel):
 #: than a parameter: _run_turn is stood in for by tests and callers with
 #: its own signature, and the listing is a fact about the request, not
 #: about the turn.
+#: What this conversation chose about approvals, read ONCE per request.
+#:
+#: A contextvar rather than another parameter on four call sites, one of
+#: which is inside the loop that runs every named agent over one message:
+#: threading it there would read the same row once per agent. _run_turn
+#: takes an explicit value too, which wins, so a caller outside the chat
+#: can still say.
+_choice_for_turn: contextvars.ContextVar = contextvars.ContextVar(
+    "chat_choice_for_turn", default=None)
+
 _listing_for_turn: contextvars.ContextVar = contextvars.ContextVar(
     "agents_listed_for_this_message", default=None)
 
@@ -418,7 +428,8 @@ async def _run_turn(user_email: str, agent_id: str, messages: list[dict],
                     brief: bool = False,
                     surface: str = agent_access.SURFACE_CHANNEL,
                     parent_run_id: str | None = None,
-                    tool_ids: list[str] | None = None) -> dict:
+                    tool_ids: list[str] | None = None,
+                    chat_choice: str | None = None) -> dict:
     """Run one turn as this user's agent, tools and all.
 
     Split out of the endpoint so /agents/chat can reuse it without going back
@@ -466,7 +477,23 @@ async def _run_turn(user_email: str, agent_id: str, messages: list[dict],
     if brief:
         made = await _brief_for(user_email, agent, roster, messages)
         messages = [made] + messages
-    mode = agent_access.effective_mode(level, None, surface)
+    # What this conversation chose about approvals, if anything. An
+    # explicit value wins; otherwise the one the request read once.
+    chat_choice = (chat_choice if chat_choice is not None
+                   else _choice_for_turn.get())
+    #
+    # `ceiling` is the agent's own level, EXCEPT for the main chat's own
+    # assistant, which has none: main_assistant.agent() writes
+    # meta.access = MODE_ASK in code, and MODE_ASK and LEVEL_ASK are both
+    # the string "ask", so the level alone cannot tell a default from a
+    # choice somebody made. The id can. Everything else keeps its ceiling,
+    # which is the rule this module exists for: a menu in a chat window
+    # does not overrule a level its owner set.
+    ceiling = (None if (agent or {}).get("id") == main_assistant.ASSISTANT_ID
+               else level)
+    mode = agent_access.with_chat_choice(
+        agent_access.effective_mode(level, None, surface),
+        chat_choice, ceiling)
 
     run_id = await agent_activity.start_run(
         agent_id, user_email, _source_for(surface),
@@ -483,6 +510,7 @@ async def _run_turn(user_email: str, agent_id: str, messages: list[dict],
                 agent=agent,
                 tool_ids=tools or None, user_email=user_email,
                 tool_mode=mode,
+                use_rules=agent_access.rules_apply(chat_choice),
                 refusal_reason=agent_access.refusal_reason(
                     level, None, surface),
                 max_iterations=(COLLEAGUE_MAX_TOOL_ITERATIONS
@@ -737,6 +765,79 @@ async def _write_pin(key: str, agent_id: str) -> None:
             await s.commit()
     except Exception:                                       # noqa: BLE001
         logger.warning("could not write the agent pin", exc_info=True)
+
+
+def _choice_key(chat_id: str, user_email: str) -> str:
+    """Scoped per PERSON as well as per chat, for the same reason the pin
+    is: two real chat_id values ("web" and "local") collapse across
+    everybody on the box, and without the email one person's choice would
+    govern another person's chat."""
+    return "chatmode:web:%s:%s" % (user_email, chat_id)
+
+
+async def _read_choice(key: str) -> str | None:
+    """What this chat chose about approvals, or None. Never raises.
+
+    No expiry, unlike the pin. A pin is "who is awake right now" and goes
+    stale in minutes; this is a preference the person set deliberately and
+    would be surprised to find reset.
+
+    Fails toward None, which is today's behaviour, never toward the widest
+    option: a state outage must not quietly stop a chat asking.
+    """
+    try:
+        async with session() as s:
+            row = (await s.execute(
+                select(BotState).where(BotState.state_key == key)
+            )).scalar_one_or_none()
+        if row is None or not isinstance(row.value, dict):
+            return None
+        return agent_access._chosen(row.value.get("choice"))
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not read the chat's approval choice",
+                       exc_info=True)
+        return None
+
+
+async def _write_choice(key: str, choice: str) -> None:
+    """Remember it. Never raises."""
+    try:
+        async with session() as s:
+            row = (await s.execute(
+                select(BotState).where(BotState.state_key == key)
+            )).scalar_one_or_none()
+            now = datetime.now(timezone.utc)
+            if row:
+                row.value = {"choice": choice}
+                row.updated_at = now
+                row.expires_at = None
+            else:
+                s.add(BotState(state_key=key, value={"choice": choice},
+                               updated_at=now, expires_at=None))
+            await s.commit()
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not write the chat's approval choice",
+                       exc_info=True)
+
+
+async def _clear_choice(key: str) -> None:
+    """Back to no choice at all, which is the default behaviour. Never
+    raises."""
+    try:
+        async with session() as s:
+            row = (await s.execute(
+                select(BotState).where(BotState.state_key == key)
+            )).scalar_one_or_none()
+            if row is not None:
+                await s.delete(row)
+                await s.commit()
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not clear the chat's approval choice",
+                       exc_info=True)
+
+
+#: Seam, so a turn can be driven without a database.
+_choice_seam = _read_choice
 
 
 async def _clear_pin(key: str) -> None:
@@ -1747,7 +1848,15 @@ async def chat(body: ChatIn,
     # rows say "chat" instead of "channel", which is what makes the main
     # chat measurable at all (agent_activity.main_chat).
     with agent_activity.main_chat():
-        return await _chat_inner(body, x_internal_secret)
+        # Read once here, not per agent: a room round runs every
+        # named agent over the same message.
+        token = _choice_for_turn.set(
+            await _choice_seam(_choice_key(body.chat_id,
+                                           body.user_email)))
+        try:
+            return await _chat_inner(body, x_internal_secret)
+        finally:
+            _choice_for_turn.reset(token)
 
 
 async def _chat_events(body: ChatIn, x_internal_secret: str):

@@ -83,6 +83,70 @@ def level_of(meta) -> str | None:
     return value if value in LEVELS else None
 
 
+#: What a person chose in the chat composer, for this conversation.
+#:
+#: Three choices because three things are genuinely different. Without the
+#: middle one `manual` and `auto` would be the same setting, since the main
+#: chat already asks: what separates them is whether a standing rule is
+#: allowed to answer in the person's place.
+CHAT_MANUAL = "manual"   #: ask every time, and let no rule answer for me
+CHAT_AUTO = "auto"       #: rules answer what they cover, the rest asks
+CHAT_SKIP = "skip"       #: never ask
+CHAT_CHOICES = frozenset({CHAT_MANUAL, CHAT_AUTO, CHAT_SKIP})
+
+#: Narrowest to widest. The order IS the safety property: a chat choice may
+#: move a named agent down this list and never up it.
+_WIDTH = {MODE_READ_ONLY: 0, MODE_ASK: 1, MODE_FULL: 2}
+
+
+def _chosen(choice) -> str | None:
+    """The choice if it is one of ours, else None.
+
+    It arrives from a browser, so anything may turn up here. Unrecognised
+    reads as "they have not chosen", never as the widest option: that
+    direction is the one that costs something.
+    """
+    return choice if isinstance(choice, str) and choice in CHAT_CHOICES \
+        else None
+
+
+def rules_apply(choice) -> bool:
+    """Whether a standing rule may answer in this person's place.
+
+    Only `manual` turns them off, and only for the chat it was chosen in.
+    A rule the person wrote is still THEIR decision, so this is not a
+    safety control; it is for the times they want to watch each one go by.
+    """
+    return _chosen(choice) != CHAT_MANUAL
+
+
+def with_chat_choice(mode: str, choice, ceiling: str | None) -> str:
+    """`mode`, adjusted by what the person chose in this conversation.
+
+    `ceiling` is the agent's own level, or None when there is no agent row
+    behind the turn. That distinction is the whole of the rule:
+
+    * A NAMED AGENT has a ceiling its owner set, and this may only narrow
+      it. "An agent's level is a CEILING... two controls that can each
+      widen the other is how permission systems get holes" is the reason
+      this module exists, and a menu in a chat window does not overrule a
+      level somebody chose deliberately.
+    * THE MAIN CHAT's assistant has no agent row: `_resolve_agent_row`
+      hands back MODE_ASK for it with no level at all. There is nothing to
+      widen, so the person's choice for their own chat is simply honoured.
+
+    Never raises.
+    """
+    chosen = _chosen(choice)
+    if chosen is None:
+        return mode
+    wanted = MODE_FULL if chosen == CHAT_SKIP else MODE_ASK
+    if ceiling is None:
+        return wanted
+    # Narrower of the two, by width. Never the wider.
+    return wanted if _WIDTH.get(wanted, 0) < _WIDTH.get(mode, 0) else mode
+
+
 def effective_mode(level: str | None, tool_mode: str | None,
                    surface: str) -> str:
     """What the tool loop is allowed to do for this run."""
