@@ -284,8 +284,10 @@ def test_the_list_goes_away_when_the_build_settles():
 def test_the_sentences_are_escaped_on_the_way_in():
     """Ours and fixed today, and they reach innerHTML. "Ours today" is how
     an escaping hole starts."""
-    body = _fn("aiuiStepPanel")
-    assert "aiuiEscape(s.said)" in body
+    # The rows are drawn by aiuiStepRows since 2026-11-10, shared with the
+    # video's panel; the escape went with them.
+    assert "aiuiStepRows(rows)" in _fn("aiuiStepPanel")
+    assert "aiuiEscape(s.said)" in _fn("aiuiStepRows")
     esc = _fn("aiuiEscape")
     for ch in ("&amp;", "&lt;", "&gt;", "&quot;"):
         assert ch in esc
