@@ -253,11 +253,21 @@ def _trello_prepare(tool_name, args, get):
     return trello_people.prepare(tool_name, args, get)
 
 
+def _github_prepare(tool_name, args, get):
+    import github_refs
+    return github_refs.prepare(tool_name, args, get)
+
+
 #: Per provider, a step between the model's arguments and the vendor.
 #: ClickUp (2026-11-10): people by name or email, columns as said, lists by
 #: name. Trello (2026-11-11): members by name or username, and the flags
-#: archive_card and complete_card exist to set.
-PREPARE = {"clickup": _clickup_prepare, "trello": _trello_prepare}
+#: archive_card and complete_card exist to set. GitHub (2026-11-11): the
+#: sha a new branch starts from, and the sha a file write updates.
+#:
+#: Each of these returns early for a tool it has nothing to do for, because
+#: this runs on EVERY call to that provider.
+PREPARE = {"clickup": _clickup_prepare, "trello": _trello_prepare,
+           "github": _github_prepare}
 
 
 def _unreachable(label: str) -> str:
@@ -704,6 +714,40 @@ GITHUB_TOOLS = [
                "limit": ("integer", "How many to return", False)},
          unwrap=lambda d: d.get("items", []),
          keep=("number", "title", "state", "html_url", "updated_at")),
+    # --- making a change, which needs a read first (2026-11-11) ----------
+    # Held back from the six above on purpose: these two need the sha they
+    # act on, and that is a prepare step. With them the chain is complete
+    # and runs as the person who typed, which is what makes switching the
+    # shared `github` server off a real option rather than a capability cut.
+    Tool(name="create_branch",
+         summary="Create a new branch in a GitHub repository. It starts "
+                 "from the branch you name, or from the repository's "
+                 "default branch.",
+         method="POST", path="/repos/{owner}/{repo}/git/refs",
+         args={"owner": ("string", "Repository owner", True),
+               "repo": ("string", "Repository name", True),
+               "branch": ("string", "Name for the new branch", True),
+               "base": ("string", "The branch to start it from. The "
+                                  "repository's default branch when left "
+                                  "out", False)},
+         body=("ref", "sha"),
+         keep=("ref", "object")),
+    Tool(name="write_file",
+         summary="Write one file in a GitHub repository, on a branch. What "
+                 "you send REPLACES the whole file, so send the file as it "
+                 "should end up rather than only the changed lines.",
+         method="PUT", path="/repos/{owner}/{repo}/contents/{path}",
+         args={"owner": ("string", "Repository owner", True),
+               "repo": ("string", "Repository name", True),
+               "path": ("string", "Path inside the repo, like src/app.py", True),
+               "content": ("string", "The file's complete new text", True),
+               "message": ("string", "Commit message", True),
+               "branch": ("string", "Branch to commit on. Make one with "
+                                    "create_branch first rather than "
+                                    "committing to the default branch",
+                          False)},
+         body=("message", "content", "branch", "sha"),
+         keep=("content", "commit")),
 ]
 
 #: ClickUp's chat endpoints, which are not on the v2 base every other
