@@ -39,11 +39,28 @@ def _panel_code():
         start = src.index("  function " + name + "(")
         return src[start:src.index("\n  }\n", start) + 5]
 
+    # The size constants the skeleton reads, taken from the file rather
+    # than restated, so a change to the default height cannot leave this
+    # file testing a number nothing uses.
+    consts = "\n".join(
+        line.strip() for line in src.splitlines()
+        if line.strip().startswith(("var AIUI_APP_H", "var AIUI_APP_MIN",
+                                    "var AIUI_APP_MAX")))
+
     # aiuiStepRows and aiuiMotion since 2026-11-10: the rows are shared with
     # the video's panel, and the step in progress moves.
-    return "\n".join(fn(n) for n in ("aiuiLaneOf", "aiuiStepStates",
-                                     "aiuiStepPanel", "aiuiStepRows",
-                                     "aiuiMotion", "aiuiEscape"))
+    #
+    # The skeleton four since 2026-11-11: drawing the steps now also draws a
+    # placeholder in the preview's shape, so the finished panel fills a
+    # space already on the page instead of appearing out of nothing a
+    # minute later. They are dependencies of aiuiStepPanel, not subjects of
+    # this file, which is still only about the rows.
+    return consts + "\n" + "\n".join(
+        fn(n) for n in ("aiuiLaneOf", "aiuiStepStates",
+                        "aiuiStepPanel", "aiuiStepRows",
+                        "aiuiMotion", "aiuiEscape",
+                        "aiuiClampAppHeight", "aiuiSavedAppHeight",
+                        "aiuiSkeletonBody", "aiuiSkeletonPanel"))
 
 
 def _page(page, *, lane, step, light_name="Simple site",
