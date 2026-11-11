@@ -31,6 +31,13 @@ from dataclasses import dataclass, field as _dc_field
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlparse
 
+#: Keys stored beside a credential that are NOT secrets: bookkeeping a
+#: renewal needs (`oauth_refresh`), plus whether ClickUp's token is sent raw
+#: or as a Bearer. Everything else in the blob is treated as a secret,
+#: including a refresh token, which no form field names and which `redact`
+#: would otherwise have echoed in full.
+PUBLIC_KEYS = frozenset({"scheme", "expires_at"})
+
 #: Longest account label rendered onto a card. The value comes from a third
 #: party, so it is bounded here rather than trusted to be sane.
 MAX_LABEL = 80
@@ -365,7 +372,13 @@ def redact(provider_id: str, values: Dict[str, str]) -> Dict[str, str]:
     a prefix of a short token is most of the token."""
     p = provider(provider_id)
     if p:
-        secret_names = {f.name for f in p.fields if f.secret}
+        # Everything the form does not call public, rather than everything
+        # the form calls secret. A credential blob holds more than its form
+        # fields: a refresh token is in none of them and is the longer-lived
+        # half of the credential, so listing what is SAFE is the only version
+        # of this that stays correct when a key is added.
+        public = {f.name for f in p.fields if not f.secret} | PUBLIC_KEYS
+        secret_names = set(values or {}) - public
     else:
         secret_names = set((values or {}).keys())
     out = {}
