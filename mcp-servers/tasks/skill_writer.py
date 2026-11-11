@@ -58,6 +58,48 @@ HOUSE_RULES = """House rules, which are what make the built-in skills work:
   instructions or reachable through a tool listed above."""
 
 
+#: How a per-user app tool is labelled, so the model can tell it from the
+#: shared connector that carries the same vendor's name.
+OWN_ACCOUNT = "%s, your own account"
+
+
+def with_connected_apps(tools: dict, apps: dict) -> dict:
+    """`tools` with the proxy umbrella expanded into the apps this person
+    actually connected, so a drafted skill can NAME one.
+
+    `routes_agents.tools_for_email` lists every connected app as a single
+    entry, `server:mcp-proxy (Your connected apps)`. That is right where it
+    came from, the agent form, where it is one checkbox meaning "all my
+    apps". It is wrong here, because a skill is PROSE and has to name the
+    tool it uses.
+
+    Measured 2026-11-11, on the writer's first real use: asked for a skill
+    whose whole job was writing a Trello card, by somebody with Trello
+    connected, it picked gmail, calendar, documents, gdrive, remember and
+    the umbrella. No Trello id was on the list to pick, so its answer was
+    correct for what it was shown. The same shape as #177 one layer up.
+
+    The umbrella is KEPT. An agent still needs it ticked to reach any of
+    these, so a skill naming `my-trello` without it would name a tool the
+    agent cannot actually be given.
+
+    Returns a NEW dict. Hand the result to BOTH `prompt_for` and
+    `user_skills.tool_warning`: expanding it for the prompt alone would
+    produce a skill that warns about the very tool it was told to use.
+    """
+    out = dict(tools or {})
+    for app_id, label in sorted((apps or {}).items()):
+        pid = str(app_id or "").strip()
+        if not pid:
+            continue
+        key = "my-" + pid
+        if key in out:
+            continue
+        said = str(label or "").strip() or pid
+        out[key] = OWN_ACCOUNT % said
+    return out
+
+
 def prompt_for(job: str, tools: dict, max_body_chars: int) -> list:
     """The messages that ask for one SKILL.md.
 

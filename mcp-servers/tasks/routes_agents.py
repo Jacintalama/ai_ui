@@ -883,6 +883,36 @@ async def my_skills(user: CurrentUser = Depends(current_user)) -> dict:
     return {"skills": await user_skills.mine(user.email)}
 
 
+async def _connected_apps_for(email: str) -> dict:
+    """The CONNECT-YOUR-OWN-APP providers this person has, id -> label.
+
+    The ones behind `server:mcp-proxy`, which is everything connected that
+    is not one of the three Google token tables. Used only to tell the
+    skill writer what it may name; the agent form keeps the umbrella.
+
+    Never raises: a skill written without knowing the apps is the old
+    behaviour, which is worse but not broken.
+    """
+    try:
+        connected = await _connected_providers(email)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not read connected apps for the skill writer",
+                       exc_info=True)
+        return {}
+
+    # NOT _label_for: `_LABELS` covers gmail, calendar, gdrive and the
+    # umbrella, so it hands back the raw id for a proxy app. Measured
+    # 2026-11-11 against the live database: _label_for("trello") is
+    # "trello", which would have written "trello, your own account" into
+    # the prompt. connections.PROVIDERS is where the real labels live.
+    import connections as C
+    out = {}
+    for pid in sorted(set(connected) - set(_TOKEN_TABLES)):
+        provider = C.provider(pid)
+        out[pid] = (getattr(provider, "label", "") or pid) if provider else pid
+    return out
+
+
 @router.post("/skills/draft")
 async def draft_skill(body: SkillDraftIn,
                       user: CurrentUser = Depends(current_user)) -> dict:
@@ -902,6 +932,10 @@ async def draft_skill(body: SkillDraftIn,
         # written with, and far better than no skill at all.
         logger.warning("could not read tools while drafting a skill",
                        exc_info=True)
+    # The umbrella names no app, so the writer could not name one either.
+    # See skill_writer.with_connected_apps for the measurement.
+    tools = skill_writer.with_connected_apps(
+        tools, await _connected_apps_for(user.email))
 
     text = await _draft_seam(user.email, body.job, tools)
     draft = skill_writer.parse_draft(text)
@@ -981,6 +1015,10 @@ async def save_my_skill(body: SkillIn,
                  if isinstance(t, dict) and t.get("id")}
     except Exception:                                       # noqa: BLE001
         pass
+    # Same expansion as the draft, or saving a skill that names my-trello
+    # would warn that my-trello is not connected.
+    tools = skill_writer.with_connected_apps(
+        tools, await _connected_apps_for(user.email))
     saved["warning"] = user_skills.tool_warning(fields.tools, tools)
     return saved
 
