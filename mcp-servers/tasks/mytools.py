@@ -266,9 +266,33 @@ def _refusal(r, label: str, creds: Dict[str, str], provider_id: str,
     own. A second copy would drift, and it would drift in error text,
     which is the part nobody re-reads.
     """
-    if r.status_code in (401, 403):
+    if r.status_code == 401:
         return ("Your " + label + " credential was rejected. It may have "
-                "expired or lack permission. Reconnect it from Connections.")
+                "expired. Reconnect it from Connections.")
+    if r.status_code == 403:
+        # 401 and 403 are DIFFERENT answers and must not share a sentence.
+        # 401 is "we do not know who you are". 403 is "we know, and you may
+        # not do this", which is a plan limit, a quota or a permission far
+        # more often than a bad token.
+        #
+        # Measured 2026-11-11, from a real conversation: ClickUp answered a
+        # create_space with
+        #     {"err": "Your plan is limited to 5 usages of feature, 5
+        #      usage.", "ECODE": "PAYWALL_004"}
+        # and this function threw that away and told Ralph to reconnect a
+        # credential that had just read his whole workspace. He would have
+        # reconnected, failed again, and had no way to find out why. The
+        # chat even told him his credential was "failing on writes", which
+        # create_task had disproved seconds earlier.
+        #
+        # Same rule the 400 path already follows: the vendor's own account
+        # of the failure is the one thing worth keeping.
+        said = _vendor_said(r, creds)
+        if said:
+            return label + " would not allow that." + said
+        return (label + " would not allow that. That is usually a "
+                "permission or a plan limit rather than a bad credential. "
+                "If it keeps happening, reconnect it from Connections.")
     if r.status_code == 404:
         return label + " could not find that." + _vendor_said(r, creds)
     if r.status_code >= 400:
