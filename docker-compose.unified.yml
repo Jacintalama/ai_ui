@@ -431,6 +431,13 @@ services:
       - CLICKUP_CLIENT_SECRET=${CLICKUP_CLIENT_SECRET:-}
       - AIRTABLE_CLIENT_ID=${AIRTABLE_CLIENT_ID:-}
       - AIRTABLE_CLIENT_SECRET=${AIRTABLE_CLIENT_SECRET:-}
+      # What the person approves on Airtable's consent screen. The default
+      # is what the four Airtable tools actually call, and it lives in
+      # oauth_providers.AIRTABLE_SCOPE; this only exists so a deployment can
+      # widen it without a release. `:-` and not `-`, unlike GITHUB_SCOPE:
+      # an empty scope is meaningless to Airtable rather than meaningful,
+      # so an empty value should fall back to the default.
+      - AIRTABLE_SCOPE=${AIRTABLE_SCOPE:-}
       - HUBSPOT_CLIENT_ID=${HUBSPOT_CLIENT_ID:-}
       - HUBSPOT_CLIENT_SECRET=${HUBSPOT_CLIENT_SECRET:-}
       # tasks mints an Open WebUI token per gateway turn, so it must sign

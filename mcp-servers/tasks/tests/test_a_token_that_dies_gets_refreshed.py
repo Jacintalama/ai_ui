@@ -410,14 +410,30 @@ async def test_a_credential_with_no_refresh_token_is_read_as_before(
 
 # --- and the two apps this unblocks ---------------------------------------
 
-def test_the_two_blocked_apps_are_still_named_as_blocked():
-    """A guard on the order of work, not on the refresh. These two go into
-    PROVIDERS only once this is deployed and proven, and this list is what
-    says so. If somebody adds them, this test should be the thing that asks
-    whether the refresh is actually live."""
-    assert O.NEEDS_TOKEN_REFRESH_FIRST == frozenset({"hubspot", "airtable"})
+def test_a_blocked_app_leaves_that_list_only_by_being_built():
+    """A guard on the order of work, not on the refresh.
+
+    This asserted {hubspot, airtable} when it was written, and said so: "if
+    somebody adds them, this test should be the thing that asks whether the
+    refresh is actually live." It then failed the same day, on Airtable,
+    which is the guard doing its job rather than being wrong. The refresh IS
+    live, proven on the box against ClickUp's real token endpoint, and
+    Airtable went in on 2026-11-11 with the PKCE it also needed.
+
+    So the shape of the rule is what matters, not the membership: a name may
+    only leave the blocked list by APPEARING in PROVIDERS. Deleting one from
+    the list without building it would pass the old assertion and fails this
+    one.
+    """
+    assert "hubspot" in O.NEEDS_TOKEN_REFRESH_FIRST
+    assert "airtable" not in O.NEEDS_TOKEN_REFRESH_FIRST
+
     for pid in O.NEEDS_TOKEN_REFRESH_FIRST:
-        assert pid not in O.PROVIDERS
+        assert pid not in O.PROVIDERS, (
+            "%s is both built and listed as blocked, so one of the two is "
+            "a lie" % pid)
+    assert "airtable" in O.PROVIDERS, (
+        "airtable left the blocked list without being built")
 
 
 def test_an_oauth_token_response_carries_its_expiry_through():
