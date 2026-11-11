@@ -154,10 +154,15 @@ def refresh_post(provider_id: str, values: Dict[str, str]) -> Dict[str, Any]:
         "headers": {"Accept": "application/json"},
     }
     if provider.token_auth == "basic":
+        # httpx builds the standard base64 header, which is what Notion
+        # wants and has always had.
         post["auth"] = (client_id, client_secret)
     else:
-        body["client_id"] = client_id
-        body["client_secret"] = client_secret
+        # {} unless the vendor wants base64URL, which only Airtable does.
+        post["headers"].update(O.basic_header(provider_id))
+        if O.client_in_body(provider_id):
+            body["client_id"] = client_id
+            body["client_secret"] = client_secret
     post["json" if provider.token_body == "json" else "data"] = body
     return post
 

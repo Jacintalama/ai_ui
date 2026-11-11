@@ -249,7 +249,15 @@ async def oauth_start(provider_id: str,
             detail="One-click connect is not set up for this app yet.")
 
     client_id, _ = O.client_credentials(provider_id)
-    state = O.STATES.mint(user.email)
+
+    # A PKCE vendor needs a one-time secret minted NOW and kept beside the
+    # state, because the authorize URL and the exchange are two separate
+    # requests and the verifier has to survive between them without ever
+    # travelling through the browser. Empty for every other vendor, and
+    # `authorize_url` ignores it for them rather than appending an unknown
+    # parameter to somebody else's consent screen.
+    verifier = O.new_verifier() if O.PROVIDERS[provider_id].pkce else ""
+    state = O.STATES.mint(user.email, verifier=verifier)
 
     # A FIRST GitHub connect goes to the install page, where the person
     # picks their repositories and comes straight back (2026-11-04, Ralph:
@@ -276,7 +284,7 @@ async def oauth_start(provider_id: str,
 
     return {"url": O.authorize_url(provider_id, client_id=client_id,
                                    redirect_uri=_redirect_uri(provider_id),
-                                   state=state)}
+                                   state=state, verifier=verifier)}
 
 
 async def _has_connection(email: str, provider_id: str) -> bool:
@@ -357,26 +365,43 @@ async def oauth_callback(provider_id: str, code: str = "", state: str = "",
         return _oauth_done(False, "Cancelled, or " + provider.label
                            + " refused the request.")
 
-    email = O.STATES.consume(state)
-    if not email:
+    started = O.STATES.take(state)
+    if not started:
         # Expired, replayed or forged. All three get the same answer.
         return _oauth_done(False, "That approval link has expired. Start the "
                                   "connection again.")
+    email = started.email
     if not code:
         return _oauth_done(False, provider.label + " did not return a code.")
 
     client_id, client_secret = O.client_credentials(provider_id)
     prov = O.PROVIDERS[provider_id]
+
+    # Checked BEFORE anything is sent. A code can be spent once, so
+    # exchanging one we cannot prove ownership of would burn it and earn an
+    # `invalid_grant` the person has no way to act on.
+    if prov.pkce and not started.verifier:
+        logger.warning("oauth: %s callback had no PKCE verifier", provider_id)
+        return _oauth_done(False, "That approval link has expired. Start the "
+                                  "connection again.")
+
     try:
         auth = (client_id, client_secret) if prov.token_auth == "basic" else None
         body = {"grant_type": "authorization_code", "code": code,
                 "redirect_uri": _redirect_uri(provider_id)}
-        if auth is None:
+        if O.client_in_body(provider_id):
             body.update({"client_id": client_id,
                          "client_secret": client_secret})
+        if prov.pkce:
+            # The half that never went through the browser, which is what
+            # makes a stolen code worthless.
+            body["code_verifier"] = started.verifier
         # GitHub answers in `key=value&key=value` unless asked for JSON, and
         # every provider here is read with r.json(). Harmless to the others.
         headers = {"Accept": "application/json"}
+        # Empty unless the vendor documents base64URL, which only Airtable
+        # does. Notion's standard Basic still rides on httpx's `auth`.
+        headers.update(O.basic_header(provider_id))
         # HubSpot and GitHub want a form; Notion and ClickUp document JSON.
         sent = ({"data": body} if prov.token_body == "form"
                 else {"json": body})

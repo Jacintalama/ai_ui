@@ -22,6 +22,8 @@ and sets a client id and secret, `configured()` is False and the dialog keeps
 offering the paste-a-token form it has today. A Connect button that strands
 someone on a vendor's error page is worse than a form that works.
 """
+import base64
+import hashlib
 import os
 import secrets
 import time
@@ -34,6 +36,35 @@ import oauth_refresh as F
 #: How long a half-finished authorization stays valid. Notion's own codes are
 #: short lived; this only has to outlast a human reading a consent screen.
 STATE_TTL_SEC = 900
+
+#: Length of a PKCE verifier, in random bytes before encoding. 64 bytes of
+#: urlsafe base64 is 86 characters, comfortably inside RFC 7636's 43 to 128
+#: and made of nothing but its unreserved alphabet.
+VERIFIER_BYTES = 64
+
+
+def new_verifier() -> str:
+    """A one-time secret for one authorization, never sent to the vendor
+    until the code is exchanged.
+
+    PKCE exists because the authorization CODE travels through the browser:
+    the address bar, the history, any referrer or extension that sees it. A
+    client secret proves the exchange is ours; this proves the exchange
+    belongs to the same flow that asked for it, so a code captured in
+    transit cannot be spent.
+    """
+    return secrets.token_urlsafe(VERIFIER_BYTES)
+
+
+def challenge_for(verifier: str) -> str:
+    """What goes on the authorize URL: base64url of SHA-256 of the verifier,
+    with the padding stripped, as RFC 7636 specifies for `S256`.
+
+    Unpadded is not a style choice here. The spec says so, and Airtable
+    compares the string it was sent.
+    """
+    digest = hashlib.sha256((verifier or "").encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
 def _env(name: str, default: str = "") -> str:
@@ -52,14 +83,29 @@ class OAuthProvider:
     #: (token json) -> (credential values, account label). Raises ValueError if
     #: the vendor did not actually return a token.
     read_token: Callable[[dict], Tuple[Dict[str, str], str]]
-    #: Vendors differ: Notion wants HTTP Basic, most want the id and secret in
-    #: the form body.
+    #: How the CLIENT authenticates at the token endpoint. Three values,
+    #: because three vendors wanted three things:
+    #:
+    #:   "basic"          HTTP Basic, standard base64. Notion. Built by
+    #:                    httpx, which is where it has always been built.
+    #:   "basic_urlsafe"  HTTP Basic, base64URL. Airtable documents this,
+    #:                    and the two alphabets differ exactly when the
+    #:                    encoded `id:secret` contains + or /, so httpx
+    #:                    cannot be used for it.
+    #:   "body"           client_id and client_secret in the request body.
+    #:                    GitHub and ClickUp.
     token_auth: str = "basic"
     #: How the token REQUEST is encoded: "json" or "form". Notion and ClickUp
     #: both document a JSON body. GitHub documents no content type at all, so
     #: it gets the form encoding RFC 6749 specifies, which is also what
     #: GitHub's own examples send.
     token_body: str = "json"
+    #: Whether this vendor requires PKCE. Airtable does, and says plainly
+    #: that omitting `S256` earns `invalid_grant`. False everywhere else,
+    #: and not a harmless default to flip: a `code_challenge` sent to a
+    #: vendor that never asked for one is an unknown parameter on somebody
+    #: else's authorize URL.
+    pkce: bool = False
 
 
 def _notion_token(payload: dict) -> Tuple[Dict[str, str], str]:
@@ -172,6 +218,34 @@ def _github_token(payload: dict) -> Tuple[Dict[str, str], str]:
     return _bare_token(payload, "GitHub")
 
 
+#: What the person approves on Airtable's consent screen.
+#:
+#: Exactly what the four Airtable tools call and nothing else. list_my_bases
+#: and list_tables read schema, list_records reads data, and whoami returns
+#: an email address only with `user.email:read`, without which the card would
+#: say "Connected" over a blank where the account name goes.
+#:
+#: No write scope, deliberately. There is no Airtable tool that writes
+#: anything yet, and asking for permission this platform cannot currently use
+#: is the opposite of the boundary work the rest of this service just did. If
+#: a write tool lands, this grows and people re-approve, which is honest; a
+#: 403 in the meantime is reported with the vendor's own reason (PR #182)
+#: rather than read as a bad credential.
+#:
+#: Space delimited, as Airtable's docs specify, and overridable the same way
+#: GITHUB_SCOPE is, so a deployment can widen it without a release.
+AIRTABLE_SCOPE = os.environ.get(
+    "AIRTABLE_SCOPE",
+    "data.records:read schema.bases:read user.email:read").strip()
+
+
+def _airtable_token(payload: dict) -> Tuple[Dict[str, str], str]:
+    # Airtable sends access_token, refresh_token and expires_in, and
+    # `_bare_token` keeps all three now, which is the whole reason the
+    # renewal had to exist before this provider could.
+    return _bare_token(payload, "Airtable")
+
+
 def _clickup_token(payload: dict) -> Tuple[Dict[str, str], str]:
     # ClickUp sends a personal token raw and an OAuth token as a Bearer, and
     # both arrive in the same `token` field, so which one this is has to be
@@ -215,25 +289,42 @@ PROVIDERS: Dict[str, OAuthProvider] = {
         read_token=_clickup_token,
         token_auth="body",
     ),
+    "airtable": OAuthProvider(
+        id="airtable",
+        label="Airtable",
+        # Read off Airtable's own OAuth reference on 2026-11-11, because the
+        # card asked for that rather than for a guess.
+        authorize_endpoint="https://airtable.com/oauth2/v1/authorize",
+        token_endpoint="https://airtable.com/oauth2/v1/token",
+        authorize_extra={"response_type": "code", "scope": AIRTABLE_SCOPE},
+        read_token=_airtable_token,
+        # base64URL of client_id:client_secret, which their docs state and
+        # httpx's BasicAuth cannot produce.
+        token_auth="basic_urlsafe",
+        token_body="form",
+        pkce=True,
+    ),
 }
 
 
 #: Vendors that could do OAuth 2.0 but are deliberately NOT here yet, so the
 #: next person does not read the gap as an oversight.
 #:
-#: HubSpot and Airtable both return a `refresh_token` and an access token that
-#: dies in under an hour: HubSpot in 1800 seconds, Airtable in 3600. Nothing in
-#: this service refreshes anything. So a one-click HubSpot connect would work
-#: for half an hour and then quietly stop, and the card would still say
-#: "Connected" because a stored credential is all it checks. The paste form it
-#: would replace hands over a private-app token that never expires, so the
-#: button would be a downgrade.
+#: This list used to hold Airtable as well, and the reason it gave was right:
+#: both vendors return a `refresh_token` and an access token that dies in
+#: under an hour, HubSpot in 1800 seconds and Airtable in 3600, and nothing in
+#: this service refreshed anything. So a one-click connect for either would
+#: have worked for half an hour and then quietly stopped, with the card still
+#: reading "Connected" because a stored credential is all it checks, replacing
+#: a paste form that hands over a token which never expires. A downgrade.
 #:
-#: Airtable needs PKCE on top of that, which is a second missing piece.
-#:
-#: Both become small once a refresh exists. That is the order: refresh first,
-#: then these two, and `read_token` returning expires_in is where it starts.
-NEEDS_TOKEN_REFRESH_FIRST = frozenset({"hubspot", "airtable"})
+#: `oauth_refresh` closed that on 2026-11-11 (PR #186), proven on the box
+#: against ClickUp's real token endpoint, and Airtable went in straight
+#: afterwards with the PKCE it also needed. HubSpot is what is left, and it
+#: needs no new machinery at all: `token_auth="body"` with
+#: `token_body="form"` is exactly GitHub's working configuration, so it is a
+#: provider entry, a client id and a secret.
+NEEDS_TOKEN_REFRESH_FIRST = frozenset({"hubspot"})
 
 
 #: Vendors whose one-click connect is NOT an OAuth 2.0 code exchange, so they
@@ -294,15 +385,66 @@ def client_credentials(provider_id: str) -> Tuple[str, str]:
     return _env(cid), _env(csec)
 
 
+def basic_header(provider_id: str) -> Dict[str, str]:
+    """The Authorization header for a token request, or {} when there is
+    none to send.
+
+    Only ever non-empty for a `basic_urlsafe` vendor, which today is only
+    Airtable. Notion's `basic` keeps going through httpx, which has built
+    that header correctly since the exchange was written: a refactor
+    underneath a working token endpoint buys nothing and risks the one
+    provider that would notice.
+    """
+    provider = PROVIDERS.get(provider_id or "")
+    if not provider or provider.token_auth != "basic_urlsafe":
+        return {}
+    client_id, client_secret = client_credentials(provider_id)
+    pair = (client_id + ":" + client_secret).encode("utf-8")
+    # Padded, because a Basic header is padded base64. base64url is a
+    # different ALPHABET, not a different padding rule; PKCE's unpadded form
+    # is a separate requirement stated separately in RFC 7636.
+    return {"Authorization":
+            "Basic " + base64.urlsafe_b64encode(pair).decode("ascii")}
+
+
+def client_in_body(provider_id: str) -> bool:
+    """Whether the client id and secret belong in the request body.
+
+    False for both Basic kinds. Airtable's docs forbid the header when there
+    is no secret and make client_id in the body optional when there is one,
+    so sending the secret twice would be sending it somewhere it was never
+    asked for.
+    """
+    provider = PROVIDERS.get(provider_id or "")
+    return bool(provider) and provider.token_auth == "body"
+
+
 def authorize_url(provider_id: str, client_id: str, redirect_uri: str,
-                  state: str) -> str:
-    """Where to send the browser to ask for consent."""
+                  state: str, verifier: str = "") -> str:
+    """Where to send the browser to ask for consent.
+
+    Takes the VERIFIER and computes the challenge here, rather than taking a
+    challenge from the caller. Deliberate: if a caller could pass a
+    challenge, a caller could pass the verifier by mistake, and that puts
+    the one-time secret in the same URL as the code it is meant to protect.
+    One function knows the difference, and it is this one.
+
+    A PKCE vendor with no verifier is refused rather than handed a URL it
+    will reject, because Airtable answers `invalid_grant` for that and the
+    person would see a connect that failed with no cause.
+    """
     provider = PROVIDERS.get(provider_id or "")
     if not provider:
         raise ValueError("No OAuth for provider: " + str(provider_id))
     params = {"client_id": client_id, "redirect_uri": redirect_uri,
               "state": state}
     params.update(provider.authorize_extra)
+    if provider.pkce:
+        if not verifier:
+            raise ValueError(provider.label + " requires PKCE, so this flow "
+                             "needs a verifier before it has a URL.")
+        params["code_challenge"] = challenge_for(verifier)
+        params["code_challenge_method"] = "S256"
     # An empty value means "do not ask for this at all", not "ask for
     # nothing". `scope=` on the URL is a request for an empty scope, which
     # a GitHub App has no reading of, so the parameter has to be absent
@@ -318,6 +460,19 @@ def read_token_response(provider_id: str, payload: dict):
     return provider.read_token(payload or {})
 
 
+@dataclass(frozen=True)
+class Started:
+    """Who began an authorization, and the PKCE secret it was begun with.
+
+    The verifier has to survive between two separate requests: the one that
+    built the authorize URL and the one that exchanges the code. There is
+    nowhere else to keep it, because a state is spent on first read and the
+    verifier has to come out of the same pop.
+    """
+    email: str
+    verifier: str = ""
+
+
 class StateStore:
     """CSRF states, in process memory, spendable once.
 
@@ -327,25 +482,37 @@ class StateStore:
     """
 
     def __init__(self):
-        self._states: Dict[str, Tuple[str, float]] = {}
+        self._states: Dict[str, Tuple[Started, float]] = {}
 
-    def mint(self, email: str, now: Optional[float] = None) -> str:
+    def mint(self, email: str, now: Optional[float] = None,
+             verifier: str = "") -> str:
         now = time.time() if now is None else now
         for key in [k for k, (_, exp) in self._states.items() if exp < now]:
             self._states.pop(key, None)
         state = secrets.token_urlsafe(24)
-        self._states[state] = (email, now + STATE_TTL_SEC)
+        self._states[state] = (Started(email, verifier), now + STATE_TTL_SEC)
         return state
 
-    def consume(self, state: Optional[str],
-                now: Optional[float] = None) -> Optional[str]:
-        """The email that started this flow, or None. Removes it either way."""
+    def take(self, state: Optional[str],
+             now: Optional[float] = None) -> Optional[Started]:
+        """Who started this flow and with what verifier, or None. Removes
+        the entry either way, so a replayed callback is inert."""
         now = time.time() if now is None else now
         item = self._states.pop((state or "").strip(), None)
         if not item:
             return None
-        email, expires = item
-        return email if expires >= now else None
+        started, expires = item
+        return started if expires >= now else None
+
+    def consume(self, state: Optional[str],
+                now: Optional[float] = None) -> Optional[str]:
+        """The email that started this flow, or None. Removes it either way.
+
+        Kept because Trello's own road and everything written before PKCE
+        asks only this question. It is `take` with the verifier dropped.
+        """
+        started = self.take(state, now)
+        return started.email if started else None
 
     def size(self) -> int:
         return len(self._states)
