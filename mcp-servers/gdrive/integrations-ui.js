@@ -4184,6 +4184,24 @@
   var AIUI_APP_H = '22rem';
   var AIUI_APP_H_BIG = '80vh';
 
+  //: The height of an app preview is the person's to choose, in pixels.
+  //:
+  //: 22rem was one guess for every app ever built, and a landing page at
+  //: 22rem is a letterbox (2026-11-11, Ralph, looking at a cup landing page
+  //: in a chat). The floor is not taste: a preview dragged to nothing is a
+  //: control that destroys the thing it controls, with no obvious way back.
+  //: The ceiling keeps one panel from being taller than any screen it is
+  //: read on.
+  var AIUI_APP_MIN = 180;
+  var AIUI_APP_MAX = 1400;
+  //: One arrow press. Big enough to be worth pressing, small enough to land
+  //: where somebody meant.
+  var AIUI_APP_STEP = 48;
+  //: Remembered per browser, not per app. The person is choosing how tall a
+  //: preview should be in their chat, which is an answer about their screen
+  //: and their eyes, not about one landing page.
+  var AIUI_APP_H_KEY = 'aiui-app-height';
+
   // ===== The name opens a menu =====
   //
   // What the app's name offers, the way ChatGPT's canvas does: where it
@@ -4542,6 +4560,7 @@
     if (s.panel && s.panel.parentNode) s.panel.parentNode.removeChild(s.panel);
     if (s.chip && s.chip.parentNode) s.chip.style.display = 'none';
     if (s.bar) s.bar.style.display = '';
+    if (s.bar) aiuiShowSizeHandle(s.bar, true);
     if (s.pane) s.pane.style.paddingRight = s.panePad;
     if (s.onKey) document.removeEventListener('keydown', s.onKey);
   }
@@ -4602,6 +4621,7 @@
     var panePad = pane.style.paddingRight;
     pane.style.paddingRight = '50vw';
     bar.style.display = 'none';
+    aiuiShowSizeHandle(bar, false);
     chip.style.display = '';
 
     function onKey(e) { if (e.key === 'Escape') aiuiSplitClose(); }
@@ -4617,32 +4637,248 @@
   // the page is slow or broken, and it says where else to look.
   var AIUI_COVER_SLOW_MS = 25000;
 
+  // The shape of a page, in grey. A nav strip, a hero, and a couple of
+  // lines of text.
+  //
+  // Shaped rather than blank on purpose. A flat rectangle reads as a broken
+  // panel; a page-shaped one reads as a page on its way, which is the whole
+  // difference between "this is loading" and "this is wrong".
+  function aiuiSkeletonBody() {
+    aiuiMotion();
+    var body = document.createElement('div');
+    body.style.cssText = 'display:flex;flex-direction:column;gap:.7rem;'
+      + 'padding:.9rem 1rem;height:100%;box-sizing:border-box;';
+
+    function block(css) {
+      var b = document.createElement('div');
+      b.className = 'aiui-shimmer';
+      b.style.cssText = css;
+      body.appendChild(b);
+      return b;
+    }
+
+    // The nav: a mark on the left, a button on the right.
+    var nav = document.createElement('div');
+    nav.style.cssText = 'display:flex;align-items:center;gap:.6rem;';
+    var mark = document.createElement('div');
+    mark.className = 'aiui-shimmer';
+    mark.style.cssText = 'height:.85rem;width:6rem;';
+    var spacer = document.createElement('div');
+    spacer.style.cssText = 'flex:1 1 auto;';
+    var cta = document.createElement('div');
+    cta.className = 'aiui-shimmer';
+    cta.style.cssText = 'height:1.5rem;width:5rem;border-radius:999px;';
+    nav.appendChild(mark);
+    nav.appendChild(spacer);
+    nav.appendChild(cta);
+    body.appendChild(nav);
+
+    block('height:2.1rem;width:72%;margin-top:.5rem;');
+    block('height:2.1rem;width:58%;');
+    block('height:.75rem;width:86%;margin-top:.3rem;');
+    block('height:.75rem;width:64%;');
+    block('flex:1 1 auto;min-height:1.5rem;');
+    return body;
+  }
+
+  // A panel-shaped placeholder, drawn while a build runs so the finished
+  // preview fills a space the eye already knows about.
+  //
+  // Ralph, 2026-11-11: "it popup showed soo long like user didnt notice it".
+  // A build takes a minute, the step list says what is happening, and then
+  // the panel appears in a part of the page that was not there a moment
+  // before. Somebody who looked away misses it entirely.
+  //
+  // One at a time, by id: the watcher runs every few seconds and a skeleton
+  // per scan would stack a column of them under the reply.
+  function aiuiSkeletonPanel() {
+    var found = document.getElementById('aiui-app-skeleton');
+    if (found) return found;
+    aiuiMotion();
+    var box = document.createElement('div');
+    box.id = 'aiui-app-skeleton';
+    box.setAttribute('aria-hidden', 'true');
+    box.style.cssText = 'margin:.5rem 0 .25rem;max-width:46rem;'
+      + 'border:1px solid rgba(127,127,127,.28);border-radius:12px;'
+      + 'overflow:hidden;background:rgba(127,127,127,.06);';
+
+    var bar = document.createElement('div');
+    bar.setAttribute('data-aiui-skeleton-bar', '1');
+    bar.style.cssText = 'display:flex;align-items:center;gap:.5rem;'
+      + 'padding:.45rem .6rem;'
+      + 'border-bottom:1px solid rgba(127,127,127,.2);';
+    var nameBlock = document.createElement('div');
+    nameBlock.className = 'aiui-shimmer';
+    nameBlock.style.cssText = 'height:.8rem;width:11rem;';
+    bar.appendChild(nameBlock);
+
+    var stage = document.createElement('div');
+    stage.style.cssText = 'height:' + aiuiSavedAppHeight() + ';';
+    stage.appendChild(aiuiSkeletonBody());
+
+    box.appendChild(bar);
+    box.appendChild(stage);
+    return box;
+  }
+
+  function aiuiClearSkeletonPanel() {
+    var el = document.getElementById('aiui-app-skeleton');
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+
   function aiuiCoverWhileLoading(holder, frame) {
     aiuiMotion();
     var cover = document.createElement('div');
-    cover.style.cssText = 'position:absolute;inset:0;display:flex;'
-      + 'flex-direction:column;align-items:center;justify-content:center;'
-      + 'gap:.6rem;background:#141416;color:#cfcfd4;font-size:.85rem;';
-    cover.textContent = 'Loading the app';
-    var track = document.createElement('div');
-    track.style.cssText = 'width:9rem;height:3px;border-radius:999px;'
-      + 'background:rgba(127,127,127,.25);overflow:hidden;';
-    var bar = document.createElement('div');
-    bar.className = 'aiui-sliding';
-    bar.style.cssText = 'height:100%;background:#6b73ff;border-radius:999px;';
-    track.appendChild(bar);
-    cover.appendChild(track);
+    cover.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;'
+      + 'display:flex;flex-direction:column;background:#141416;'
+      + 'color:#cfcfd4;font-size:.8rem;overflow:hidden;';
+    cover.appendChild(aiuiSkeletonBody());
+
+    // Said only once it has been slow, because a panel that announces its
+    // own loading before anything is wrong is noise.
+    var said = document.createElement('div');
+    said.style.cssText = 'display:none;padding:.5rem 1rem .8rem;'
+      + 'text-align:center;opacity:.8;';
+    cover.appendChild(said);
     holder.appendChild(cover);
+
     function gone() {
       if (cover.parentNode) cover.parentNode.removeChild(cover);
     }
     frame.addEventListener('load', gone);
     setTimeout(function () {
       if (!cover.parentNode) return;
-      cover.firstChild.textContent = 'Still loading. If nothing appears, '
-        + 'open it in a new tab.';
+      said.textContent = 'Still loading. If nothing appears, open it in a '
+        + 'new tab.';
+      said.style.display = 'block';
     }, AIUI_COVER_SLOW_MS);
     return cover;
+  }
+
+  // Hide or show the grab bar that sits beside `bar`, by walking to the
+  // panel they share.
+  //
+  // Called wherever the in-chat chrome is hidden, which today is the move
+  // to the side pane. There the PANE owns the height and the stage left
+  // behind in the thread is empty, so a grab bar under it would resize
+  // something the person is not looking at.
+  //
+  // Finds nothing and does nothing for a panel that has no preview, which
+  // is the video panel sharing this same split code.
+  function aiuiShowSizeHandle(bar, shown) {
+    var box = bar && bar.parentNode;
+    var handle = box && box.querySelector
+      ? box.querySelector('[data-aiui-size-handle]') : null;
+    if (handle) handle.style.display = shown ? 'flex' : 'none';
+  }
+
+  // ===== The size of a preview is the person's =====
+
+  function aiuiClampAppHeight(px) {
+    var n = Number(px);
+    if (!isFinite(n)) return null;
+    return Math.max(AIUI_APP_MIN, Math.min(AIUI_APP_MAX, Math.round(n)));
+  }
+
+  // The remembered height as a CSS length, or the default.
+  //
+  // localStorage is editable, shared with everything else on this origin,
+  // and survives a release that changes what a value means, so anything
+  // unreadable falls back rather than being trusted.
+  function aiuiSavedAppHeight() {
+    var raw = null;
+    try {
+      raw = window.localStorage.getItem(AIUI_APP_H_KEY);
+    } catch (e) {
+      raw = null;
+    }
+    if (!raw) return AIUI_APP_H;
+    var px = aiuiClampAppHeight(parseFloat(raw));
+    return px ? px + 'px' : AIUI_APP_H;
+  }
+
+  function aiuiSaveAppHeight(px) {
+    var clamped = aiuiClampAppHeight(px);
+    if (!clamped) return;
+    try {
+      window.localStorage.setItem(AIUI_APP_H_KEY, String(clamped));
+    } catch (e) {
+      // A browser with storage switched off still resizes, it just does
+      // not remember. Worth nothing happening rather than a thrown error
+      // halfway through a drag.
+    }
+  }
+
+  // A grab bar under the preview. Drag it, or focus it and use the arrows.
+  //
+  // Keyboard as well as pointer because a drag-only control is a control
+  // some people do not have, and this one is the only way to make a
+  // letterboxed preview readable.
+  function aiuiSizeHandle(frame) {
+    var handle = document.createElement('div');
+    handle.setAttribute('data-aiui-size-handle', '1');
+    handle.setAttribute('role', 'separator');
+    handle.setAttribute('aria-orientation', 'horizontal');
+    handle.setAttribute('aria-label',
+                        'Resize the preview. Use the up and down arrows.');
+    handle.setAttribute('tabindex', '0');
+    handle.setAttribute('aria-valuemin', String(AIUI_APP_MIN));
+    handle.setAttribute('aria-valuemax', String(AIUI_APP_MAX));
+    handle.style.cssText = 'display:flex;align-items:center;'
+      + 'justify-content:center;height:14px;cursor:ns-resize;'
+      + 'border-top:1px solid rgba(127,127,127,.2);'
+      + 'background:rgba(127,127,127,.06);touch-action:none;';
+
+    var grip = document.createElement('div');
+    grip.style.cssText = 'width:2.2rem;height:3px;border-radius:999px;'
+      + 'background:rgba(127,127,127,.45);';
+    handle.appendChild(grip);
+
+    function height() {
+      return Math.round(frame.getBoundingClientRect().height);
+    }
+
+    function apply(px, remember) {
+      var clamped = aiuiClampAppHeight(px);
+      if (!clamped) return;
+      frame.style.height = clamped + 'px';
+      handle.setAttribute('aria-valuenow', String(clamped));
+      if (remember) aiuiSaveAppHeight(clamped);
+    }
+
+    handle.setAttribute('aria-valuenow', String(height()));
+
+    handle.addEventListener('pointerdown', function (down) {
+      down.preventDefault();
+      var startY = down.clientY;
+      var startH = height();
+      // Listened for on the window rather than captured on the element:
+      // a pointer dragged off a 14 pixel bar must not end the drag, and
+      // this needs no pointer id to be right.
+      function move(e) { apply(startH + (e.clientY - startY), false); }
+      function up() {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        handle.style.background = 'rgba(127,127,127,.06)';
+        aiuiSaveAppHeight(height());
+      }
+      handle.style.background = 'rgba(127,127,127,.16)';
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    });
+
+    handle.addEventListener('keydown', function (e) {
+      var k = e.key;
+      var now = height();
+      if (k === 'ArrowDown' || k === 'ArrowRight') apply(now + AIUI_APP_STEP, true);
+      else if (k === 'ArrowUp' || k === 'ArrowLeft') apply(now - AIUI_APP_STEP, true);
+      else if (k === 'Home') apply(AIUI_APP_MIN, true);
+      else if (k === 'End') apply(AIUI_APP_MAX, true);
+      else return;
+      e.preventDefault();
+    });
+
+    return handle;
   }
   // ===== End app beside the chat =====
 
@@ -4966,6 +5202,10 @@
   function aiuiShowAppInline(chatId, slug, messageId) {
     if (aiuiChatIdFromUrl() !== chatId) return;
     if (!/^[a-z0-9][a-z0-9-]{0,80}$/.test(String(slug || ''))) return;
+    // The placeholder has done its job the moment there is a real panel to
+    // draw. One that outlives the thing it stands for is worse than no
+    // placeholder at all.
+    aiuiClearSkeletonPanel();
     var id = 'aiui-app-' + slug;
     var inReply = aiuiReplyFor(id, messageId);
     if (inReply === undefined) return;
@@ -5156,7 +5396,7 @@
       // Growing in place is worse than sitting beside the chat and much
       // better than a control that does nothing.
       big = !big;
-      frame.style.height = big ? AIUI_APP_H_BIG : AIUI_APP_H;
+      frame.style.height = big ? AIUI_APP_H_BIG : aiuiSavedAppHeight();
       grow.title = big ? 'Make it smaller' : 'Make it bigger';
       grow.setAttribute('aria-label', grow.title);
     });
@@ -5186,8 +5426,8 @@
     frame.setAttribute('loading', 'lazy');
     frame.title = slug;
     frame.src = url;
-    frame.style.cssText = 'display:block;width:100%;height:' + AIUI_APP_H
-      + ';border:0;background:#fff;';
+    frame.style.cssText = 'display:block;width:100%;height:'
+      + aiuiSavedAppHeight() + ';border:0;background:#fff;';
 
     // The frame sits in a holder so a cover can lie over it until the app's
     // page has loaded. Until then the panel was a blank white box
@@ -5200,6 +5440,9 @@
     box.appendChild(bar);
     box.appendChild(chip);
     box.appendChild(stage);
+    // Under the preview, above the ask box, so dragging it never covers
+    // the thing being resized.
+    box.appendChild(aiuiSizeHandle(frame));
     box.appendChild(ask);
     box.appendChild(look.el);
     if (inReply) aiuiPutInReply(box, inReply);
@@ -5303,6 +5546,18 @@
         + 'border:1px solid rgba(127,127,127,.28);border-radius:12px;'
         + 'font-size:.85rem;';
       aiuiPutUnderLastMessage(el);
+
+      // And a placeholder in the preview's own shape, so the finished
+      // panel fills a space already on the page rather than appearing out
+      // of nothing a minute later. Drawn once, beside the steps, and
+      // removed by whoever draws the real thing.
+      //
+      // Here and NOT in the video panel just below, which shares this
+      // markup: a video has no preview panel coming, so a preview-shaped
+      // ghost under one would be a promise nothing keeps.
+      var ghost = aiuiSkeletonPanel();
+      ghost.style.marginLeft = '3.75rem';
+      aiuiPutUnderLastMessage(ghost);
     }
 
     var done = 0;
@@ -5349,6 +5604,9 @@
   function aiuiClearSteps() {
     var el = document.getElementById('aiui-steps');
     if (el && el.parentNode) el.parentNode.removeChild(el);
+    // A build that ended with no app, because it failed, must not leave a
+    // preview-shaped ghost waiting for one that is never coming.
+    aiuiClearSkeletonPanel();
   }
 
   // The numbered rows with their Done / Working on it / Waiting pills, for
@@ -5384,10 +5642,18 @@
     st.textContent = '@keyframes aiui-pulse{0%,100%{opacity:1}50%{opacity:.45}}'
       + '@keyframes aiui-slide{0%{transform:translateX(-100%)}'
       + '100%{transform:translateX(250%)}}'
+      + '@keyframes aiui-shimmer{0%{background-position:-150% 0}'
+      + '100%{background-position:250% 0}}'
       + '.aiui-working{animation:aiui-pulse 1.6s ease-in-out infinite;}'
       + '.aiui-sliding{width:40%;animation:aiui-slide 1.6s ease-in-out infinite;}'
+      // Grey on grey, so it reads the same in either theme without this
+      // file knowing which one is on.
+      + '.aiui-shimmer{border-radius:6px;background-size:300% 100%;'
+      + 'background-image:linear-gradient(90deg,rgba(127,127,127,.13) 25%,'
+      + 'rgba(127,127,127,.27) 37%,rgba(127,127,127,.13) 63%);'
+      + 'animation:aiui-shimmer 1.8s ease-in-out infinite;}'
       + '@media (prefers-reduced-motion: reduce){'
-      + '.aiui-working,.aiui-sliding{animation:none;}}';
+      + '.aiui-working,.aiui-sliding,.aiui-shimmer{animation:none;}}';
     (document.head || document.body).appendChild(st);
   }
 
