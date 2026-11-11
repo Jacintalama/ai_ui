@@ -232,11 +232,22 @@ def _github_token(payload: dict) -> Tuple[Dict[str, str], str]:
 #: 403 in the meantime is reported with the vendor's own reason (PR #182)
 #: rather than read as a bad credential.
 #:
-#: Space delimited, as Airtable's docs specify, and overridable the same way
-#: GITHUB_SCOPE is, so a deployment can widen it without a release.
-AIRTABLE_SCOPE = os.environ.get(
-    "AIRTABLE_SCOPE",
-    "data.records:read schema.bases:read user.email:read").strip()
+#: Space delimited, as Airtable's docs specify, and overridable so a
+#: deployment can widen it without a release.
+#:
+#: `or` rather than a default argument to `get`, which is not pedantry. The
+#: variable is declared in compose as `${AIRTABLE_SCOPE:-}`, so an unset one
+#: reaches the container as an EMPTY STRING, and `os.environ.get(name,
+#: default)` would then hand back that empty string instead of the default:
+#: a connect asking for no scopes at all, which Airtable has no reading of.
+#: GITHUB_SCOPE solves the same problem from the other end, by putting its
+#: default in compose, because for a GitHub App an empty scope is a
+#: meaningful value and has to survive. For Airtable it is meaningless, so
+#: the default belongs here, in one place, where it cannot drift from the
+#: list of what the tools actually call.
+AIRTABLE_SCOPE = (os.environ.get("AIRTABLE_SCOPE")
+                  or "data.records:read schema.bases:read "
+                     "user.email:read").strip()
 
 
 def _airtable_token(payload: dict) -> Tuple[Dict[str, str], str]:

@@ -199,6 +199,60 @@ def test_the_default_scope_covers_what_the_tools_actually_call():
     assert "data.records:read" in O.AIRTABLE_SCOPE
 
 
+def test_the_scope_survives_an_empty_variable(monkeypatch):
+    """The trap this almost shipped with.
+
+    Compose declares the variable as `${AIRTABLE_SCOPE:-}`, so on a
+    deployment that never sets it the container receives an EMPTY STRING,
+    not nothing. `os.environ.get(name, default)` hands back that empty
+    string, and the connect would then ask Airtable for no scopes at all,
+    which is not a thing Airtable can grant. The symptom would be a button
+    that works and a credential that reaches nothing, which is the worst
+    shape a connection can have, because it passes every check we make.
+    """
+    import importlib
+    monkeypatch.setenv("AIRTABLE_SCOPE", "")
+    reloaded = importlib.reload(O)
+    try:
+        assert reloaded.AIRTABLE_SCOPE, "an empty variable wiped the scope"
+        assert "user.email:read" in reloaded.AIRTABLE_SCOPE
+    finally:
+        monkeypatch.undo()
+        importlib.reload(O)
+
+
+def test_a_real_override_is_still_honoured(monkeypatch):
+    import importlib
+    monkeypatch.setenv("AIRTABLE_SCOPE", "data.records:write")
+    reloaded = importlib.reload(O)
+    try:
+        assert reloaded.AIRTABLE_SCOPE == "data.records:write"
+    finally:
+        monkeypatch.undo()
+        importlib.reload(O)
+
+
+def test_the_scope_variable_reaches_the_container():
+    """The bug this whole class of test exists for: a variable that is right
+    in .env, right in the code, and declared nowhere in between, so the
+    container cannot see it and the only symptom is a feature that silently
+    does the wrong thing. It cost a day on 2026-10-30 with TRELLO_API_KEY.
+    """
+    import re
+
+    from repo_checkout import repo_root_or_skip
+
+    compose = (repo_root_or_skip() / "docker-compose.unified.yml").read_text(
+        encoding="utf-8")
+    start = compose.index("\n  tasks:\n")
+    rest = compose[start + 1:]
+    end = re.search(r"\n  [a-z0-9][a-z0-9-]*:\n", rest)
+    block = rest[:end.start()] if end else rest
+    assert re.search(r"^\s*-\s*AIRTABLE_SCOPE=", block, re.M), (
+        "the tasks container cannot see AIRTABLE_SCOPE, so setting it on the "
+        "server would do nothing at all")
+
+
 # --- the authorize URL ----------------------------------------------------
 
 def _url(pid="airtable", **kw):
