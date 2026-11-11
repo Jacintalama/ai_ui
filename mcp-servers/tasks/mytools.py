@@ -598,6 +598,88 @@ GITHUB_TOOLS = [
          summary="Show which GitHub account is currently connected to your assistant.",
          method="GET", path="/user",
          keep=("login", "name", "html_url", "public_repos")),
+    # --- opening a pull request, and search (2026-11-11) ------------------
+    # The second half of the connector boundary work. `my-github` had 13
+    # tools against the shared server's 32, and that gap is the whole
+    # reason the shared one is still on, which means four admins act as
+    # somebody else's GitHub account.
+    #
+    # Only SIX of the 19 are real: seven were the same capability under
+    # another name (get_file_contents is read_file, get_me is whoami,
+    # list_issues is list_repo_issues, and so on) and the rest are niche.
+    # create_branch and push_files are deliberately absent: both need a
+    # commit sha read before the call, which is a prepare step, and that
+    # belongs in its own change rather than hidden in this one.
+    Tool(name="list_branches",
+         summary="List the branches in a GitHub repository, with the commit "
+                 "each one points at.",
+         method="GET", path="/repos/{owner}/{repo}/branches",
+         query={"per_page": "limit"},
+         args={"owner": ("string", "Repository owner", True),
+               "repo": ("string", "Repository name", True),
+               "limit": ("integer", "How many to return", False)},
+         keep=("name", "commit", "protected")),
+    Tool(name="list_commits",
+         summary="List recent commits in a GitHub repository, newest first.",
+         method="GET", path="/repos/{owner}/{repo}/commits",
+         query={"sha": "branch", "path": "path", "per_page": "limit"},
+         args={"owner": ("string", "Repository owner", True),
+               "repo": ("string", "Repository name", True),
+               "branch": ("string", "Only commits on this branch. The "
+                                    "repository's default branch when left "
+                                    "out", False),
+               "path": ("string", "Only commits that touched this file", False),
+               "limit": ("integer", "How many to return", False)},
+         keep=("sha", "commit", "html_url")),
+    Tool(name="create_pull_request",
+         summary="Open a pull request in a GitHub repository. It is opened "
+                 "for review only: nothing lands on the base branch until "
+                 "somebody approves and completes it.",
+         method="POST", path="/repos/{owner}/{repo}/pulls",
+         args={"owner": ("string", "Repository owner", True),
+               "repo": ("string", "Repository name", True),
+               "title": ("string", "Pull request title", True),
+               "head": ("string", "The branch to merge FROM, the one that "
+                                  "holds your commits", True),
+               "base": ("string", "The branch to merge INTO, usually main", True),
+               "body": ("string", "What the pull request does, and how it "
+                                  "was checked", False)},
+         body=("title", "head", "base", "body"),
+         keep=("number", "title", "state", "html_url", "head", "base")),
+    Tool(name="search_repositories",
+         summary="Search GitHub for repositories.",
+         method="GET", path="/search/repositories",
+         query={"q": "query", "sort": "sort", "per_page": "limit"},
+         args={"query": ("string", "GitHub search syntax, so qualifiers "
+                                   "like user:someone or language:python "
+                                   "work", True),
+               "sort": ("string", "stars, forks or updated", False),
+               "limit": ("integer", "How many to return", False)},
+         unwrap=lambda d: d.get("items", []),
+         keep=("full_name", "private", "html_url", "description",
+               "updated_at")),
+    Tool(name="search_code",
+         summary="Search the CODE inside GitHub repositories, to find where "
+                 "something is written.",
+         method="GET", path="/search/code",
+         query={"q": "query", "per_page": "limit"},
+         args={"query": ("string", "GitHub search syntax, so qualifiers "
+                                   "like repo:owner/name, path: and "
+                                   "language: work", True),
+               "limit": ("integer", "How many to return", False)},
+         unwrap=lambda d: d.get("items", []),
+         keep=("name", "path", "html_url", "repository")),
+    Tool(name="search_issues",
+         summary="Search GitHub issues and pull requests.",
+         method="GET", path="/search/issues",
+         query={"q": "query", "sort": "sort", "per_page": "limit"},
+         args={"query": ("string", "GitHub search syntax, so qualifiers "
+                                   "like repo:owner/name, is:open and "
+                                   "author: work", True),
+               "sort": ("string", "created, updated or comments", False),
+               "limit": ("integer", "How many to return", False)},
+         unwrap=lambda d: d.get("items", []),
+         keep=("number", "title", "state", "html_url", "updated_at")),
 ]
 
 #: ClickUp's chat endpoints, which are not on the v2 base every other
