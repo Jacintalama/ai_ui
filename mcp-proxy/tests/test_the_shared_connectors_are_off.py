@@ -43,6 +43,7 @@ who wants that later connects it as their own, with that URL and their own
 key, which is the rule for connected apps applied properly.
 """
 import importlib
+import io
 
 import pytest
 
@@ -69,6 +70,25 @@ def _as_the_server_sees_it(monkeypatch):
     monkeypatch.setenv("CLICKUP_API_TOKEN", "pk_whatever")
     for env in SHARED.values():
         monkeypatch.setenv(env, "set_for_this_test")
+    # EVERY credential that could enable a SHARED server, read out of the
+    # source rather than listed by hand.
+    #
+    # Setting only the three I was changing is what let this file lie on
+    # 2026-11-11: `sonarqube` is enabled by bool(os.getenv("SONARQUBE_
+    # TOKEN")), which is unset on a laptop, so it read disabled here and
+    # "no shared connector is left enabled" passed while the server, which
+    # HAS the token, had it on. That is the exact trap the ClickUp file's
+    # fixture warns about, and I walked into it anyway.
+    import re
+    src = io.open(tenants.__file__, encoding="utf-8").read()
+    entry = re.compile(r"MCPServerConfig\((.*?)\n    \),", re.S)
+    takes_env = re.compile(r'enabled\s*=\s*bool\(os\.getenv\("([A-Z0-9_]+)"')
+    for m in entry.finditer(src):
+        block = m.group(1)
+        if "AccessClass.SHARED" not in block:
+            continue
+        for env in takes_env.findall(block):
+            monkeypatch.setenv(env, "set_for_this_test")
     importlib.reload(tenants)
     yield
     monkeypatch.undo()
@@ -126,19 +146,52 @@ def test_every_connectable_app_still_has_a_per_user_route():
         assert mine is not None and mine.enabled, sid
 
 
-def test_no_shared_connector_is_left_enabled():
-    """A guard on the whole class rather than on three names: after this,
-    no SHARED server that fronts a vendor container may be on.
+#: SHARED servers that are still on, each with the reason, so the test
+#: below states the exception rather than hiding it.
+#:
+#: `sonarqube` is genuinely different from the four that were switched
+#: off: there is no connect form for it (connections.py has no entry), so
+#: there is no `my-sonarqube` and no per-user route to replace it with.
+#: Switching it off would remove the capability outright rather than move
+#: it onto each person's own account. Whether a shared SonarQube token is
+#: acceptable is a decision, and it has its own card.
+STILL_ON_ON_PURPOSE = {"sonarqube"}
 
-    If somebody adds one later, this fails and they have to say why in
-    the same breath, which is what the ClickUp file's last test was for.
+
+def test_only_the_documented_exceptions_are_left_enabled():
+    """A guard on the whole class, not on three names.
+
+    This asserted `still_on == []` when it was written, and passed, and was
+    WRONG on the server: the fixture set only the three credentials I was
+    changing, so `sonarqube` read disabled on a laptop. Now the fixture
+    sets every credential that enables a SHARED server, so this sees what
+    production sees, and a new shared server has to be named here with a
+    reason before it can pass.
     """
-    still_on = sorted(
-        sid for sid, cfg in tenants.ALL_SERVERS.items()
-        if cfg.access_class == tenants.AccessClass.SHARED and cfg.enabled)
-    assert still_on == [], (
-        "these shared connectors are still on and spend somebody else's "
-        "credential: %s" % ", ".join(still_on))
+    still_on = {sid for sid, cfg in tenants.ALL_SERVERS.items()
+                if cfg.access_class == tenants.AccessClass.SHARED
+                and cfg.enabled}
+    unexplained = sorted(still_on - STILL_ON_ON_PURPOSE)
+    assert unexplained == [], (
+        "these shared connectors are on and spend somebody else's "
+        "credential, with no reason recorded: %s" % ", ".join(unexplained))
+
+
+def test_the_four_we_switched_off_are_not_quietly_back():
+    off = {sid for sid, cfg in tenants.ALL_SERVERS.items()
+           if cfg.access_class == tenants.AccessClass.SHARED
+           and not cfg.enabled}
+    assert {"clickup", "trello", "github", "n8n"} <= off
+
+
+def test_the_exception_list_is_not_a_place_to_hide_things():
+    """Anything named in STILL_ON_ON_PURPOSE must actually exist and
+    actually be SHARED, so a stale name cannot silently excuse a real
+    server somebody adds with that id later."""
+    for sid in STILL_ON_ON_PURPOSE:
+        cfg = tenants.ALL_SERVERS.get(sid)
+        assert cfg is not None, sid
+        assert cfg.access_class == tenants.AccessClass.SHARED, sid
 
 
 def test_the_per_user_servers_are_untouched_by_this():
