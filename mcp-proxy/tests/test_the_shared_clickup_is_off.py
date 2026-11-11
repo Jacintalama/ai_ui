@@ -21,10 +21,16 @@ shared one was down. That is the one models should reach, so the shared
 entry is off by name rather than left to auto-enable on the presence of a
 token.
 
-Deliberately NOT changed: `trello`. It is the same shape and the same
-one-token-for-everyone concern, but it recovered on 2026-11-06 and serves
-25 tools, so turning it off would remove something that works. Noted here
-so the asymmetry reads as a decision rather than an oversight.
+Deliberately NOT changed at the time: `trello`. Same shape and the same
+one-token-for-everyone concern, but it recovered on 2026-11-06 and served
+25 tools against `my-trello`'s 7, so turning it off would have removed
+work people could do.
+
+SUPERSEDED 2026-11-11. That gap was the whole reason, and #178, #179 and
+#180 closed it: `my-trello` has 13 tools now and `my-github` 21. So
+`trello`, `github` and `n8n` were switched off too, for the same reason
+ClickUp was. See test_the_shared_connectors_are_off.py, which also records
+why n8n turned out to be the cheapest of the three rather than the hardest.
 """
 import os
 
@@ -84,11 +90,16 @@ def test_the_per_user_one_is_still_on():
     assert "my-tools" in mine.endpoint_url or "mytools" in mine.endpoint_url
 
 
-def test_trello_was_left_alone_on_purpose():
-    """Same shape, and it works. If this ever starts failing because
-    somebody turned Trello off too, that is a decision to make on purpose
-    and to write down, not a thing to discover here."""
-    assert tenants.ALL_SERVERS["trello"].enabled is not None
+def test_trello_is_off_too_now():
+    """This asked to be told if somebody turned Trello off as well. That
+    happened on 2026-11-11, deliberately, once #178 had closed the tool
+    gap that was the reason to leave it on.
+
+    The old assertion was `enabled is not None`, which False satisfies, so
+    it would never have noticed either way. Asserting the actual state
+    instead, so this file tracks reality rather than permitting anything.
+    """
+    assert tenants.ALL_SERVERS["trello"].enabled is False
     assert tenants.ALL_SERVERS["my-trello"].enabled is True
 
 
@@ -101,3 +112,6 @@ def test_no_other_shared_connector_was_switched_off_by_this():
         and cfg.enabled is False
         and cfg.endpoint_url and "mcp-" in str(cfg.endpoint_url))
     assert "clickup" in shared_off
+    # Since 2026-11-11 it is no longer the only one; the three that
+    # followed have their own file.
+    assert {"trello", "github", "n8n"} <= set(shared_off)
