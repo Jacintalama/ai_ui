@@ -354,7 +354,21 @@ TIER3_SERVERS: Dict[str, MCPServerConfig] = {
         auth_type="bearer",
         api_key_env="MCP_API_KEY",  # mcpo uses MCP_API_KEY for auth
         description="Kanban boards and task management",
-        enabled=bool(os.getenv("TRELLO_API_KEY"))  # Auto-enable if Trello key is set
+        # OFF since 2026-11-11, following `clickup` above. This spends one
+        # TRELLO_API_KEY/TRELLO_TOKEN pair for everybody, and it belongs to
+        # a single teammate: whoami on it answers `clarenzbacalla`. So a
+        # card created through here was created BY him, whoever asked, and
+        # Trello's own history recorded it that way.
+        #
+        # It stayed on when ClickUp went off because `my-trello` had 7
+        # tools against this one's 25, so switching it off would have
+        # removed work people could do. #178 closed that: `my-trello` has
+        # 13 now, including assigning a member by name, archiving and
+        # completing, which is what the gap actually was.
+        #
+        # Off by name rather than by removing the credential: the
+        # mcp-trello container itself still reads it.
+        enabled=False
     ),
     "airtable": MCPServerConfig(
         server_id="airtable",
@@ -667,7 +681,15 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
         auth_type="bearer",
         api_key_env="MCP_API_KEY",  # mcp-github uses MCP_API_KEY for internal auth
         description="GitHub repositories, issues, PRs (26 tools)",
-        enabled=bool(os.getenv("GITHUB_TOKEN"))  # Requires valid PAT to function
+        # OFF since 2026-11-11, same reason as `trello` above. One
+        # GITHUB_TOKEN for everybody, and it is one teammate's: whoami on
+        # it answers `Jacintalama`. A branch or an issue opened through
+        # here was opened by him, whoever asked.
+        #
+        # #179 and #180 closed the gap: `my-github` has 21 tools now
+        # against 13, including create_pull_request, create_branch and
+        # write_file, so a person can make a whole change as themselves.
+        enabled=False
     ),
     "filesystem": MCPServerConfig(
         server_id="filesystem",
@@ -718,7 +740,24 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
         auth_type="bearer",
         api_key_env="MCP_API_KEY",
         description="AI-driven n8n workflow creation, management, and execution (20 tools)",
-        enabled=bool(os.getenv("N8N_API_KEY"))
+        # OFF since 2026-11-11, and this one is the cheapest of the three
+        # rather than the hardest, which is the opposite of what its tool
+        # count suggested (3 on `my-n8n` against 28 here).
+        #
+        # Nobody uses either side: 0 of 9 people have connected an n8n, 0
+        # automations and 0 schedules use one, and no `n8n_*` tool appears
+        # anywhere in the platform's 60 recorded tool calls.
+        #
+        # I argued for a day that n8n was a special case, "one instance,
+        # not nine accounts, so shared may be correct". The connect form
+        # disproves it: it asks for `base_url` ("Your n8n URL") as well as
+        # `api_key`, so it was built for somebody to point at their own
+        # instance.
+        #
+        # This does NOT touch the team's n8n or any workflow on it. It
+        # stops agents reaching it with one anonymous key. Anyone who wants
+        # that connects it as their own, with that URL and their own key.
+        enabled=False
     ),
     "scheduler": MCPServerConfig(
         server_id="scheduler",
