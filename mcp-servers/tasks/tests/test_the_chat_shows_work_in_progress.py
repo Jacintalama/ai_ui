@@ -216,16 +216,56 @@ def test_the_build_poller_draws_nothing_until_a_reply_is_there():
 # --- the app: loading, then the app --------------------------------------------
 
 def test_an_app_shows_loading_until_its_page_has_loaded():
+    """It covers the frame while the app's page loads, and goes on load.
+
+    What it SAYS changed on 2026-11-11. It used to be a flat dark box
+    reading "Loading the app", which had motion but looked nothing like
+    the thing about to replace it, so it read as a broken panel rather
+    than a loading one. It is the shape of a page now: shimmer blocks for
+    a nav, a heading and some lines.
+
+    The words are gone on purpose, not lost. A panel that announces its
+    own loading before anything is wrong is noise, so the sentence about
+    opening it in a new tab waits until it HAS been slow, which is the
+    next test.
+    """
+    got = _node(r"""
+    var wrap = new El('div'), frame = new El('iframe');
+    wrap.appendChild(frame);
+    var cover = aiuiCoverWhileLoading(wrap, frame);
+    function shimmers(el) {
+      var n = el.className === 'aiui-shimmer' ? 1 : 0;
+      el.children.forEach(function (c) { n += shimmers(c); });
+      return n;
+    }
+    var before = {there: cover.parentNode === wrap, blocks: shimmers(cover)};
+    frame.fire('load');
+    console.log(JSON.stringify({before: before, after: cover.parentNode === wrap}));""")
+    assert got["before"]["there"] is True
+    assert got["before"]["blocks"] >= 3, (
+        "a page-shaped skeleton needs more than one block")
+    assert got["after"] is False
+
+
+def test_an_app_that_is_slow_says_where_else_to_look():
+    """Only once it has been slow. Before that the skeleton is the whole
+    message and a sentence would be noise."""
     got = _node(r"""
     AIUI_COVER_SLOW_MS = 1;
     var wrap = new El('div'), frame = new El('iframe');
     wrap.appendChild(frame);
     var cover = aiuiCoverWhileLoading(wrap, frame);
-    var before = {there: cover.parentNode === wrap, said: cover.textContent};
-    frame.fire('load');
-    console.log(JSON.stringify({before: before, after: cover.parentNode === wrap}));""")
-    assert got["before"] == {"there": True, "said": "Loading the app"}
-    assert got["after"] is False
+    function said(el) {
+      if (el.textContent) return el.textContent;
+      var out = '';
+      el.children.forEach(function (c) { out = out || said(c); });
+      return out;
+    }
+    var quiet = said(cover);
+    await new Promise(function (r) { setTimeout(r, 30); });
+    console.log(JSON.stringify({quiet: quiet, slow: said(cover)}));""")
+    assert got["quiet"] == "", "it spoke before anything was wrong"
+    assert "new tab" in got["slow"]
 
 
 def test_the_app_panel_uses_the_cover():

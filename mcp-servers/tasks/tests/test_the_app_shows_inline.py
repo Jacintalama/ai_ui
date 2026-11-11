@@ -114,10 +114,16 @@ def test_it_can_be_made_bigger():
 
 
 def test_making_it_bigger_is_reversible():
-    """A one-way expand leaves a chat with an 80vh frame wedged in it."""
+    """A one-way expand leaves a chat with an 80vh frame wedged in it.
+
+    Coming back lands on the height the PERSON chose, not on the 22rem
+    default (2026-11-11). Since the preview became resizable, going big and
+    then small again would otherwise undo a size somebody had set by hand,
+    which is a worse surprise than the one this test was written for.
+    """
     body = _inline()
     assert "big = !big" in body
-    assert "big ? AIUI_APP_H_BIG : AIUI_APP_H" in body
+    assert "big ? AIUI_APP_H_BIG : aiuiSavedAppHeight()" in body
 
 
 def test_the_controls_say_what_they_do():
