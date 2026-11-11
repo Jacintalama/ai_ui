@@ -68,7 +68,26 @@ jobs:
           cache: pip
           cache-dependency-path: mcp-servers/tasks/requirements.txt
       - run: pip install -r requirements.txt
-      - run: python -m playwright install --with-deps chromium
+      # `--with-deps` runs apt against Ubuntu's mirrors, and that is the
+      # most fragile thing in this pipeline. On 2026-11-11
+      # security.ubuntu.com was unresolvable from the runner for twenty
+      # minutes, two runs in a row, and every deploy behind it was blocked,
+      # other people's included. Every package it could not fetch was a
+      # FONT: fonts-wqy-zenhei, xfonts-encodings, xfonts-utils and friends.
+      #
+      # So try the full install and fall back to the browser alone. The
+      # browser comes from Playwright's own CDN, a different host that was
+      # answering throughout, and the runner image already carries most of
+      # Chromium's shared libraries. A missing CJK font changes nothing any
+      # assertion in this repository reads; a blocked deploy changes
+      # everything.
+      #
+      # Still fails honestly when there is genuinely no browser, because
+      # the fallback has to succeed on its own.
+      - name: chromium for the browser tests
+        run: |
+          python -m playwright install --with-deps chromium ||
+            python -m playwright install chromium
       - name: unit
         env:
           AIUI_SKIP_DB: "1"
