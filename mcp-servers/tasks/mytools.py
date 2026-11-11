@@ -248,6 +248,11 @@ def _clickup_prepare(tool_name, args, get):
     return clickup_people.prepare(tool_name, args, get)
 
 
+def _trello_prepare(tool_name, args, get):
+    import trello_people
+    return trello_people.prepare(tool_name, args, get)
+
+
 def _github_prepare(tool_name, args, get):
     import github_refs
     return github_refs.prepare(tool_name, args, get)
@@ -255,12 +260,14 @@ def _github_prepare(tool_name, args, get):
 
 #: Per provider, a step between the model's arguments and the vendor.
 #: ClickUp (2026-11-10): people by name or email, columns as said, lists by
-#: name. GitHub (2026-11-11): the sha a new branch starts from, and the sha
-#: a file write updates.
+#: name. Trello (2026-11-11): members by name or username, and the flags
+#: archive_card and complete_card exist to set. GitHub (2026-11-11): the
+#: sha a new branch starts from, and the sha a file write updates.
 #:
 #: Each of these returns early for a tool it has nothing to do for, because
 #: this runs on EVERY call to that provider.
-PREPARE = {"clickup": _clickup_prepare, "github": _github_prepare}
+PREPARE = {"clickup": _clickup_prepare, "trello": _trello_prepare,
+           "github": _github_prepare}
 
 
 def _unreachable(label: str) -> str:
@@ -907,6 +914,56 @@ TRELLO_TOOLS = [
          summary="Show which Trello account is currently connected to your assistant.",
          method="GET", path="/members/me",
          keep=("id", "username", "fullName", "url")),
+    # The five below close the practical half of the gap against the SHARED
+    # Trello connector, measured 2026-11-11 at 7 tools here against its 25.
+    # That gap is the whole reason the shared one is still switched on, and
+    # the reason four admins act as somebody else's Trello account.
+    Tool(name="list_board_members",
+         summary="List the people on one Trello board, with the username and "
+                 "member id you need to put somebody on a card.",
+         method="GET", path="/boards/{board_id}/members",
+         args={"board_id": ("string", "Board id from list_my_boards", True)},
+         keep=("id", "username", "fullName")),
+    Tool(name="assign_member_to_card",
+         summary="Put somebody on a Trello card. Takes their name, their "
+                 "Trello username or their member id and looks it up, so "
+                 "there is no need to find the id first.",
+         method="POST", path="/cards/{card_id}/idMembers",
+         query={"value": "member"},
+         args={"card_id": ("string", "Card id from list_cards", True),
+               "member": ("string", "Who to put on it: a name, a Trello "
+                                    "username, or a member id from "
+                                    "list_board_members", True)},
+         keep=("id",)),
+    Tool(name="remove_member_from_card",
+         summary="Take somebody off a Trello card. Takes their name, their "
+                 "Trello username or their member id and looks it up.",
+         method="DELETE", path="/cards/{card_id}/idMembers/{member}",
+         args={"card_id": ("string", "Card id from list_cards", True),
+               "member": ("string", "Who to take off: a name, a Trello "
+                                    "username, or a member id from "
+                                    "list_board_members", True)},
+         keep=("id",)),
+    Tool(name="archive_card",
+         summary="Archive a Trello card, which takes it off the board "
+                 "without destroying it. This is how a card is retired.",
+         method="PUT", path="/cards/{card_id}",
+         query={"closed": "closed"},
+         args={"card_id": ("string", "Card id from list_cards", True)},
+         keep=("id", "name", "closed")),
+    Tool(name="complete_card",
+         summary="Mark a Trello card complete, ticking its due-date "
+                 "checkbox. Use this when a board marks finished work with "
+                 "the tick rather than by moving the card.",
+         method="PUT", path="/cards/{card_id}",
+         query={"dueComplete": "dueComplete"},
+         args={"card_id": ("string", "Card id from list_cards", True)},
+         keep=("id", "name", "dueComplete")),
+    Tool(name="list_my_cards",
+         summary="List the Trello cards you are on, across every board.",
+         method="GET", path="/members/me/cards",
+         keep=("id", "name", "due", "dueComplete", "url", "idList",
+               "idBoard")),
 ]
 
 NOTION_TOOLS = [
