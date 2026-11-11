@@ -103,17 +103,37 @@ def test_the_thirteen_that_already_worked_are_untouched():
             "comment_on_pull_request", "whoami"} <= set(_tools())
 
 
-def test_the_two_that_need_a_sha_lookup_are_not_smuggled_in():
-    """create_branch and push_files need a commit sha read first, which is
-    a prepare step. They get their own PR; this one stays declarative."""
-    assert "create_branch" not in _tools()
-    assert "push_files" not in _tools()
+def test_the_tools_that_need_a_sha_never_arrive_without_the_lookup():
+    """SUPERSEDED 2026-11-11, and deliberately rewritten rather than deleted.
+
+    This file originally asserted that `create_branch` and `push_files` were
+    ABSENT, and that `github` was not in PREPARE. Both were true and both
+    were the point: the six tools here are declarative, and a prepare step
+    for GitHub would have been machinery with no job that still cost a read
+    on every call.
+
+    The follow-up added `create_branch` and `write_file`, which genuinely
+    need the sha they act on, together WITH the prepare step that reads it.
+    So the guard worth keeping is not "they are absent" but "they never
+    exist without the lookup", which is the thing that would actually
+    break: either of those tools shipping while `github` is missing from
+    PREPARE means sending a branch name as a ref and no sha at all, which
+    GitHub answers 422.
+    """
+    have = set(_tools())
+    needs_a_read = {"create_branch", "write_file", "push_files"} & have
+    if needs_a_read:
+        assert "github" in mytools.PREPARE, sorted(needs_a_read)
 
 
-def test_github_still_needs_no_prepare_step():
-    """Nothing here resolves anything, so adding a prepare for github would
-    be machinery with no job, and would cost a read on every github call."""
-    assert "github" not in mytools.PREPARE
+def test_the_six_declarative_tools_cost_no_lookup(github):
+    """Whatever else is registered, none of THESE six may pay for a read.
+    prepare runs on every call to a provider, so a careless one makes all
+    thirteen existing GitHub tools twice as slow."""
+    calls, answers = github
+    answers[("GET", "/repos/%s/%s/branches" % (OWNER, REPO))] = _Resp(200, [])
+    _run("list_branches", {"owner": OWNER, "repo": REPO})
+    assert [c["method"] for c in calls] == ["GET"]
 
 
 # --- what the model is told -------------------------------------------------
