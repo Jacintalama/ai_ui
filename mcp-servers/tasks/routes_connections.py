@@ -10,9 +10,11 @@ or Notion before it stores anything, so a card that says Connected means that
 vendor confirmed the credential and named the account. The alternative, storing
 whatever was pasted and finding out at first use, produces a UI that lies.
 """
+import asyncio
 import json
 import logging
 import os
+import time
 import urllib.parse
 from typing import Dict, List, Optional
 
@@ -23,6 +25,7 @@ from pydantic import BaseModel
 
 import connections as C
 import crypto_utils
+import oauth_refresh as F
 import trello_connect as T
 from auth import current_user, CurrentUser
 
@@ -36,6 +39,35 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "")
 #: enough for a cold API, short enough that a wedged host does not hold the
 #: user's browser open.
 VERIFY_TIMEOUT_SEC = 12
+
+#: A renewal happens while somebody waits for a tool call, so it gets less
+#: patience than a connect does. Failing it is cheap: the token in hand is
+#: still good for another SKEW_SEC and the call goes out on that.
+REFRESH_TIMEOUT_SEC = 10
+
+
+def _now() -> float:
+    """Seam, so a test can say what time it is without freezing the clock for
+    everything else in the process."""
+    return time.time()
+
+
+#: One renewal at a time per credential, keyed by whose it is.
+#:
+#: Two tool calls arriving together would otherwise both renew, and a vendor
+#: that ROTATES its refresh token retires the first answer when it issues the
+#: second, so the loser of the race stores a refresh token that no longer
+#: works. In process only, which is enough: there is one tasks container, and
+#: the worst a second one could do is waste a renewal.
+_REFRESH_LOCKS: Dict[tuple, asyncio.Lock] = {}
+
+
+def _refresh_lock(email: str, provider_id: str) -> asyncio.Lock:
+    key = (email, provider_id)
+    lock = _REFRESH_LOCKS.get(key)
+    if lock is None:
+        lock = _REFRESH_LOCKS[key] = asyncio.Lock()
+    return lock
 
 
 async def _connect():
@@ -786,13 +818,8 @@ async def disconnect(provider_id: str,
     return {"provider": provider_id, "connected": False}
 
 
-async def secrets_for(email: str, provider_id: str) -> Dict[str, str]:
-    """The user's decrypted credential, for the code that will eventually call
-    the vendor on their behalf. Returns {} when they have not connected.
-
-    Not exposed as a route, and never will be. The only reason to decrypt is to
-    make a request as that user.
-    """
+async def _stored_credential(email: str, provider_id: str) -> Dict[str, str]:
+    """What is in the row, decrypted, with nothing decided about it."""
     try:
         conn = await _connect()
     except Exception:
@@ -813,3 +840,111 @@ async def secrets_for(email: str, provider_id: str) -> Dict[str, str]:
         logger.warning("connections: could not decrypt %s for a user (%s)",
                        provider_id, type(e).__name__)
         return {}
+
+
+async def _replace_secrets(email: str, provider_id: str,
+                           values: Dict[str, str]) -> None:
+    """Write a renewed credential, and nothing else.
+
+    Deliberately NOT `_store_connection`, which also writes `account_label`
+    and moves `updated_at`. The card shows `updated_at` as when the person
+    connected and the label as which account it is; a renewal is neither of
+    those things and must not read as one.
+    """
+    blob = crypto_utils.encrypt(json.dumps(values))
+    conn = await _connect()
+    try:
+        await conn.execute(
+            "UPDATE tasks.user_connections SET secrets_encrypted = $1 "
+            "WHERE email = $2 AND provider = $3", blob, email, provider_id)
+    finally:
+        await conn.close()
+
+
+async def _renewed(email: str, provider_id: str,
+                   values: Dict[str, str]) -> Dict[str, str]:
+    """Ask the vendor for a new access token, store it, and hand it back.
+
+    EVERY failure path returns the credential we already have, never {}.
+    Returning nothing would make every tool say "You have not connected your
+    X account yet", which is false and sends somebody off to connect an
+    account they already connected. Handing the old token to the vendor gets
+    a 401 instead, and `mytools._refusal` already turns that into "Your X
+    credential was rejected. It may have expired. Reconnect it from
+    Connections." The right words exist; a renewal must not talk over them.
+
+    It also means a vendor having a bad minute costs nothing, because the
+    renewal runs SKEW_SEC early and the token in hand still works.
+    """
+    try:
+        post = F.refresh_post(provider_id, values)
+    except ValueError:
+        return values
+
+    try:
+        async with httpx.AsyncClient(timeout=REFRESH_TIMEOUT_SEC) as client:
+            resp = await client.post(post["url"],
+                                     headers=post.get("headers"),
+                                     json=post.get("json"),
+                                     data=post.get("data"),
+                                     auth=post.get("auth"))
+    except Exception as e:
+        logger.warning("connections: could not reach %s to renew a token (%s)",
+                       provider_id, type(e).__name__)
+        return values
+
+    if resp.status_code >= 400:
+        # Never the body: a token endpoint's error echoes what was sent to
+        # it, and what was sent to it is a credential.
+        logger.warning("connections: %s refused to renew a token (HTTP %s)",
+                       provider_id, resp.status_code)
+        return values
+
+    try:
+        fresh = F.after_refresh(values, resp.json(), now=_now())
+    except Exception as e:
+        logger.warning("connections: %s answered a renewal with no token (%s)",
+                       provider_id, type(e).__name__)
+        return values
+
+    try:
+        await _replace_secrets(email, provider_id, fresh)
+    except Exception as e:
+        # Usable for this call even though the next one will renew again.
+        logger.warning("connections: renewed %s but could not store it (%s)",
+                       provider_id, type(e).__name__)
+        return fresh
+
+    logger.info("connections: renewed a %s token", provider_id)
+    return fresh
+
+
+async def secrets_for(email: str, provider_id: str) -> Dict[str, str]:
+    """The user's decrypted credential, for the code that will eventually call
+    the vendor on their behalf. Returns {} when they have not connected.
+
+    Renews it first when it is about to expire, because this is the one place
+    a stored credential is decrypted: every per-user tool call, every
+    automation and the Trello poller come through here, and none of them has
+    to know. A credential with no expiry, which is every one stored today, is
+    handed straight back and asks no vendor anything.
+
+    Not exposed as a route, and never will be. The only reason to decrypt is
+    to make a request as that user.
+    """
+    values = await _stored_credential(email, provider_id)
+    if not values:
+        return {}
+    if not (F.expired(values, now=_now())
+            and F.refreshable(provider_id, values)):
+        return values
+
+    async with _refresh_lock(email, provider_id):
+        # Read again under the lock. Whoever got here first has renewed and
+        # written by now, and asking the vendor a second time would retire
+        # the token they just stored.
+        values = await _stored_credential(email, provider_id) or values
+        if not (F.expired(values, now=_now())
+                and F.refreshable(provider_id, values)):
+            return values
+        return await _renewed(email, provider_id, values)

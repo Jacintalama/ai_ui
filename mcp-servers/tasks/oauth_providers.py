@@ -29,6 +29,8 @@ from dataclasses import dataclass
 from typing import Callable, Dict, Optional, Tuple
 from urllib.parse import urlencode
 
+import oauth_refresh as F
+
 #: How long a half-finished authorization stays valid. Notion's own codes are
 #: short lived; this only has to outlast a human reading a consent screen.
 STATE_TTL_SEC = 900
@@ -72,7 +74,8 @@ def _notion_token(payload: dict) -> Tuple[Dict[str, str], str]:
     # Bounded and de-tagged where it enters, as well as escaped where it is
     # rendered. This is a name a third party chose and we put on a page.
     clean = "".join(c for c in str(label) if c not in "<>").strip()
-    return {"token": token}, (clean or "Notion workspace")[:80]
+    return (F.with_expiry({"token": token}, payload),
+            (clean or "Notion workspace")[:80])
 
 
 #: What the person is asked to approve on GitHub's consent screen. `repo`
@@ -157,7 +160,12 @@ def _bare_token(payload: dict, vendor: str,
         raise ValueError(vendor + " did not return an access token.")
     values = {"token": token}
     values.update(extra or {})
-    return values, ""
+    # An expiry and a refresh token, when the vendor sent them, so a token
+    # that dies can be renewed (`oauth_refresh`). The vendor sends a refresh
+    # token exactly once, in this response, so one thrown away here cannot be
+    # recovered afterwards. Inert for all three providers below, none of
+    # which sends either, and it is what makes HubSpot and Airtable possible.
+    return F.with_expiry(values, payload), ""
 
 
 def _github_token(payload: dict) -> Tuple[Dict[str, str], str]:
