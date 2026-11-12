@@ -6054,15 +6054,11 @@
         + 'font-size:.85rem;';
       aiuiPutUnderLastMessage(el);
 
-      // And a placeholder in the preview's own shape, so the finished
-      // panel fills a space already on the page rather than appearing out
-      // of nothing a minute later. Drawn once, beside the steps, and
-      // removed by whoever draws the real thing.
-      //
-      // Here and NOT in the video panel just below, which shares this
-      // markup: a video has no preview panel coming, so a preview-shaped
-      // ghost under one would be a promise nothing keeps.
-      aiuiShowBuildGhost();
+      // The placeholder is NOT drawn here any more. It used to be, because
+      // this was the earliest thing that ran; the watcher now draws it on
+      // its first tick, before this panel's labels have even been
+      // fetched, which is seconds earlier and the whole point. Two
+      // callers would be two places to change and one chance to drift.
     }
 
     var done = 0;

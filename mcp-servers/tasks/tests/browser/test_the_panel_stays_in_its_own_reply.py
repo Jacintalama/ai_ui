@@ -86,8 +86,13 @@ def _carries(src):
 def _js():
     src = JS.read_text(encoding="utf-8")
     parts = [_carries(src)]
+    # aiuiPutInReply sets the thread's gutter, which is now the box's own
+    # value rather than a raw marginLeft, because that margin also carries
+    # half the extra width and the two have to compose.
     for name in ("aiuiMessageRowOf", "aiuiMessageIdOf", "aiuiAppsDeclaredIn",
-                 "aiuiReplyFor", "aiuiPutInReply"):
+                 "aiuiReplyFor", "aiuiMaxAppExtra", "aiuiClampAppExtra",
+                 "aiuiSavedAppExtra", "aiuiIndentOf", "aiuiApplyAppWidth",
+                 "aiuiSetIndent", "aiuiPutInReply"):
         parts.append(_fn(src, name))
     return "\n".join(parts)
 

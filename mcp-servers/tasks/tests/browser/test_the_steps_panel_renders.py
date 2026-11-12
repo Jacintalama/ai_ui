@@ -60,6 +60,13 @@ def _panel_code():
                         "aiuiStepPanel", "aiuiStepRows",
                         "aiuiMotion", "aiuiEscape",
                         "aiuiClampAppHeight", "aiuiSavedAppHeight",
+                        # The placeholder is the size the panel will be, so
+                        # it reaches for the width helpers. A cut missing
+                        # half a function is a ReferenceError, not a
+                        # lesser version of it.
+                        "aiuiMaxAppExtra", "aiuiClampAppExtra",
+                        "aiuiSavedAppExtra", "aiuiIndentOf",
+                        "aiuiApplyAppWidth",
                         "aiuiSkeletonBody", "aiuiSkeletonPanel"))
 
 
