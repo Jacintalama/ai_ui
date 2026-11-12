@@ -271,7 +271,7 @@ def with_buttons(answer: str, p) -> str:
     """
     answer = str(answer or "")
     low = answer.lower()
-    out = []
+    lines, buttons = [], []
     for a in (p or {}).get("apps") or []:
         if a["connected"]:
             continue
@@ -282,14 +282,16 @@ def with_buttons(answer: str, p) -> str:
             line = "Recommended: %s, so IO can %s" % (app.label, app.can)
             if app.cannot:
                 line += " (it cannot %s yet)" % app.cannot
-            out.append(line + ".")
+            lines.append(line + ".")
         elif app.cannot:
-            out.append("Once %s is connected, IO can %s. It cannot %s yet."
-                       % (app.label, app.can, app.cannot))
-        out.append(_button(app))
-    if not out:
+            lines.append("Once %s is connected, IO can %s. It cannot %s yet."
+                         % (app.label, app.can, app.cannot))
+        buttons.append(_button(app))
+    if not buttons:
         return answer
-    return answer.rstrip() + "\n\n" + "\n".join(out)
+    # The buttons go last, together on one line: one paragraph, so they sit
+    # side by side. One per line stacked them, touching (live, 2026-11-12).
+    return answer.rstrip() + "\n\n" + "\n".join(lines + [" ".join(buttons)])
 
 
 def already_offered(messages, turns: int = 6) -> set:

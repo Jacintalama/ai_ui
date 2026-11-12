@@ -656,3 +656,29 @@ def test_the_brief_forbids_offering_what_io_cannot_do():
     b = app_triage.brief(app_triage.plan([("airtable", 0.94)], set(), []))
     said = "do not offer to " + app_triage.APPS["airtable"].cannot
     assert said.lower() in b.lower()
+
+
+# --- the buttons sit in a row (2026-11-12, screenshot from the live chat) -------
+
+def test_two_buttons_share_one_line_after_the_text():
+    """Live: Connect n8n and Connect Zapier stacked one under the other,
+    touching, with the second against the toolbar. One line of buttons is
+    one paragraph, so they sit side by side."""
+    p = app_triage.plan([("n8n", 0.97)], set(), [])
+    out = app_triage.with_buttons("Here is how I would do it.", p)
+    last = out.rstrip().splitlines()[-1]
+    assert last == ("[Connect n8n](#aiui-connect:n8n) "
+                    "[Connect Zapier](#aiui-connect:zapier)")
+    assert "Recommended: n8n" in out and out.index("Recommended: Zapier") < out.index(last)
+
+
+def test_the_button_has_room_around_it():
+    """The drawn button gets a gap beside it and above the toolbar."""
+    import os
+    js = open(os.path.join(os.path.dirname(__file__), "..", "..", "gdrive",
+                           "integrations-ui.js"), encoding="utf-8").read()
+    start = js.index("function wireAiuiConnectLink(anchor)")
+    body = js[start:js.index("btn.addEventListener", start)]
+    assert "container.style.cssText" in body
+    assert "inline-block" in body and "margin:" in body
+
