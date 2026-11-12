@@ -332,6 +332,37 @@ def test_a_nested_error_is_read_as_a_sentence_rather_than_a_dict():
     assert "{" not in said and "'" not in said, said
 
 
+#: Airtable's whole answer, measured live on 2026-11-12 against Ralph's
+#: own read-only token. It is 178 characters, and the cap on a vendor's
+#: words is 160.
+AIRTABLE_LONG = {"error": {
+    "type": "INVALID_PERMISSIONS_OR_MODEL_NOT_FOUND",
+    "message": "Invalid permissions, or the requested model was not found. "
+               "Check that both your user and your token have the required "
+               "permissions, and that the model names and/or ids are "
+               "correct."}}
+
+
+def test_a_long_vendor_message_is_cut_between_words():
+    """Measured live: the cut landed inside "and/or" and the reply read
+    "...that the model names and/ If you connected Airtable before".
+    A word broken in half reads like something went wrong with us."""
+    said = _said(AIRTABLE_LONG)
+    assert "names and/ " not in said, said
+
+
+def test_a_cut_message_says_it_was_cut():
+    """Otherwise a sentence that simply stops looks like the vendor's
+    whole answer, and somebody goes looking for the rest of it."""
+    assert "..." in _said(AIRTABLE_LONG)
+
+
+def test_a_message_that_fits_is_not_touched():
+    short = {"message": "Invalid permissions."}
+    assert "..." not in _said(short)
+    assert "Invalid permissions." in _said(short)
+
+
 def test_a_plan_limit_is_still_not_a_reconnect():
     """The regression PR #182 fixed, from the other side. create_space is
     a write too, and a write refused for money must not send anybody to

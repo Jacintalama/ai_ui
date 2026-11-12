@@ -210,7 +210,17 @@ def _vendor_said(r, creds: Dict[str, str]) -> str:
             found = found.get("message") or found.get("type") or ""
         message = str(found or "")
     message = " ".join(c for c in message.split() if c)
-    message = "".join(c for c in message if c.isprintable())[:MAX_VENDOR_NOTE]
+    message = "".join(c for c in message if c.isprintable())
+    if len(message) > MAX_VENDOR_NOTE:
+        # Between words, not through one. Measured live 2026-11-12: the
+        # hard cut landed inside "and/or" and the reply read "...that the
+        # model names and/ If you connected Airtable before", which looks
+        # like something went wrong on our side rather than a long
+        # sentence politely shortened. The dots are so a message that
+        # simply stops is not mistaken for the whole answer.
+        cut = message[:MAX_VENDOR_NOTE]
+        at = cut.rfind(" ")
+        message = (cut[:at] if at > 0 else cut).rstrip(" ,;:") + "..."
     if not message:
         return ""
     for value in (creds or {}).values():
