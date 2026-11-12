@@ -44,6 +44,12 @@ El.prototype.addEventListener = function (t, f) { (this.listeners[t] = this.list
 El.prototype.removeEventListener = function (t, f) { var l = this.listeners[t] || []; var i = l.indexOf(f); if (i >= 0) l.splice(i, 1); };
 El.prototype.fire = function (t) { (this.listeners[t] || []).slice().forEach(function (f) { f({}); }); };
 El.prototype.querySelector = function () { return null; };
+// The real DOM has this on every element, and code that measures a
+// box is entitled to assume it. A stub without it is the harness
+// being less than the thing it stands for.
+El.prototype.getBoundingClientRect = function () {
+  return { width: this.clientWidth || 0, height: this.clientHeight || 0,
+           top: 0, left: 0, right: 0, bottom: 0 }; };
 El.prototype.contains = function () { return false; };
 var document = { head: new El('head'), body: new El('body'), listeners: {},
   createElement: function (t) { return new El(t); },

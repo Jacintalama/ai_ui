@@ -130,9 +130,14 @@ def _page(browser, js, driver, reduced=False):
 
 # --- 1. the skeleton that holds the space -------------------------------
 
+#: The placeholder is the size the panel will be, so it carries the width
+#: helpers too. A ghost of a different width is a layout jump dressed up
+#: as a loading state.
 SKELETON_JS = lambda: _js("aiuiMotion", "aiuiClampAppHeight",
-                          "aiuiSavedAppHeight", "aiuiSkeletonBody",
-                          "aiuiSkeletonPanel")
+                          "aiuiSavedAppHeight", "aiuiMaxAppExtra",
+                          "aiuiClampAppExtra", "aiuiSavedAppExtra",
+                          "aiuiIndentOf", "aiuiApplyAppWidth",
+                          "aiuiSkeletonBody", "aiuiSkeletonPanel")
 
 SKELETON_DRIVER = """
 window.__draw = function () {
@@ -263,8 +268,8 @@ def test_the_loading_state_covers_the_frame_completely(browser):
 SIZE_JS = lambda: _js("aiuiMotion", "aiuiSavedAppHeight", "aiuiSaveAppHeight",
                       "aiuiClampAppHeight", "aiuiMaxAppExtra",
                       "aiuiClampAppExtra", "aiuiSavedAppExtra",
-                      "aiuiSaveAppExtra", "aiuiApplyAppWidth",
-                      "aiuiSizeHandle")
+                      "aiuiSaveAppExtra", "aiuiIndentOf", "aiuiSetIndent",
+                      "aiuiApplyAppWidth", "aiuiSizeHandle")
 
 SIZE_DRIVER = """
 window.__make = function () {
@@ -275,6 +280,17 @@ window.__make = function () {
   var col = document.createElement('div');
   col.style.cssText = 'width:600px;margin:0 auto;';
   var box = document.createElement('div');
+  // Built the way aiuiShowAppInline builds it, max-width and all.
+  //
+  // The driver used to make a bare div. That is why the width drag
+  // shipped broken on 2026-11-11 with nine green browser tests behind
+  // it: a block element does not grow past its max-width however
+  // negative its margins are, and the box under test had no max-width
+  // for the margins to lose to. A harness that builds something simpler
+  // than the real thing tests the harness.
+  box.setAttribute('data-aiui-indent', '0');
+  box.setAttribute('data-aiui-widenable', '1');
+  box.style.cssText = 'max-width:' + AIUI_APP_MAXW + ';';
   var frame = document.createElement('iframe');
   frame.style.cssText = 'display:block;width:100%;height:' +
     aiuiSavedAppHeight() + ';border:0;';
@@ -458,6 +474,56 @@ def test_dragging_sideways_widens_it(browser):
     assert page.evaluate("__w()") > before + 50
 
 
+def test_it_really_grows_past_the_width_it_sits_at(browser):
+    """The bug the nine tests before it missed.
+
+    46rem is 736px. The column here is 600, so a gentle widening stays
+    under the cap and looks perfect while proving nothing. This one
+    drags past it and asks whether the box actually got bigger.
+    """
+    page = _page(browser, SIZE_JS(), SIZE_DRIVER)
+    page.evaluate("localStorage.clear(); __make()")
+    cap = page.evaluate("parseFloat(getComputedStyle(document.documentElement)"
+                        ".fontSize) * 46")
+    h = page.query_selector("[data-aiui-size-handle]")
+    box = h.bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(box["x"] + box["width"] / 2 + 400,
+                    box["y"] + box["height"] / 2, steps=8)
+    page.mouse.up()
+    assert page.evaluate("__w()") > cap + 20, (
+        "the box is still held at its max-width, so the drag moves it "
+        "without widening it")
+
+
+def test_the_cap_comes_back_when_it_is_narrowed_again(browser):
+    """At rest it is one turn in a conversation, not the page."""
+    page = _page(browser, SIZE_JS(), SIZE_DRIVER)
+    page.evaluate("localStorage.clear(); __make()")
+    page.focus("[data-aiui-size-handle]")
+    for _ in range(14):
+        page.keyboard.press("ArrowRight")
+    for _ in range(20):
+        page.keyboard.press("ArrowLeft")
+    assert page.evaluate(
+        "getComputedStyle(window.__boxEl).maxWidth") != "none"
+
+
+def test_a_widened_panel_keeps_the_threads_gutter(browser):
+    """marginLeft carries the avatar gutter AND half the extra width.
+    Composed, not one replacing the other."""
+    page = _page(browser, SIZE_JS(), SIZE_DRIVER)
+    page.evaluate("localStorage.clear(); __make();"
+                  " window.__boxEl.setAttribute('data-aiui-indent','3.75rem');"
+                  " aiuiApplyAppWidth(window.__boxEl, 200)")
+    left = page.evaluate(
+        "parseFloat(getComputedStyle(window.__boxEl).marginLeft)")
+    rem = page.evaluate(
+        "parseFloat(getComputedStyle(document.documentElement).fontSize)")
+    assert abs(left - (3.75 * rem - 100)) < 2, left
+
+
 def test_the_width_is_remembered_for_the_next_app(browser):
     page = _page(browser, SIZE_JS(), SIZE_DRIVER)
     page.evaluate("localStorage.clear(); __make()")
@@ -489,7 +555,7 @@ TOGGLE_JS = lambda: _js("aiuiMotion", "aiuiClampAppHeight",
                         "aiuiSavedAppHeight", "aiuiSaveAppHeight",
                         "aiuiMaxAppExtra", "aiuiClampAppExtra",
                         "aiuiSavedAppExtra", "aiuiSaveAppExtra",
-                        "aiuiApplyAppWidth",
+                        "aiuiIndentOf", "aiuiSetIndent", "aiuiApplyAppWidth",
                         "aiuiSizeHandle", "aiuiShowSizeHandle")
 
 TOGGLE_DRIVER = """
