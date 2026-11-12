@@ -152,5 +152,7 @@ def brief(p) -> str:
         "IO cannot do something this list says it can, and never offer "
         "something it says IO cannot. For an app that is not connected, say "
         "it has to be connected first: a Connect button is added under your "
-        "answer, so do not write a link yourself.")
+        "answer, so do not write a link yourself. This list is the whole "
+        "answer, so do not say you are about to go and check, and do not "
+        "promise to look in a moment: say what IO can do and stop.")
     return "\n".join(lines)

@@ -145,6 +145,16 @@ def test_the_instruction_forbids_the_answer_that_started_this():
     assert "never say io cannot" in said.lower(), said
 
 
+def test_the_instruction_forbids_promising_to_go_and_look():
+    """Measured live 2026-11-12, the first real turn after this shipped:
+    "Yes, Airtable is connected. Let me check what I can see in your
+    account." It never does, because a capability question picks no tool,
+    so that sentence is a promise the turn cannot keep. The list IS the
+    answer."""
+    said = _facts(["airtable"], {"airtable"}).lower()
+    assert "do not say you are about to go and check" in said
+
+
 def test_the_general_question_is_answered_with_what_they_have():
     said = _facts([], {"airtable", "trello"})
     assert "Airtable (connected)" in said
