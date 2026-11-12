@@ -80,7 +80,8 @@ def _consts(src):
                 or s.startswith("var AIUI_APP_MAX") \
                 or s.startswith("var AIUI_APP_H_KEY") \
                 or s.startswith("var AIUI_COVER_SLOW_MS") \
-                or s.startswith("var AIUI_APP_STEP"):
+                or s.startswith("var AIUI_APP_STEP") \
+                or s.startswith("var AIUI_APP_W_"):
             out.append(s)
     return "\n".join(out)
 
@@ -256,23 +257,44 @@ def test_the_loading_state_covers_the_frame_completely(browser):
 
 # --- 3. the size is the person's to choose -------------------------------
 
+#: The handle moves two axes now, so the cut has to carry both halves.
+#: A cut with half the references missing does not test a lesser version
+#: of the control, it throws a ReferenceError on the first pointerdown.
 SIZE_JS = lambda: _js("aiuiMotion", "aiuiSavedAppHeight", "aiuiSaveAppHeight",
-                      "aiuiClampAppHeight", "aiuiSizeHandle")
+                      "aiuiClampAppHeight", "aiuiMaxAppExtra",
+                      "aiuiClampAppExtra", "aiuiSavedAppExtra",
+                      "aiuiSaveAppExtra", "aiuiApplyAppWidth",
+                      "aiuiSizeHandle")
 
 SIZE_DRIVER = """
 window.__make = function () {
   var root = document.getElementById('root');
   root.innerHTML = '';
+  // A column to sit in, because widening is measured against the thing
+  // the box is inside: the handle grows the BOX beyond its parent.
+  var col = document.createElement('div');
+  col.style.cssText = 'width:600px;margin:0 auto;';
+  var box = document.createElement('div');
   var frame = document.createElement('iframe');
   frame.style.cssText = 'display:block;width:100%;height:' +
     aiuiSavedAppHeight() + ';border:0;';
-  root.appendChild(frame);
-  root.appendChild(aiuiSizeHandle(frame));
+  box.appendChild(frame);
+  box.appendChild(aiuiSizeHandle(frame, box));
+  col.appendChild(box);
+  root.appendChild(col);
+  // In the page FIRST, then the remembered width, exactly as the real
+  // caller does it: how much wider it may grow is measured against the
+  // column and the window, and a box with no parent has neither.
+  aiuiApplyAppWidth(box, aiuiSavedAppExtra());
   window.__frame = frame;
+  window.__boxEl = box;
   return frame.getBoundingClientRect().height;
 };
 window.__h = function () {
   return window.__frame.getBoundingClientRect().height;
+};
+window.__w = function () {
+  return Math.round(window.__boxEl.getBoundingClientRect().width);
 };
 window.__handle = function () {
   return document.querySelector('[data-aiui-size-handle]');
@@ -360,8 +382,114 @@ def test_a_saved_size_that_is_nonsense_is_ignored(browser):
     assert page.evaluate("__h()") >= 100
 
 
+# --- 3b. and the other direction (2026-11-12) -----------------------------
+#
+# "the size cant be widen only hight i can adjust". Height alone is half an
+# answer: a landing page is wide, and the column it sits in is roughly a
+# third of the screen.
+#
+# Driven in a browser rather than asserted structurally because the whole
+# trick is negative margins against a real parent, and whether a box
+# actually got wider is a question only layout can answer.
+
+def test_the_keyboard_can_make_it_wider(browser):
+    page = _page(browser, SIZE_JS(), SIZE_DRIVER)
+    page.evaluate("localStorage.clear(); __make()")
+    before = page.evaluate("__w()")
+    page.focus("[data-aiui-size-handle]")
+    page.keyboard.press("ArrowRight")
+    assert page.evaluate("__w()") > before
+
+
+def test_the_keyboard_can_make_it_narrow_again(browser):
+    page = _page(browser, SIZE_JS(), SIZE_DRIVER)
+    page.evaluate("localStorage.clear(); __make()")
+    page.focus("[data-aiui-size-handle]")
+    page.keyboard.press("ArrowRight")
+    wider = page.evaluate("__w()")
+    page.keyboard.press("ArrowLeft")
+    assert page.evaluate("__w()") < wider
+
+
+def test_widening_does_not_also_change_the_height(browser):
+    """Two axes on one control, and each arrow has to mean one of them."""
+    page = _page(browser, SIZE_JS(), SIZE_DRIVER)
+    page.evaluate("localStorage.clear(); __make()")
+    tall = page.evaluate("__h()")
+    page.focus("[data-aiui-size-handle]")
+    page.keyboard.press("ArrowRight")
+    assert abs(page.evaluate("__h()") - tall) < 2
+
+
+def test_it_never_goes_narrower_than_the_column_it_sits_in(browser):
+    """Zero extra is the floor. Below that is positive margins, which is a
+    preview shrinking away from a column that already fits it."""
+    page = _page(browser, SIZE_JS(), SIZE_DRIVER)
+    page.evaluate("localStorage.clear(); __make()")
+    page.focus("[data-aiui-size-handle]")
+    for _ in range(12):
+        page.keyboard.press("ArrowLeft")
+    assert page.evaluate("__w()") == 600
+
+
+def test_it_can_never_be_dragged_past_the_edge_of_the_screen(browser):
+    page = _page(browser, SIZE_JS(), SIZE_DRIVER)
+    page.evaluate("localStorage.clear(); __make()")
+    h = page.query_selector("[data-aiui-size-handle]")
+    box = h.bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(box["x"] + 4000, box["y"] + box["height"] / 2, steps=8)
+    page.mouse.up()
+    assert page.evaluate("__w()") <= page.evaluate("window.innerWidth")
+
+
+def test_dragging_sideways_widens_it(browser):
+    page = _page(browser, SIZE_JS(), SIZE_DRIVER)
+    page.evaluate("localStorage.clear(); __make()")
+    before = page.evaluate("__w()")
+    h = page.query_selector("[data-aiui-size-handle]")
+    box = h.bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(box["x"] + box["width"] / 2 + 80,
+                    box["y"] + box["height"] / 2, steps=6)
+    page.mouse.up()
+    assert page.evaluate("__w()") > before + 50
+
+
+def test_the_width_is_remembered_for_the_next_app(browser):
+    page = _page(browser, SIZE_JS(), SIZE_DRIVER)
+    page.evaluate("localStorage.clear(); __make()")
+    page.focus("[data-aiui-size-handle]")
+    for _ in range(2):
+        page.keyboard.press("ArrowRight")
+    chosen = page.evaluate("__w()")
+    page.evaluate("__make()")
+    assert page.evaluate("__w()") == chosen
+
+
+def test_a_saved_width_that_is_nonsense_is_ignored(browser):
+    page = _page(browser, SIZE_JS(), SIZE_DRIVER)
+    page.evaluate(
+        "localStorage.setItem(AIUI_APP_W_KEY, 'drop table'); __make()")
+    assert page.evaluate("__w()") == 600
+
+
+def test_a_saved_width_too_big_for_this_screen_is_brought_back(browser):
+    """The ordinary way a once-legal value stops fitting is the window
+    being made smaller, and nothing rewrites storage when that happens."""
+    page = _page(browser, SIZE_JS(), SIZE_DRIVER)
+    page.evaluate(
+        "localStorage.setItem(AIUI_APP_W_KEY, '99999'); __make()")
+    assert page.evaluate("__w()") <= page.evaluate("window.innerWidth")
+
+
 TOGGLE_JS = lambda: _js("aiuiMotion", "aiuiClampAppHeight",
                         "aiuiSavedAppHeight", "aiuiSaveAppHeight",
+                        "aiuiMaxAppExtra", "aiuiClampAppExtra",
+                        "aiuiSavedAppExtra", "aiuiSaveAppExtra",
+                        "aiuiApplyAppWidth",
                         "aiuiSizeHandle", "aiuiShowSizeHandle")
 
 TOGGLE_DRIVER = """
@@ -374,7 +502,7 @@ window.__box = function (withHandle) {
   box.appendChild(bar);
   var frame = document.createElement('iframe');
   box.appendChild(frame);
-  if (withHandle) box.appendChild(aiuiSizeHandle(frame));
+  if (withHandle) box.appendChild(aiuiSizeHandle(frame, box));
   root.appendChild(box);
   window.__bar = bar;
 };

@@ -65,7 +65,21 @@ APP = (
 PAGE = """<!doctype html><meta charset="utf-8">
 <div id="host"></div>
 <script>
-function authHeaders() { return { 'Content-Type': 'application/json' }; }
+function aiuiAuthHeaders() { return { 'Content-Type': 'application/json' }; }
+// A TRAP, not a stub. Until 2026-11-12 this harness defined `authHeaders`
+// instead, which is the name of a function that lives inside
+// createIntegrationsModal and is therefore NOT in scope anywhere in this
+// section of the file. Supplying it here meant this panel passed a real
+// browser test while every one of its three calls threw a ReferenceError
+// in production, so the panel said "Reading this app..." for a week and
+// the pencil's enhance sent nothing at all.
+//
+// A harness that defines a name the real page lacks does not test the
+// page, it tests the harness. This one fails loudly instead.
+function authHeaders() {
+  throw new Error('authHeaders is not in scope in the real page. '
+                  + 'Use aiuiAuthHeaders.');
+}
 function aiuiWatchChange() { window.__watched = true; }
 window.__sent = [];
 window.fetch = function (url, opts) {

@@ -171,8 +171,35 @@ def test_a_preview_opens_at_the_width_it_was_left_at():
     """Remembering a size and not restoring it is worse than not
     remembering: the control looks broken every time the page reloads."""
     body = _fn("aiuiShowAppInline")
-    assert "aiuiApplyAppWidth" in body
-    assert "aiuiSavedAppExtra()" in body
+    assert "aiuiApplyAppWidth(box, aiuiSavedAppExtra())" in body
+
+
+def test_the_width_is_restored_only_once_the_box_is_in_the_page():
+    """How much wider a box may grow is measured against the column it
+    sits in and the window around it, and a box with no parent has
+    neither: the maximum comes out as the whole window and the preview
+    opens wider than the screen.
+
+    Caught in a browser on 2026-11-12 and by nothing else, which is the
+    argument for the browser tier existing at all: the box was 1848
+    pixels wide in a 1280 pixel window.
+    """
+    body = _fn("aiuiShowAppInline")
+    placed = max(body.index("aiuiPutInReply(box"),
+                 body.index("aiuiPutUnderLastMessage(box)"))
+    assert body.index("aiuiApplyAppWidth(box") > placed, (
+        "the width is restored before the box is in the page, so it is "
+        "measured against nothing")
+
+
+def test_the_handle_keeps_no_second_copy_of_the_width():
+    """The caller restores the width after placing the box, so a number
+    cached in the handle is a number that is already wrong by then."""
+    body = _fn("aiuiSizeHandle")
+    assert "extraNow()" in body
+    assert "var extra =" not in body, (
+        "a cached width drifts from the box the moment anything else "
+        "sets it")
 
 
 def test_the_handle_is_given_the_box_it_has_to_widen():
