@@ -188,10 +188,18 @@ def test_the_ghost_waits_for_somewhere_to_put_itself():
     assert "aiuiLastReplyBody()" in body
 
 
-def test_the_step_panel_uses_the_same_helper():
-    """One place that knows how a build's placeholder is drawn."""
+def test_only_the_watcher_draws_the_placeholder():
+    """The step panel used to draw it, because it was the earliest thing
+    that ran. The watcher now draws it on its first tick, seconds before
+    this panel's labels have even been fetched, so the step panel's copy
+    is redundant and two callers would be two places to drift."""
     body = _fn("aiuiStepPanel")
-    assert "aiuiShowBuildGhost()" in body
+    assert "aiuiShowBuildGhost()" not in body
+    # Calls only. The declaration contains the same text.
+    calls = re.findall(r"(?<!function )aiuiShowBuildGhost\(\)", _js())
+    assert len(calls) == 1, (
+        "%d callers draw the placeholder, which is %d places to drift"
+        % (len(calls), len(calls)))
 
 
 def test_the_ghost_is_the_size_the_preview_will_be():

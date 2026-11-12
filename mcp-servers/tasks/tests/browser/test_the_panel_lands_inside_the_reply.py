@@ -52,7 +52,16 @@ def _placer():
     finder = src[finder_start:finder_end]
     start = src.index("  function aiuiScroller()")
     end = src.index("\n  function ", src.index("function aiuiPutUnderLastMessage"))
-    return finder + "\n" + src[start:end]
+    # The thread's gutter is the box's own value now, because marginLeft
+    # also carries half the extra width and the two have to compose.
+    # These live outside the range above, and a cut missing half a
+    # function is a ReferenceError rather than a lesser version of it.
+    extra = []
+    for name in ("aiuiMaxAppExtra", "aiuiClampAppExtra", "aiuiSavedAppExtra",
+                 "aiuiIndentOf", "aiuiApplyAppWidth", "aiuiSetIndent"):
+        at = src.index("  function " + name + "(")
+        extra.append(src[at:src.index("\n  }\n", at) + 5])
+    return finder + "\n" + "\n".join(extra) + "\n" + src[start:end]
 
 
 def _reply(mid, text):
