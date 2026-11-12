@@ -149,6 +149,20 @@ def test_the_features_the_tool_pick_chose_are_in_the_plan():
     assert any("timer" in f for f in p["features"])
 
 
+def test_a_choice_is_never_split_by_the_cap():
+    """Review: github .99, airtable .98, zapier .95 showed Zapier alone."""
+    p = app_triage.plan([("github", 0.99), ("airtable", 0.98),
+                         ("zapier", 0.95)], set(), [])
+    ids = [a["id"] for a in p["apps"]]
+    assert "zapier" in ids and "n8n" in ids
+
+
+def test_a_group_member_jev_scored_keeps_its_score():
+    p = app_triage.plan([("zapier", 0.97), ("n8n", 0.95)], set(), [])
+    assert {a["id"]: a["score"] for a in p["apps"]} == {"zapier": 0.97,
+                                                       "n8n": 0.95}
+
+
 def test_the_assistant_is_needed_only_for_an_app_not_connected():
     assert app_triage.needs_assistant(
         app_triage.plan([("airtable", 0.9)], set(), []))
@@ -168,6 +182,13 @@ def test_the_brief_says_connected_or_not_and_what_io_can_and_cannot_do():
     assert "not connected" in b
     assert air.can in b and air.cannot in b
     assert "Connect button" in b
+
+
+def test_the_brief_is_not_read_as_part_of_the_account():
+    """Review: it is appended under the graph block, whose heading says
+    "this is what this person has right now"."""
+    b = app_triage.brief(app_triage.plan([("airtable", 0.9)], set(), []))
+    assert b.splitlines()[0].startswith("Separate from the account above")
 
 
 def test_the_brief_compares_a_choice():
@@ -202,6 +223,40 @@ def test_an_app_the_answer_never_named_is_introduced():
     out = app_triage.with_buttons("Here is how I would do it.", p)
     assert "Recommended: Airtable" in out
     assert AIR in out
+
+
+def test_the_introduction_says_what_io_cannot_do():
+    """Review: "Recommended: Airtable, so IO can read your bases" under a
+    request to SAVE leads contradicted itself."""
+    p = app_triage.plan([("airtable", 0.9)], set(), [])
+    out = app_triage.with_buttons("Here is how I would do it.", p)
+    assert "cannot add or change rows" in out
+
+
+def test_a_google_app_named_the_short_way_is_not_introduced_again():
+    p = app_triage.plan([("calendar", 0.95)], set(), [])
+    out = app_triage.with_buttons("Connect your calendar and I'll add it.", p)
+    assert "Recommended:" not in out
+    assert "#aiui-connect:calendar" in out
+
+
+def test_n8n_is_not_called_open_source():
+    """Its licence is the Sustainable Use License (fair-code)."""
+    assert "open source" not in app_triage.APPS["n8n"].pros.lower()
+
+
+def test_notion_only_claims_what_its_tools_return():
+    """get_page returns properties, not the page's text."""
+    n = app_triage.APPS["notion"]
+    assert "propert" in n.can and "text" in n.cannot
+
+
+def test_gmail_does_not_promise_an_approval_the_chat_can_switch_off():
+    assert "asks first" not in app_triage.APPS["gmail"].can
+
+
+def test_hubspots_paste_instructions_grant_what_create_contact_needs():
+    assert "contacts.write" in connections.PROVIDERS["hubspot"].where
 
 
 def test_a_connected_app_gets_no_button():
@@ -251,6 +306,8 @@ def _wire(monkeypatch, answer="Airtable fits.", pending=None):
 
 
 def test_an_app_not_connected_makes_the_assistant_answer_with_no_tool(monkeypatch):
+    said = []
+    monkeypatch.setattr(rt.agent_progress, "say", said.append)
     seen = _wire(monkeypatch)
     triage = {"picks": [("airtable", 0.9)], "connected": set()}
     out = asyncio.run(rt._assistant_reply(_Body(LEADS), LEADS, [], picked=[],
@@ -260,17 +317,32 @@ def test_an_app_not_connected_makes_the_assistant_answer_with_no_tool(monkeypatc
     assert seen["graph"].startswith("GRAPH")
     assert app_triage.APPS["airtable"].can in seen["graph"]
     assert out["turns"][0]["answer"].rstrip().endswith(AIR)
+    assert said == [app_triage.CHOOSING_LINE]
 
 
-def test_with_tools_picked_the_brief_rides_along(monkeypatch):
+def test_with_everything_connected_the_tool_path_is_exactly_as_before(monkeypatch):
+    """Review 2026-11-12: "check my inbox" with Gmail connected must not get
+    a prompt telling the model to recommend Gmail."""
     seen = _wire(monkeypatch, answer="I will check Gmail every morning.")
     triage = {"picks": [("gmail", 0.9)], "connected": {"gmail"}}
     out = asyncio.run(rt._assistant_reply(
         _Body("every 8am read my email"), "every 8am read my email", [],
         picked=["schedules", "gmail"], triage=triage))
     assert seen["tool_ids"] == ["schedules", "gmail"]
-    assert "Gmail" in seen["graph"] and "timer" in seen["graph"]
-    assert "#aiui-connect" not in out["turns"][0]["answer"]
+    assert seen["graph"] == "GRAPH"
+    assert out["turns"][0]["answer"] == "I will check Gmail every morning."
+
+
+def test_with_one_app_missing_the_brief_rides_along_with_the_tools(monkeypatch):
+    seen = _wire(monkeypatch, answer="I'll set a daily job.")
+    triage = {"picks": [("gmail", 0.9), ("calendar", 0.9)],
+              "connected": {"calendar"}}
+    asyncio.run(rt._assistant_reply(
+        _Body("every 8am read my email"), "every 8am read my email", [],
+        picked=["schedules"], triage=triage))
+    assert "Gmail (not connected)" in seen["graph"]
+    assert "Google Calendar (connected)" in seen["graph"]
+    assert "timer" in seen["graph"]
 
 
 def test_only_connected_apps_and_no_tool_leave_it_to_the_free_model(monkeypatch):
@@ -303,7 +375,7 @@ def test_triage_pick_reads_jev_and_connections_together(monkeypatch):
         assert email == "owner@example.com" and text == LEADS
         return [("airtable", 0.9)]
 
-    async def connected(email):
+    async def connected(email, strict=False):
         return {"gmail"}
 
     import routes_agents
@@ -315,12 +387,71 @@ def test_triage_pick_reads_jev_and_connections_together(monkeypatch):
     assert got == {"picks": [("airtable", 0.9)], "connected": {"gmail"}}
 
 
+def test_an_app_already_offered_in_this_chat_is_not_offered_again(monkeypatch):
+    """Measured live 2026-11-12: after Airtable was recommended, "thanks!"
+    scored Airtable 0.94 and "ok how do I connect it?" 0.96, so the button
+    would have come back under every follow-up."""
+    async def pick_apps(email, text, context=""):
+        return [("airtable", 0.94), ("hubspot", 0.91)]
+
+    async def connected(email, strict=False):
+        return set()
+
+    import routes_agents
+    monkeypatch.setattr(rt, "_assistant_on", lambda: True)
+    monkeypatch.setattr(rt.agent_llm, "can_run", lambda agent: True)
+    monkeypatch.setattr(rt.agent_jev, "pick_apps", pick_apps)
+    monkeypatch.setattr(routes_agents, "_connected_providers", connected)
+    before = [{"role": "user", "content": LEADS},
+              {"role": "assistant", "content": "Airtable fits.\n\n" + AIR}]
+    got = asyncio.run(rt._triage_pick(_Body("thanks!", before), "thanks!"))
+    assert got == {"picks": [("hubspot", 0.91)], "connected": set()}
+
+
+def test_only_the_assistants_own_buttons_count_as_offered():
+    msgs = [{"role": "user", "content": "do I need " + AIR},
+            {"role": "assistant", "content": "[Connect Notion](#aiui-connect:notion)"},
+            {"role": "user", "content": "x"}]
+    assert app_triage.already_offered(msgs) == {"notion"}
+
+
+def test_a_failed_connection_read_recommends_nothing(monkeypatch):
+    """Review: a database blip read as "nothing connected" would offer
+    Connect buttons for apps the person already has."""
+    async def pick_apps(email, text, context=""):
+        return [("calendar", 0.95)]
+
+    async def connected(email, strict=False):
+        assert strict is True
+        raise RuntimeError("db down")
+
+    import routes_agents
+    monkeypatch.setattr(rt, "_assistant_on", lambda: True)
+    monkeypatch.setattr(rt.agent_llm, "can_run", lambda agent: True)
+    monkeypatch.setattr(rt.agent_jev, "pick_apps", pick_apps)
+    monkeypatch.setattr(routes_agents, "_connected_providers", connected)
+    assert asyncio.run(rt._triage_pick(_Body(LEADS), LEADS)) is None
+
+
+def test_the_strict_connection_read_raises_instead_of_saying_none(monkeypatch):
+    import asyncpg
+    import routes_agents
+
+    async def refuse(*a, **k):
+        raise OSError("no database")
+
+    monkeypatch.setattr(asyncpg, "connect", refuse)
+    assert asyncio.run(routes_agents._connected_providers("a@b.c")) == set()
+    with pytest.raises(OSError):
+        asyncio.run(routes_agents._connected_providers("a@b.c", strict=True))
+
+
 def test_nothing_picked_reads_no_connections(monkeypatch):
     """Most messages fit no app: no database read for them."""
     async def pick_apps(email, text, context=""):
         return []
 
-    async def connected(email):
+    async def connected(email, strict=False):
         raise AssertionError("read connections for nothing")
 
     import routes_agents
@@ -339,7 +470,7 @@ def test_triage_pick_steps_aside(monkeypatch, why):
             raise RuntimeError("bad")
         return None if why == "jev_down" else [("airtable", 0.9)]
 
-    async def connected(email):
+    async def connected(email, strict=False):
         return set()
 
     import routes_agents

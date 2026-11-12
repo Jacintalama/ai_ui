@@ -133,6 +133,38 @@ GitHub on the versioning ask: Lukas's own wording scored 0.94 to 0.95 in 4 of
 4 tries, a shorter paraphrase 0.89 to 0.91, so a terse phrasing can fall just
 under the cut. The next app scored under 0.45 every time.
 
+## After review (2026-11-12)
+
+An independent review found these, each checked against the code, and
+where it said so, live:
+
+- **Only a recommendation changes anything.** The brief and buttons were
+  attached whenever an app fit, so "check my inbox" with Gmail connected was
+  told to recommend Gmail. Now the plan is dropped unless some fitting app is
+  not connected, and the tool path is exactly what it was.
+- **Offered once per conversation.** Measured live: after Airtable was
+  recommended, "thanks!" scored Airtable 0.94 and "ok how do I connect it?"
+  0.96 with the exchange as context. An app whose Connect button is in one of
+  the assistant's recent replies (`app_triage.already_offered`) is no longer
+  picked; re-measured: both follow-ups now pick nothing, and "can you also
+  check my calendar" still picks Calendar 0.94.
+- **A failed connection read recommends nothing.** `_connected_providers`
+  reads a database error as "nothing connected", which here would offer
+  Connect buttons for apps the person has. Triage reads it with
+  `strict=True` and fails open on an error.
+- **Claims corrected.** Notion's `get_page` returns properties, not text;
+  the main chat can be set to skip approvals, so Gmail no longer says
+  "sending asks first"; the "Recommended:" line says what IO cannot do; n8n
+  is fair-code, not open source; HubSpot's paste-a-token instructions now ask
+  for `crm.objects.contacts.write`, which `create_contact` needs.
+- **A choice is never split by the cap**, and a group member keeps the score
+  Jev gave it. Short names ("your calendar") count as naming the app.
+- **Not changed, with reasons.** The extra Jev call against the 2000-a-day
+  cap: production made at most 57 calls a day in the last week, and one app
+  call costs about $0.00006. The timer rule reads the tool pick, so when the
+  tool pick cannot be asked, n8n and Zapier may be offered for a timer job;
+  that is a harmless extra suggestion, not a broken answer.
+
 ## Not in this round
 
 - Discord and the agents panel: only the main chat (Auto) triages.

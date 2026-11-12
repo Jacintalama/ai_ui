@@ -48,22 +48,25 @@ class App:
     group: str = ""
     #: The case for this side of a choice, in a sentence.
     pros: str = ""
+    #: Other words an answer uses for it ("your calendar"), so an answer
+    #: that already named it is not given a second introduction.
+    says: tuple = ()
 
 
 _APPS = (
     App("gmail", "Gmail",
         "email: reading, searching, drafting or sending email, including "
         "emails to a list of leads or customers",
-        "read, search, draft and send email (sending asks first)",
+        "read, search, draft and send email",
         ("gmail",)),
     App("calendar", "Google Calendar",
         "a calendar: events, meetings, appointments and booking time",
         "read the calendar and add, move or delete events",
-        ("calendar",)),
+        ("calendar",), says=("calendar",)),
     App("gdrive", "Google Drive",
         "storing, finding or reading files, documents and spreadsheets",
         "find and read files in Drive",
-        ("gdrive",)),
+        ("gdrive",), says=("drive",)),
     App("airtable", "Airtable",
         "a database made of tables, like a spreadsheet, for keeping records: "
         "leads, customers, contacts, orders, inventory, or any list of things "
@@ -99,9 +102,10 @@ _APPS = (
          "comment_on_card", "complete_card")),
     App("notion", "Notion",
         "pages and databases for notes, documents, a wiki or to-do lists",
-        "search and read pages and database rows",
+        "search pages and databases, read a page's properties and list a "
+        "database's rows",
         ("search", "get_page", "query_database"),
-        cannot="write or change pages"),
+        cannot="read a page's text, or write or change pages"),
     App("n8n", "n8n",
         "automation workflows that connect apps and run steps on their own, "
         "when something happens or on a timer",
@@ -109,9 +113,9 @@ _APPS = (
         ("list_my_workflows", "get_workflow", "list_executions"),
         cannot="create or change workflows",
         group="automation",
-        pros="Open source and can be self-hosted, so it costs only the "
-             "server it runs on (or a paid n8n Cloud plan); more control and "
-             "custom code, but more setup."),
+        pros="Source-available (fair-code) and can be self-hosted, so it "
+             "costs only the server it runs on (or a paid n8n Cloud plan); "
+             "more control and custom code, but more setup."),
     App("zapier", "Zapier",
         "automation between apps without code, hosted for you: when "
         "something happens in one app, do something in another",
@@ -126,6 +130,11 @@ _APPS = (
 
 #: Every app the platform can connect, in the order Jev is asked about them.
 APPS = {a.id: a for a in _APPS}
+
+#: Said while the assistant works out a recommendation with no tool to run,
+#: so the chat is not silent (agent_progress, 2026-10-29: a line only when it
+#: is true of this message).
+CHOOSING_LINE = "Choosing the right app for this..."
 
 #: The platform's own features, as the main chat's tool pick names them, in a
 #: sentence the assistant can repeat. These need no connection: they are what
@@ -187,26 +196,25 @@ def plan(picks, connected, tools, text: str = "") -> dict:
         ranked = [(i, s) for i, s in ranked
                   if APPS[i].group != AUTOMATION_GROUP or _named(APPS[i], text)]
     have = set(connected or ())
-    chosen, scores = [], {}
-    for app_id, score in ranked:
-        if app_id in scores:
+    jev = dict(ranked)
+    chosen = []
+    for app_id, _score in ranked:
+        if app_id in chosen:
             continue
-        group = APPS[app_id].group
-        family = [app_id] + [a.id for a in _APPS
-                             if group and a.group == group and a.id != app_id]
-        if len(chosen) + 1 > MAX_APPS:
+        if len(chosen) >= MAX_APPS:
             break
-        for member in family:
-            if member not in scores and len(chosen) < MAX_APPS:
-                chosen.append(member)
-                scores[member] = score if member == app_id else None
+        group = APPS[app_id].group
+        # A choice is shown whole even past the cap: one side of it alone
+        # is a recommendation pretending to be a comparison.
+        chosen += [app_id] + [a.id for a in _APPS if group and a.group == group
+                              and a.id != app_id and a.id not in chosen]
     apps = []
     for app_id in chosen:
         a = APPS[app_id]
         apps.append({"id": a.id, "label": a.label,
                      "connected": a.id in have, "can": a.can,
                      "cannot": a.cannot, "group": a.group, "pros": a.pros,
-                     "score": scores[app_id]})
+                     "score": jev.get(app_id)})
     features = [FEATURES[t] for t in tools or [] if t in FEATURES]
     return {"apps": apps, "features": features}
 
@@ -223,7 +231,8 @@ def brief(p) -> str:
     apps = (p or {}).get("apps") or []
     if not apps:
         return ""
-    lines = ["Apps that fit what the person wants (decided for this message):"]
+    lines = ["Separate from the account above: apps that fit what the person "
+             "wants now, connected or not (decided for this message):"]
     for a in apps:
         state = "connected" if a["connected"] else "not connected"
         line = "- %s (%s). IO can %s." % (a["label"], state, a["can"])
@@ -260,9 +269,27 @@ def with_buttons(answer: str, p) -> str:
         app = APPS[a["id"]]
         if connect_href(app.id) in low:
             continue
-        if app.label.lower() not in low:
-            out.append("Recommended: %s, so IO can %s." % (app.label, app.can))
+        if not any(w in low for w in (app.label.lower(),) + app.says):
+            line = "Recommended: %s, so IO can %s" % (app.label, app.can)
+            if app.cannot:
+                line += " (it cannot %s yet)" % app.cannot
+            out.append(line + ".")
         out.append(_button(app))
     if not out:
         return answer
     return answer.rstrip() + "\n\n" + "\n".join(out)
+
+
+def already_offered(messages, turns: int = 6) -> set:
+    """Apps whose Connect button one of the assistant's recent replies already
+    carries. Measured live 2026-11-12: after Airtable was recommended,
+    "thanks!" scored Airtable 0.94 with the exchange as context, so without
+    this the button came back under every follow-up. Only the assistant's
+    own messages count: a person pasting a link is not an offer made."""
+    out = set()
+    for m in list(messages or [])[-(turns + 1):-1]:
+        if not isinstance(m, dict) or m.get("role") != "assistant":
+            continue
+        said = str(m.get("content") or "").lower()
+        out |= {i for i in APPS if connect_href(i) in said}
+    return out

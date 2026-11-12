@@ -1880,11 +1880,20 @@ async def _triage_pick(body: ChatIn, text: str) -> dict | None:
         picks = await agent_jev.pick_apps(body.user_email, text, context)
         if picks is None:
             return None
+        # Offered once per conversation: with the exchange as context,
+        # "thanks!" after an Airtable recommendation scored Airtable 0.94
+        # (measured live 2026-11-12), and the button would follow every reply.
+        offered = app_triage.already_offered(body.messages, CONTEXT_TURNS)
+        picks = [(a, s) for a, s in picks if a not in offered]
         if not picks:
             # Nothing fits, which is most messages: no database read.
             return {"picks": [], "connected": set()}
         import routes_agents                   # it imports this module
-        connected = await routes_agents._connected_providers(body.user_email)
+        # Strict: a failed read must not pass for "nothing connected", which
+        # would offer Connect buttons for apps the person already has. On a
+        # failure the except below recommends nothing.
+        connected = await routes_agents._connected_providers(body.user_email,
+                                                             strict=True)
         return {"picks": list(picks), "connected": set(connected or ())}
     except Exception:                                       # noqa: BLE001
         logger.warning("the triage pick failed; nothing is recommended",
@@ -1950,7 +1959,11 @@ async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
             plan = app_triage.plan(triage.get("picks"),
                                    triage.get("connected"), picked or [],
                                    text=text)
-        if not picked and not app_triage.needs_assistant(plan):
+        # Only a recommendation to make changes anything: with every fitting
+        # app already connected, the tool path is exactly what it was.
+        if not app_triage.needs_assistant(plan):
+            plan = None
+        if not picked and plan is None:
             return None
         picked = list(picked or [])
         assistant = main_assistant.agent()
@@ -1959,7 +1972,8 @@ async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
         # silent: "check my inbox" took 9.5s on the live box with nothing
         # on screen. Said before the turn, naming the place rather than the
         # tool id, and no agent's name, because no agent is involved.
-        reading = agent_progress.reading_line(picked)
+        reading = agent_progress.reading_line(picked) or (
+            app_triage.CHOOSING_LINE if plan else "")
         if reading:
             agent_progress.say(reading)
         graph = await agent_graph.graph_block(body.user_email, text)

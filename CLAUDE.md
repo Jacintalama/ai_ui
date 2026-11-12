@@ -365,6 +365,9 @@ Connect buttons under the answer. Two rules worth knowing:
   and `cannot` says so. If you add a write tool, update the catalogue.
 - **A timer job is the platform's**: with `schedules` picked, n8n and Zapier
   are dropped unless named ("every 8am read my email" is schedules + Gmail).
+- **Only an app NOT connected changes anything**, and it is offered once per
+  conversation (`app_triage.already_offered`): with context, "thanks!" after
+  a recommendation scored the same app 0.94.
 `MAIN_CHAT_TRIAGE=0` switches it off. Design:
 `docs/plans/2026-11-12-triage-agent-design.md`.
 
