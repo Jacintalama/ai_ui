@@ -36,6 +36,7 @@ import httpx
 from fastapi import Depends, FastAPI
 from pydantic import BaseModel, Field
 
+import connection_health as H
 import connections as C
 from auth import current_user, CurrentUser
 
@@ -335,7 +336,7 @@ class _VendorRefused(Exception):
 
 async def _run_composite(provider_id: str, tool: Tool, auth,
                          creds: Dict[str, str], label: str,
-                         args: Dict[str, Any]) -> dict:
+                         args: Dict[str, Any], email: str = "") -> dict:
     """Run a tool that answers with several vendor calls.
 
     Everything a single-call tool gets stays the same: this person's own
@@ -353,6 +354,10 @@ async def _run_composite(provider_id: str, tool: Tool, auth,
                                  base=tool.base)
             if r is None:
                 raise _VendorRefused(_unreachable(label))
+            # What this answer says about the stored credential, if
+            # anything. A 401 marks it, a working call clears it, a 403
+            # says nothing at all. Before the refusal, which returns.
+            await H.note(email, provider_id, r.status_code)
             problem = _refusal(r, label, creds, provider_id, tool.name)
             if problem:
                 raise _VendorRefused(problem)
@@ -388,7 +393,7 @@ async def _call(provider_id: str, tool: Tool, email: str,
     # it to fix up.
     if tool.run:
         return await _run_composite(provider_id, tool, auth, creds, label,
-                                    args)
+                                    args, email=email)
 
     prepare = PREPARE.get(provider_id)
     if prepare:
@@ -435,6 +440,9 @@ async def _call(provider_id: str, tool: Tool, email: str,
         logger.warning("mytools: %s unreachable (%s)", provider_id,
                        type(e).__name__)
         return _err(_unreachable(label))
+
+    # Before the refusal below, which returns.
+    await H.note(email, provider_id, r.status_code)
 
     problem = _refusal(r, label, creds, provider_id, tool.name)
     if problem:
