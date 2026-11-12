@@ -5084,7 +5084,7 @@
         status.textContent = 'Saving...';
         fetch('/api/aiuibuilder/' + encodeURIComponent(slug) + '/theme', {
           method: 'PUT',
-          headers: authHeaders(),
+          headers: aiuiAuthHeaders(),
           body: JSON.stringify({ values: changed })
         }).then(function (r) {
           return r.ok ? r.json() : r.json().then(function (j) {
@@ -5150,7 +5150,7 @@
         how.textContent = 'Asking for that...';
         fetch('/api/aiuibuilder/' + encodeURIComponent(slug) + '/theme/upgrade', {
           method: 'POST',
-          headers: authHeaders(),
+          headers: aiuiAuthHeaders(),
           body: JSON.stringify({})
         }).then(function (r) {
           return r.ok ? r.json() : r.json().then(function (j) {
@@ -5178,7 +5178,7 @@
       if (loaded) return;
       say('Reading this app...');
       fetch('/api/aiuibuilder/' + encodeURIComponent(slug) + '/theme', {
-        headers: authHeaders()
+        headers: aiuiAuthHeaders()
       }).then(function (r) {
         if (!r.ok) throw new Error('that could not be read');
         return r.json();
@@ -5308,6 +5308,12 @@
       mode = null;
       picked = null;
       ask.style.display = 'none';
+      // The send disables the box and this hides it. Re-opening the pencil
+      // shows the SAME input again, so without this a change that worked
+      // still leaves a dead box behind, which is how it looked on
+      // 2026-11-12: "once i submitted i cant type anymore it in".
+      asked.disabled = false;
+      asked.style.display = '';
       note.style.opacity = '.6';
       note.title = 'Point at something to change it';
       note.setAttribute('aria-label', note.title);
@@ -5349,26 +5355,38 @@
       if (!said || !picked) return;
       asked.disabled = true;
       askWhat.textContent = 'Asking for that change...';
-      fetch('/api/aiuibuilder/' + encodeURIComponent(slug) + '/enhance', {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ prompt: aiuiAnnotatePrompt(picked, said) })
-      }).then(function (r) {
-        return r.ok ? r.json() : r.json().then(function (j) {
-          throw new Error(j.detail || 'that could not be asked for');
+      // Wrapped because a `.catch` cannot catch a throw raised while
+      // fetch's own arguments are still being built: there is no promise
+      // yet. That is precisely what happened on 2026-11-12, when the
+      // headers came from a function that is not in scope here. No request
+      // went out and nothing ever re-enabled the box, so the feature
+      // looked dead rather than broken.
+      try {
+        fetch('/api/aiuibuilder/' + encodeURIComponent(slug) + '/enhance', {
+          method: 'POST',
+          headers: aiuiAuthHeaders(),
+          body: JSON.stringify({ prompt: aiuiAnnotatePrompt(picked, said) })
+        }).then(function (r) {
+          return r.ok ? r.json() : r.json().then(function (j) {
+            throw new Error(j.detail || 'that could not be asked for');
+          });
+        }).then(function (made) {
+          annotateStop();
+          // The change is a BUILD, so it is watched like any other and the
+          // panel reloads when it lands. Nothing here polls: the watcher
+          // already does, and two pollers on one task is two answers.
+          if (made && made.task_id) {
+            aiuiWatchChange(chatId, made.task_id, frame);
+          }
+        }).catch(function (err) {
+          asked.disabled = false;
+          askWhat.textContent = String((err && err.message)
+                                       || 'That did not work.');
         });
-      }).then(function (made) {
-        annotateStop();
-        // The change is a BUILD, so it is watched like any other and the
-        // panel reloads when it lands. Nothing here polls: the watcher
-        // already does, and two pollers on one task is two answers.
-        if (made && made.task_id) {
-          aiuiWatchChange(chatId, made.task_id, frame);
-        }
-      }).catch(function (err) {
+      } catch (err) {
         asked.disabled = false;
-        askWhat.textContent = String((err && err.message) || 'That did not work.');
-      });
+        askWhat.textContent = 'That could not be sent. Try again.';
+      }
     });
 
     // Appearance: its own panel under the frame, like the pencil's.
