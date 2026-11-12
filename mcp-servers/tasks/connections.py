@@ -277,7 +277,8 @@ PROVIDERS: Dict[str, Provider] = {
         fields=[Field("token", "Private app access token",
                       placeholder="pat-na1-...")],
         where="HubSpot: Settings, Integrations, Private Apps. Create an app, "
-              "give it CRM read scopes, then copy its access token.",
+              "give it CRM read scopes and crm.objects.contacts.write (so "
+              "contacts can be added), then copy its access token.",
         build_auth=_hubspot_auth,
         probe_path="/account-info/v3/details",
         read_label=_hubspot_label,

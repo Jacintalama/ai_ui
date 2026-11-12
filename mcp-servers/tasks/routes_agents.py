@@ -349,7 +349,7 @@ async def _installed_tool_ids() -> list:
     return [r["id"] for r in rows]
 
 
-async def _connected_providers(email: str) -> set:
+async def _connected_providers(email: str, strict: bool = False) -> set:
     """Everything `email` has connected right now, by provider id.
 
     One connection, one query, covering the three token tables plus
@@ -362,6 +362,10 @@ async def _connected_providers(email: str) -> set:
     "connected": a tool wrongly reported as unconnected is a nag the user
     can click through; a tool wrongly reported as connected is one an agent
     will pick and then fail to actually run.
+
+    `strict` raises instead (2026-11-12, the triage agent): there "nothing
+    connected" is not a safe reading, because it offers Connect buttons for
+    apps the person already has.
     """
     import asyncpg
 
@@ -382,11 +386,15 @@ async def _connected_providers(email: str) -> set:
         conn = await asyncpg.connect(_database_url())
     except Exception:
         logger.warning("could not reach the database to read connection state")
+        if strict:
+            raise
         return set()
     try:
         rows = await conn.fetch(query, email)
     except Exception:
         logger.warning("could not read connection state", exc_info=True)
+        if strict:
+            raise
         return set()
     finally:
         await conn.close()

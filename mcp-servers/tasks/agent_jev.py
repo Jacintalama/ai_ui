@@ -42,6 +42,7 @@ PURPOSE_REPLY = "reply_answers"
 PURPOSE_RELEASE = "release"
 PURPOSE_TOOLS = "tool_pick"
 PURPOSE_SKILLS = "skill_pick"
+PURPOSE_APPS = "app_pick"
 
 #: Where each check acts. A Choice (plain question, rollback version) and the
 #: release yes act at or above their cut; the reflection and reply checks act
@@ -61,7 +62,14 @@ CUTS = {PURPOSE_PLAIN: 0.6, PURPOSE_ROLLBACK: 0.6, PURPOSE_RELEASE: 0.6,
         # would want for the agent scored 0.78 or more, and the ones scored
         # 0.60 to 0.72 were plausible extras. A skill is pasted into every
         # turn of the agent, so an extra costs on every message.
-        PURPOSE_SKILLS: 0.75}
+        PURPOSE_SKILLS: 0.75,
+        # The triage agent (2026-11-12). Measured with
+        # scripts/jev_checks_calibrate.py apps 2 on jev-1.13.0, 17 labelled
+        # messages x 2 runs: 0.90 is the only cut with no wrong pick in
+        # either run (0.85 had one, 0.75 four), and no need was missed at
+        # it. Ordinary questions topped out at 0.62. A wrong pick puts a
+        # Connect button under an answer that needed none.
+        PURPOSE_APPS: 0.9}
 
 
 def cut(purpose: str) -> float:
@@ -680,5 +688,63 @@ async def pick_skills(email: str, text: str, skills: list) -> list[str] | None:
         return (",".join(chosen) or "none"), top
 
     answers = await ask_many(email, PURPOSE_SKILLS, state, questions,
+                             outcome=outcome)
+    return None if answers is None else ranked(answers)
+
+
+# --- the triage agent: which app fits, connected or not (2026-11-12) -------
+
+def apps_request(text: str, context: str = "") -> tuple[str, dict]:
+    """One Noul per app in app_triage.APPS, ids a0, a1, ... in that order.
+
+    Every app the platform can connect is asked about, connected or not:
+    Lukas, 2026-11-12, "even though it's not integrated yet, seeing all of
+    those possible connections, and recommending the right one". `context`
+    is what was said just before, for the reason tools_request gives.
+    """
+    import app_triage
+    questions = {}
+    for i, app in enumerate(app_triage.APPS.values()):
+        questions[f"a{i}"] = {
+            "type": "noul",
+            "instructions": f"To do what the person wants, would {app.label}, "
+                            f"an app for {app.note}, be a good app to use, "
+                            f"even if they did not name it?",
+            "criteria": {
+                "true": "what the person wants is the kind of thing this app "
+                        "is made for",
+                "false": "the message is small talk, a general question, or "
+                         "about something this app is not made for",
+            }}
+    if not str(context or "").strip():
+        return "The person wrote:\n" + _clip(text), questions
+    return ("Earlier in this conversation:\n"
+            + " ".join(str(context).split())[:CONTEXT_CHARS]
+            + "\n\nThe person has now written:\n" + _clip(text)), questions
+
+
+async def pick_apps(email: str, text: str,
+                    context: str = "") -> list[tuple[str, float]] | None:
+    """The apps Jev is sure fit this message, as [(app id, score)] surest
+    first: [] when none, None when Jev could not be asked or answered
+    unreadably (the caller then recommends nothing). Never raises."""
+    import app_triage
+    if not str(text or "").strip():
+        return []
+    ids = list(app_triage.APPS)
+    state, questions = apps_request(text, context)
+    least = cut(PURPOSE_APPS)
+
+    def ranked(answers: dict) -> list[tuple[str, float]]:
+        scored = [(ids[int(q[1:])], a.value) for q, a in answers.items()
+                  if a.value >= least]
+        scored.sort(key=lambda pair: (-pair[1], pair[0]))
+        return scored
+
+    def outcome(answers: dict) -> tuple[str, float | None]:
+        top = max((a.value for a in answers.values()), default=None)
+        return (",".join(i for i, _v in ranked(answers)) or "none"), top
+
+    answers = await ask_many(email, PURPOSE_APPS, state, questions,
                              outcome=outcome)
     return None if answers is None else ranked(answers)
