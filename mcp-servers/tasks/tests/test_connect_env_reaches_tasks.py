@@ -76,6 +76,14 @@ def test_the_github_app_slug_is_passed_through():
     assert _declared("GITHUB_APP_SLUG")
 
 
+def test_the_hubspot_scope_is_passed_through():
+    """Derived list above covers _CLIENT_ID and _CLIENT_SECRET only, so a
+    scope variable has to be asserted by name or it reaches the container
+    as nothing at all. HubSpot's scope is a REQUIRED parameter, unlike
+    GitHub's, so an absent one is a connect that cannot start."""
+    assert _declared("HUBSPOT_SCOPE")
+
+
 def test_the_scope_keeps_its_default_when_nobody_sets_it():
     """`-` and not `:-`. With `:-`, an empty value and an absent one are
     indistinguishable, and every deployment still on an OAuth App would

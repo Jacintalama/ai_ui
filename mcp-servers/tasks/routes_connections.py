@@ -902,7 +902,10 @@ async def _renewed(email: str, provider_id: str,
     renewal runs SKEW_SEC early and the token in hand still works.
     """
     try:
-        post = F.refresh_post(provider_id, values)
+        # The same redirect the connect used, which HubSpot's refresh asks
+        # for and nobody else's does.
+        post = F.refresh_post(provider_id, values,
+                              redirect_uri=_redirect_uri(provider_id))
     except ValueError:
         return values
 

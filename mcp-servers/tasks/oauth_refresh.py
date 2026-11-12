@@ -126,7 +126,8 @@ def refreshable(provider_id: str, values: Dict[str, str]) -> bool:
     return O.supports_oauth(provider_id)
 
 
-def refresh_post(provider_id: str, values: Dict[str, str]) -> Dict[str, Any]:
+def refresh_post(provider_id: str, values: Dict[str, str],
+                 redirect_uri: str = "") -> Dict[str, Any]:
     """The exact request that renews this credential.
 
     Encoded the way that vendor wants it, read off the provider rather than
@@ -134,6 +135,12 @@ def refresh_post(provider_id: str, values: Dict[str, str]) -> Dict[str, Any]:
     neither and gets the form encoding RFC 6749 specifies. Getting this wrong
     on a renewal is the same 400 as getting it wrong on the exchange, and the
     exchange already learned it.
+
+    `redirect_uri` is wanted by HubSpot alone and must be the same one the
+    connect used. A provider that asks for it and is given nothing is
+    REFUSED here rather than sent without it, because `_renewed` turns that
+    into "your credential was rejected, reconnect it", which somebody can
+    act on, while a 400 from the vendor reads as the vendor's fault.
     """
     import oauth_providers as O
 
@@ -147,6 +154,11 @@ def refresh_post(provider_id: str, values: Dict[str, str]) -> Dict[str, Any]:
     client_id, client_secret = O.client_credentials(provider_id)
     body: Dict[str, str] = {"grant_type": "refresh_token",
                             "refresh_token": refresh}
+    if provider.refresh_needs_redirect:
+        if not redirect_uri:
+            raise ValueError(provider.label + " wants the redirect URI on a "
+                             "renewal, and this call did not supply one.")
+        body["redirect_uri"] = redirect_uri
     post: Dict[str, Any] = {
         "url": provider.token_endpoint,
         # GitHub answers in `key=value&key=value` unless asked for JSON, and

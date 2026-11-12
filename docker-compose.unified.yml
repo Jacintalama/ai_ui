@@ -440,6 +440,13 @@ services:
       - AIRTABLE_SCOPE=${AIRTABLE_SCOPE:-}
       - HUBSPOT_CLIENT_ID=${HUBSPOT_CLIENT_ID:-}
       - HUBSPOT_CLIENT_SECRET=${HUBSPOT_CLIENT_SECRET:-}
+      # What the person approves on HubSpot's consent screen. The default is
+      # what the five HubSpot tools actually call and it lives in
+      # oauth_providers.HUBSPOT_SCOPE; this only exists so a deployment can
+      # widen it without a release. `:-` and not `-`, as for Airtable: an
+      # empty scope is not merely meaningless to HubSpot, it is a required
+      # parameter, so an empty value has to fall back to the default.
+      - HUBSPOT_SCOPE=${HUBSPOT_SCOPE:-}
       # tasks mints an Open WebUI token per gateway turn, so it must sign
       # with the SAME secret Open WebUI verifies with. Declared for
       # api-gateway, mcp-proxy and open-webui but never for tasks: it was

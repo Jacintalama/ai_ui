@@ -53,19 +53,21 @@ def test_notion_was_left_alone():
 
 # --- the vendors that must NOT be offered yet --------------------------------
 
-def test_hubspot_and_airtable_are_not_offered_until_a_refresh_exists():
-    """Both hand back a refresh_token and an access token that dies in under
-    an hour, and nothing in this service refreshes anything. The button would
-    work for half an hour and then stop, while the card still said Connected,
-    and it would be replacing a paste-form token that never expires.
+def test_hubspot_and_airtable_are_offered_now_that_a_refresh_exists():
+    """This test used to assert the opposite, and said so: "delete this test
+    when refresh lands, not before."
 
-    So this is a downgrade, not a gap. Delete this test when refresh lands,
-    not before.
+    The refresh landed on 2026-11-11, proven on the box against ClickUp's
+    real token endpoint. Airtable went in the same day and HubSpot on
+    2026-11-12, so the two names this test was written about are now the
+    two names it checks the other way round. Inverted rather than deleted,
+    because an access token that dies in under an hour is exactly the case
+    worth keeping a test on.
     """
-    for pid in sorted(O.NEEDS_TOKEN_REFRESH_FIRST):
-        assert O.supports_oauth(pid) is False
-        assert O.one_click(pid) is False
-        assert pid not in O.PROVIDERS
+    for pid in ("hubspot", "airtable"):
+        assert O.supports_oauth(pid) is True
+        assert O.one_click(pid) is True
+        assert pid in O.PROVIDERS
 
 
 def test_the_ones_that_will_never_offer_it_still_do_not():
