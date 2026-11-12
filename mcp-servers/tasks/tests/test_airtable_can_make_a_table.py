@@ -171,6 +171,44 @@ def test_the_columns_of_a_row_are_declared_an_object():
     assert "{" in desc, "the model is shown no shape to copy: %r" % desc
 
 
+# --- several rows at once -------------------------------------------------
+
+def test_several_rows_can_go_in_one_call():
+    """The round limit is the reason this exists rather than a loop.
+
+    A reply stops after seven rounds of tool use, and the same screenshot
+    that asked for this table carried "Stopped after 7 rounds of tool
+    use, so this answer may be incomplete." Five people added one call
+    each is five of those seven rounds spent on typing.
+    """
+    assert "create_records" in TOOLS
+    t = TOOLS["create_records"]
+    assert t.method == "POST"
+    assert t.path == "/{base_id}/{table}"
+
+
+def test_each_row_is_wrapped_the_way_airtable_wants_it():
+    sent = _body("create_records", base_id="appX", table="T",
+                 rows=[{"Name": "Ada"}, {"Name": "Lin"}])
+    assert sent["records"] == [{"fields": {"Name": "Ada"}},
+                               {"fields": {"Name": "Lin"}}]
+    assert sent["typecast"] is True
+
+
+def test_more_rows_than_airtable_takes_are_not_all_sent():
+    """Airtable's limit is ten per call and answers 422 above it, which
+    would lose every row rather than the eleventh."""
+    sent = _body("create_records", base_id="appX", table="T",
+                 rows=[{"Name": str(n)} for n in range(25)])
+    assert len(sent["records"]) == 10
+
+
+def test_a_row_that_is_not_a_row_is_dropped():
+    sent = _body("create_records", base_id="appX", table="T",
+                 rows=[{"Name": "Ada"}, "Lin", None, {}])
+    assert sent["records"] == [{"fields": {"Name": "Ada"}}]
+
+
 def test_changing_a_row_changes_only_the_columns_given():
     t = TOOLS["update_record"]
     assert t.method == "PATCH", (

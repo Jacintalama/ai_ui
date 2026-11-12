@@ -1163,6 +1163,19 @@ def _airtable_table_body(args: Dict[str, Any]) -> Dict[str, Any]:
     return body
 
 
+#: How many rows Airtable takes in one create. Above it the call is a
+#: 422, which loses every row rather than the eleventh.
+_AIRTABLE_MAX_ROWS = 10
+
+
+def _airtable_records_body(args: Dict[str, Any]) -> Dict[str, Any]:
+    given = args.get("rows")
+    rows = [r for r in (given if isinstance(given, (list, tuple)) else [])
+            if isinstance(r, dict) and r]
+    return {"records": [{"fields": r} for r in rows[:_AIRTABLE_MAX_ROWS]],
+            "typecast": True}
+
+
 def _airtable_record_body(args: Dict[str, Any]) -> Dict[str, Any]:
     fields = args.get("fields")
     # `typecast` is the difference between a model writing "Active" into
@@ -1218,6 +1231,19 @@ AIRTABLE_TOOLS = [
                           '{"Name": "Ada", "Role": "engineer"}. Column names '
                           "have to match the table's exactly.", True)},
          shape=_airtable_record_body,
+         keep=("id", "createdTime", "fields")),
+    Tool(name="create_records",
+         summary="Add several rows to one of your Airtable tables in a "
+                 "single call, up to ten at a time.",
+         method="POST", path="/{base_id}/{table}",
+         args={"base_id": ("string", "Base id from list_my_bases", True),
+               "table": ("string", "Table id or name from list_tables", True),
+               "rows": ("array",
+                        "The rows, as a list of objects of column name to "
+                        'value, like [{"Name": "Ada"}, {"Name": "Lin"}]. Up '
+                        "to ten.", True)},
+         shape=_airtable_records_body,
+         unwrap=lambda d: (d or {}).get("records", []),
          keep=("id", "createdTime", "fields")),
     Tool(name="update_record",
          summary="Change some columns of one row in an Airtable table, "
