@@ -4202,6 +4202,30 @@
   //: and their eyes, not about one landing page.
   var AIUI_APP_H_KEY = 'aiui-app-height';
 
+  //: And how much WIDER than its column, which is the other half of the
+  //: same answer (2026-11-12, Ralph: "the size cant be widen only hight i
+  //: can adjust.. please add that also").
+  //:
+  //: A landing page is wide. The message column is roughly 720 pixels on a
+  //: 1920 screen, so a page was being rendered into a third of the window
+  //: and read at a third of its size, with two thirds of the screen empty
+  //: on either side of it.
+  //:
+  //: What is stored is the EXTRA beyond the column, never a width. The box
+  //: lives in the column's normal flow: a width larger than the column
+  //: overflows to one side and sits off centre, while symmetric NEGATIVE
+  //: margins keep it in flow, centred, and growing both ways, which is
+  //: what "wider" looks like to the person dragging it. An extra also
+  //: survives the column itself changing width, which a stored width does
+  //: not.
+  var AIUI_APP_W_KEY = 'aiui-app-width';
+  //: One arrow press sideways. Wider than the vertical step because
+  //: horizontal room is what there is most of.
+  var AIUI_APP_W_STEP = 64;
+  //: Kept off the window's own edges, so the drag always has somewhere
+  //: left to grab.
+  var AIUI_APP_W_GUTTER = 16;
+
   // ===== The name opens a menu =====
   //
   // What the app's name offers, the way ChatGPT's canvas does: where it
@@ -4557,15 +4581,36 @@
       s.frame.style.height = s.homeHeight;
       s.home.appendChild(s.frame);
     }
+    // Home before the panel goes, or everything still inside it leaves
+    // the document with it. Reversed so re-inserting one control never
+    // moves the next one's anchor.
+    for (var i = (s.moved || []).length - 1; i >= 0; i -= 1) {
+      var m = s.moved[i];
+      if (!m.home) continue;
+      if (m.next && m.next.parentNode === m.home) {
+        m.home.insertBefore(m.el, m.next);
+      } else {
+        m.home.appendChild(m.el);
+      }
+    }
     if (s.panel && s.panel.parentNode) s.panel.parentNode.removeChild(s.panel);
     if (s.chip && s.chip.parentNode) s.chip.style.display = 'none';
     if (s.bar) s.bar.style.display = '';
     if (s.bar) aiuiShowSizeHandle(s.bar, true);
+    if (s.box) aiuiApplyAppWidth(s.box, aiuiSavedAppExtra());
     if (s.pane) s.pane.style.paddingRight = s.panePad;
     if (s.onKey) document.removeEventListener('keydown', s.onKey);
   }
 
-  function aiuiSplitOpen(slug, box, bar, frame, chip) {
+  // `tools` are buttons from the thread's bar that belong in the panel's
+  // head, and `footers` are the panels they open, which belong under the
+  // app. Both are MOVED, never copied, for the same reason the iframe is:
+  // these are live closures over this app's frame, and a copy would be a
+  // second control wired to nothing.
+  //
+  // Both are optional, so a caller with no bar of its own still gets a
+  // panel rather than a crash.
+  function aiuiSplitOpen(slug, box, bar, frame, chip, tools, footers) {
     aiuiSplitClose();
     var pane = aiuiChatPane();
     if (!pane) return false;   // caller falls back to growing in place
@@ -4607,12 +4652,31 @@
     var holder = document.createElement('div');
     holder.style.cssText = 'flex:1 1 auto;min-height:0;overflow:hidden;';
 
+    // Where each borrowed control came from, so closing the panel puts it
+    // back where it was rather than merely back in the bar: a row of icons
+    // has nothing but its order.
+    var moved = [];
+    function borrow(el, into, before) {
+      if (!el) return;
+      moved.push({ el: el, home: el.parentNode, next: el.nextSibling });
+      if (before && before.parentNode === into) into.insertBefore(el, before);
+      else into.appendChild(el);
+    }
+
     var home = frame.parentNode;
     var homeHeight = frame.style.height;
     frame.style.height = '100%';
     holder.appendChild(frame);
+    // Before the open-in-a-tab link, so the panel's own controls stay on
+    // the right where they were.
+    for (var t = 0; t < (tools || []).length; t += 1) {
+      borrow(tools[t], head, out);
+    }
     panel.appendChild(head);
     panel.appendChild(holder);
+    for (var f = 0; f < (footers || []).length; f += 1) {
+      borrow(footers[f], panel);
+    }
     document.body.appendChild(panel);
     aiuiFitDesktop(frame, holder);
     function onResize() { aiuiFitDesktop(frame, holder); }
@@ -4620,6 +4684,10 @@
 
     var panePad = pane.style.paddingRight;
     pane.style.paddingRight = '50vw';
+    // The box left behind in the thread is empty once the app moves out.
+    // Negative margins on an empty box push it out over the conversation,
+    // and the pane sets its own size anyway.
+    aiuiApplyAppWidth(box, 0);
     bar.style.display = 'none';
     aiuiShowSizeHandle(bar, false);
     chip.style.display = '';
@@ -4628,7 +4696,8 @@
     document.addEventListener('keydown', onKey);
 
     aiuiSplit = { panel: panel, frame: frame, home: home, bar: bar,
-                  chip: chip, pane: pane, panePad: panePad,
+                  box: box, chip: chip, pane: pane, panePad: panePad,
+                  moved: moved,
                   homeHeight: homeHeight, onKey: onKey, onResize: onResize };
     return true;
   }
@@ -4809,23 +4878,91 @@
     }
   }
 
+  // The widest this box may grow BEYOND its column, in pixels.
+  //
+  // Measured against the column rather than the box, because the box's own
+  // width already contains whatever extra is applied: measuring that would
+  // compound on every drag and run off the screen in three pulls.
+  function aiuiMaxAppExtra(box) {
+    var col = box && box.parentElement;
+    var colW = col ? col.getBoundingClientRect().width
+                   : (box ? box.getBoundingClientRect().width : 0);
+    var room = window.innerWidth - colW - (AIUI_APP_W_GUTTER * 2);
+    return Math.max(0, Math.round(room));
+  }
+
+  function aiuiClampAppExtra(px, box) {
+    var n = Number(px);
+    if (!isFinite(n)) return 0;
+    // Zero is the floor: a negative extra is a POSITIVE margin, which is a
+    // preview shrinking away from a column that already fits it. Narrower
+    // than the column is not something anybody asked for, and it has no
+    // obvious way back.
+    return Math.max(0, Math.min(aiuiMaxAppExtra(box), Math.round(n)));
+  }
+
+  // What was stored, floored but NOT fitted to a screen: the box is what
+  // knows how much room there is, and it does that fitting in
+  // aiuiApplyAppWidth, which is the only place a value reaches the page.
+  // One clamp, at the one moment both the number and the box are known.
+  function aiuiSavedAppExtra() {
+    var raw = null;
+    try {
+      raw = window.localStorage.getItem(AIUI_APP_W_KEY);
+    } catch (e) {
+      raw = null;
+    }
+    var n = raw ? parseFloat(raw) : 0;
+    return isFinite(n) ? Math.max(0, Math.round(n)) : 0;
+  }
+
+  function aiuiSaveAppExtra(px) {
+    try {
+      window.localStorage.setItem(AIUI_APP_W_KEY,
+                                  String(Math.max(0, Math.round(px) || 0)));
+    } catch (e) {
+      // Same as the height: a browser with storage switched off still
+      // resizes, it just does not remember. A thrown error halfway
+      // through a drag is worse than forgetting.
+    }
+  }
+
+  // Widen the box by `extra` pixels, half on each side, and never by more
+  // than the screen has room for.
+  //
+  // THE one place an extra reaches the page, so THE one place it is fitted
+  // to the window. A stored value is editable, shared with everything else
+  // on this origin, and survives a window being resized or a release that
+  // changes what it means; clamping here covers the drag, the arrows and
+  // the restore with a single rule.
+  function aiuiApplyAppWidth(box, extra) {
+    if (!box || !box.style) return 0;
+    var fitted = aiuiClampAppExtra(extra, box);
+    var half = fitted / 2;
+    box.style.marginLeft = half ? (-half + 'px') : '';
+    box.style.marginRight = half ? (-half + 'px') : '';
+    return fitted;
+  }
+
   // A grab bar under the preview. Drag it, or focus it and use the arrows.
   //
   // Keyboard as well as pointer because a drag-only control is a control
   // some people do not have, and this one is the only way to make a
   // letterboxed preview readable.
-  function aiuiSizeHandle(frame) {
+  function aiuiSizeHandle(frame, box) {
     var handle = document.createElement('div');
     handle.setAttribute('data-aiui-size-handle', '1');
     handle.setAttribute('role', 'separator');
     handle.setAttribute('aria-orientation', 'horizontal');
     handle.setAttribute('aria-label',
-                        'Resize the preview. Use the up and down arrows.');
+                        'Resize the preview. Drag it, or use the up and down'
+                        + ' arrows for height and the left and right arrows'
+                        + ' for width.');
     handle.setAttribute('tabindex', '0');
     handle.setAttribute('aria-valuemin', String(AIUI_APP_MIN));
     handle.setAttribute('aria-valuemax', String(AIUI_APP_MAX));
     handle.style.cssText = 'display:flex;align-items:center;'
-      + 'justify-content:center;height:14px;cursor:ns-resize;'
+      + 'justify-content:center;height:14px;cursor:move;'
       + 'border-top:1px solid rgba(127,127,127,.2);'
       + 'background:rgba(127,127,127,.06);touch-action:none;';
 
@@ -4848,19 +4985,39 @@
 
     handle.setAttribute('aria-valuenow', String(height()));
 
+    //: How much wider than its column the box is right now. Tracked here
+    //: rather than measured off the DOM for the same reason the maximum
+    //: is: the box's own width already contains it.
+    var extra = aiuiSavedAppExtra();
+
+    function widen(px, remember) {
+      extra = aiuiApplyAppWidth(box, px);
+      if (remember) aiuiSaveAppExtra(extra);
+      return extra;
+    }
+
     handle.addEventListener('pointerdown', function (down) {
       down.preventDefault();
       var startY = down.clientY;
+      var startX = down.clientX;
       var startH = height();
+      var startExtra = extra;
       // Listened for on the window rather than captured on the element:
       // a pointer dragged off a 14 pixel bar must not end the drag, and
       // this needs no pointer id to be right.
-      function move(e) { apply(startH + (e.clientY - startY), false); }
+      function move(e) {
+        apply(startH + (e.clientY - startY), false);
+        // Twice the pointer's travel, because the box grows from both
+        // edges at once: that is what keeps the right edge under the
+        // finger that is dragging it.
+        widen(startExtra + ((e.clientX - startX) * 2), false);
+      }
       function up() {
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', up);
         handle.style.background = 'rgba(127,127,127,.06)';
         aiuiSaveAppHeight(height());
+        aiuiSaveAppExtra(extra);
       }
       handle.style.background = 'rgba(127,127,127,.16)';
       window.addEventListener('pointermove', move);
@@ -4870,8 +5027,13 @@
     handle.addEventListener('keydown', function (e) {
       var k = e.key;
       var now = height();
-      if (k === 'ArrowDown' || k === 'ArrowRight') apply(now + AIUI_APP_STEP, true);
-      else if (k === 'ArrowUp' || k === 'ArrowLeft') apply(now - AIUI_APP_STEP, true);
+      // Up and down are height, left and right are WIDTH. They used to be
+      // a second way to change the height, which left no key at all for
+      // the direction somebody on a keyboard cannot drag.
+      if (k === 'ArrowDown') apply(now + AIUI_APP_STEP, true);
+      else if (k === 'ArrowUp') apply(now - AIUI_APP_STEP, true);
+      else if (k === 'ArrowRight') widen(extra + AIUI_APP_W_STEP, true);
+      else if (k === 'ArrowLeft') widen(extra - AIUI_APP_W_STEP, true);
       else if (k === 'Home') apply(AIUI_APP_MIN, true);
       else if (k === 'End') apply(AIUI_APP_MAX, true);
       else return;
@@ -5409,7 +5571,8 @@
         aiuiSplitClose();
         return;
       }
-      if (aiuiSplitOpen(slug, box, bar, frame, chip)) return;
+      if (aiuiSplitOpen(slug, box, bar, frame, chip,
+                        [note, paint], [ask, look.el])) return;
       // No chat pane to shrink, so this markup is not what we expect.
       // Growing in place is worse than sitting beside the chat and much
       // better than a control that does nothing.
@@ -5460,7 +5623,10 @@
     box.appendChild(stage);
     // Under the preview, above the ask box, so dragging it never covers
     // the thing being resized.
-    box.appendChild(aiuiSizeHandle(frame));
+    box.appendChild(aiuiSizeHandle(frame, box));
+    // Remembering a size and not restoring it is worse than not
+    // remembering at all: the control looks broken on every reload.
+    aiuiApplyAppWidth(box, aiuiSavedAppExtra());
     box.appendChild(ask);
     box.appendChild(look.el);
     if (inReply) aiuiPutInReply(box, inReply);
