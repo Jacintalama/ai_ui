@@ -2037,6 +2037,13 @@ async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
         if not pending and (plan or can_plan):
             turn = dict(turn, answer=app_triage.with_buttons(
                 turn.get("answer"), plan or can_plan))
+            # Its own pass, because the rules are different: a
+            # recommendation offers an app NOBODY has connected, and this
+            # offers one whose credential stopped working, which is
+            # connected and would be skipped there.
+            if can_plan:
+                turn = dict(turn, answer=can_do.reconnect_buttons(
+                    turn.get("answer"), can_plan))
         # IO speaking for itself: no name and no face over the answer, and
         # that holds whether it answered or stopped to ask.
         #

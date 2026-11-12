@@ -171,3 +171,37 @@ def brief(p) -> str:
         "answer, so do not say you are about to go and check, and do not "
         "promise to look in a moment: say what IO can do and stop.")
     return "\n".join(lines)
+
+
+def reconnect_buttons(answer: str, p) -> str:
+    """`answer` with a button for every app whose credential was rejected.
+
+    `app_triage.with_buttons` draws a button for an app that is NOT
+    connected, which is right for a recommendation and leaves this case
+    out: a rejected credential is connected, and the row is there. So the
+    model, told it had been rejected, wrote "There should be a Connect
+    button below to sort that" and the service drew nothing (measured
+    live 2026-11-12).
+
+    The button is the right offer. `#aiui-connect:<id>` opens the
+    Connections panel on that app's own card, which is where reconnecting
+    happens. Never twice, and never for a credential that works.
+    """
+    answer = str(answer or "")
+    low = answer.lower()
+    lines, buttons = [], []
+    for a in (p or {}).get("apps") or []:
+        if not a.get("rejected"):
+            continue
+        app = app_triage.APPS.get(a["id"])
+        if not app or app_triage.connect_href(app.id) in low:
+            continue
+        lines.append("%s has to be reconnected before IO can use it."
+                     % app.label)
+        buttons.append("[Connect %s](%s)"
+                       % (app.label, app_triage.connect_href(app.id)))
+    if not buttons:
+        return answer
+    # One paragraph, so the buttons sit side by side rather than stacked
+    # and touching (app_triage, 2026-11-12).
+    return answer.rstrip() + "\n\n" + "\n".join(lines + [" ".join(buttons)])
