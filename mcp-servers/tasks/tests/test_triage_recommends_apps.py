@@ -612,3 +612,32 @@ def test_the_main_chat_hands_the_message_to_the_plan(monkeypatch):
     said = out["turns"][0]["answer"]
     assert "#aiui-connect:gmail" in said
     assert "n8n" not in said and "n8n" not in seen["graph"]
+
+
+# --- the truth is the service's, not the model's (e2e, 2026-11-12) --------------
+
+#: What the main chat's free model wrote on the live site, 2026-11-12 11:31
+#: UTC, with the brief saying "IO cannot add or change rows yet" in front of
+#: it. The prompt is not a guarantee (CLAUDE.md).
+LIVE_OVERCLAIM = ("Use Airtable as the place to save them. It's not connected "
+                  "yet, so hit the Connect button under this message and I'll "
+                  "be able to write rows into it once it is.")
+
+
+def test_a_named_app_with_a_limit_still_gets_the_limit_said():
+    p = app_triage.plan([("airtable", 0.94)], set(), [])
+    out = app_triage.with_buttons(LIVE_OVERCLAIM, p)
+    assert "cannot add or change rows" in out
+    assert out.rstrip().endswith(AIR)
+    assert out.index("cannot add or change rows") < out.index(AIR)
+
+
+def test_a_named_app_without_a_limit_gets_only_its_button():
+    p = app_triage.plan([("trello", 0.96)], set(), [])
+    out = app_triage.with_buttons("Trello fits your to-dos.", p)
+    assert out == "Trello fits your to-dos.\n\n[Connect Trello](#aiui-connect:trello)"
+
+
+def test_the_brief_forbids_offering_what_io_cannot_do():
+    b = app_triage.brief(app_triage.plan([("airtable", 0.94)], set(), []))
+    assert "do not offer to add or change rows" in b.lower()
