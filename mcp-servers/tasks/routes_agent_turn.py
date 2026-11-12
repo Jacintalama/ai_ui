@@ -44,6 +44,7 @@ import agent_memory
 import agent_progress
 import agent_routing
 import app_triage
+import can_do
 import main_assistant
 import skill_fit
 import agent_skills
@@ -1911,6 +1912,31 @@ async def _skill_connect_needs(email: str) -> list:
     return skill_fit.overview(pool, connected)["connect"]
 
 
+async def _can_do_facts(email: str, asked) -> tuple:
+    """What IO can do for this person, for a question about its abilities,
+    as (the block for the model, the plan the buttons are drawn from).
+
+    The connections are read HERE rather than taken from the triage pick,
+    which carries an empty set whenever it recommends nothing: treating
+    that as "nothing connected" would be the same lie with its sign
+    flipped. Strict, for the same reason.
+
+    Fails open to ("", None): a database that will not answer must not
+    cost a turn that had tools to run anyway. See can_do.
+    """
+    try:
+        import routes_agents                   # it imports this module
+        connected = await routes_agents._connected_providers(email,
+                                                             strict=True)
+        plan = can_do.plan(asked, set(connected or ()))
+        return can_do.brief(plan), plan
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not read what this person has connected; the "
+                       "capability question is left to the model",
+                       exc_info=True)
+        return "", None
+
+
 async def _with_connect_links(email: str, turn: dict) -> dict:
     """An answer about skills with the Connect links it talks about and left
     out put back underneath, each a button in the main chat
@@ -1963,7 +1989,19 @@ async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
         # app already connected, the tool path is exactly what it was.
         if not app_triage.needs_assistant(plan):
             plan = None
-        if not picked and plan is None:
+        # A question about what IO can do is answered from the person's own
+        # connections (can_do). Nothing is fetched to answer "can you", so
+        # Jev picks no tool and the free model used to answer out of its own
+        # head: "I don't have Airtable access in this chat" while Airtable
+        # was connected and working (2026-11-11).
+        asked = can_do.question(text)
+        facts, can_plan = "", None
+        if asked is not None:
+            # Before the read, which is what the line is about.
+            if not agent_progress.reading_line(picked):
+                agent_progress.say(can_do.CHECKING_LINE)
+            facts, can_plan = await _can_do_facts(body.user_email, asked)
+        if not picked and plan is None and not facts:
             return None
         picked = list(picked or [])
         assistant = main_assistant.agent()
@@ -1977,9 +2015,9 @@ async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
         if reading:
             agent_progress.say(reading)
         graph = await agent_graph.graph_block(body.user_email, text)
-        advice = app_triage.brief(plan)
-        if advice:
-            graph = (str(graph or "") + "\n\n" + advice).strip()
+        for block in (app_triage.brief(plan), facts):
+            if block:
+                graph = (str(graph or "") + "\n\n" + block).strip()
         turn = await _turn_for(
             body.user_email, assistant, body.messages, names, roster=agents,
             graph=graph, tool_ids=picked)
@@ -1989,9 +2027,9 @@ async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
             return None
         if not pending and "skills" in picked:
             turn = await _with_connect_links(body.user_email, turn)
-        if not pending and plan:
+        if not pending and (plan or can_plan):
             turn = dict(turn, answer=app_triage.with_buttons(
-                turn.get("answer"), plan))
+                turn.get("answer"), plan or can_plan))
         # IO speaking for itself: no name and no face over the answer, and
         # that holds whether it answered or stopped to ask.
         #
