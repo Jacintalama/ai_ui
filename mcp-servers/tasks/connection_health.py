@@ -123,3 +123,45 @@ async def note(email: str, provider: str, status_code) -> None:
             pass
 
     _SAID[key] = says
+
+
+async def rejected(email: str) -> set:
+    """The providers whose credential was rejected the last time it was
+    used, as a set of provider ids.
+
+    The read side of `note`. `check_ok` is nullable with no default, so
+    three states live in that column: true means a call worked, false
+    means a call came back 401, and NULL means nothing has been learned
+    about it yet. Only false is reported here. NULL must never read as
+    broken, because it is every connection nobody has used since the
+    column existed.
+
+    Fails toward "nothing is rejected", the opposite way round to the
+    write: telling somebody to reconnect a credential that works is the
+    PR #182 mistake in another costume, and here there is no vendor
+    answer to correct it with.
+    """
+    try:
+        conn = await _connect()
+    except Exception as err:                                # noqa: BLE001
+        logger.warning("health: could not reach the database (%s)",
+                       type(err).__name__)
+        return set()
+    try:
+        rows = await conn.fetch(
+            """
+            SELECT provider
+              FROM tasks.user_connections
+             WHERE email = $1 AND check_ok IS FALSE
+            """,
+            email)
+    except Exception as err:                                # noqa: BLE001
+        logger.warning("health: could not read what is rejected (%s)",
+                       type(err).__name__)
+        return set()
+    finally:
+        try:
+            await conn.close()
+        except Exception:                                   # noqa: BLE001
+            pass
+    return {r["provider"] for r in rows}

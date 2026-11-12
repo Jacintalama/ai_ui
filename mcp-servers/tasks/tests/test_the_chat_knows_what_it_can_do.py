@@ -119,8 +119,8 @@ def test_a_word_inside_another_word_is_not_the_app():
 
 # --- what the model is told -----------------------------------------------
 
-def _facts(ids, connected):
-    return can_do.brief(can_do.plan(ids, connected))
+def _facts(ids, connected, rejected=()):
+    return can_do.brief(can_do.plan(ids, connected, rejected))
 
 
 def test_it_says_whether_the_app_is_connected():
@@ -186,6 +186,90 @@ def test_with_nothing_connected_the_general_question_still_has_an_answer():
     assert "Airtable" in said
 
 
+# --- a credential that stopped working is not an ability ------------------
+
+def test_a_rejected_credential_is_not_quietly_counted_as_working():
+    """Measured live 2026-11-12: asked "what can you do", the chat listed
+    GitHub among the things it can do. My GitHub credential has answered
+    401 since the morning and the Connections card already says so, which
+    is the whole point of check_ok. Connected is not the same as usable.
+    """
+    said = _facts([], {"github"}, rejected={"github"})
+    assert "GitHub (connected" in said
+    assert "reconnect" in said.lower(), said
+
+
+def test_a_rejected_credential_is_said_to_be_the_reason():
+    said = _facts(["github"], {"github"}, rejected={"github"})
+    assert "rejected" in said.lower(), said
+
+
+def test_a_working_credential_says_nothing_about_reconnecting():
+    assert "reconnect" not in _facts(["airtable"], {"airtable"}).lower()
+
+
+def test_nothing_is_rejected_by_default():
+    """The flag is nullable with no default: NULL means nothing was ever
+    learned, and nothing learned must never read as broken."""
+    assert can_do.plan(["github"], {"github"})["apps"][0]["rejected"] is False
+
+
+# --- reading that back ----------------------------------------------------
+
+class _Conn:
+    def __init__(self, rows):
+        self.rows = rows
+        self.sql = []
+        self.args = []
+        self.closed = False
+
+    async def fetch(self, sql, *args):
+        self.sql.append(" ".join(sql.split()))
+        self.args.append(args)
+        return self.rows
+
+    async def close(self):
+        self.closed = True
+
+
+def _fake_db(monkeypatch, rows):
+    made = []
+
+    async def _connect():
+        c = _Conn(rows)
+        made.append(c)
+        return c
+
+    import connection_health
+    monkeypatch.setattr(connection_health, "_connect", _connect)
+    return made
+
+
+def test_the_rejected_ones_are_read_from_the_column_that_holds_them(monkeypatch):
+    import connection_health
+
+    made = _fake_db(monkeypatch, [{"provider": "github"}])
+    out = asyncio.run(connection_health.rejected("ralph@example.com"))
+    assert out == {"github"}
+    assert "tasks.user_connections" in made[0].sql[0]
+    assert "check_ok IS FALSE" in made[0].sql[0]
+    assert made[0].args[0] == ("ralph@example.com",)
+    assert made[0].closed is True
+
+
+def test_a_database_that_will_not_answer_accuses_nobody(monkeypatch):
+    """Failing toward "rejected" would tell somebody to reconnect a
+    credential that works, which is the PR #182 mistake in another
+    costume."""
+    import connection_health
+
+    async def boom():
+        raise RuntimeError("no database")
+
+    monkeypatch.setattr(connection_health, "_connect", boom)
+    assert asyncio.run(connection_health.rejected("ralph@example.com")) == set()
+
+
 # --- the wiring -----------------------------------------------------------
 
 class _Body:
@@ -196,8 +280,12 @@ class _Body:
         self.conversation_id = "c1"
 
 
-def _wire(monkeypatch, answer="Yes, Airtable is connected.", connected=()):
+def _wire(monkeypatch, answer="Yes, Airtable is connected.", connected=(),
+          rejected=()):
     seen = {}
+    # Without this the wiring tests reach for a real database and wait out
+    # its timeout: 13 seconds for a question with no database in it.
+    _fake_db(monkeypatch, [{"provider": p} for p in rejected])
 
     async def turn_for(user_email, agent, messages, names=(), roster=(),
                        graph="", now=None, tool_ids=None):
@@ -248,6 +336,16 @@ def test_an_app_not_connected_gets_its_connect_button(monkeypatch):
     out = asyncio.run(rt._assistant_reply(_Body(text), text, [], picked=[]))
     assert "Notion (not connected)" in seen["graph"]
     assert app_triage.connect_href("notion") in out["turns"][0]["answer"]
+
+
+def test_a_rejected_credential_reaches_the_model_through_the_real_path(
+        monkeypatch):
+    """The whole wire, end to end: the column says GitHub was rejected,
+    and what the model is told says so too."""
+    seen = _wire(monkeypatch, connected=("github",), rejected=("github",))
+    text = "can you access github?"
+    asyncio.run(rt._assistant_reply(_Body(text), text, [], picked=[]))
+    assert "reconnected from Connections" in seen["graph"]
 
 
 def test_the_graph_block_is_still_there(monkeypatch):

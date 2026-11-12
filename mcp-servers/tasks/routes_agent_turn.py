@@ -45,6 +45,7 @@ import agent_progress
 import agent_routing
 import app_triage
 import can_do
+import connection_health
 import main_assistant
 import skill_fit
 import agent_skills
@@ -1928,7 +1929,13 @@ async def _can_do_facts(email: str, asked) -> tuple:
         import routes_agents                   # it imports this module
         connected = await routes_agents._connected_providers(email,
                                                              strict=True)
-        plan = can_do.plan(asked, set(connected or ()))
+        # Connected is not the same as usable. A credential that answers
+        # 401 is a row in the table and nothing in practice, and this is
+        # the column that already knows (connection_health, PR #197).
+        # It fails toward "nothing is rejected" on its own, so it can
+        # never accuse a credential that works.
+        bad = await connection_health.rejected(email)
+        plan = can_do.plan(asked, set(connected or ()), bad)
         return can_do.brief(plan), plan
     except Exception:                                       # noqa: BLE001
         logger.warning("could not read what this person has connected; the "
