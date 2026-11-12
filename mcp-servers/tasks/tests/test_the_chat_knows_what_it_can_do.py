@@ -214,6 +214,46 @@ def test_nothing_is_rejected_by_default():
     assert can_do.plan(["github"], {"github"})["apps"][0]["rejected"] is False
 
 
+# --- and the button it talks about is really there ------------------------
+
+REJECTED = {"apps": [{"id": "github", "label": "GitHub", "connected": True,
+                      "rejected": True, "can": "read repositories",
+                      "cannot": "create a new repository"}]}
+
+
+def test_a_rejected_credential_gets_a_button_to_reconnect_it():
+    """Measured live 2026-11-12: "There should be a Connect button below
+    to sort that." There was not. A rejected credential is connected, so
+    the recommendation rules skip it, and the model was left promising a
+    button the service never drew. The button is the right thing to
+    offer: it opens the card you reconnect from."""
+    out = can_do.reconnect_buttons("GitHub needs reconnecting.", REJECTED)
+    assert app_triage.connect_href("github") in out
+
+
+def test_it_says_what_the_button_is_for():
+    out = can_do.reconnect_buttons("GitHub is in a bad way.", REJECTED)
+    assert "reconnect" in out.lower()
+
+
+def test_a_credential_that_works_is_offered_nothing():
+    fine = {"apps": [{"id": "airtable", "label": "Airtable",
+                      "connected": True, "rejected": False,
+                      "can": "read your bases", "cannot": ""}]}
+    assert can_do.reconnect_buttons("Yes.", fine) == "Yes."
+
+
+def test_a_button_already_in_the_answer_is_not_added_twice():
+    said = "Reconnect it: [Connect GitHub](%s)" % app_triage.connect_href(
+        "github")
+    assert can_do.reconnect_buttons(said, REJECTED) == said
+
+
+def test_nothing_rejected_leaves_the_answer_exactly_as_it_was():
+    assert can_do.reconnect_buttons("Yes.", {"apps": []}) == "Yes."
+    assert can_do.reconnect_buttons("Yes.", None) == "Yes."
+
+
 # --- reading that back ----------------------------------------------------
 
 class _Conn:
@@ -342,10 +382,12 @@ def test_a_rejected_credential_reaches_the_model_through_the_real_path(
         monkeypatch):
     """The whole wire, end to end: the column says GitHub was rejected,
     and what the model is told says so too."""
-    seen = _wire(monkeypatch, connected=("github",), rejected=("github",))
+    seen = _wire(monkeypatch, connected=("github",), rejected=("github",),
+                 answer="GitHub needs reconnecting.")
     text = "can you access github?"
-    asyncio.run(rt._assistant_reply(_Body(text), text, [], picked=[]))
+    out = asyncio.run(rt._assistant_reply(_Body(text), text, [], picked=[]))
     assert "reconnected from Connections" in seen["graph"]
+    assert app_triage.connect_href("github") in out["turns"][0]["answer"]
 
 
 def test_the_graph_block_is_still_there(monkeypatch):
