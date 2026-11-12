@@ -102,15 +102,22 @@ def question(text: str) -> Optional[List[str]]:
     return named or None
 
 
-def plan(ids, connected) -> dict:
+def plan(ids, connected, rejected=()) -> dict:
     """What to tell the model, as `app_triage.with_buttons` also reads it.
 
     With apps named, those apps. With none named, the general question:
     everything this person has connected, plus the rest of the catalogue
     as what they could connect, because "what can you do" asked by
     somebody with nothing connected is not answered by "nothing".
+
+    `rejected` is the providers whose credential was refused the last
+    time it was used (`connection_health.rejected`). Connected is not the
+    same as usable: measured live 2026-11-12, "what can you do" listed
+    GitHub among the answers while that credential had been answering 401
+    since the morning and the Connections card already said so.
     """
     have = set(connected or ())
+    bad = set(rejected or ())
     general = not ids
     if general:
         chosen = [a for a in app_triage.APPS.values() if a.id in have]
@@ -119,7 +126,8 @@ def plan(ids, connected) -> dict:
                   if i in app_triage.APPS]
     return {
         "apps": [{"id": a.id, "label": a.label, "connected": a.id in have,
-                  "can": a.can, "cannot": a.cannot} for a in chosen],
+                  "rejected": a.id in bad, "can": a.can, "cannot": a.cannot}
+                 for a in chosen],
         "general": general,
         "rest": [a.label for a in app_triage.APPS.values()
                  if a.id not in have] if general else [],
@@ -138,9 +146,16 @@ def brief(p) -> str:
              "truth about this platform, so say nothing about IO's "
              "abilities that contradicts it:"]
     for a in apps:
-        line = "- %s (%s). IO can %s." % (
-            a["label"], "connected" if a["connected"] else "not connected",
-            a["can"])
+        state = "connected" if a["connected"] else "not connected"
+        if a.get("rejected"):
+            # A credential that answers 401 is a connection in the table
+            # and nothing in practice, and the Connections card already
+            # says so. Saying "connected" alone here is how the chat came
+            # to offer GitHub while GitHub was refusing every call.
+            state = ("connected, but the credential was rejected the last "
+                     "time it was used, so it has to be reconnected from "
+                     "Connections before IO can use it")
+        line = "- %s (%s). IO can %s." % (a["label"], state, a["can"])
         if a["cannot"]:
             line += " IO cannot %s yet." % a["cannot"]
         lines.append(line)
