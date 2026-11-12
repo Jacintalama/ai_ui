@@ -86,11 +86,21 @@ def test_no_pane_means_no_split():
 
 def test_the_caller_falls_back_rather_than_doing_nothing():
     """A control that silently does nothing is worse than one that does
-    something smaller."""
+    something smaller.
+
+    Matched on the SHAPE of the call, not its whole text: the argument
+    list grew when the pencil and the appearance panel started travelling
+    with the app (2026-11-12), and an exact string would have failed for a
+    change that left this behaviour exactly as it was.
+    """
     src = _js()
-    assert "if (aiuiSplitOpen(slug, box, bar, frame, chip)) return;" in src
-    after = src[src.index("if (aiuiSplitOpen(slug, box, bar, frame, chip)) return;"):]
-    assert "AIUI_APP_H_BIG" in after[:600]
+    at = src.index("if (aiuiSplitOpen(")
+    call = src[at:src.index(";", at) + 1]
+    assert call.endswith(") return;"), (
+        "the split is no longer used as the condition it returns on, so "
+        "there is no fall-back when there is no chat pane to shrink")
+    after = src[at:]
+    assert "AIUI_APP_H_BIG" in after[:700]
 
 
 # --- what is left in the thread -------------------------------------------
