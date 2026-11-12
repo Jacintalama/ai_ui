@@ -168,9 +168,14 @@ def test_airtable_can_be_connected_by_approving():
 
 def test_airtable_is_no_longer_listed_as_blocked():
     """The list exists so a gap reads as a decision. Leaving Airtable on it
-    after building it would make the list a lie."""
+    after building it would make the list a lie.
+
+    This also asserted that HubSpot was still on the list, which was true
+    for one day. HubSpot was built on 2026-11-12 and the shape of the rule
+    is guarded in test_a_token_that_dies_gets_refreshed.py, which is where
+    it belongs: it is about the list, not about Airtable.
+    """
     assert "airtable" not in O.NEEDS_TOKEN_REFRESH_FIRST
-    assert "hubspot" in O.NEEDS_TOKEN_REFRESH_FIRST
 
 
 def test_the_endpoints_are_the_ones_airtable_documents():

@@ -424,16 +424,25 @@ def test_a_blocked_app_leaves_that_list_only_by_being_built():
     only leave the blocked list by APPEARING in PROVIDERS. Deleting one from
     the list without building it would pass the old assertion and fails this
     one.
+
+    The list is empty since 2026-11-12, which is why the history is written
+    down here rather than read off it. An empty list makes the loop below
+    vacuous, and on its own that would turn this guard into a test that
+    passes no matter what anybody deletes.
     """
-    assert "hubspot" in O.NEEDS_TOKEN_REFRESH_FIRST
-    assert "airtable" not in O.NEEDS_TOKEN_REFRESH_FIRST
+    # Every name the list has ever held. Both are built now, and the only
+    # honest way off the list is the one the loop checks.
+    EVER_BLOCKED = ("hubspot", "airtable")
+
+    for pid in EVER_BLOCKED:
+        assert pid not in O.NEEDS_TOKEN_REFRESH_FIRST
+        assert pid in O.PROVIDERS, (
+            "%s left the blocked list without being built" % pid)
 
     for pid in O.NEEDS_TOKEN_REFRESH_FIRST:
         assert pid not in O.PROVIDERS, (
             "%s is both built and listed as blocked, so one of the two is "
             "a lie" % pid)
-    assert "airtable" in O.PROVIDERS, (
-        "airtable left the blocked list without being built")
 
 
 def test_an_oauth_token_response_carries_its_expiry_through():

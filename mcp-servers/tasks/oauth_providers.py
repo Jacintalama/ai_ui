@@ -100,6 +100,16 @@ class OAuthProvider:
     #: it gets the form encoding RFC 6749 specifies, which is also what
     #: GitHub's own examples send.
     token_body: str = "json"
+    #: Whether this vendor wants `redirect_uri` in a REFRESH body too.
+    #:
+    #: True for HubSpot alone, whose refresh request documents it beside the
+    #: client id and secret. RFC 6749 does not ask for it on a refresh and
+    #: no other vendor here wants it, which is precisely how it gets left
+    #: out: the connect works, the card says Connected, every tool works,
+    #: and half an hour later the renewal 400s and the person is told to
+    #: reconnect. That reads as a flaky vendor rather than a missing
+    #: parameter, which is the most expensive kind of bug to find.
+    refresh_needs_redirect: bool = False
     #: Whether this vendor requires PKCE. Airtable does, and says plainly
     #: that omitting `S256` earns `invalid_grant`. False everywhere else,
     #: and not a harmless default to flip: a `code_challenge` sent to a
@@ -257,6 +267,50 @@ def _airtable_token(payload: dict) -> Tuple[Dict[str, str], str]:
     return _bare_token(payload, "Airtable")
 
 
+#: What the person approves on HubSpot's consent screen.
+#:
+#: Exactly what the five HubSpot tools call: contacts read and write, deals
+#: read, companies read. No more, because asking for permission this
+#: platform cannot use is the opposite of the boundary work the rest of this
+#: service just did, and a consent screen is something a person reads.
+#:
+#: `oauth` is deliberately absent even though every call needs it. HubSpot
+#: adds that scope to every public app by itself, which is what lets the
+#: whoami tool and the connect's own probe read
+#: `/account-info/v3/details` without asking for anything: that endpoint's
+#: only requirement is `oauth`. Listing it again would be noise.
+#:
+#: Space delimited and named `scope`, singular, as HubSpot's docs specify.
+#: The token RESPONSE calls the same thing `scopes`, which is a good way to
+#: send the plural by mistake and leave the required parameter absent.
+#:
+#: `or` rather than a default argument to `get`, for the reason spelled out
+#: above AIRTABLE_SCOPE: compose declares it as `${HUBSPOT_SCOPE:-}`, so an
+#: unset one arrives as an empty string and `get(name, default)` would hand
+#: back the empty string rather than the default. Here that would be a
+#: connect asking for no scopes, which HubSpot refuses outright, since
+#: unlike GitHub's it is a required parameter.
+HUBSPOT_SCOPE = (os.environ.get("HUBSPOT_SCOPE")
+                 or "crm.objects.contacts.read crm.objects.contacts.write "
+                    "crm.objects.companies.read "
+                    "crm.objects.deals.read").strip()
+
+
+def _hubspot_token(payload: dict) -> Tuple[Dict[str, str], str]:
+    """HubSpot's exchange, which dies in 1800 seconds.
+
+    The response carries `hub_id`, which is exactly the portal id the card
+    shows, and the label is still left empty so the route goes and asks.
+    That is not a wasted call: it proves the token WORKS before any card
+    says Connected, through the same function the paste form and the Test
+    button use. The first real GitHub connect is why that matters. It
+    named the right account, answered every check we made, and reached
+    nothing, and a connection shaped like that costs an afternoon to tell
+    apart from a broken tool.
+    """
+    return _bare_token(payload, "HubSpot")
+
+
 def _clickup_token(payload: dict) -> Tuple[Dict[str, str], str]:
     # ClickUp sends a personal token raw and an OAuth token as a Bearer, and
     # both arrive in the same `token` field, so which one this is has to be
@@ -315,27 +369,71 @@ PROVIDERS: Dict[str, OAuthProvider] = {
         token_body="form",
         pkce=True,
     ),
+    "hubspot": OAuthProvider(
+        id="hubspot",
+        label="HubSpot",
+        # Read off HubSpot's own OAuth and migration guides on 2026-11-12.
+        authorize_endpoint="https://app.hubspot.com/oauth/authorize",
+        # FOUR live HubSpot token endpoints exist and picking the wrong
+        # one is a connect that never works. This is the one that applies,
+        # and the reason is the app, not the API:
+        #
+        # Legacy public apps CANNOT BE CREATED any more, as of 23 June
+        # 2026. So the only app anybody can register for this is on the
+        # new developer platform, and that platform's own OAuth quickstart
+        # says /oauth/v3/token on api.hubapi.com, which is also the host
+        # every other HubSpot call in this service already uses.
+        #
+        # The other three, written down so nobody has to find them twice:
+        #   /oauth/v1/token        sunset 2027-02-16, and what every
+        #                          HubSpot example on the internet shows.
+        #   /oauth/2026-03/token   what the LEGACY v1 migration guide
+        #                          points legacy apps at. A right answer
+        #                          to a different question.
+        #   api.hubspot.com/oauth/2026-09/token
+        #                          in the newest reference, on a different
+        #                          host. Where this moves next.
+        token_endpoint="https://api.hubapi.com/oauth/v3/token",
+        # No response_type. HubSpot's documented required parameters are
+        # client_id, redirect_uri and scope, and nothing else belongs on
+        # somebody else's authorize URL.
+        authorize_extra={"scope": HUBSPOT_SCOPE},
+        read_token=_hubspot_token,
+        # client_id and client_secret in the body, form encoded: GitHub's
+        # working configuration exactly, which is why this needed no new
+        # machinery once the refresh existed.
+        token_auth="body",
+        token_body="form",
+        # The one thing here that is not GitHub's configuration.
+        refresh_needs_redirect=True,
+    ),
 }
 
 
 #: Vendors that could do OAuth 2.0 but are deliberately NOT here yet, so the
 #: next person does not read the gap as an oversight.
 #:
-#: This list used to hold Airtable as well, and the reason it gave was right:
-#: both vendors return a `refresh_token` and an access token that dies in
-#: under an hour, HubSpot in 1800 seconds and Airtable in 3600, and nothing in
-#: this service refreshed anything. So a one-click connect for either would
-#: have worked for half an hour and then quietly stopped, with the card still
-#: reading "Connected" because a stored credential is all it checks, replacing
-#: a paste form that hands over a token which never expires. A downgrade.
+#: EMPTY since 2026-11-12, and kept rather than deleted, because the rule it
+#: carries outlived its members and the next vendor with a short-lived token
+#: needs to meet it.
+#:
+#: It held HubSpot and Airtable, and the reason it gave was right: both
+#: return a `refresh_token` and an access token that dies in under an hour,
+#: HubSpot in 1800 seconds and Airtable in 3600, and nothing in this service
+#: refreshed anything. So a one-click connect for either would have worked
+#: for half an hour and then quietly stopped, with the card still reading
+#: "Connected" because a stored credential is all it checks, replacing a
+#: paste form that hands over a token which never expires. A downgrade.
 #:
 #: `oauth_refresh` closed that on 2026-11-11 (PR #186), proven on the box
-#: against ClickUp's real token endpoint, and Airtable went in straight
-#: afterwards with the PKCE it also needed. HubSpot is what is left, and it
-#: needs no new machinery at all: `token_auth="body"` with
-#: `token_body="form"` is exactly GitHub's working configuration, so it is a
-#: provider entry, a client id and a secret.
-NEEDS_TOKEN_REFRESH_FIRST = frozenset({"hubspot"})
+#: against ClickUp's real token endpoint. Airtable went in straight
+#: afterwards with the PKCE it also needed, and HubSpot on 2026-11-12 with
+#: no new machinery at all.
+#:
+#: The rule, for whoever adds the next one: a token that dies needs
+#: somewhere to be renewed BEFORE its button is offered, or the connect is
+#: worse than the form it replaces.
+NEEDS_TOKEN_REFRESH_FIRST: frozenset = frozenset()
 
 
 #: Vendors whose one-click connect is NOT an OAuth 2.0 code exchange, so they
