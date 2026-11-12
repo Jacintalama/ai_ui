@@ -265,8 +265,9 @@ PROVIDERS: Dict[str, Provider] = {
         label="Airtable",
         fields=[Field("token", "Personal access token", placeholder="pat...")],
         where="Airtable: airtable.com/create/tokens, create a token with the "
-              "schema.bases:read and data.records:read scopes and the bases "
-              "you want it to reach.",
+              "schema.bases:read, schema.bases:write, data.records:read and "
+              "data.records:write scopes (the write ones so it can make a "
+              "table and add rows) and the bases you want it to reach.",
         build_auth=_airtable_auth,
         probe_path="/meta/whoami",
         read_label=_airtable_label,

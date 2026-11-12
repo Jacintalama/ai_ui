@@ -71,9 +71,11 @@ _APPS = (
         "a database made of tables, like a spreadsheet, for keeping records: "
         "leads, customers, contacts, orders, inventory, or any list of things "
         "to store, sort and filter",
-        "read your bases, tables and rows",
-        ("list_my_bases", "list_tables", "list_records"),
-        cannot="add or change rows"),
+        "read your bases, tables and rows, make a new table, add rows and "
+        "change a row",
+        ("list_my_bases", "list_tables", "list_records", "create_table",
+         "create_record", "create_records", "update_record"),
+        cannot="make a new base, or delete a table or a row"),
     App("hubspot", "HubSpot",
         "a CRM for sales: leads, contacts, companies and deals, and keeping "
         "track of following up with customers",
