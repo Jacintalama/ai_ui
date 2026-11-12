@@ -2777,6 +2777,22 @@
     return h;
   }
 
+  // Ask a browser to draw a glyph as TEXT rather than as an emoji.
+  //
+  // U+270E (the pencil) and U+2197 (the open-in-a-tab arrow) both have an
+  // emoji presentation a browser is free to prefer, and one did: the
+  // pencil came out orange beside five monochrome glyphs (2026-11-12,
+  // Ralph: "change the icon for pencil because it colorful and the other
+  // icon isnt... or fix all").
+  //
+  // U+FE0E is the variation selector that asks for text. It changes
+  // nothing for a character with no emoji form, which is why it goes on
+  // all of them rather than on the two that misbehave today: the next
+  // glyph somebody adds is covered without anybody remembering this.
+  function aiuiGlyph(ch) {
+    return String(ch || '') + '\ufe0e';
+  }
+
   function aiuiPopupBlocked(win) {
     // A blocked window.open returns null in Chrome; some browsers return a
     // window that is immediately closed.
@@ -4101,9 +4117,12 @@
       // indent every panel carries for the thread would double up here.
       // Cleared centrally, because six panels carry it and a seventh
       // would forget.
-      box.style.marginLeft = '0';
+      aiuiSetIndent(box, '0');
       box.style.paddingLeft = '0';
       reply.appendChild(box);
+      // After it is in the page: how much wider it may grow is measured
+      // against the column it sits in and the window around it.
+      aiuiSetIndent(box, '0');
       return;
     }
     var thread = aiuiThread();
@@ -4195,6 +4214,15 @@
   //: How tall the app sits in the conversation, and how tall it goes when
   //: somebody expands it. Small by default: it is one turn in a chat, not
   //: the page.
+  //: How wide a preview sits in the conversation at rest. One turn in a
+  //: chat, not the page.
+  //:
+  //: It is a CAP, which is why the drag shipped on 2026-11-11 looked
+  //: broken: a block element does not grow past its max-width however
+  //: negative its margins are, so the handle moved the box around inside
+  //: its column and every test of it passed, having measured a box with
+  //: no such cap on it.
+  var AIUI_APP_MAXW = '46rem';
   var AIUI_APP_H = '22rem';
   var AIUI_APP_H_BIG = '80vh';
 
@@ -4678,14 +4706,14 @@
     out.href = frame.src;
     out.target = '_blank';
     out.rel = 'noopener';
-    out.textContent = '↗';
+    out.textContent = aiuiGlyph('↗');
     out.title = 'Open in a new tab';
     out.setAttribute('aria-label', 'Open in a new tab');
     out.style.cssText = 'color:inherit;opacity:.65;text-decoration:none;'
       + 'padding:.1rem .35rem;';
     var shut = document.createElement('button');
     shut.type = 'button';
-    shut.textContent = '✕';
+    shut.textContent = aiuiGlyph('✕');
     shut.title = 'Put it back in the chat';
     shut.setAttribute('aria-label', 'Put it back in the chat');
     shut.style.cssText = 'background:none;border:0;color:inherit;opacity:.65;'
@@ -4813,7 +4841,12 @@
     var box = document.createElement('div');
     box.id = 'aiui-app-skeleton';
     box.setAttribute('aria-hidden', 'true');
-    box.style.cssText = 'margin:.5rem 0 .25rem;max-width:46rem;'
+    // The same size as the panel that replaces it. A placeholder of a
+    // different width is a layout jump dressed up as a loading state.
+    box.setAttribute('data-aiui-indent', '3.75rem');
+    box.setAttribute('data-aiui-widenable', '1');
+    box.style.cssText = 'margin:.5rem 0 .25rem;max-width:' + AIUI_APP_MAXW
+      + ';'
       + 'border:1px solid rgba(127,127,127,.28);border-radius:12px;'
       + 'overflow:hidden;background:rgba(127,127,127,.06);';
 
@@ -4833,7 +4866,29 @@
 
     box.appendChild(bar);
     box.appendChild(stage);
+    aiuiApplyAppWidth(box, aiuiSavedAppExtra());
     return box;
+  }
+
+  // The preview's shape, under the reply, while a build runs.
+  //
+  // Drawn from the FIRST tick of the watcher rather than once the step
+  // list arrives: that needs the task to have answered and its labels to
+  // have loaded, which is seconds in, and until then a build in the chat
+  // looked like nothing happening at all (2026-11-12, Ralph: "user didnt
+  // know its loading and working on it").
+  //
+  // Once, however many polls there are, and only when there is a reply to
+  // put it under: a chat just opened can answer its first poll before any
+  // reply is drawn, and a panel put then goes to the end of the page and
+  // stays there.
+  function aiuiShowBuildGhost() {
+    if (document.getElementById('aiui-app-skeleton')) return null;
+    if (!aiuiLastReplyBody()) return null;
+    var ghost = aiuiSkeletonPanel();
+    ghost.style.marginLeft = '3.75rem';
+    aiuiPutUnderLastMessage(ghost);
+    return ghost;
   }
 
   function aiuiClearSkeletonPanel() {
@@ -4986,9 +5041,19 @@
   // width already contains whatever extra is applied: measuring that would
   // compound on every drag and run off the screen in three pulls.
   function aiuiMaxAppExtra(box) {
-    var col = box && box.parentElement;
-    var colW = col ? col.getBoundingClientRect().width
-                   : (box ? box.getBoundingClientRect().width : 0);
+    // Nothing that cannot be MEASURED is widened. A detached node, or
+    // anything that is not a laid-out element, has no column to grow
+    // beyond and no window to fit inside, so the honest allowance is
+    // none rather than a guess at one.
+    function widthOf(el) {
+      if (!el || typeof el.getBoundingClientRect !== 'function') return null;
+      try {
+        return el.getBoundingClientRect().width;
+      } catch (e) { return null; }
+    }
+    var colW = widthOf(box && box.parentElement);
+    if (colW === null) colW = widthOf(box);
+    if (colW === null || !window.innerWidth) return 0;
     var room = window.innerWidth - colW - (AIUI_APP_W_GUTTER * 2);
     return Math.max(0, Math.round(room));
   }
@@ -5029,6 +5094,33 @@
     }
   }
 
+  // The thread's avatar gutter for this box, kept as its own value.
+  //
+  // `marginLeft` used to carry two meanings at once: this gutter, which
+  // both placement functions set to 0 when a panel goes inside a reply,
+  // and half the extra width. Whichever was written last won, so a
+  // widened panel snapped back to its column every time Open WebUI
+  // rebuilt the message and the panel was re-placed.
+  function aiuiIndentOf(box) {
+    return (box && box.getAttribute
+            && box.getAttribute('data-aiui-indent')) || '0';
+  }
+
+  // Set the gutter, and put the width back on top of it.
+  //
+  // Does nothing clever for a box that cannot be widened, which is the
+  // video panel and the build panel: they share these placement
+  // functions and have no width of their own to restore.
+  function aiuiSetIndent(box, indent) {
+    if (!box || !box.style) return;
+    if (box.setAttribute) box.setAttribute('data-aiui-indent', indent);
+    if (box.hasAttribute && box.hasAttribute('data-aiui-widenable')) {
+      aiuiApplyAppWidth(box, aiuiSavedAppExtra());
+      return;
+    }
+    box.style.marginLeft = indent;
+  }
+
   // Widen the box by `extra` pixels, half on each side, and never by more
   // than the screen has room for.
   //
@@ -5041,8 +5133,17 @@
     if (!box || !box.style) return 0;
     var fitted = aiuiClampAppExtra(extra, box);
     var half = fitted / 2;
-    box.style.marginLeft = half ? (-half + 'px') : '';
+    var indent = aiuiIndentOf(box);
+    // Composed with the gutter rather than replacing it, so a widened
+    // panel inside a reply keeps its indent and a widened panel in the
+    // thread keeps the avatar's.
+    box.style.marginLeft = half
+      ? ('calc(' + indent + ' - ' + half + 'px)') : indent;
     box.style.marginRight = half ? (-half + 'px') : '';
+    // Without this the margins move the box and the cap holds its width,
+    // which is exactly what "it can only stretch up and down" looked
+    // like.
+    box.style.maxWidth = fitted ? 'none' : AIUI_APP_MAXW;
     return fitted;
   }
 
@@ -5497,6 +5598,9 @@
     var drawn = document.getElementById(id);
     if (drawn) {
       if (inReply && !inReply.contains(drawn)) aiuiPutInReply(drawn, inReply);
+      // Whether or not it moved: a rebuilt message can hand back a panel
+      // whose inline styles were rewritten under it.
+      aiuiApplyAppWidth(drawn, aiuiSavedAppExtra());
       return;
     }
 
@@ -5509,7 +5613,12 @@
 
     var box = document.createElement('div');
     box.id = id;
-    box.style.cssText = 'margin:.5rem 0 1rem 3.75rem;max-width:46rem;'
+    // The gutter is an attribute as well as a margin, because the margin
+    // is also where the extra width goes and the two have to compose.
+    box.setAttribute('data-aiui-indent', '3.75rem');
+    box.setAttribute('data-aiui-widenable', '1');
+    box.style.cssText = 'margin:.5rem 0 1rem 3.75rem;max-width:'
+      + AIUI_APP_MAXW + ';'
       + 'border:1px solid rgba(127,127,127,.28);border-radius:12px;'
       + 'overflow:hidden;background:rgba(127,127,127,.06);';
 
@@ -5519,7 +5628,7 @@
       + 'border-bottom:1px solid rgba(127,127,127,.2);';
 
     var dot = document.createElement('span');
-    dot.textContent = '▣';
+    dot.textContent = aiuiGlyph('▣');
     dot.style.cssText = 'opacity:.55;';
     var name = document.createElement('button');
     name.type = 'button';
@@ -5555,7 +5664,8 @@
     chip.style.cssText = 'display:none;width:100%;text-align:left;'
       + 'background:none;border:0;color:inherit;cursor:pointer;'
       + 'padding:.55rem .7rem;font-size:.85rem;';
-    chip.textContent = '▣  ' + slug + '  ·  showing beside the chat';
+    chip.textContent = aiuiGlyph('▣') + '  ' + slug
+      + '  ·  showing beside the chat';
 
     // Point at a part of the page and say what to change.
     var ask = document.createElement('div');
@@ -5625,7 +5735,7 @@
       note.setAttribute('aria-label', note.title);
     }
 
-    var note = iconBtn('✎', 'Point at something to change it');
+    var note = iconBtn(aiuiGlyph('✎'), 'Point at something to change it');
     note.addEventListener('click', function () {
       if (mode) { annotateStop(); return; }
       mode = aiuiAnnotateOn(frame, function (pick) {
@@ -5763,7 +5873,7 @@
 
     // Appearance: its own panel under the frame, like the pencil's.
     var look = aiuiAppearance(chatId, slug, frame);
-    var paint = iconBtn('◐', 'Change the colours and type');
+    var paint = iconBtn(aiuiGlyph('◐'), 'Change the colours and type');
     paint.addEventListener('click', function () {
       if (look.isOpen()) {
         look.close();
@@ -5774,7 +5884,7 @@
       paint.style.opacity = '1';
     });
 
-    var grow = iconBtn('⤢', 'Show it beside the chat');
+    var grow = iconBtn(aiuiGlyph('⤢'), 'Show it beside the chat');
     var big = false;
     grow.addEventListener('click', function () {
       if (aiuiSplit && aiuiSplit.frame === frame) {
@@ -5797,7 +5907,7 @@
     out.href = url;
     out.target = '_blank';
     out.rel = 'noopener';
-    out.textContent = '↗';
+    out.textContent = aiuiGlyph('↗');
     out.title = 'Open in a new tab';
     out.setAttribute('aria-label', 'Open in a new tab');
     out.style.cssText = 'flex:0 0 auto;color:inherit;opacity:.6;'
@@ -5952,9 +6062,7 @@
       // Here and NOT in the video panel just below, which shares this
       // markup: a video has no preview panel coming, so a preview-shaped
       // ghost under one would be a promise nothing keeps.
-      var ghost = aiuiSkeletonPanel();
-      ghost.style.marginLeft = '3.75rem';
-      aiuiPutUnderLastMessage(ghost);
+      aiuiShowBuildGhost();
     }
 
     var done = 0;
@@ -6123,6 +6231,9 @@
   }
 
   function aiuiPollBuild(chatId, id, started) {
+    // Before the fetch, not after it: the wait for the first answer is
+    // the wait this covers.
+    aiuiShowBuildGhost();
     fetch('/api/tasks/' + id, { headers: aiuiAuthHeaders() }).then(function (r) {
       // Not this person's build, or gone: nothing to report, ever.
       if (r.status === 403 || r.status === 404) return 'stop';
@@ -6333,9 +6444,12 @@
 
   function aiuiPutInReply(box, body) {
     // The reply already has the avatar gutter, as in aiuiPutUnderLastMessage.
-    box.style.marginLeft = '0';
+    aiuiSetIndent(box, '0');
     box.style.paddingLeft = '0';
     body.appendChild(box);
+    // Again once it is in the page, because the width it may grow to is
+    // measured against the column it sits in.
+    aiuiSetIndent(box, '0');
   }
 
   function aiuiDrawSavedVideo(chatId, video) {
