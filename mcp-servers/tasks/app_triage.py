@@ -237,7 +237,8 @@ def brief(p) -> str:
         state = "connected" if a["connected"] else "not connected"
         line = "- %s (%s). IO can %s." % (a["label"], state, a["can"])
         if a["cannot"]:
-            line += " IO cannot %s yet." % a["cannot"]
+            line += (" IO cannot %s yet, so do not offer to %s with it, "
+                     "even once it is connected." % (a["cannot"], a["cannot"]))
         if a["pros"]:
             line += " " + a["pros"]
         lines.append(line)
@@ -259,7 +260,13 @@ def with_buttons(answer: str, p) -> str:
     """`answer` with a Connect button for every recommended app that is not
     connected, each at most once, and a one-line introduction for one the
     answer never named. Measured 2026-11-04: the model wrote "there's a
-    Connect button above" and left the link out, so the service adds it."""
+    Connect button above" and left the link out, so the service adds it.
+
+    An app with a limit always gets the limit said, named or not. On the live
+    site 2026-11-12 the model, with "IO cannot add or change rows yet" in its
+    brief, still wrote "I'll be able to write rows into it once it is". The
+    truth under a recommendation is the service's to state, not the model's.
+    """
     answer = str(answer or "")
     low = answer.lower()
     out = []
@@ -274,6 +281,9 @@ def with_buttons(answer: str, p) -> str:
             if app.cannot:
                 line += " (it cannot %s yet)" % app.cannot
             out.append(line + ".")
+        elif app.cannot:
+            out.append("Once %s is connected, IO can %s. It cannot %s yet."
+                       % (app.label, app.can, app.cannot))
         out.append(_button(app))
     if not out:
         return answer
