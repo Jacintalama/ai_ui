@@ -280,6 +280,118 @@ def report_tools(runs: list) -> float:
     return chosen
 
 
+# --- the triage agent's app pick (2026-11-12) -------------------------------
+
+#: (message, needs, fine). `needs` is a list of sets, and each set is met by
+#: ANY one of its apps ("track my to-dos" is Notion, ClickUp or Trello, and
+#: any of them is right). `fine` may be picked without being wrong. Anything
+#: else picked is a wrong recommendation, which is the expensive mistake: a
+#: Connect button under a joke. The first five are Lukas's own examples from
+#: the 2026-11-12 call.
+APP_CASES = [
+    ("I want to scrape and find a bunch of customers and save them somewhere",
+     [{"airtable", "hubspot"}], {"gdrive", "notion", "gmail"}),
+    ("every 8am read my email and send me a summary", [{"gmail"}],
+     {"calendar", "n8n", "zapier"}),
+    ("I have a landing page for my cup shop, I want to make lots of changes, "
+     "keep every version and be able to come back to an old one",
+     [{"github"}], {"gdrive"}),
+    ("I need something to track my to-dos and calendar", [{"notion", "clickup",
+                                                           "trello"}],
+     {"calendar", "airtable"}),
+    ("I need an automation workflow that connects my apps",
+     [{"n8n", "zapier"}], set()),
+    ("set up a board for my team's tasks and assign them to people",
+     [{"clickup", "trello"}], {"notion", "airtable", "github"}),
+    ("keep track of my sales leads and follow up with each customer",
+     [{"hubspot", "airtable"}], {"gmail", "notion", "clickup", "trello"}),
+    ("put a meeting with Ana on my calendar for Friday at 3pm",
+     [{"calendar"}], {"gmail"}),
+    ("where is the budget spreadsheet I shared last week", [{"gdrive"}],
+     {"airtable", "gmail"}),
+    ("when a new order comes into my shop, add the customer to a list and "
+     "email them a thank you", [{"n8n", "zapier"}],
+     {"airtable", "hubspot", "gmail", "gdrive"}),
+    ("tell me a joke about coffee", [], set()),
+    ("what is the capital of Australia", [], set()),
+    ("write a short poem about autumn", [], set()),
+    ("thanks, that looks great", [], set()),
+    ("explain what a REST API is in two sentences", [], set()),
+    ("make me a landing page for a bakery", [], {"github"}),
+    ("how many days are there until Christmas", [], set()),
+]
+
+
+def app_score(values: dict, needs: list, fine: set, cut: float) -> tuple:
+    """(missed, wrong) at this cut: needs with none of their apps picked, and
+    picked apps that were neither needed nor fine."""
+    picked = {a for a, v in values.items() if v >= cut}
+    wanted = set().union(*needs) if needs else set()
+    missed = sum(1 for group in needs if not picked & group)
+    return missed, len(picked - wanted - fine)
+
+
+def choose_app_cut(wrong_per_run: list) -> float:
+    """The rule fixed before the run (design 2026-11-12): a wrong
+    recommendation is worse than a missed one, so the lowest cut with no
+    wrong pick in every run, then one step higher, never above the highest.
+    None clean: the check is off."""
+    clean = [c for c in UP if all(w[c] == 0 for w in wrong_per_run)]
+    if not clean:
+        return OFF["up"]
+    i = UP.index(min(clean))
+    return UP[min(i + 1, len(UP) - 1)]
+
+
+async def run_apps(key: str, cap_usd: float):
+    """[(case, {app: value})] for every app case, and dollars spent."""
+    import app_triage
+    ids = list(app_triage.APPS)
+    rows, spent, last = [], 0.0, 0.0
+    for case in APP_CASES:
+        if spent + last > cap_usd:
+            print(f"stopped at the ${cap_usd} cap")
+            break
+        state, questions = agent_jev.apps_request(case[0])
+        data = await agent_decider._post(
+            {"model": agent_decider.model(), "state": state,
+             "questions": questions}, key)
+        values = {}
+        for qid in questions:
+            a = agent_jev.read(data, qid)
+            if a is not None:
+                values[ids[int(qid[1:])]] = a.value
+        tokens = (data.get("usage") or {}).get("input_tokens")
+        last = agent_decider.cost_usd(tokens) or 0.0
+        spent += last
+        rows.append((case, values))
+    return rows, spent
+
+
+def report_apps(runs: list) -> float:
+    print(f"\n== {agent_jev.PURPOSE_APPS} on {agent_decider.model()}")
+    for case, values in runs[0]:
+        top = sorted(values.items(), key=lambda kv: -kv[1])[:4]
+        need = " / ".join("|".join(sorted(g)) for g in case[1]) or "-"
+        print(f"{case[0][:52]:52} need {need} | "
+              + " ".join(f"{a} {v:.2f}" for a, v in top))
+    missed_per_run, wrong_per_run = [], []
+    for rows in runs:
+        missed_per_run.append({c: sum(app_score(v, k[1], k[2], c)[0]
+                                      for k, v in rows) for c in UP})
+        wrong_per_run.append({c: sum(app_score(v, k[1], k[2], c)[1]
+                                     for k, v in rows) for c in UP})
+    print("cut  | " + " | ".join(f"run {n + 1} missed wrong"
+                                 for n in range(len(runs))))
+    for c in UP:
+        print(f"{c:.2f} | " + " | ".join(
+            f"{m[c]:12} {w[c]:5}" for m, w in zip(missed_per_run,
+                                                  wrong_per_run)))
+    chosen = choose_app_cut(wrong_per_run)
+    print(f"chosen cut: {chosen}")
+    return chosen
+
+
 # --- scoring ----------------------------------------------------------------
 
 def outcome(shape: str, label, choice, value: float, cut: float) -> str:
@@ -348,7 +460,19 @@ def main() -> None:
     key = agent_decider._key()
     if not key:
         sys.exit("TYPESAFE_API_KEY is not set")
-    runs = int(sys.argv[1]) if len(sys.argv) > 1 else 2
+    args = [a for a in sys.argv[1:] if a != "apps"]
+    runs = int(args[0]) if args else 2
+    if "apps" in sys.argv[1:]:
+        # Only the triage agent's app pick: `... jev_checks_calibrate.py apps 2`
+        app_runs, total = [], 0.0
+        for n in range(runs):
+            rows, spent = asyncio.run(run_apps(key, CAP_USD / runs))
+            app_runs.append(rows)
+            total += spent
+            print(f"app run {n + 1}: {len(rows)} calls, ${spent:.6f}")
+        report_apps(app_runs)
+        print(f"\ntotal ${total:.6f}")
+        return
     cases = requests()
     all_rows, total = [], 0.0
     for n in range(runs):

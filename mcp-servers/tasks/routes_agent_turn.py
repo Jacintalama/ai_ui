@@ -43,6 +43,7 @@ import agent_llm
 import agent_memory
 import agent_progress
 import agent_routing
+import app_triage
 import main_assistant
 import skill_fit
 import agent_skills
@@ -1853,6 +1854,44 @@ async def _tool_pick(body: ChatIn, text: str) -> list[str] | None:
         return None
 
 
+def _triage_on() -> bool:
+    """MAIN_CHAT_TRIAGE=0 switches the triage agent off; anything else is on."""
+    return os.environ.get("MAIN_CHAT_TRIAGE", "1").strip() != "0"
+
+
+async def _triage_pick(body: ChatIn, text: str) -> dict | None:
+    """The triage agent (Lukas, 2026-11-12): which apps fit this message,
+    connected or not, as {"picks": [(app id, score)], "connected": {provider
+    ids}}, the connections read only once an app was picked. None when
+    triage is off, the assistant cannot answer, the message opens with a
+    greeting, or Jev could not be asked. Never raises.
+
+    The same gates as _tool_pick, because what it decides is only ever said
+    by the assistant. Design: docs/plans/2026-11-12-triage-agent-design.md.
+    """
+    try:
+        if not _triage_on() or not _assistant_on():
+            return None
+        context = recent_exchange(body.messages)
+        if is_small_talk(text) and not context:
+            return None
+        if not agent_llm.can_run(main_assistant.agent()):
+            return None
+        picks = await agent_jev.pick_apps(body.user_email, text, context)
+        if picks is None:
+            return None
+        if not picks:
+            # Nothing fits, which is most messages: no database read.
+            return {"picks": [], "connected": set()}
+        import routes_agents                   # it imports this module
+        connected = await routes_agents._connected_providers(body.user_email)
+        return {"picks": list(picks), "connected": set(connected or ())}
+    except Exception:                                       # noqa: BLE001
+        logger.warning("the triage pick failed; nothing is recommended",
+                       exc_info=True)
+        return None
+
+
 async def _skill_connect_needs(email: str) -> list:
     """The apps this person has not connected that some skill needs, as
     skill_fit.needs_connect gives them. The same reading as
@@ -1885,7 +1924,8 @@ async def _with_connect_links(email: str, turn: dict) -> dict:
 
 
 async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
-                           picked: list[str] | None = None) -> dict | None:
+                           picked: list[str] | None = None,
+                           triage: dict | None = None) -> dict | None:
     """The main chat's assistant answering a message nobody took, with the
     tools Jev picked for it, or None to leave it to the caller's own model.
     Never raises.
@@ -1895,29 +1935,49 @@ async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
     brief, no graph read and no tool loop in front of it. Jev sure that no
     tool is needed, or Jev unavailable, both mean the free model answers;
     an agent named by the person still has everything it has.
+
+    Or with an app to recommend (2026-11-12, the triage agent): `triage` is
+    what _triage_pick found. When it names an app this person has not
+    connected, the assistant answers even with no tool, with the plan in
+    front of it (app_triage.brief), and the Connect buttons are added under
+    its answer by the service, not left to the model.
     """
     try:
         if picked is None:
             picked = await _tool_pick(body, text)
-        if not picked:
+        plan = None
+        if triage:
+            plan = app_triage.plan(triage.get("picks"),
+                                   triage.get("connected"), picked or [],
+                                   text=text)
+        if not picked and not app_triage.needs_assistant(plan):
             return None
+        picked = list(picked or [])
         assistant = main_assistant.agent()
         names = [a.get("name") for a in agents if a.get("name")]
         # The slowest thing the main chat does, and until now the most
         # silent: "check my inbox" took 9.5s on the live box with nothing
         # on screen. Said before the turn, naming the place rather than the
         # tool id, and no agent's name, because no agent is involved.
-        agent_progress.say(agent_progress.reading_line(picked))
+        reading = agent_progress.reading_line(picked)
+        if reading:
+            agent_progress.say(reading)
+        graph = await agent_graph.graph_block(body.user_email, text)
+        advice = app_triage.brief(plan)
+        if advice:
+            graph = (str(graph or "") + "\n\n" + advice).strip()
         turn = await _turn_for(
             body.user_email, assistant, body.messages, names, roster=agents,
-            graph=await agent_graph.graph_block(body.user_email, text),
-            tool_ids=list(picked))
+            graph=graph, tool_ids=picked)
         pending = (isinstance(turn.get("pending"), dict)
                    and bool(turn["pending"].get("calls")))
         if not pending and _assistant_failed(str(turn.get("answer") or "")):
             return None
         if not pending and "skills" in picked:
             turn = await _with_connect_links(body.user_email, turn)
+        if not pending and plan:
+            turn = dict(turn, answer=app_triage.with_buttons(
+                turn.get("answer"), plan))
         # IO speaking for itself: no name and no face over the answer, and
         # that holds whether it answered or stopped to ask.
         #
@@ -2303,15 +2363,20 @@ async def _route_chat(body: ChatIn, x_internal_secret: str = "") -> dict:
             # answers at once, which is what an ordinary question deserves.
             # _tool_pick still runs: it picks TOOLS for the assistant, which
             # is the free model with hands, not an agent speaking as itself.
-            chosen, picked = await asyncio.gather(
+            #
+            # The third, "which apps fit, connected or not", is the triage
+            # agent (2026-11-12): independent of both, so asked beside them.
+            chosen, picked, triage = await asyncio.gather(
                 (_jev_decision(body, text, agents) if _agents_may_take_unnamed()
                  else _none()),
-                _tool_pick(body, text))
+                _tool_pick(body, text),
+                _triage_pick(body, text))
             if chosen is not None:
                 answered = await _jev_answer(body, text, agents, chosen)
                 if answered is not None:
                     return answered
-            helped = await _assistant_reply(body, text, agents, picked=picked)
+            helped = await _assistant_reply(body, text, agents, picked=picked,
+                                            triage=triage)
             if helped is not None:
                 return helped
         else:

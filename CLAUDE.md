@@ -349,6 +349,25 @@ above") and `routes_agent_turn._with_connect_links` now puts it back under a
 skills answer that talks about connecting an app the person lacks. Live test:
 `test_asking_which_skills_to_use_shows_a_connect_button`.
 
+**The triage agent (2026-11-12).** Lukas: Jev should see every integration,
+connected or not, and recommend the right one ("I want to save my leads" →
+Airtable; "keep every version of my site" → GitHub; "automation workflow" →
+n8n vs Zapier with pros and cons). On Auto a third Jev question runs beside
+the other two: `agent_jev.pick_apps`, one yes/no per app in
+`app_triage.APPS`, purpose `app_pick`, cut 0.90 measured with
+`scripts/jev_checks_calibrate.py apps 2`. When it names an app the person has
+not connected, the assistant answers even with no tool, with
+`app_triage.brief` in front of it, and `app_triage.with_buttons` adds the
+Connect buttons under the answer. Two rules worth knowing:
+- **Every `can` line rests on real tools** (`App.tools`), checked by
+  `tests/test_triage_recommends_apps.py`. Airtable, Notion and n8n are
+  read-only, GitHub cannot create a repo, Zapier only starts an existing Zap,
+  and `cannot` says so. If you add a write tool, update the catalogue.
+- **A timer job is the platform's**: with `schedules` picked, n8n and Zapier
+  are dropped unless named ("every 8am read my email" is schedules + Gmail).
+`MAIN_CHAT_TRIAGE=0` switches it off. Design:
+`docs/plans/2026-11-12-triage-agent-design.md`.
+
 ### Automation: run an agent from outside (2026-10-27)
 `POST /api/tasks/agents/run` with `Authorization: Bearer iok_...` runs one of
 the key owner's agents on a message and returns the answer
