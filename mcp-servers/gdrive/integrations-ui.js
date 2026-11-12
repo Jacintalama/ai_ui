@@ -4985,15 +4985,24 @@
 
     handle.setAttribute('aria-valuenow', String(height()));
 
-    //: How much wider than its column the box is right now. Tracked here
-    //: rather than measured off the DOM for the same reason the maximum
-    //: is: the box's own width already contains it.
-    var extra = aiuiSavedAppExtra();
+    // How much wider than its column the box is RIGHT NOW, read back off
+    // the margins rather than kept in a variable here.
+    //
+    // A remembered copy drifts the moment anything else widens the box,
+    // and something else does: the caller restores the saved width after
+    // it puts the box in the page, because until then there is no column
+    // to measure against and no window to fit inside. A cached number
+    // would have the handle believing the box is 160 wider than the page
+    // shows, and the first arrow press would jump.
+    function extraNow() {
+      var m = parseFloat((box && box.style && box.style.marginLeft) || 0);
+      return isFinite(m) ? Math.max(0, Math.round(-m * 2)) : 0;
+    }
 
     function widen(px, remember) {
-      extra = aiuiApplyAppWidth(box, px);
-      if (remember) aiuiSaveAppExtra(extra);
-      return extra;
+      var now = aiuiApplyAppWidth(box, px);
+      if (remember) aiuiSaveAppExtra(now);
+      return now;
     }
 
     handle.addEventListener('pointerdown', function (down) {
@@ -5001,7 +5010,7 @@
       var startY = down.clientY;
       var startX = down.clientX;
       var startH = height();
-      var startExtra = extra;
+      var startExtra = extraNow();
       // Listened for on the window rather than captured on the element:
       // a pointer dragged off a 14 pixel bar must not end the drag, and
       // this needs no pointer id to be right.
@@ -5017,7 +5026,7 @@
         window.removeEventListener('pointerup', up);
         handle.style.background = 'rgba(127,127,127,.06)';
         aiuiSaveAppHeight(height());
-        aiuiSaveAppExtra(extra);
+        aiuiSaveAppExtra(extraNow());
       }
       handle.style.background = 'rgba(127,127,127,.16)';
       window.addEventListener('pointermove', move);
@@ -5032,8 +5041,8 @@
       // the direction somebody on a keyboard cannot drag.
       if (k === 'ArrowDown') apply(now + AIUI_APP_STEP, true);
       else if (k === 'ArrowUp') apply(now - AIUI_APP_STEP, true);
-      else if (k === 'ArrowRight') widen(extra + AIUI_APP_W_STEP, true);
-      else if (k === 'ArrowLeft') widen(extra - AIUI_APP_W_STEP, true);
+      else if (k === 'ArrowRight') widen(extraNow() + AIUI_APP_W_STEP, true);
+      else if (k === 'ArrowLeft') widen(extraNow() - AIUI_APP_W_STEP, true);
       else if (k === 'Home') apply(AIUI_APP_MIN, true);
       else if (k === 'End') apply(AIUI_APP_MAX, true);
       else return;
@@ -5624,13 +5633,16 @@
     // Under the preview, above the ask box, so dragging it never covers
     // the thing being resized.
     box.appendChild(aiuiSizeHandle(frame, box));
-    // Remembering a size and not restoring it is worse than not
-    // remembering at all: the control looks broken on every reload.
-    aiuiApplyAppWidth(box, aiuiSavedAppExtra());
     box.appendChild(ask);
     box.appendChild(look.el);
     if (inReply) aiuiPutInReply(box, inReply);
     else aiuiPutUnderLastMessage(box);
+    // AFTER the box is in the page, never before. How much wider it may
+    // grow is measured against the column it sits in and the window
+    // around it, and a box with no parent has neither: restoring it
+    // first produced a preview 568 pixels wider than the screen, caught
+    // in a browser on 2026-11-12 and by nothing else.
+    aiuiApplyAppWidth(box, aiuiSavedAppExtra());
   }
   // ===== The whole walk, not just the step it is on =====
   //
