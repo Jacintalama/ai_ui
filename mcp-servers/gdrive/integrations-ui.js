@@ -2821,6 +2821,10 @@
 
     var container = document.createElement('span');
     container.className = 'aiui-connect-inline';
+    // Room around each button: two in a row had nothing between them, and
+    // the last one sat against the reply's toolbar (2026-11-12).
+    container.style.cssText = 'display:inline-block;margin:10px 8px 8px 0;'
+      + 'vertical-align:middle;';
     var btn = document.createElement('button');
     btn.textContent = anchor.textContent || ('Connect ' + provider);
     btn.style.cssText = 'padding:8px 16px;background:#4CAF50;color:#fff;border:none;'
