@@ -497,6 +497,55 @@ def test_it_really_grows_past_the_width_it_sits_at(browser):
         "without widening it")
 
 
+def test_widening_moves_BOTH_edges(browser):
+    """The test above was too weak and a real bug walked through it.
+
+    `aiuiIndentOf` returned a unitless '0' inside a reply, so the margin
+    became `calc(0 - 300px)`, which is invalid CSS: calc will not subtract
+    a length from a unitless number and the browser drops the whole
+    declaration. The RIGHT margin still applied, so the box grew one way
+    and by half, which satisfies "did it get bigger" perfectly.
+
+    Measured in Open WebUI's own reply markup on 2026-11-12: at rest
+    left 592, widened left 592. The edge never moved.
+    """
+    page = _page(browser, SIZE_JS(), SIZE_DRIVER)
+    page.evaluate("localStorage.clear(); __make()")
+    before = page.evaluate(
+        "(function(){var r=window.__boxEl.getBoundingClientRect();"
+        "return {l: Math.round(r.left), r: Math.round(r.right)};})()")
+    page.evaluate("aiuiApplyAppWidth(window.__boxEl, 300)")
+    after = page.evaluate(
+        "(function(){var r=window.__boxEl.getBoundingClientRect();"
+        "return {l: Math.round(r.left), r: Math.round(r.right)};})()")
+    assert after["l"] < before["l"] - 100, (
+        "the left edge did not move: %s then %s" % (before, after))
+    assert after["r"] > before["r"] + 100, (before, after)
+
+
+def test_widening_grows_by_exactly_what_was_asked_for(browser):
+    """Not "bigger". Bigger by the amount, split evenly."""
+    page = _page(browser, SIZE_JS(), SIZE_DRIVER)
+    page.evaluate("localStorage.clear(); __make()")
+    was = page.evaluate("__w()")
+    page.evaluate("aiuiApplyAppWidth(window.__boxEl, 300)")
+    assert abs(page.evaluate("__w()") - (was + 300)) < 2, (
+        "asked for 300 more and got %s more"
+        % (page.evaluate("__w()") - was))
+
+
+def test_a_zero_gutter_is_a_length_rather_than_a_bare_zero(browser):
+    """The whole bug in one assertion: the margin has to survive being
+    read back, and an invalid declaration reads back as none."""
+    page = _page(browser, SIZE_JS(), SIZE_DRIVER)
+    page.evaluate("localStorage.clear(); __make();"
+                  " window.__boxEl.setAttribute('data-aiui-indent','0');"
+                  " aiuiApplyAppWidth(window.__boxEl, 200)")
+    left = page.evaluate(
+        "parseFloat(getComputedStyle(window.__boxEl).marginLeft)")
+    assert abs(left - (-100)) < 2, left
+
+
 def test_the_cap_comes_back_when_it_is_narrowed_again(browser):
     """At rest it is one turn in a conversation, not the page."""
     page = _page(browser, SIZE_JS(), SIZE_DRIVER)

@@ -4595,6 +4595,127 @@
   // which throws away the scroll position and anything typed into it, and
   // the whole point of expanding is to look at the thing you were already
   // looking at.
+  //: How wide the panel beside the chat is, in pixels.
+  //:
+  //: It was 50vw, decided once for every screen and every page. A landing
+  //: page wants more than half of a 1920 screen and a short form wants
+  //: less, and the conversation on the other side has the same argument
+  //: in reverse (2026-11-12, Ralph: "user can't adjust the sizez in here
+  //: to the left").
+  //:
+  //: The floor and the ceiling are not taste. Below the floor the panel
+  //: is too narrow to render a page into; above the ceiling the chat it
+  //: sits beside is a sliver with the handle on top of it, and neither
+  //: has an obvious way back.
+  var AIUI_SPLIT_MIN = 320;
+  var AIUI_SPLIT_KEY = 'aiui-split-width';
+  //: One arrow press.
+  var AIUI_SPLIT_STEP = 64;
+
+  function aiuiSplitMax() {
+    // Always leaves the conversation something to be. Computed rather
+    // than stored, because a window can be made smaller after the fact.
+    return Math.max(AIUI_SPLIT_MIN,
+                    Math.round(window.innerWidth * 0.85));
+  }
+
+  function aiuiClampSplit(px) {
+    var n = Number(px);
+    if (!isFinite(n)) return null;
+    return Math.max(AIUI_SPLIT_MIN, Math.min(aiuiSplitMax(), Math.round(n)));
+  }
+
+  function aiuiSavedSplit() {
+    var raw = null;
+    try {
+      raw = window.localStorage.getItem(AIUI_SPLIT_KEY);
+    } catch (e) {
+      raw = null;
+    }
+    // Half the window is what it has always been, and is still the right
+    // answer for somebody who has never moved it.
+    if (!raw) return aiuiClampSplit(Math.round(window.innerWidth / 2));
+    return aiuiClampSplit(parseFloat(raw))
+      || aiuiClampSplit(Math.round(window.innerWidth / 2));
+  }
+
+  function aiuiSaveSplit(px) {
+    var clamped = aiuiClampSplit(px);
+    if (!clamped) return;
+    try {
+      window.localStorage.setItem(AIUI_SPLIT_KEY, String(clamped));
+    } catch (e) {
+      // Storage switched off still resizes, it just does not remember.
+    }
+  }
+
+  // The panel's left edge, as a control.
+  //
+  // Two things have to move with it, and both would be silent if they did
+  // not: `pane.style.paddingRight` is the only thing keeping the panel off
+  // the conversation, and the frame inside is SCALED to fit, so a panel
+  // that changes width without re-fitting shows the app rendered for the
+  // width it used to have.
+  function aiuiSplitHandle(panel, pane, frame, holder) {
+    var grip = document.createElement('div');
+    grip.setAttribute('data-aiui-split-handle', '1');
+    grip.setAttribute('role', 'separator');
+    grip.setAttribute('aria-orientation', 'vertical');
+    grip.setAttribute('aria-label',
+                      'Resize the panel. Use the left and right arrows.');
+    grip.setAttribute('tabindex', '0');
+    grip.style.cssText = 'position:absolute;left:0;top:0;bottom:0;width:10px;'
+      + 'cursor:ew-resize;touch-action:none;z-index:2;'
+      + 'background:transparent;';
+
+    function apply(px, remember) {
+      var w = aiuiClampSplit(px);
+      if (!w) return;
+      panel.style.width = w + 'px';
+      if (pane) pane.style.paddingRight = w + 'px';
+      grip.setAttribute('aria-valuenow', String(w));
+      aiuiFitDesktop(frame, holder);
+      if (remember) aiuiSaveSplit(w);
+    }
+
+    function width() {
+      return Math.round(panel.getBoundingClientRect().width);
+    }
+
+    grip.addEventListener('pointerdown', function (down) {
+      down.preventDefault();
+      // The panel is pinned to the RIGHT, so its width is the distance
+      // from the pointer to that edge. Measured from the window rather
+      // than from a start offset, which is what keeps the edge under the
+      // finger when the drag outruns the pointer events.
+      function move(e) { apply(window.innerWidth - e.clientX, false); }
+      function up() {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        grip.style.background = 'transparent';
+        aiuiSaveSplit(width());
+      }
+      grip.style.background = 'rgba(127,127,127,.22)';
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    });
+
+    grip.addEventListener('keydown', function (e) {
+      var k = e.key;
+      var now = width();
+      // Left makes the panel WIDER, because its left edge is what moves.
+      if (k === 'ArrowLeft') apply(now + AIUI_SPLIT_STEP, true);
+      else if (k === 'ArrowRight') apply(now - AIUI_SPLIT_STEP, true);
+      else if (k === 'Home') apply(AIUI_SPLIT_MIN, true);
+      else if (k === 'End') apply(aiuiSplitMax(), true);
+      else return;
+      e.preventDefault();
+    });
+
+    grip.setAttribute('aria-valuenow', String(width()));
+    return grip;
+  }
+
   var aiuiSplit = null;
 
   // The element holding both the messages and the composer, found rather
@@ -4689,8 +4810,10 @@
     var pane = aiuiChatPane();
     if (!pane) return false;   // caller falls back to growing in place
 
+    var wide = aiuiSavedSplit();
     var panel = document.createElement('div');
-    panel.style.cssText = 'position:fixed;top:0;right:0;bottom:0;width:50vw;'
+    panel.style.cssText = 'position:fixed;top:0;right:0;bottom:0;'
+      + 'width:' + wide + 'px;'
       + 'z-index:9000;background:#0e0e10;display:flex;flex-direction:column;'
       + 'border-left:1px solid rgba(127,127,127,.3);';
 
@@ -4753,11 +4876,13 @@
     }
     document.body.appendChild(panel);
     aiuiFitDesktop(frame, holder);
+    // The edge, last so it sits above the head and the holder both.
+    panel.appendChild(aiuiSplitHandle(panel, pane, frame, holder));
     function onResize() { aiuiFitDesktop(frame, holder); }
     window.addEventListener('resize', onResize);
 
     var panePad = pane.style.paddingRight;
-    pane.style.paddingRight = '50vw';
+    pane.style.paddingRight = wide + 'px';
     // The box left behind in the thread is empty once the app moves out.
     // Negative margins on an empty box push it out over the conversation,
     // and the pane sets its own size anyway.
@@ -5102,8 +5227,21 @@
   // widened panel snapped back to its column every time Open WebUI
   // rebuilt the message and the panel was re-placed.
   function aiuiIndentOf(box) {
-    return (box && box.getAttribute
-            && box.getAttribute('data-aiui-indent')) || '0';
+    var raw = (box && box.getAttribute
+               && box.getAttribute('data-aiui-indent')) || '0px';
+    // A UNIT, always, because this value goes into calc().
+    //
+    // `calc(0 - 300px)` is invalid: calc will not subtract a length from
+    // a unitless number, so the browser drops the whole declaration. The
+    // right margin still applied, so a widened panel grew only to the
+    // right and only by half of what was asked for.
+    //
+    // Measured inside Open WebUI's own reply markup on 2026-11-12:
+    //     at rest        width 736  left 592  right 1328
+    //     widened by 600 width 1036 left 592  right 1628
+    // The left edge never moved, which is what "it still cannot be
+    // widened in the chat" looked like from the outside.
+    return (raw === '0' || raw === '') ? '0px' : raw;
   }
 
   // Set the gutter, and put the width back on top of it.
