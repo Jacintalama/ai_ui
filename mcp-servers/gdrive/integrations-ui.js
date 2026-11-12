@@ -892,6 +892,15 @@
         statusEl.innerHTML = '<span style="color:#666;font-size:11px;">Coming soon</span>';
       } else if (!connChecked[app.id]) {
         statusEl.innerHTML = '<span style="color:#777;font-size:12px;">Checking…</span>';
+      } else if (connected && connMeta[app.id]
+                 && connMeta[app.id].needs_reconnect) {
+        // Three states, not two. Something IS stored and it has a name on
+        // it, so this is not "Connect"; but the vendor has rejected it, so
+        // it is certainly not "Connected". Saying Connected here is the
+        // whole bug: a card read Connected for days while every call with
+        // that credential answered 401.
+        statusEl.innerHTML = '<span style="color:#f0b429;font-size:12px;'
+          + 'font-weight:600;">Needs reconnecting</span>';
       } else if (connected) {
         statusEl.innerHTML = '<span style="color:#4CAF50;font-size:12px;font-weight:600;">Connected</span>';
       } else if (partial) {
@@ -1049,7 +1058,12 @@
 
       var sub = document.createElement('div');
       sub.style.cssText = 'color:#8d8d8d;font-size:12px;line-height:1.5;margin-bottom:16px;';
-      sub.textContent = connected
+      sub.textContent = connected && meta.needs_reconnect
+        ? (app.name + ' rejected the credential stored for '
+           + (meta.account_label || app.name) + '. '
+           + (meta.oauth ? 'Reconnect to replace it.'
+                         : 'Paste a new credential to replace it.'))
+        : connected
         ? ('Connected as ' + (meta.account_label || app.name) + '. '
            + (meta.oauth ? 'Reconnect to replace it.'
                          : 'Paste a new credential to replace it.'))

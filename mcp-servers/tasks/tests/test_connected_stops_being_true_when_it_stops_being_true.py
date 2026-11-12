@@ -221,3 +221,107 @@ async def test_replacing_a_credential_forgets_what_we_knew(conn):
     H.forget("ralph@example.com", "github")
     await H.note("ralph@example.com", "github", 401)
     assert len(conn) == 2
+
+
+# --- driven for real, because a name out of scope is a runtime fact -------
+#
+# Added after wiring this into mytools and finding that _run_composite had
+# no `email` parameter at all. A structural test that "H.note( appears
+# before _refusal(" was perfectly happy with a NameError, and importing
+# the module would not have caught it either: it is inside a function
+# body. CLAUDE.md says this in so many words, and the morning's bug was
+# the same shape in JavaScript.
+
+import asyncio
+import json
+
+import mytools
+
+
+class _Resp:
+    def __init__(self, status_code=200, payload=None):
+        self.status_code = status_code
+        self._payload = payload if payload is not None else {}
+        self.text = json.dumps(self._payload)
+
+    def json(self):
+        return self._payload
+
+
+@pytest.fixture
+def vendor(monkeypatch):
+    """A ClickUp that answers whatever the test asks it to, and a record
+    of every verdict the call wrote down."""
+    told = []
+    reply = {"status": 200, "payload": {"id": "x", "name": "a task"}}
+
+    async def secrets(email, provider):
+        return {"token": "pk_test_000000000000"}
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def request(self, method, url, headers=None, params=None,
+                          json=None):
+            return _Resp(reply["status"], reply["payload"])
+
+        async def get(self, url, headers=None, params=None):
+            return _Resp(reply["status"], reply["payload"])
+
+    async def note(email, provider, status):
+        told.append((email, provider, status))
+
+    monkeypatch.setattr(mytools, "_secrets_for", secrets)
+    monkeypatch.setattr(mytools.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(mytools.H, "note", note)
+    return told, reply
+
+
+def _run(name, args):
+    return asyncio.run(mytools._call(
+        "clickup", mytools.CLICKUP_TOOLS_BY_NAME[name], "r@example.com",
+        args))
+
+
+def test_a_single_call_tells_the_card_what_the_vendor_said(vendor):
+    told, reply = vendor
+    reply["status"] = 401
+    reply["payload"] = {"err": "Token invalid"}
+    out = _run("get_task", {"task_id": "abc"})
+    assert out.get("ok") is False
+    assert told == [("r@example.com", "clickup", 401)], told
+
+
+def test_a_single_call_that_worked_says_so_too(vendor):
+    told, _ = vendor
+    _run("get_task", {"task_id": "abc"})
+    assert told == [("r@example.com", "clickup", 200)], told
+
+
+def test_a_composite_walk_tells_it_as_well(vendor):
+    """The bug this test was written for: _run_composite took no email,
+    so this path raised NameError on the first vendor answer."""
+    told, reply = vendor
+    reply["status"] = 401
+    reply["payload"] = {"err": "Token invalid"}
+    out = _run("find_list", {"name": "Project 1"})
+    assert out.get("ok") is False
+    assert told, "the walk told the card nothing"
+    assert told[0][0] == "r@example.com"
+    assert told[0][2] == 401
+
+
+def test_the_walk_knows_whose_credential_it_was_using(vendor):
+    told, _ = vendor
+    _run("find_list", {"name": "Project 1"})
+    assert told, "the walk told the card nothing"
+    for email, provider, _status in told:
+        assert email == "r@example.com"
+        assert provider == "clickup"

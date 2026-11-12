@@ -32,6 +32,20 @@ def _migration():
     raise AssertionError("no migration 068")
 
 
+def _ddl():
+    """The migration's statements, with every comment line removed first.
+
+    These tests ask what the SQL does, and the comments above it explain
+    at length what it deliberately does NOT do: "NULLABLE WITH NO
+    DEFAULT", "there is no column for what the vendor said". Scanning the
+    whole file for those words finds the explanation and fails on it.
+    """
+    lines = [l for l in _migration().splitlines()
+             if not l.strip().startswith("--")]
+    body = " ".join(" ".join(lines).split())
+    return [s.strip().lower() for s in body.split(";") if s.strip()]
+
+
 def _src(path):
     with open(path, encoding="utf-8") as fh:
         return fh.read()
@@ -54,19 +68,25 @@ def test_the_migration_can_run_twice():
 def test_there_is_no_column_for_what_a_vendor_said():
     """Vendors echo the request in their errors, and Trello's credential
     rides in its query string. A boolean and a time cannot leak one."""
-    sql = _migration().lower()
-    for word in ("error", "message", "detail", "reason", "body"):
-        assert word not in sql, "068 stores " + word
+    for line in _ddl():
+        for word in ("error", "message", "detail", "reason", "body", "text"):
+            assert word not in line, "068 stores " + word
 
 
 def test_a_credential_nobody_has_used_is_null_not_false():
     """NULL is "we have not learned anything", which is the honest state
-    for every row that exists before this migration runs. A default of
-    false would accuse every connection on the platform at once."""
-    sql = _migration().lower()
-    at = sql.index("check_ok")
-    assert "default" not in sql[at:at + 120], (
-        "check_ok has a default, so every existing connection gets one")
+    for every row that exists before this migration runs and every one
+    nobody has used since.
+
+    A default of false would accuse every connection on the platform at
+    once. A default of true would be a second thing asserting something
+    nobody checked, which is the bug this migration exists to fix.
+    """
+    adds = [line for line in _ddl() if "add column" in line]
+    assert len(adds) == 2, adds
+    for line in adds:
+        assert "default" not in line, line
+        assert "not null" not in line, line
 
 
 # --- what the listing reads -----------------------------------------------
@@ -128,12 +148,22 @@ def test_the_card_is_told_when_it_was_last_checked():
     assert out["checked_at"] == "2026-11-12T01:00:00"
 
 
-def test_nothing_in_the_description_could_be_a_secret():
+def test_the_description_carries_only_the_fields_it_is_meant_to():
+    """An allowlist rather than a scan for suspicious words.
+
+    A scan is both too weak and too strong: `where` is help text that
+    legitimately says "token" ("set up a personal access token"), and a
+    credential that happened not to contain the word would sail past. The
+    set of keys is the thing that must not grow by accident, because this
+    dict is built from a row that also holds `secrets_encrypted`.
+    """
     out = _described(account_label="x", updated_at="x", check_ok=False,
                      checked_at="y")
+    assert set(out) == {
+        "provider", "label", "connected", "needs_reconnect", "checked_at",
+        "account_label", "connected_at", "where", "oauth", "fields",
+    }, sorted(out)
     assert "secrets_encrypted" not in out
-    for value in out.values():
-        assert "token" not in str(value).lower()
 
 
 # --- where it is learned --------------------------------------------------
@@ -179,22 +209,68 @@ def test_reconnecting_clears_the_accusation():
 
 
 # --- and what it looks like ------------------------------------------------
+#
+# TWO surfaces draw this, and the badge lied on both: the Connections list
+# on the agents page, and the integrations grid in the main chat.
 
-def test_the_page_has_a_third_state():
-    src = _src(JS)
+PAGE = os.path.join(HERE, "..", "static", "agents.html")
+
+
+def test_the_agents_page_has_a_third_state():
+    src = _src(PAGE)
     assert "Needs reconnecting" in src
+    assert "needs_reconnect" in src
 
 
-def test_the_third_state_is_not_drawn_as_connected():
-    """Same green pill would make the fix invisible, which is the bug."""
-    src = _src(JS)
+def test_the_agents_page_does_not_draw_it_as_connected():
+    """The same green pill would make the whole fix invisible."""
+    src = _src(PAGE)
     row = src[src.index("function connRow("):]
     row = row[:row.index("\n    function ")]
-    assert "needs_reconnect" in row or "needsReconnect" in row
+    assert "needsReconnect" in row
+    at = row.index("needsReconnect")
+    assert "warn" in row[at:at + 200], (
+        "it is drawn with the same class as a working connection")
 
 
-def test_the_button_on_a_dead_credential_says_reconnect():
-    src = _src(JS)
+def test_the_warning_is_not_drawn_as_an_error():
+    """Amber, not red. Nothing is broken that one button does not fix,
+    and red beside an app somebody connected on purpose reads as a
+    failure they caused."""
+    src = _src(PAGE)
+    assert ".conn-state.warn" in src
+    at = src.index(".conn-state.warn")
+    style = src[at:at + 60].lower()
+    assert "#f0b429" in style or "amber" in style
+    assert "#f00" not in style and "red" not in style
+
+
+def test_the_button_on_a_dead_credential_still_says_reconnect():
+    """It is a replacement, not a first setup: the account name and the
+    history are still there."""
+    src = _src(PAGE)
     row = src[src.index("function connRow("):]
     row = row[:row.index("\n    function ")]
     assert "Reconnect" in row
+
+
+def test_the_grid_in_the_main_chat_has_it_too():
+    src = _src(JS)
+    assert "Needs reconnecting" in src
+    grid = src[src.index("var statusEl = document.createElement"):][:1600]
+    assert "needs_reconnect" in grid
+
+
+def test_the_grid_checks_it_before_it_says_connected():
+    """Order matters in an if/else chain: `connected` is true for a dead
+    credential, so a later branch never runs."""
+    src = _src(JS)
+    grid = src[src.index("var statusEl = document.createElement"):][:1800]
+    assert grid.index("needs_reconnect") < grid.index(">Connected<")
+
+
+def test_opening_a_rejected_app_says_what_happened():
+    """The card says two words. The panel behind it has room to say which
+    account was rejected and that reconnecting replaces it."""
+    src = _src(JS)
+    assert "rejected the credential stored for" in src
