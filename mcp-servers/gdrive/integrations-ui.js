@@ -4435,10 +4435,16 @@
       e.preventDefault();
       e.stopPropagation();
       var el = e.target;
+      var said = String(el.textContent || '').trim();
       onPick({
         selector: aiuiSelectorFor(el),
         tag: (el.tagName || '').toLowerCase(),
-        text: String(el.textContent || '').trim().slice(0, 200)
+        // What the AGENT is shown. 200 is plenty to describe an element.
+        text: said.slice(0, 200),
+        // What a direct swap MATCHES. Never truncated: a prefix match
+        // replaces the front of the words and leaves the tail behind,
+        // which is a mangled page rather than a failed change.
+        full: said
       });
     }
     doc.addEventListener('mouseover', onOver, true);
@@ -5468,7 +5474,38 @@
     var askWhat = document.createElement('div');
     askWhat.style.cssText = 'font-size:.75rem;opacity:.6;margin-bottom:.35rem;'
       + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+
+    // The fast half, and first because it is the one that is right most
+    // often: change the words themselves. Asking the agent is a BUILD,
+    // minutes and a commit, which is the right price for "make the hero
+    // more dramatic" and the wrong one for a typo in a rating.
+    var wordsRow = document.createElement('div');
+    wordsRow.style.cssText = 'display:flex;gap:.4rem;align-items:center;'
+      + 'margin-bottom:.45rem;';
+    var words = document.createElement('input');
+    words.type = 'text';
+    words.setAttribute('aria-label', 'The words on the page');
+    words.style.cssText = 'flex:1 1 auto;min-width:0;padding:.45rem .55rem;'
+      + 'border-radius:8px;border:1px solid rgba(127,127,127,.35);'
+      + 'background:transparent;color:inherit;font-size:.88rem;';
+    var swapBtn = document.createElement('button');
+    swapBtn.type = 'button';
+    swapBtn.textContent = 'Replace';
+    swapBtn.style.cssText = 'flex:0 0 auto;padding:.45rem .7rem;'
+      + 'border-radius:8px;border:1px solid rgba(127,127,127,.35);'
+      + 'background:rgba(127,127,127,.12);color:inherit;cursor:pointer;'
+      + 'font-size:.82rem;';
+    wordsRow.appendChild(words);
+    wordsRow.appendChild(swapBtn);
+
+    // Two inputs with nothing between them is a guessing game.
+    var orLine = document.createElement('div');
+    orLine.textContent = 'or ask for a change';
+    orLine.style.cssText = 'font-size:.72rem;opacity:.5;margin-bottom:.3rem;';
+
     ask.appendChild(askWhat);
+    ask.appendChild(wordsRow);
+    ask.appendChild(orLine);
     ask.appendChild(asked);
 
     var picked = null;
@@ -5485,6 +5522,8 @@
       // 2026-11-12: "once i submitted i cant type anymore it in".
       asked.disabled = false;
       asked.style.display = '';
+      words.disabled = false;
+      swapBtn.disabled = false;
       note.style.opacity = '.6';
       note.title = 'Point at something to change it';
       note.setAttribute('aria-label', note.title);
@@ -5498,8 +5537,16 @@
         askWhat.textContent = 'Changing: ' + (pick.text || pick.selector
                                               || pick.tag);
         ask.style.display = '';
+        // An image, a spacer, a wrapper around other elements: there is
+        // nothing to put in a words box, and an empty one only invites a
+        // change that can be refused.
+        var hasWords = !!pick.full;
+        wordsRow.style.display = hasWords ? 'flex' : 'none';
+        orLine.style.display = hasWords ? '' : 'none';
+        words.value = pick.full || '';
         asked.value = '';
-        asked.focus();
+        if (hasWords) words.focus();
+        else asked.focus();
       });
       if (!mode) {
         // Nothing to point at: the app has not finished loading, or this
@@ -5517,6 +5564,55 @@
       note.style.opacity = '1';
       note.title = 'Stop pointing';
       note.setAttribute('aria-label', note.title);
+    });
+
+    function doSwap() {
+      var want = words.value.trim();
+      if (!want || !picked || !picked.full) return;
+      if (want === picked.full) {
+        askWhat.textContent = 'Those are the same words.';
+        return;
+      }
+      words.disabled = true;
+      swapBtn.disabled = true;
+      askWhat.textContent = 'Changing the words...';
+      // Wrapped for the same reason the enhance below is: a `.catch`
+      // cannot catch a throw raised while the request is still being
+      // built, and the box would stay dead with nothing sent.
+      try {
+        fetch('/api/aiuibuilder/' + encodeURIComponent(slug) + '/text', {
+          method: 'POST',
+          headers: aiuiAuthHeaders(),
+          body: JSON.stringify({ old: picked.full, new: want })
+        }).then(function (r) {
+          return r.ok ? r.json() : r.json().then(function (j) {
+            throw new Error(j.detail || 'that could not be changed');
+          });
+        }).then(function () {
+          // The file changed under a frame with every reason to believe
+          // it did not, so the same cache-bust the build watcher uses.
+          try {
+            var at = frame.src.split('#')[0].split('?')[0];
+            frame.src = at + '?changed=' + Date.now();
+          } catch (e) { /* the frame went away */ }
+          annotateStop();
+        }).catch(function (err) {
+          words.disabled = false;
+          swapBtn.disabled = false;
+          askWhat.textContent = String((err && err.message)
+                                       || 'That did not work.');
+        });
+      } catch (err) {
+        words.disabled = false;
+        swapBtn.disabled = false;
+        askWhat.textContent = 'That could not be sent. Try again.';
+      }
+    }
+
+    swapBtn.addEventListener('click', doSwap);
+    words.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { annotateStop(); return; }
+      if (e.key === 'Enter') { e.preventDefault(); doSwap(); }
     });
 
     asked.addEventListener('keydown', function (e) {

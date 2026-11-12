@@ -19,6 +19,7 @@ from sqlalchemy import select, text, update
 
 import agent_jev
 import app_git
+import app_text
 import app_theme
 import light_build
 import light_runner
@@ -972,3 +973,57 @@ async def make_app_themeable(slug: str,
     task_id, out_slug = await _create_and_spawn_enhance(
         user.email, slug, app_theme.upgrade_prompt(slug))
     return BuildResponse(task_id=task_id, slug=out_slug, status="running")
+
+
+class TextSwap(BaseModel):
+    """The words that are there, and the words to put in their place."""
+    old: str = Field(..., min_length=1, max_length=600)
+    new: str = Field(..., min_length=1, max_length=600)
+
+
+class TextSwapped(BaseModel):
+    ok: bool
+    file: str
+
+
+@router.post("/{slug}/text", response_model=TextSwapped)
+async def change_app_text(slug: str, body: TextSwap,
+                          user: CurrentUser = Depends(current_user)):
+    """Change the words on this app's page. No agent, no build.
+
+    Pointing at something and asking for a change runs an agent, which
+    costs minutes. That is the right price for "make the hero more
+    dramatic" and the wrong one for fixing a typo in a rating
+    (2026-11-12). The appearance panel has written files directly since
+    2026-11-05 for the same reason; this is the same shape.
+
+    Every refusal is a 400 carrying a sentence meant to be read, because
+    there is always a way through and it is the pencil's other button:
+    ask for the change and the agent will do it. `app_text` decides all
+    of them, counts the matches across every file before opening any of
+    them for writing, and leaves the app untouched on anything it will
+    not do.
+    """
+    _validate_slug(slug)
+    async with session() as s:
+        await _require_role(s, slug, user.email, "owner",
+                            is_admin=getattr(user, "is_admin", False))
+
+    try:
+        where = app_text.swap(slug, body.old, body.new)
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err))
+    except OSError:
+        logger.exception("text: could not write the page for %s", slug)
+        raise HTTPException(status_code=500,
+                            detail="That could not be saved, try again")
+
+    # The history is the monorepo's log for apps/<slug>/, so a word change
+    # has to be a commit or it is invisible to the version list and cannot
+    # be rolled back. Fails open like every other sweep: the change is
+    # already on disk and live, and a failed commit must not read as a
+    # failed save.
+    await app_git.sweep_app_commit(
+        slug, message="Text: " + body.old[:60], actor_email=user.email)
+
+    return TextSwapped(ok=True, file=where)
