@@ -206,3 +206,34 @@ def test_the_change_is_still_sent_to_the_user_scoped_builder():
 def test_the_change_still_carries_what_was_pointed_at():
     body = _body(*_span("aiuiShowAppInline"))
     assert "aiuiAnnotatePrompt(picked, said)" in body
+
+
+# --- the whole class, not just this one -----------------------------------
+
+def test_every_aiui_function_the_preview_calls_really_exists():
+    """The general form of the bug, and the cheap half of a browser.
+
+    `node --check` is a PARSE. A name that is not in scope is a runtime
+    fact, so it says nothing about any of this, and the one real browser
+    test covering the appearance panel was green throughout because its
+    harness supplied the missing name itself.
+
+    Every `aiuiSomething(` called from the preview's own code must be a
+    top-level function in this file. Top level is the IIFE's scope, which
+    is the only scope all of this shares.
+    """
+    src = _js()
+    defined = set(re.findall(r"^  function (aiui\w+)\(", src, re.M))
+    assert len(defined) > 40, "the top-level scan found almost nothing"
+
+    for fn in ("aiuiShowAppInline", "aiuiAppearance", "aiuiAnnotateOn",
+               "aiuiSizeHandle", "aiuiSplitOpen", "aiuiSplitClose"):
+        body = _body(*_span(fn))
+        called = set(re.findall(r"(?<![A-Za-z0-9_.])(aiui\w+)\s*\(",
+                                _strip(body)))
+        # Names declared inside this function are its own business.
+        local = set(re.findall(r"function (aiui\w+)\(", body))
+        missing = sorted(called - defined - local)
+        assert missing == [], (
+            "%s calls %s, which is not a top-level function here"
+            % (fn, ", ".join(missing)))

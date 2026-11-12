@@ -892,6 +892,15 @@
         statusEl.innerHTML = '<span style="color:#666;font-size:11px;">Coming soon</span>';
       } else if (!connChecked[app.id]) {
         statusEl.innerHTML = '<span style="color:#777;font-size:12px;">Checking…</span>';
+      } else if (connected && connMeta[app.id]
+                 && connMeta[app.id].needs_reconnect) {
+        // Three states, not two. Something IS stored and it has a name on
+        // it, so this is not "Connect"; but the vendor has rejected it, so
+        // it is certainly not "Connected". Saying Connected here is the
+        // whole bug: a card read Connected for days while every call with
+        // that credential answered 401.
+        statusEl.innerHTML = '<span style="color:#f0b429;font-size:12px;'
+          + 'font-weight:600;">Needs reconnecting</span>';
       } else if (connected) {
         statusEl.innerHTML = '<span style="color:#4CAF50;font-size:12px;font-weight:600;">Connected</span>';
       } else if (partial) {
@@ -1049,7 +1058,12 @@
 
       var sub = document.createElement('div');
       sub.style.cssText = 'color:#8d8d8d;font-size:12px;line-height:1.5;margin-bottom:16px;';
-      sub.textContent = connected
+      sub.textContent = connected && meta.needs_reconnect
+        ? (app.name + ' rejected the credential stored for '
+           + (meta.account_label || app.name) + '. '
+           + (meta.oauth ? 'Reconnect to replace it.'
+                         : 'Paste a new credential to replace it.'))
+        : connected
         ? ('Connected as ' + (meta.account_label || app.name) + '. '
            + (meta.oauth ? 'Reconnect to replace it.'
                          : 'Paste a new credential to replace it.'))
@@ -2763,6 +2777,22 @@
     return h;
   }
 
+  // Ask a browser to draw a glyph as TEXT rather than as an emoji.
+  //
+  // U+270E (the pencil) and U+2197 (the open-in-a-tab arrow) both have an
+  // emoji presentation a browser is free to prefer, and one did: the
+  // pencil came out orange beside five monochrome glyphs (2026-11-12,
+  // Ralph: "change the icon for pencil because it colorful and the other
+  // icon isnt... or fix all").
+  //
+  // U+FE0E is the variation selector that asks for text. It changes
+  // nothing for a character with no emoji form, which is why it goes on
+  // all of them rather than on the two that misbehave today: the next
+  // glyph somebody adds is covered without anybody remembering this.
+  function aiuiGlyph(ch) {
+    return String(ch || '') + '\ufe0e';
+  }
+
   function aiuiPopupBlocked(win) {
     // A blocked window.open returns null in Chrome; some browsers return a
     // window that is immediately closed.
@@ -4087,9 +4117,12 @@
       // indent every panel carries for the thread would double up here.
       // Cleared centrally, because six panels carry it and a seventh
       // would forget.
-      box.style.marginLeft = '0';
+      aiuiSetIndent(box, '0');
       box.style.paddingLeft = '0';
       reply.appendChild(box);
+      // After it is in the page: how much wider it may grow is measured
+      // against the column it sits in and the window around it.
+      aiuiSetIndent(box, '0');
       return;
     }
     var thread = aiuiThread();
@@ -4181,6 +4214,15 @@
   //: How tall the app sits in the conversation, and how tall it goes when
   //: somebody expands it. Small by default: it is one turn in a chat, not
   //: the page.
+  //: How wide a preview sits in the conversation at rest. One turn in a
+  //: chat, not the page.
+  //:
+  //: It is a CAP, which is why the drag shipped on 2026-11-11 looked
+  //: broken: a block element does not grow past its max-width however
+  //: negative its margins are, so the handle moved the box around inside
+  //: its column and every test of it passed, having measured a box with
+  //: no such cap on it.
+  var AIUI_APP_MAXW = '46rem';
   var AIUI_APP_H = '22rem';
   var AIUI_APP_H_BIG = '80vh';
 
@@ -4435,10 +4477,29 @@
       e.preventDefault();
       e.stopPropagation();
       var el = e.target;
+      var said = String(el.textContent || '').trim();
       onPick({
         selector: aiuiSelectorFor(el),
         tag: (el.tagName || '').toLowerCase(),
-        text: String(el.textContent || '').trim().slice(0, 200)
+        // What the AGENT is shown. 200 is plenty to describe an element.
+        text: said.slice(0, 200),
+        // What a direct swap MATCHES, and ONLY when this element's text
+        // is one contiguous run.
+        //
+        // An element with element children of its own is not. The
+        // heading
+        //     <h1>A cup that<br>holds the heat,<br>not you back.</h1>
+        // reads back as "A cup thatholds the heat,not you back", because
+        // textContent contributes nothing for a <br>, and that string
+        // appears nowhere in the file. The swap refused correctly and
+        // said to ask the agent, which works, but a box that can only
+        // refuse should not have been offered: this is knowable before
+        // anything is typed (2026-11-12, from Ralph's screenshot).
+        //
+        // Never truncated either: a prefix match replaces the front of
+        // the words and leaves the tail behind, which is a mangled page
+        // rather than a failed change.
+        full: (el.children && el.children.length === 0) ? said : ''
       });
     }
     doc.addEventListener('mouseover', onOver, true);
@@ -4487,21 +4548,34 @@
             frame.src = at + '?changed=' + Date.now();
           } catch (e) { /* the frame went away */ }
           aiuiBuildLine(chatId, 'The change is in. Reloading it.');
+          aiuiWorkingDone(frame);
           setTimeout(function () { aiuiClearBuildLine(); }, 4000);
           return true;
         }
         if (status === 'failed') {
           aiuiBuildLine(chatId, 'That change did not work out. The app is'
                         + ' as it was.');
+          // A strip still shimmering after a failure says work is
+          // happening when none is.
+          aiuiWorkingDone(frame);
           setTimeout(function () { aiuiClearBuildLine(); }, 8000);
           return true;
         }
         var said = String(task.build_step_said || '').trim();
-        aiuiBuildLine(chatId, said ? said + '...' : 'Making that change...');
+        said = said ? said + '...' : 'Making that change...';
+        aiuiBuildLine(chatId, said);
+        // The same sentence where the app is, because the side panel
+        // covers the chat the line above goes to.
+        aiuiWorkingSay(frame, said);
         return false;
       }).catch(function () { return false; })
       .then(function (finished) {
-        if (finished || Date.now() - started > AIUI_CHANGE_GIVE_UP_MS) return;
+        if (finished) return;
+        if (Date.now() - started > AIUI_CHANGE_GIVE_UP_MS) {
+          // Thirty minutes, reached without either ending above.
+          aiuiWorkingDone(frame);
+          return;
+        }
         setTimeout(function () {
           aiuiWatchChange(chatId, taskId, frame, started);
         }, AIUI_CHANGE_POLL_MS);
@@ -4632,14 +4706,14 @@
     out.href = frame.src;
     out.target = '_blank';
     out.rel = 'noopener';
-    out.textContent = '↗';
+    out.textContent = aiuiGlyph('↗');
     out.title = 'Open in a new tab';
     out.setAttribute('aria-label', 'Open in a new tab');
     out.style.cssText = 'color:inherit;opacity:.65;text-decoration:none;'
       + 'padding:.1rem .35rem;';
     var shut = document.createElement('button');
     shut.type = 'button';
-    shut.textContent = '✕';
+    shut.textContent = aiuiGlyph('✕');
     shut.title = 'Put it back in the chat';
     shut.setAttribute('aria-label', 'Put it back in the chat');
     shut.style.cssText = 'background:none;border:0;color:inherit;opacity:.65;'
@@ -4767,7 +4841,12 @@
     var box = document.createElement('div');
     box.id = 'aiui-app-skeleton';
     box.setAttribute('aria-hidden', 'true');
-    box.style.cssText = 'margin:.5rem 0 .25rem;max-width:46rem;'
+    // The same size as the panel that replaces it. A placeholder of a
+    // different width is a layout jump dressed up as a loading state.
+    box.setAttribute('data-aiui-indent', '3.75rem');
+    box.setAttribute('data-aiui-widenable', '1');
+    box.style.cssText = 'margin:.5rem 0 .25rem;max-width:' + AIUI_APP_MAXW
+      + ';'
       + 'border:1px solid rgba(127,127,127,.28);border-radius:12px;'
       + 'overflow:hidden;background:rgba(127,127,127,.06);';
 
@@ -4787,7 +4866,29 @@
 
     box.appendChild(bar);
     box.appendChild(stage);
+    aiuiApplyAppWidth(box, aiuiSavedAppExtra());
     return box;
+  }
+
+  // The preview's shape, under the reply, while a build runs.
+  //
+  // Drawn from the FIRST tick of the watcher rather than once the step
+  // list arrives: that needs the task to have answered and its labels to
+  // have loaded, which is seconds in, and until then a build in the chat
+  // looked like nothing happening at all (2026-11-12, Ralph: "user didnt
+  // know its loading and working on it").
+  //
+  // Once, however many polls there are, and only when there is a reply to
+  // put it under: a chat just opened can answer its first poll before any
+  // reply is drawn, and a panel put then goes to the end of the page and
+  // stays there.
+  function aiuiShowBuildGhost() {
+    if (document.getElementById('aiui-app-skeleton')) return null;
+    if (!aiuiLastReplyBody()) return null;
+    var ghost = aiuiSkeletonPanel();
+    ghost.style.marginLeft = '3.75rem';
+    aiuiPutUnderLastMessage(ghost);
+    return ghost;
   }
 
   function aiuiClearSkeletonPanel() {
@@ -4822,6 +4923,62 @@
       said.style.display = 'block';
     }, AIUI_COVER_SLOW_MS);
     return cover;
+  }
+
+  // A thin shimmering strip across the TOP of the preview, saying what is
+  // being done to it.
+  //
+  // Not `aiuiCoverWhileLoading`, which hides the whole frame behind a
+  // skeleton. That is right for an app that has not arrived and wrong for
+  // one being changed: an enhance takes minutes, and hiding somebody's
+  // page for minutes to tell them it is busy costs more than it gives.
+  // They are watching it precisely to see it change.
+  //
+  // Attached to whatever the frame's parent currently is, because the
+  // frame MOVES between the thread and the side panel and the strip has
+  // to appear in the one being looked at. The progress was already being
+  // reported before this existed, by aiuiBuildLine into the CHAT, which
+  // the side panel covers (2026-11-12, Ralph, watching an enhance with no
+  // sign anything was happening).
+  function aiuiWorkingSay(frame, said) {
+    var holder = frame && frame.parentNode;
+    if (!holder || !holder.appendChild) return null;
+    aiuiMotion();
+
+    // An absolutely positioned child escapes a static parent. The holder
+    // is ours either way: the stage in the thread, or the panel's holder.
+    var how = '';
+    try {
+      how = window.getComputedStyle(holder).position;
+    } catch (e) { how = ''; }
+    if (how === 'static' || !how) holder.style.position = 'relative';
+
+    // Found again rather than stacked: the watcher calls this on every
+    // poll, which is once every eight seconds for up to thirty minutes.
+    var strip = holder.querySelector
+      ? holder.querySelector('[data-aiui-working]') : null;
+    if (!strip) {
+      strip = document.createElement('div');
+      strip.setAttribute('data-aiui-working', '1');
+      strip.setAttribute('role', 'status');
+      strip.setAttribute('aria-live', 'polite');
+      strip.className = 'aiui-shimmer';
+      strip.style.cssText = 'position:absolute;top:0;left:0;right:0;'
+        + 'z-index:3;padding:.4rem .7rem;font-size:.78rem;'
+        + 'color:#ededee;background-color:rgba(20,20,22,.92);'
+        + 'border-radius:0;overflow:hidden;text-overflow:ellipsis;'
+        + 'white-space:nowrap;pointer-events:none;';
+      holder.appendChild(strip);
+    }
+    strip.textContent = said || 'Working on it...';
+    return strip;
+  }
+
+  function aiuiWorkingDone(frame) {
+    var holder = frame && frame.parentNode;
+    var strip = holder && holder.querySelector
+      ? holder.querySelector('[data-aiui-working]') : null;
+    if (strip && strip.parentNode) strip.parentNode.removeChild(strip);
   }
 
   // Hide or show the grab bar that sits beside `bar`, by walking to the
@@ -4884,9 +5041,19 @@
   // width already contains whatever extra is applied: measuring that would
   // compound on every drag and run off the screen in three pulls.
   function aiuiMaxAppExtra(box) {
-    var col = box && box.parentElement;
-    var colW = col ? col.getBoundingClientRect().width
-                   : (box ? box.getBoundingClientRect().width : 0);
+    // Nothing that cannot be MEASURED is widened. A detached node, or
+    // anything that is not a laid-out element, has no column to grow
+    // beyond and no window to fit inside, so the honest allowance is
+    // none rather than a guess at one.
+    function widthOf(el) {
+      if (!el || typeof el.getBoundingClientRect !== 'function') return null;
+      try {
+        return el.getBoundingClientRect().width;
+      } catch (e) { return null; }
+    }
+    var colW = widthOf(box && box.parentElement);
+    if (colW === null) colW = widthOf(box);
+    if (colW === null || !window.innerWidth) return 0;
     var room = window.innerWidth - colW - (AIUI_APP_W_GUTTER * 2);
     return Math.max(0, Math.round(room));
   }
@@ -4927,6 +5094,33 @@
     }
   }
 
+  // The thread's avatar gutter for this box, kept as its own value.
+  //
+  // `marginLeft` used to carry two meanings at once: this gutter, which
+  // both placement functions set to 0 when a panel goes inside a reply,
+  // and half the extra width. Whichever was written last won, so a
+  // widened panel snapped back to its column every time Open WebUI
+  // rebuilt the message and the panel was re-placed.
+  function aiuiIndentOf(box) {
+    return (box && box.getAttribute
+            && box.getAttribute('data-aiui-indent')) || '0';
+  }
+
+  // Set the gutter, and put the width back on top of it.
+  //
+  // Does nothing clever for a box that cannot be widened, which is the
+  // video panel and the build panel: they share these placement
+  // functions and have no width of their own to restore.
+  function aiuiSetIndent(box, indent) {
+    if (!box || !box.style) return;
+    if (box.setAttribute) box.setAttribute('data-aiui-indent', indent);
+    if (box.hasAttribute && box.hasAttribute('data-aiui-widenable')) {
+      aiuiApplyAppWidth(box, aiuiSavedAppExtra());
+      return;
+    }
+    box.style.marginLeft = indent;
+  }
+
   // Widen the box by `extra` pixels, half on each side, and never by more
   // than the screen has room for.
   //
@@ -4939,8 +5133,17 @@
     if (!box || !box.style) return 0;
     var fitted = aiuiClampAppExtra(extra, box);
     var half = fitted / 2;
-    box.style.marginLeft = half ? (-half + 'px') : '';
+    var indent = aiuiIndentOf(box);
+    // Composed with the gutter rather than replacing it, so a widened
+    // panel inside a reply keeps its indent and a widened panel in the
+    // thread keeps the avatar's.
+    box.style.marginLeft = half
+      ? ('calc(' + indent + ' - ' + half + 'px)') : indent;
     box.style.marginRight = half ? (-half + 'px') : '';
+    // Without this the margins move the box and the cap holds its width,
+    // which is exactly what "it can only stretch up and down" looked
+    // like.
+    box.style.maxWidth = fitted ? 'none' : AIUI_APP_MAXW;
     return fitted;
   }
 
@@ -5395,6 +5598,9 @@
     var drawn = document.getElementById(id);
     if (drawn) {
       if (inReply && !inReply.contains(drawn)) aiuiPutInReply(drawn, inReply);
+      // Whether or not it moved: a rebuilt message can hand back a panel
+      // whose inline styles were rewritten under it.
+      aiuiApplyAppWidth(drawn, aiuiSavedAppExtra());
       return;
     }
 
@@ -5407,7 +5613,12 @@
 
     var box = document.createElement('div');
     box.id = id;
-    box.style.cssText = 'margin:.5rem 0 1rem 3.75rem;max-width:46rem;'
+    // The gutter is an attribute as well as a margin, because the margin
+    // is also where the extra width goes and the two have to compose.
+    box.setAttribute('data-aiui-indent', '3.75rem');
+    box.setAttribute('data-aiui-widenable', '1');
+    box.style.cssText = 'margin:.5rem 0 1rem 3.75rem;max-width:'
+      + AIUI_APP_MAXW + ';'
       + 'border:1px solid rgba(127,127,127,.28);border-radius:12px;'
       + 'overflow:hidden;background:rgba(127,127,127,.06);';
 
@@ -5417,7 +5628,7 @@
       + 'border-bottom:1px solid rgba(127,127,127,.2);';
 
     var dot = document.createElement('span');
-    dot.textContent = '▣';
+    dot.textContent = aiuiGlyph('▣');
     dot.style.cssText = 'opacity:.55;';
     var name = document.createElement('button');
     name.type = 'button';
@@ -5453,7 +5664,8 @@
     chip.style.cssText = 'display:none;width:100%;text-align:left;'
       + 'background:none;border:0;color:inherit;cursor:pointer;'
       + 'padding:.55rem .7rem;font-size:.85rem;';
-    chip.textContent = '▣  ' + slug + '  ·  showing beside the chat';
+    chip.textContent = aiuiGlyph('▣') + '  ' + slug
+      + '  ·  showing beside the chat';
 
     // Point at a part of the page and say what to change.
     var ask = document.createElement('div');
@@ -5468,7 +5680,38 @@
     var askWhat = document.createElement('div');
     askWhat.style.cssText = 'font-size:.75rem;opacity:.6;margin-bottom:.35rem;'
       + 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+
+    // The fast half, and first because it is the one that is right most
+    // often: change the words themselves. Asking the agent is a BUILD,
+    // minutes and a commit, which is the right price for "make the hero
+    // more dramatic" and the wrong one for a typo in a rating.
+    var wordsRow = document.createElement('div');
+    wordsRow.style.cssText = 'display:flex;gap:.4rem;align-items:center;'
+      + 'margin-bottom:.45rem;';
+    var words = document.createElement('input');
+    words.type = 'text';
+    words.setAttribute('aria-label', 'The words on the page');
+    words.style.cssText = 'flex:1 1 auto;min-width:0;padding:.45rem .55rem;'
+      + 'border-radius:8px;border:1px solid rgba(127,127,127,.35);'
+      + 'background:transparent;color:inherit;font-size:.88rem;';
+    var swapBtn = document.createElement('button');
+    swapBtn.type = 'button';
+    swapBtn.textContent = 'Replace';
+    swapBtn.style.cssText = 'flex:0 0 auto;padding:.45rem .7rem;'
+      + 'border-radius:8px;border:1px solid rgba(127,127,127,.35);'
+      + 'background:rgba(127,127,127,.12);color:inherit;cursor:pointer;'
+      + 'font-size:.82rem;';
+    wordsRow.appendChild(words);
+    wordsRow.appendChild(swapBtn);
+
+    // Two inputs with nothing between them is a guessing game.
+    var orLine = document.createElement('div');
+    orLine.textContent = 'or ask for a change';
+    orLine.style.cssText = 'font-size:.72rem;opacity:.5;margin-bottom:.3rem;';
+
     ask.appendChild(askWhat);
+    ask.appendChild(wordsRow);
+    ask.appendChild(orLine);
     ask.appendChild(asked);
 
     var picked = null;
@@ -5485,12 +5728,14 @@
       // 2026-11-12: "once i submitted i cant type anymore it in".
       asked.disabled = false;
       asked.style.display = '';
+      words.disabled = false;
+      swapBtn.disabled = false;
       note.style.opacity = '.6';
       note.title = 'Point at something to change it';
       note.setAttribute('aria-label', note.title);
     }
 
-    var note = iconBtn('✎', 'Point at something to change it');
+    var note = iconBtn(aiuiGlyph('✎'), 'Point at something to change it');
     note.addEventListener('click', function () {
       if (mode) { annotateStop(); return; }
       mode = aiuiAnnotateOn(frame, function (pick) {
@@ -5498,8 +5743,16 @@
         askWhat.textContent = 'Changing: ' + (pick.text || pick.selector
                                               || pick.tag);
         ask.style.display = '';
+        // An image, a spacer, a wrapper around other elements: there is
+        // nothing to put in a words box, and an empty one only invites a
+        // change that can be refused.
+        var hasWords = !!pick.full;
+        wordsRow.style.display = hasWords ? 'flex' : 'none';
+        orLine.style.display = hasWords ? '' : 'none';
+        words.value = pick.full || '';
         asked.value = '';
-        asked.focus();
+        if (hasWords) words.focus();
+        else asked.focus();
       });
       if (!mode) {
         // Nothing to point at: the app has not finished loading, or this
@@ -5517,6 +5770,64 @@
       note.style.opacity = '1';
       note.title = 'Stop pointing';
       note.setAttribute('aria-label', note.title);
+    });
+
+    function doSwap() {
+      var want = words.value.trim();
+      if (!want || !picked || !picked.full) return;
+      if (want === picked.full) {
+        askWhat.textContent = 'Those are the same words.';
+        return;
+      }
+      words.disabled = true;
+      swapBtn.disabled = true;
+      askWhat.textContent = 'Changing the words...';
+      // Fast, but it still writes a file, commits and reloads, and in the
+      // side panel this strip is the only thing that says so.
+      aiuiWorkingSay(frame, 'Changing the words...');
+      // Wrapped for the same reason the enhance below is: a `.catch`
+      // cannot catch a throw raised while the request is still being
+      // built, and the box would stay dead with nothing sent.
+      try {
+        fetch('/api/aiuibuilder/' + encodeURIComponent(slug) + '/text', {
+          method: 'POST',
+          headers: aiuiAuthHeaders(),
+          body: JSON.stringify({ old: picked.full, new: want })
+        }).then(function (r) {
+          return r.ok ? r.json() : r.json().then(function (j) {
+            throw new Error(j.detail || 'that could not be changed');
+          });
+        }).then(function () {
+          // The file changed under a frame with every reason to believe
+          // it did not, so the same cache-bust the build watcher uses.
+          try {
+            var at = frame.src.split('#')[0].split('?')[0];
+            frame.src = at + '?changed=' + Date.now();
+            frame.addEventListener('load', function once() {
+              frame.removeEventListener('load', once);
+              aiuiWorkingDone(frame);
+            });
+          } catch (e) { aiuiWorkingDone(frame); }
+          annotateStop();
+        }).catch(function (err) {
+          aiuiWorkingDone(frame);
+          words.disabled = false;
+          swapBtn.disabled = false;
+          askWhat.textContent = String((err && err.message)
+                                       || 'That did not work.');
+        });
+      } catch (err) {
+        aiuiWorkingDone(frame);
+        words.disabled = false;
+        swapBtn.disabled = false;
+        askWhat.textContent = 'That could not be sent. Try again.';
+      }
+    }
+
+    swapBtn.addEventListener('click', doSwap);
+    words.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { annotateStop(); return; }
+      if (e.key === 'Enter') { e.preventDefault(); doSwap(); }
     });
 
     asked.addEventListener('keydown', function (e) {
@@ -5562,7 +5873,7 @@
 
     // Appearance: its own panel under the frame, like the pencil's.
     var look = aiuiAppearance(chatId, slug, frame);
-    var paint = iconBtn('◐', 'Change the colours and type');
+    var paint = iconBtn(aiuiGlyph('◐'), 'Change the colours and type');
     paint.addEventListener('click', function () {
       if (look.isOpen()) {
         look.close();
@@ -5573,7 +5884,7 @@
       paint.style.opacity = '1';
     });
 
-    var grow = iconBtn('⤢', 'Show it beside the chat');
+    var grow = iconBtn(aiuiGlyph('⤢'), 'Show it beside the chat');
     var big = false;
     grow.addEventListener('click', function () {
       if (aiuiSplit && aiuiSplit.frame === frame) {
@@ -5596,7 +5907,7 @@
     out.href = url;
     out.target = '_blank';
     out.rel = 'noopener';
-    out.textContent = '↗';
+    out.textContent = aiuiGlyph('↗');
     out.title = 'Open in a new tab';
     out.setAttribute('aria-label', 'Open in a new tab');
     out.style.cssText = 'flex:0 0 auto;color:inherit;opacity:.6;'
@@ -5743,17 +6054,11 @@
         + 'font-size:.85rem;';
       aiuiPutUnderLastMessage(el);
 
-      // And a placeholder in the preview's own shape, so the finished
-      // panel fills a space already on the page rather than appearing out
-      // of nothing a minute later. Drawn once, beside the steps, and
-      // removed by whoever draws the real thing.
-      //
-      // Here and NOT in the video panel just below, which shares this
-      // markup: a video has no preview panel coming, so a preview-shaped
-      // ghost under one would be a promise nothing keeps.
-      var ghost = aiuiSkeletonPanel();
-      ghost.style.marginLeft = '3.75rem';
-      aiuiPutUnderLastMessage(ghost);
+      // The placeholder is NOT drawn here any more. It used to be, because
+      // this was the earliest thing that ran; the watcher now draws it on
+      // its first tick, before this panel's labels have even been
+      // fetched, which is seconds earlier and the whole point. Two
+      // callers would be two places to change and one chance to drift.
     }
 
     var done = 0;
@@ -5922,6 +6227,9 @@
   }
 
   function aiuiPollBuild(chatId, id, started) {
+    // Before the fetch, not after it: the wait for the first answer is
+    // the wait this covers.
+    aiuiShowBuildGhost();
     fetch('/api/tasks/' + id, { headers: aiuiAuthHeaders() }).then(function (r) {
       // Not this person's build, or gone: nothing to report, ever.
       if (r.status === 403 || r.status === 404) return 'stop';
@@ -6132,9 +6440,12 @@
 
   function aiuiPutInReply(box, body) {
     // The reply already has the avatar gutter, as in aiuiPutUnderLastMessage.
-    box.style.marginLeft = '0';
+    aiuiSetIndent(box, '0');
     box.style.paddingLeft = '0';
     body.appendChild(box);
+    // Again once it is in the page, because the width it may grow to is
+    // measured against the column it sits in.
+    aiuiSetIndent(box, '0');
   }
 
   function aiuiDrawSavedVideo(chatId, video) {

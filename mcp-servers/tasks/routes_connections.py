@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
+import connection_health as H
 import connections as C
 import crypto_utils
 import oauth_refresh as F
@@ -109,11 +110,17 @@ class ConnectBody(BaseModel):
 
 async def _stored(conn, email: str) -> Dict[str, dict]:
     rows = await conn.fetch(
-        "SELECT provider, account_label, updated_at FROM tasks.user_connections "
-        "WHERE email = $1", email)
-    return {r["provider"]: {"account_label": r["account_label"],
-                            "updated_at": r["updated_at"].isoformat()}
-            for r in rows}
+        "SELECT provider, account_label, updated_at, check_ok, checked_at "
+        "FROM tasks.user_connections WHERE email = $1", email)
+    return {r["provider"]: {
+        "account_label": r["account_label"],
+        "updated_at": r["updated_at"].isoformat(),
+        # None means nothing has been learned about this one yet, which is
+        # every connection made before 068 and every one nobody has used.
+        "check_ok": r["check_ok"],
+        "checked_at": (r["checked_at"].isoformat()
+                       if r["checked_at"] else None),
+    } for r in rows}
 
 
 def _oauth_ready(provider_id: str) -> bool:
@@ -142,7 +149,17 @@ def _describe(provider: C.Provider, stored: dict) -> dict:
     return {
         "provider": provider.id,
         "label": provider.label,
+        # Stays TRUE for a rejected credential. Three states, not two:
+        # something is stored, it has a name on it, and the fix is one
+        # button rather than a fresh setup. Other code reads this to decide
+        # which skills a person can use at all, and a dead GitHub token is
+        # still a GitHub connection for that question.
         "connected": bool(hit),
+        # Only ever true when a vendor actually said no. `is False` rather
+        # than `not ...` on purpose: None is "nobody has used it yet", and
+        # silence is not evidence.
+        "needs_reconnect": (hit or {}).get("check_ok") is False,
+        "checked_at": (hit or {}).get("checked_at"),
         "account_label": (hit or {}).get("account_label"),
         "connected_at": (hit or {}).get("updated_at"),
         "where": provider.where,
@@ -175,12 +192,18 @@ async def list_connections(user: CurrentUser = Depends(current_user)):
                             for p in C.PROVIDERS.values()]}
 
 
-async def _ask_vendor(provider: C.Provider, values: Dict[str, str]) -> tuple:
+async def _ask_vendor(provider: C.Provider, values: Dict[str, str],
+                      email: str = "") -> tuple:
     """(ok, account_label, error). Never raises, never echoes a credential.
 
     Shared by connect and test on purpose: "is this credential real" must be
     the same question both times, or a connection can pass one and fail the
     other for no reason a user could understand.
+
+    Given an `email`, this also writes down what the vendor's answer says
+    about the stored credential. That is the Test button's whole job, and
+    it would be strange to ask, be told no, and leave the card saying yes.
+    Optional because a CONNECT asks this before any row exists.
     """
     try:
         req = C.verify_request(provider.id, values)
@@ -199,6 +222,12 @@ async def _ask_vendor(provider: C.Provider, values: Dict[str, str]) -> tuple:
                        type(e).__name__)
         return False, None, ("Could not reach " + provider.label
                              + " just now. Try again in a moment.")
+
+    # What this answer says about the credential, if anything. A 403 says
+    # nothing: it is a plan limit or a permission far more often than a bad
+    # token, and PR #182 was the cost of conflating them.
+    if email:
+        await H.note(email, provider.id, r.status_code)
 
     if r.status_code in (401, 403):
         return False, None, (provider.label + " rejected that credential. It "
@@ -749,16 +778,25 @@ async def _store_connection(email: str, provider_id: str,
         await conn.execute(
             """
             INSERT INTO tasks.user_connections
-                (email, provider, secrets_encrypted, account_label, updated_at)
-            VALUES ($1, $2, $3, $4, now())
+                (email, provider, secrets_encrypted, account_label,
+                 updated_at, check_ok, checked_at)
+            VALUES ($1, $2, $3, $4, now(), TRUE, now())
             ON CONFLICT (email, provider) DO UPDATE
                 SET secrets_encrypted = EXCLUDED.secrets_encrypted,
                     account_label = EXCLUDED.account_label,
-                    updated_at = now()
+                    updated_at = now(),
+                    -- Good by construction: nothing reaches this function
+                    -- until _ask_vendor has proved the credential and the
+                    -- vendor has named the account.
+                    check_ok = TRUE,
+                    checked_at = now()
             """,
             email, provider_id, blob, label)
     finally:
         await conn.close()
+    # A memo left over from the credential this one replaced would suppress
+    # the next write that says the new one works.
+    H.forget(email, provider_id)
 
 
 @router.post("/{provider_id}/test")
@@ -783,7 +821,7 @@ async def test_connection(provider_id: str,
         return {"provider": provider_id, "ok": False,
                 "error": "Not connected yet. Add a credential first."}
 
-    ok, label, error = await _ask_vendor(provider, values)
+    ok, label, error = await _ask_vendor(provider, values, email=user.email)
     return {"provider": provider_id, "ok": ok,
             "account_label": label, "error": error}
 

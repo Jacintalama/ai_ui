@@ -679,6 +679,10 @@
                      margin-top: 2px; }
   .conn-state { font-size: 12px; color: var(--muted); }
   .conn-state.on { color: #4ade80; }
+  /* Amber, not red: nothing is broken that one button does not fix, and
+     red beside an app somebody connected on purpose reads as an error
+     they caused. */
+  .conn-state.warn { color: #f0b429; }
   .conn-form { padding: 4px 0 14px; }
   .conn-form input { width: 100%; margin-bottom: 8px; }
   .conn-where { color: var(--muted); font-size: 12px; margin-bottom: 9px; }
@@ -1774,6 +1778,7 @@
           label: pr.label || pr.provider,
           sub: pr.account_label || "",
           connected: !!pr.connected,
+          needsReconnect: !!pr.needs_reconnect,
           where: pr.where,
           oauth: !!pr.oauth,
           fields: pr.fields || []
@@ -1789,8 +1794,10 @@
       head.innerHTML =
         '<div class="conn-name">' + esc(pr.label)
           + (pr.sub ? "<small>" + esc(pr.sub) + "</small>" : "") + "</div>" +
-        '<span class="conn-state' + (pr.connected ? " on" : "") + '">'
-          + (pr.connected ? "Connected" : "Not connected") + "</span>" +
+        '<span class="conn-state' + (pr.needsReconnect ? " warn"
+            : (pr.connected ? " on" : "")) + '">'
+          + (pr.needsReconnect ? "Needs reconnecting"
+             : (pr.connected ? "Connected" : "Not connected")) + "</span>" +
         '<button class="btn sm" type="button" data-conn="'
           + esc(pr.provider) + '">'
           + (pr.connected ? "Reconnect" : "Connect") + "</button>";
