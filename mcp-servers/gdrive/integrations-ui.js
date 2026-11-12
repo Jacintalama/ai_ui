@@ -4441,10 +4441,23 @@
         tag: (el.tagName || '').toLowerCase(),
         // What the AGENT is shown. 200 is plenty to describe an element.
         text: said.slice(0, 200),
-        // What a direct swap MATCHES. Never truncated: a prefix match
-        // replaces the front of the words and leaves the tail behind,
-        // which is a mangled page rather than a failed change.
-        full: said
+        // What a direct swap MATCHES, and ONLY when this element's text
+        // is one contiguous run.
+        //
+        // An element with element children of its own is not. The
+        // heading
+        //     <h1>A cup that<br>holds the heat,<br>not you back.</h1>
+        // reads back as "A cup thatholds the heat,not you back", because
+        // textContent contributes nothing for a <br>, and that string
+        // appears nowhere in the file. The swap refused correctly and
+        // said to ask the agent, which works, but a box that can only
+        // refuse should not have been offered: this is knowable before
+        // anything is typed (2026-11-12, from Ralph's screenshot).
+        //
+        // Never truncated either: a prefix match replaces the front of
+        // the words and leaves the tail behind, which is a mangled page
+        // rather than a failed change.
+        full: (el.children && el.children.length === 0) ? said : ''
       });
     }
     doc.addEventListener('mouseover', onOver, true);
@@ -4493,21 +4506,34 @@
             frame.src = at + '?changed=' + Date.now();
           } catch (e) { /* the frame went away */ }
           aiuiBuildLine(chatId, 'The change is in. Reloading it.');
+          aiuiWorkingDone(frame);
           setTimeout(function () { aiuiClearBuildLine(); }, 4000);
           return true;
         }
         if (status === 'failed') {
           aiuiBuildLine(chatId, 'That change did not work out. The app is'
                         + ' as it was.');
+          // A strip still shimmering after a failure says work is
+          // happening when none is.
+          aiuiWorkingDone(frame);
           setTimeout(function () { aiuiClearBuildLine(); }, 8000);
           return true;
         }
         var said = String(task.build_step_said || '').trim();
-        aiuiBuildLine(chatId, said ? said + '...' : 'Making that change...');
+        said = said ? said + '...' : 'Making that change...';
+        aiuiBuildLine(chatId, said);
+        // The same sentence where the app is, because the side panel
+        // covers the chat the line above goes to.
+        aiuiWorkingSay(frame, said);
         return false;
       }).catch(function () { return false; })
       .then(function (finished) {
-        if (finished || Date.now() - started > AIUI_CHANGE_GIVE_UP_MS) return;
+        if (finished) return;
+        if (Date.now() - started > AIUI_CHANGE_GIVE_UP_MS) {
+          // Thirty minutes, reached without either ending above.
+          aiuiWorkingDone(frame);
+          return;
+        }
         setTimeout(function () {
           aiuiWatchChange(chatId, taskId, frame, started);
         }, AIUI_CHANGE_POLL_MS);
@@ -4828,6 +4854,62 @@
       said.style.display = 'block';
     }, AIUI_COVER_SLOW_MS);
     return cover;
+  }
+
+  // A thin shimmering strip across the TOP of the preview, saying what is
+  // being done to it.
+  //
+  // Not `aiuiCoverWhileLoading`, which hides the whole frame behind a
+  // skeleton. That is right for an app that has not arrived and wrong for
+  // one being changed: an enhance takes minutes, and hiding somebody's
+  // page for minutes to tell them it is busy costs more than it gives.
+  // They are watching it precisely to see it change.
+  //
+  // Attached to whatever the frame's parent currently is, because the
+  // frame MOVES between the thread and the side panel and the strip has
+  // to appear in the one being looked at. The progress was already being
+  // reported before this existed, by aiuiBuildLine into the CHAT, which
+  // the side panel covers (2026-11-12, Ralph, watching an enhance with no
+  // sign anything was happening).
+  function aiuiWorkingSay(frame, said) {
+    var holder = frame && frame.parentNode;
+    if (!holder || !holder.appendChild) return null;
+    aiuiMotion();
+
+    // An absolutely positioned child escapes a static parent. The holder
+    // is ours either way: the stage in the thread, or the panel's holder.
+    var how = '';
+    try {
+      how = window.getComputedStyle(holder).position;
+    } catch (e) { how = ''; }
+    if (how === 'static' || !how) holder.style.position = 'relative';
+
+    // Found again rather than stacked: the watcher calls this on every
+    // poll, which is once every eight seconds for up to thirty minutes.
+    var strip = holder.querySelector
+      ? holder.querySelector('[data-aiui-working]') : null;
+    if (!strip) {
+      strip = document.createElement('div');
+      strip.setAttribute('data-aiui-working', '1');
+      strip.setAttribute('role', 'status');
+      strip.setAttribute('aria-live', 'polite');
+      strip.className = 'aiui-shimmer';
+      strip.style.cssText = 'position:absolute;top:0;left:0;right:0;'
+        + 'z-index:3;padding:.4rem .7rem;font-size:.78rem;'
+        + 'color:#ededee;background-color:rgba(20,20,22,.92);'
+        + 'border-radius:0;overflow:hidden;text-overflow:ellipsis;'
+        + 'white-space:nowrap;pointer-events:none;';
+      holder.appendChild(strip);
+    }
+    strip.textContent = said || 'Working on it...';
+    return strip;
+  }
+
+  function aiuiWorkingDone(frame) {
+    var holder = frame && frame.parentNode;
+    var strip = holder && holder.querySelector
+      ? holder.querySelector('[data-aiui-working]') : null;
+    if (strip && strip.parentNode) strip.parentNode.removeChild(strip);
   }
 
   // Hide or show the grab bar that sits beside `bar`, by walking to the
@@ -5576,6 +5658,9 @@
       words.disabled = true;
       swapBtn.disabled = true;
       askWhat.textContent = 'Changing the words...';
+      // Fast, but it still writes a file, commits and reloads, and in the
+      // side panel this strip is the only thing that says so.
+      aiuiWorkingSay(frame, 'Changing the words...');
       // Wrapped for the same reason the enhance below is: a `.catch`
       // cannot catch a throw raised while the request is still being
       // built, and the box would stay dead with nothing sent.
@@ -5594,15 +5679,21 @@
           try {
             var at = frame.src.split('#')[0].split('?')[0];
             frame.src = at + '?changed=' + Date.now();
-          } catch (e) { /* the frame went away */ }
+            frame.addEventListener('load', function once() {
+              frame.removeEventListener('load', once);
+              aiuiWorkingDone(frame);
+            });
+          } catch (e) { aiuiWorkingDone(frame); }
           annotateStop();
         }).catch(function (err) {
+          aiuiWorkingDone(frame);
           words.disabled = false;
           swapBtn.disabled = false;
           askWhat.textContent = String((err && err.message)
                                        || 'That did not work.');
         });
       } catch (err) {
+        aiuiWorkingDone(frame);
         words.disabled = false;
         swapBtn.disabled = false;
         askWhat.textContent = 'That could not be sent. Try again.';
