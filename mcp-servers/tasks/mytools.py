@@ -100,6 +100,19 @@ class Tool:
     #: Signature is `run(get, args)`, where `get(path)` does one
     #: authenticated GET as this person. `method` and `path` are unused.
     run: Optional[Callable[..., Any]] = None
+    #: Build the whole JSON body from the arguments, instead of copying
+    #: named ones across.
+    #:
+    #: `body` and `wrap_body` cover a vendor that takes the fields as they
+    #: were given, flat or under one key. Airtable does not: a table is
+    #: made with a LIST OF FIELD OBJECTS that nothing in the arguments
+    #: looks like, and asking a model to write that list itself is asking
+    #: it to know which types need an `options` block (2026-11-12). The
+    #: shaping belongs on this side, where it can be read and tested
+    #: without a vendor.
+    #:
+    #: Signature is `shape(args) -> dict`. It wins over `body`.
+    shape: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None
 
 
 def _payload_for(tool: "Tool", args: Optional[Dict[str, Any]]) -> Optional[Dict]:
@@ -109,6 +122,8 @@ def _payload_for(tool: "Tool", args: Optional[Dict[str, Any]]) -> Optional[Dict]
     vendor, a connection or a network. The default is applied only when
     the caller gave nothing, so a caller that means "post" keeps it.
     """
+    if tool.shape:
+        return tool.shape(args or {})
     if not tool.body:
         return None
     given = args or {}
@@ -183,8 +198,17 @@ def _vendor_said(r, creds: Dict[str, str]) -> str:
     message = ""
     if isinstance(payload, dict):
         # ClickUp puts its reason in "err" (2026-11-10).
-        message = str(payload.get("message") or payload.get("error")
-                      or payload.get("err") or "")
+        found = (payload.get("message") or payload.get("error")
+                 or payload.get("err") or "")
+        # Airtable NESTS it: {"error": {"type": ..., "message": ...}}.
+        # str() on that drops a Python dict into the middle of a chat
+        # reply, braces and quotes and all, which is the vendor's own
+        # reason turned back into the noise this function exists to
+        # replace. The type is the fallback because Airtable sends one
+        # with no message at all on some refusals.
+        if isinstance(found, dict):
+            found = found.get("message") or found.get("type") or ""
+        message = str(found or "")
     message = " ".join(c for c in message.split() if c)
     message = "".join(c for c in message if c.isprintable())[:MAX_VENDOR_NOTE]
     if not message:
@@ -275,8 +299,40 @@ def _unreachable(label: str) -> str:
     return "Could not reach " + label + " just now. Try again in a moment."
 
 
+#: Words that mean "you are not allowed", and words that mean "you have
+#: run out". The two are opposite advice and a 403 carries either.
+_NOT_ALLOWED_WORDS = ("permission", "scope", "not authorized", "unauthorized",
+                      "forbidden", "insufficient", "read-only", "read only")
+_RAN_OUT_WORDS = ("plan", "limit", "quota", "usage", "upgrade", "billing",
+                  "paywall", "trial")
+
+
+def _scope_hint(said: str, label: str) -> str:
+    """One sentence for a write a vendor refused on permission grounds.
+
+    A token carries what was approved on the day it was made, so every
+    write tool that ships is newer than somebody's connection and the
+    first thing it meets is a 403 nobody can read. Airtable's is
+    "Invalid permissions, or the requested model was not found", which
+    sounds like a wrong base id and sends a person hunting one.
+
+    The guard is the whole point. PR #182 is the afternoon this cost:
+    ClickUp refused a create_space for a plan limit and Ralph was told
+    to reconnect a credential that had just read his entire workspace.
+    So a refusal that says anything about money, usage or a plan gets
+    nothing added, however much of a write it was.
+    """
+    low = (said or "").lower()
+    if any(word in low for word in _RAN_OUT_WORDS):
+        return ""
+    if not any(word in low for word in _NOT_ALLOWED_WORDS):
+        return ""
+    return (" If you connected " + label + " before IO could write, "
+            "reconnect it from Connections to allow that.")
+
+
 def _refusal(r, label: str, creds: Dict[str, str], provider_id: str,
-             tool_name: str) -> str:
+             tool_name: str, writes: bool = False) -> str:
     """The sentence for a vendor's refusal, or "" when it did not refuse.
 
     One function because two kinds of tool need the same words now: a
@@ -307,7 +363,8 @@ def _refusal(r, label: str, creds: Dict[str, str], provider_id: str,
         # of the failure is the one thing worth keeping.
         said = _vendor_said(r, creds)
         if said:
-            return label + " would not allow that." + said
+            return (label + " would not allow that." + said
+                    + (_scope_hint(said, label) if writes else ""))
         return (label + " would not allow that. That is usually a "
                 "permission or a plan limit rather than a bad credential. "
                 "If it keeps happening, reconnect it from Connections.")
@@ -444,7 +501,8 @@ async def _call(provider_id: str, tool: Tool, email: str,
     # Before the refusal below, which returns.
     await H.note(email, provider_id, r.status_code)
 
-    problem = _refusal(r, label, creds, provider_id, tool.name)
+    problem = _refusal(r, label, creds, provider_id, tool.name,
+                       writes=str(tool.method or "").upper() != "GET")
     if problem:
         return _err(problem)
 
@@ -1046,6 +1104,74 @@ N8N_TOOLS = [
          keep=("id", "workflowId", "status", "startedAt", "stoppedAt")),
 ]
 
+#: Airtable field types that need no `options` block to be created.
+#:
+#: Every other type needs one: singleSelect wants its choices, number its
+#: precision, date its format, checkbox an icon and a colour. Asked for a
+#: Status column a model reaches for singleSelect, Airtable answers 422,
+#: and the person gets NO TABLE rather than a table with a text column in
+#: it. So a type from this list is honoured and anything else is made
+#: text, which is a column that exists and that Airtable itself can
+#: change in two clicks.
+_AIRTABLE_PLAIN_TYPES = ("singleLineText", "multilineText", "email", "url",
+                         "phoneNumber")
+_AIRTABLE_TEXT = "singleLineText"
+#: More columns than any table described in a sentence.
+_AIRTABLE_MAX_COLUMNS = 50
+
+
+def _airtable_fields(given: Any) -> List[Dict[str, str]]:
+    """The `fields` Airtable wants, from however the columns were named.
+
+    Columns arrive as plain strings ("Name", "Status", "Role") or as
+    objects carrying a type, and both are reasonable things for a model
+    to send, so both are read here.
+
+    Order is kept, because Airtable makes the FIRST field the table's
+    primary one. Names are deduplicated case-insensitively, because
+    Airtable refuses a table with two fields of one name and a model
+    listing columns out of a sentence repeats itself. An empty list
+    becomes one column, because a table with no fields is refused too
+    and "make me a table called Leads" should mean something.
+    """
+    out: List[Dict[str, str]] = []
+    seen = set()
+    for item in (given if isinstance(given, (list, tuple)) else []):
+        kind = _AIRTABLE_TEXT
+        if isinstance(item, dict):
+            name = str(item.get("name") or "").strip()
+            asked = str(item.get("type") or "").strip()
+            if asked in _AIRTABLE_PLAIN_TYPES:
+                kind = asked
+        else:
+            name = str(item or "").strip()
+        if not name or name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        out.append({"name": name, "type": kind})
+        if len(out) >= _AIRTABLE_MAX_COLUMNS:
+            break
+    return out or [{"name": "Name", "type": _AIRTABLE_TEXT}]
+
+
+def _airtable_table_body(args: Dict[str, Any]) -> Dict[str, Any]:
+    body: Dict[str, Any] = {"name": str(args.get("name") or "").strip(),
+                            "fields": _airtable_fields(args.get("columns"))}
+    description = str(args.get("description") or "").strip()
+    if description:
+        body["description"] = description
+    return body
+
+
+def _airtable_record_body(args: Dict[str, Any]) -> Dict[str, Any]:
+    fields = args.get("fields")
+    # `typecast` is the difference between a model writing "Active" into
+    # a single-select column and Airtable refusing a word where it keeps
+    # option ids. A model has the word and has never seen the id.
+    return {"fields": fields if isinstance(fields, dict) else {},
+            "typecast": True}
+
+
 AIRTABLE_TOOLS = [
     Tool(name="list_my_bases",
          summary="List the Airtable bases your access token can reach.",
@@ -1067,6 +1193,43 @@ AIRTABLE_TOOLS = [
                "limit": ("integer", "How many rows to return", False),
                "view": ("string", "Optional view name", False)},
          unwrap=lambda d: (d or {}).get("records", []),
+         keep=("id", "createdTime", "fields")),
+    Tool(name="create_table",
+         summary="Create a new table in one of your Airtable bases, with the "
+                 "columns you name. Every column is made a text column.",
+         method="POST", path="/meta/bases/{base_id}/tables",
+         args={"base_id": ("string", "Base id from list_my_bases", True),
+               "name": ("string", "What to call the table", True),
+               "columns": ("array",
+                           "The column names in order, as a list of strings "
+                           'like ["Name", "Status", "Role"]. The first one '
+                           "is the table's primary column.", True),
+               "description": ("string", "Optional note about the table",
+                               False)},
+         shape=_airtable_table_body,
+         keep=("id", "name", "primaryFieldId", "fields")),
+    Tool(name="create_record",
+         summary="Add a row to one of your Airtable tables.",
+         method="POST", path="/{base_id}/{table}",
+         args={"base_id": ("string", "Base id from list_my_bases", True),
+               "table": ("string", "Table id or name from list_tables", True),
+               "fields": ("object",
+                          "The row, as column name to value, like "
+                          '{"Name": "Ada", "Role": "engineer"}. Column names '
+                          "have to match the table's exactly.", True)},
+         shape=_airtable_record_body,
+         keep=("id", "createdTime", "fields")),
+    Tool(name="update_record",
+         summary="Change some columns of one row in an Airtable table, "
+                 "leaving every column you do not name as it is.",
+         method="PATCH", path="/{base_id}/{table}/{record_id}",
+         args={"base_id": ("string", "Base id from list_my_bases", True),
+               "table": ("string", "Table id or name from list_tables", True),
+               "record_id": ("string", "Row id from list_records", True),
+               "fields": ("object",
+                          "Only the columns to change, as column name to "
+                          'value, like {"Status": "Done"}.', True)},
+         shape=_airtable_record_body,
          keep=("id", "createdTime", "fields")),
     Tool(name="whoami",
          summary="Show which Airtable account is currently connected to your assistant.",

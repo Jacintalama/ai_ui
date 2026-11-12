@@ -230,17 +230,23 @@ def _github_token(payload: dict) -> Tuple[Dict[str, str], str]:
 
 #: What the person approves on Airtable's consent screen.
 #:
-#: Exactly what the four Airtable tools call and nothing else. list_my_bases
+#: Exactly what the seven Airtable tools call and nothing else. list_my_bases
 #: and list_tables read schema, list_records reads data, and whoami returns
 #: an email address only with `user.email:read`, without which the card would
 #: say "Connected" over a blank where the account name goes.
 #:
-#: No write scope, deliberately. There is no Airtable tool that writes
-#: anything yet, and asking for permission this platform cannot currently use
-#: is the opposite of the boundary work the rest of this service just did. If
-#: a write tool lands, this grows and people re-approve, which is honest; a
-#: 403 in the meantime is reported with the vendor's own reason (PR #182)
-#: rather than read as a bad credential.
+#: The two write scopes landed on 2026-11-12 with the tools that need them,
+#: which is the way this was written to grow: "if a write tool lands, this
+#: grows and people re-approve, which is honest". create_table needs
+#: `schema.bases:write`; create_record and update_record need
+#: `data.records:write`.
+#:
+#: SO EVERY AIRTABLE CONNECTION MADE BEFORE THAT DATE CAN READ AND CANNOT
+#: WRITE, because a token carries what was approved the day it was made and a
+#: refresh renews that same grant. The vendor's answer for it is a 403 whose
+#: own words are "Invalid permissions, or the requested model was not found",
+#: which reads like a wrong base id, so `mytools._scope_hint` adds the one
+#: sentence that helps: reconnect from Connections.
 #:
 #: Space delimited, as Airtable's docs specify, and overridable so a
 #: deployment can widen it without a release.
@@ -256,7 +262,8 @@ def _github_token(payload: dict) -> Tuple[Dict[str, str], str]:
 #: the default belongs here, in one place, where it cannot drift from the
 #: list of what the tools actually call.
 AIRTABLE_SCOPE = (os.environ.get("AIRTABLE_SCOPE")
-                  or "data.records:read schema.bases:read "
+                  or "data.records:read data.records:write "
+                     "schema.bases:read schema.bases:write "
                      "user.email:read").strip()
 
 

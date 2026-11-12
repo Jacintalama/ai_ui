@@ -34,17 +34,27 @@ def test_every_can_line_rests_on_tools_that_exist():
 
 
 def test_read_only_apps_say_what_they_cannot_do():
-    """Measured 2026-11-12: these have no tool that writes."""
-    for app_id in ("airtable", "notion", "n8n"):
+    """Measured 2026-11-12: these have no tool that writes. Airtable was
+    here until the same afternoon, when it got three (PR #203)."""
+    for app_id in ("notion", "n8n"):
         assert app_triage.APPS[app_id].cannot, app_id
+        names = {t.name for t in mytools.PROVIDER_TOOLS[app_id]}
+        writes = {"create", "add", "update", "write", "delete"}
+        assert not any(w in n for n in names for w in writes), (
+            "%s can write now: update its can/cannot lines" % app_id)
 
 
-def test_airtable_does_not_claim_to_write():
-    writes = {"create", "add", "update", "write", "delete"}
+def test_airtable_claims_the_writing_it_has_and_no_more():
+    """The tripwire this replaces said Airtable must not claim to write,
+    and it fired the moment it could. The limit that is left is real:
+    there is no tool that makes a base and none that deletes anything."""
     names = {t.name for t in mytools.PROVIDER_TOOLS["airtable"]}
-    assert not any(w in n for n in names for w in writes), (
-        "Airtable can write now: update its can/cannot lines")
-    assert "add" in app_triage.APPS["airtable"].cannot
+    assert {"create_table", "create_record", "update_record"} <= names
+    cannot = app_triage.APPS["airtable"].cannot
+    assert "delete" in cannot and "base" in cannot, cannot
+    assert not any(n.startswith("delete") or n.startswith("create_base")
+                   for n in names), (
+        "Airtable can do what it says it cannot: update the cannot line")
 
 
 def test_n8n_and_zapier_are_offered_as_a_choice_with_pros_and_cons():
@@ -230,7 +240,10 @@ def test_the_introduction_says_what_io_cannot_do():
     request to SAVE leads contradicted itself."""
     p = app_triage.plan([("airtable", 0.9)], set(), [])
     out = app_triage.with_buttons("Here is how I would do it.", p)
-    assert "cannot add or change rows" in out
+    # The catalogue's own words rather than a copy of them: what Airtable
+    # cannot do changed the day it learned to write (PR #203), and a test
+    # that pins the sample sentence tests the sample.
+    assert "cannot " + app_triage.APPS["airtable"].cannot in out
 
 
 def test_a_google_app_named_the_short_way_is_not_introduced_again():
@@ -627,9 +640,10 @@ LIVE_OVERCLAIM = ("Use Airtable as the place to save them. It's not connected "
 def test_a_named_app_with_a_limit_still_gets_the_limit_said():
     p = app_triage.plan([("airtable", 0.94)], set(), [])
     out = app_triage.with_buttons(LIVE_OVERCLAIM, p)
-    assert "cannot add or change rows" in out
+    limit = "cannot " + app_triage.APPS["airtable"].cannot
+    assert limit in out
     assert out.rstrip().endswith(AIR)
-    assert out.index("cannot add or change rows") < out.index(AIR)
+    assert out.index(limit) < out.index(AIR)
 
 
 def test_a_named_app_without_a_limit_gets_only_its_button():
@@ -640,4 +654,5 @@ def test_a_named_app_without_a_limit_gets_only_its_button():
 
 def test_the_brief_forbids_offering_what_io_cannot_do():
     b = app_triage.brief(app_triage.plan([("airtable", 0.94)], set(), []))
-    assert "do not offer to add or change rows" in b.lower()
+    said = "do not offer to " + app_triage.APPS["airtable"].cannot
+    assert said.lower() in b.lower()
