@@ -253,6 +253,22 @@ def _vendor_said(r, creds: Dict[str, str]) -> str:
         # with no message at all on some refusals.
         if isinstance(found, dict):
             found = found.get("message") or found.get("type") or ""
+        if not found:
+            # Jira's dialect, and it names no "message" at all:
+            #   {"errorMessages": ["..."], "errors": {"duedate": "..."}}
+            # `errors` is per FIELD, which is the likeliest real failure on
+            # a live site: a project whose create screen requires a field
+            # we did not send. The field name is half the answer, so it is
+            # kept rather than only the sentence. Three at most, because
+            # a misconfigured screen can name a dozen.
+            errors = payload.get("errors")
+            if isinstance(errors, dict) and errors:
+                found = "; ".join(str(k) + ": " + str(v)
+                                  for k, v in list(errors.items())[:3])
+            if not found:
+                general = payload.get("errorMessages")
+                if isinstance(general, (list, tuple)) and general:
+                    found = "; ".join(str(g) for g in general[:2])
         message = str(found or "")
     message = " ".join(c for c in message.split() if c)
     message = "".join(c for c in message if c.isprintable())
@@ -1402,7 +1418,10 @@ def _jira_adf(text: Any) -> Optional[Dict[str, Any]]:
     string to Jira: a text node with no text is invalid and the whole
     request is refused after the person has approved it.
     """
-    body = str(text or "").strip()
+    # Line endings first: a paste carries \r\n, and "\r\n\r\n" holds no
+    # "\n\n" to split on, so a two-paragraph description would arrive as
+    # one paragraph with carriage returns inside the text node.
+    body = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     if not body:
         return None
     paragraphs = [p.strip() for p in body.split("\n\n")]

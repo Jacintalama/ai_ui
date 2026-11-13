@@ -22,6 +22,7 @@ and a 403 on a read must not.
 """
 import base64
 import os
+from json import dumps as json_dumps
 
 import pytest
 
@@ -219,6 +220,16 @@ def test_blank_lines_become_separate_paragraphs():
     assert doc["content"][1]["content"][0]["text"] == "Two."
 
 
+def test_text_pasted_from_windows_splits_the_same_way():
+    """A paste carries \\r\\n, and "\\r\\n\\r\\n" holds no "\\n\\n" to split
+    on, so the whole thing would have arrived as one paragraph with
+    carriage returns inside the text node."""
+    doc = mytools._jira_adf("One.\r\n\r\nTwo.")
+    assert len(doc["content"]) == 2
+    assert doc["content"][1]["content"][0]["text"] == "Two."
+    assert "\r" not in json_dumps(doc)
+
+
 def test_a_comment_is_a_document_too():
     body = mytools._jira_comment_body({"issue_key": "IO-1",
                                        "comment": "Looking at it now."})
@@ -272,6 +283,57 @@ def test_no_card_claims_to_be_real_without_a_connector_behind_it():
     assert unbacked == [], (
         "marked real with no entry in connections.PROVIDERS: "
         + ", ".join(unbacked))
+
+
+# --- when Jira says no, it says why in its own shape --------------------
+# Jira answers a bad create with {"errorMessages": [...], "errors":
+# {"field": "..."}} and NOTHING in _vendor_said read either key, so the
+# single most likely failure on a real site, a project whose create screen
+# requires a field we did not send, would have come back as "Jira returned
+# an error (400)." with the reason thrown away. That is the exact bug the
+# function was written to stop, in a new vendor's dialect.
+
+
+class _Resp:
+    def __init__(self, payload, status=400):
+        self._payload = payload
+        self.status_code = status
+
+    def json(self):
+        return self._payload
+
+
+def test_a_jira_field_error_is_repeated_to_the_person():
+    said = mytools._vendor_said(
+        _Resp({"errorMessages": [],
+               "errors": {"summary": "You must specify a summary of the "
+                                     "issue."}}), {})
+    assert "must specify a summary" in said
+
+
+def test_a_jira_field_error_names_the_field_it_is_about():
+    """"Field 'duedate' cannot be set" is actionable; the message alone is
+    not, when a project requires three custom fields."""
+    said = mytools._vendor_said(
+        _Resp({"errors": {"duedate": "Field 'duedate' cannot be set."}}), {})
+    assert "duedate" in said
+
+
+def test_jiras_general_message_is_used_when_there_is_no_field_error():
+    said = mytools._vendor_said(
+        _Resp({"errorMessages": ["Issue type is a sub-task but parent issue "
+                                 "key or id not specified."],
+               "errors": {}}), {})
+    assert "parent issue key" in said
+
+
+def test_a_vendor_message_carrying_the_credential_is_still_suppressed():
+    """The rule that makes repeating a vendor safe at all has to cover the
+    new keys too, or a vendor echoing the request puts a token in a chat."""
+    said = mytools._vendor_said(
+        _Resp({"errorMessages": ["bad token abcdef1234567890"]}),
+        {"token": "abcdef1234567890"})
+    assert said == ""
 
 
 TENANTS = os.path.join(HERE, "..", "..", "..", "mcp-proxy", "tenants.py")
