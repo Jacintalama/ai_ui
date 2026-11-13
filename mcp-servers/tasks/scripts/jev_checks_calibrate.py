@@ -282,7 +282,12 @@ def report_tools(runs: list) -> float:
 
 # --- the triage agent's app pick (2026-11-12) -------------------------------
 
-#: (message, needs, fine). `needs` is a list of sets, and each set is met by
+#: An App Builder build said just before a follow-up (cases with context).
+BUILT = ("person: make me a landing page for my bakery\nreply: Done. Your "
+         "bakery landing page is built in the App Builder as "
+         "bakery-landing-3f2a, with a hero, menu and contact form.")
+
+#: (message, needs, fine[, context]). `needs` is a list of sets, and each set is met by
 #: ANY one of its apps ("track my to-dos" is Notion, ClickUp or Trello, and
 #: any of them is right). `fine` may be picked without being wrong. Anything
 #: else picked is a wrong recommendation, which is the expensive mistake: a
@@ -302,13 +307,15 @@ APP_CASES = [
     ("I need an automation workflow that connects my apps",
      [{"n8n", "zapier"}], set()),
     ("set up a board for my team's tasks and assign them to people",
-     [{"clickup", "trello"}], {"notion", "airtable", "github"}),
+     [{"clickup", "trello"}], {"notion", "airtable", "github", "jira"}),
     ("keep track of my sales leads and follow up with each customer",
      [{"hubspot", "airtable"}], {"gmail", "notion", "clickup", "trello"}),
     ("put a meeting with Ana on my calendar for Friday at 3pm",
      [{"calendar"}], {"gmail"}),
+    # Dropbox and Jira joined the catalogue on 2026-11-13 (Ralph); a shared
+    # file can live in Dropbox and a team board in Jira, so both are fair.
     ("where is the budget spreadsheet I shared last week", [{"gdrive"}],
-     {"airtable", "gmail"}),
+     {"airtable", "gmail", "dropbox"}),
     ("when a new order comes into my shop, add the customer to a list and "
      "email them a thank you", [{"n8n", "zapier"}],
      {"airtable", "hubspot", "gmail", "gdrive"}),
@@ -319,6 +326,71 @@ APP_CASES = [
     ("explain what a REST API is in two sentences", [], set()),
     ("make me a landing page for a bakery", [], {"github"}),
     ("how many days are there until Christmas", [], set()),
+    # The platform's own Publish (2026-11-13). Lukas: "it should just
+    # recommend the most straightforward one".
+    ("how do I put my landing page online so people can visit it",
+     [{"publish"}], {"github", "vercel"}),
+    ("can I deploy my app to Vercel", [{"vercel"}], {"github", "publish"}),
+    # Not built here: Publish serves App Builder apps from apps/<slug>/ and
+    # cannot host anything else (review 2026-11-13).
+    ("how do I deploy my Django app from my laptop", [], {"github"}),
+    ("how do I deploy my Django app from my laptop to Vercel", [], {"github"}),
+    ("where should I host my company's existing WordPress site", [], set()),
+    ("I want my bakery site live on my own domain", [{"publish"}],
+     {"github", "vercel"}),
+    ("I have this website for a cup landing page, I want to make a lot of "
+     "changes, have it stored and versioned, and I want other people to "
+     "visit it", [{"github"}], {"publish", "gdrive", "vercel"}),
+    # With the build in the conversation, as people really ask it. The
+    # fourth element is what was said before (review 2026-11-13: no case
+    # carried context, which is where follow-ups score high).
+    ("can I deploy it to Vercel?", [{"vercel"}], {"publish", "github"}, BUILT),
+    ("how do I put it online so customers can visit?", [{"publish"}],
+     {"vercel", "github"}, BUILT),
+    ("can I use my own domain for it?", [{"publish", "vercel"}], {"github"},
+     BUILT),
+    ("thanks, looks great", [], set(), BUILT),
+    ("make the header blue", [], {"github"}, BUILT),
+]
+
+
+#: (message, needs, fine) for the skill pick, scored like APP_CASES. A
+#: general question picking a skill is the expensive mistake here: it would
+#: send an ordinary question through the assistant.
+SKILL_CASES = [
+    ("help me write an apology to a customer whose order arrived late",
+     [{"apology-note", "complaint-response"}], {"draft-reply"}),
+    ("what does my day look like, where are the gaps", [{"day-ahead"}],
+     {"protect-focus-time", "meeting-scheduler", "morning-briefing"}),
+    ("summarise my week: what shipped and what slipped", [{"weekly-review"}],
+     {"catch-me-up", "brief-the-team", "sprint-health"}),
+    ("sort my unread emails into what needs a reply today", [{"inbox-triage"}],
+     {"follow-up-chaser", "draft-reply", "vip-watch"}),
+    # daily-standup marked fine AFTER the first run (2026-11-13): it scored
+    # 0.89 to 0.90 here in five runs, and it is itself a morning report
+    # (across task trackers), a fair second suggestion rather than a wrong
+    # one. It also never shows: two skills are kept and the two needed ones
+    # score 0.98.
+    ("every morning send me a briefing of what matters that day",
+     [{"morning-briefing", "recurring-digest"}],
+     {"schedule-a-job", "day-ahead", "daily-standup"}),
+    ("compare Notion and ClickUp for my team", [{"vendor-compare"}],
+     {"pricing-research"}),
+    ("clean up this messy CSV of customer names and emails", [{"csv-cleanup"}],
+     {"spreadsheet"}),
+    ("find the budget file I shared in Drive last week",
+     [{"find-my-file", "find-the-attachment"}], set()),
+    ("write a proposal for a website redesign project", [{"proposal-draft"}],
+     {"write-a-document"}),
+    ("who is Ana Reyes? I am meeting her tomorrow", [{"person-brief"}],
+     {"meeting-prep", "research-and-cite"}),
+    ("tell me a joke about coffee", [], set()),
+    ("what is the capital of Australia", [], set()),
+    ("thanks, that looks great", [], set()),
+    ("write a short poem about autumn", [], set()),
+    ("explain what a REST API is in two sentences", [], set()),
+    ("how many days are there until Christmas", [], set()),
+    ("hi, how are you today", [], set()),
 ]
 
 
@@ -346,13 +418,14 @@ def choose_app_cut(wrong_per_run: list) -> float:
 async def run_apps(key: str, cap_usd: float):
     """[(case, {app: value})] for every app case, and dollars spent."""
     import app_triage
-    ids = list(app_triage.APPS)
+    ids = app_triage.catalogue_ids()
     rows, spent, last = [], 0.0, 0.0
     for case in APP_CASES:
         if spent + last > cap_usd:
             print(f"stopped at the ${cap_usd} cap")
             break
-        state, questions = agent_jev.apps_request(case[0])
+        state, questions = agent_jev.apps_request(
+            case[0], case[3] if len(case) > 3 else "")
         data = await agent_decider._post(
             {"model": agent_decider.model(), "state": state,
              "questions": questions}, key)
@@ -368,7 +441,101 @@ async def run_apps(key: str, cap_usd: float):
     return rows, spent
 
 
+async def run_skills(key: str, cap_usd: float):
+    """[(case, {skill: value})] for every skill case, and dollars spent."""
+    import agent_skills
+    pool = agent_skills.load_all()
+    pairs = [(n, (s or {}).get("description")) for n, s in sorted(pool.items())]
+    rows, spent, last = [], 0.0, 0.0
+    for case in SKILL_CASES:
+        if spent + last > cap_usd:
+            print(f"stopped at the ${cap_usd} cap")
+            break
+        state, questions = agent_jev.message_skills_request(case[0], pairs)
+        data = await agent_decider._post(
+            {"model": agent_decider.model(), "state": state,
+             "questions": questions}, key)
+        values = {}
+        for qid in questions:
+            a = agent_jev.read(data, qid)
+            if a is not None:
+                values[pairs[int(qid[1:])][0]] = a.value
+        tokens = (data.get("usage") or {}).get("input_tokens")
+        last = agent_decider.cost_usd(tokens) or 0.0
+        spent += last
+        rows.append((case, values))
+    return rows, spent
+
+
+def report_skills(runs: list) -> float:
+    """The same table and rule as the apps: the lowest cut with no wrong pick
+    in every run, one step up."""
+    print(f"\n== {agent_jev.PURPOSE_SKILL_FOR} on {agent_decider.model()}")
+    for case, values in runs[0]:
+        top = sorted(values.items(), key=lambda kv: -kv[1])[:3]
+        need = " / ".join("|".join(sorted(g)) for g in case[1]) or "-"
+        print(f"{case[0][:48]:48} need {need[:40]} | "
+              + " ".join(f"{a} {v:.2f}" for a, v in top))
+    missed_per_run, wrong_per_run = [], []
+    for rows in runs:
+        missed_per_run.append({c: sum(app_score(v, k[1], k[2], c)[0]
+                                      for k, v in rows) for c in UP})
+        wrong_per_run.append({c: sum(app_score(v, k[1], k[2], c)[1]
+                                     for k, v in rows) for c in UP})
+    print("cut  | " + " | ".join(f"run {n + 1} missed wrong"
+                                 for n in range(len(runs))))
+    for c in UP:
+        print(f"{c:.2f} | " + " | ".join(
+            f"{m[c]:12} {w[c]:5}" for m, w in zip(missed_per_run,
+                                                  wrong_per_run)))
+    chosen = choose_app_cut(wrong_per_run)
+    print(f"chosen cut: {chosen}")
+    return chosen
+
+
+def report_platform(runs: list) -> float:
+    """The platform's own features (app_triage.PLATFORM) cut on their own:
+    the same rule as the apps, counting only those ids."""
+    import app_triage
+    plat = set(app_triage.PLATFORM)
+
+    def only(values):
+        return {k: v for k, v in values.items() if k in plat}
+
+    def only_needs(needs):
+        return [g & plat for g in needs if g & plat]
+
+    print(f"\n== {agent_jev.PURPOSE_PLATFORM} (inside {agent_jev.PURPOSE_APPS})")
+    for case, values in runs[0]:
+        print(f"{case[0][:52]:52} " + " ".join(
+            f"{k} {v:.2f}" for k, v in only(values).items()))
+    missed_per_run, wrong_per_run = [], []
+    for rows in runs:
+        missed_per_run.append({c: sum(app_score(only(v), only_needs(k[1]),
+                                                set(k[2]) & plat, c)[0]
+                                      for k, v in rows) for c in UP})
+        wrong_per_run.append({c: sum(app_score(only(v), only_needs(k[1]),
+                                               set(k[2]) & plat, c)[1]
+                                     for k, v in rows) for c in UP})
+    print("cut  | " + " | ".join(f"run {n + 1} missed wrong"
+                                 for n in range(len(runs))))
+    for c in UP:
+        print(f"{c:.2f} | " + " | ".join(
+            f"{m[c]:12} {w[c]:5}" for m, w in zip(missed_per_run,
+                                                  wrong_per_run)))
+    chosen = choose_app_cut(wrong_per_run)
+    print(f"chosen cut: {chosen}")
+    return chosen
+
+
 def report_apps(runs: list) -> float:
+    # The platform's own features are cut on their own (report_platform), so
+    # the apps' cut is measured on the apps alone.
+    import app_triage
+    plat = set(app_triage.PLATFORM)
+    runs = [[((k[0], [g - plat for g in k[1] if g - plat], set(k[2]) - plat),
+              {a: x for a, x in v.items() if a not in plat})
+             for k, v in rows] for rows in runs]
     print(f"\n== {agent_jev.PURPOSE_APPS} on {agent_decider.model()}")
     for case, values in runs[0]:
         top = sorted(values.items(), key=lambda kv: -kv[1])[:4]
@@ -460,8 +627,19 @@ def main() -> None:
     key = agent_decider._key()
     if not key:
         sys.exit("TYPESAFE_API_KEY is not set")
-    args = [a for a in sys.argv[1:] if a != "apps"]
+    args = [a for a in sys.argv[1:] if a not in ("apps", "skills")]
     runs = int(args[0]) if args else 2
+    if "skills" in sys.argv[1:]:
+        # Only the skill pick: `... jev_checks_calibrate.py skills 2`
+        skill_runs, total = [], 0.0
+        for n in range(runs):
+            rows, spent = asyncio.run(run_skills(key, CAP_USD * 4 / runs))
+            skill_runs.append(rows)
+            total += spent
+            print(f"skill run {n + 1}: {len(rows)} calls, ${spent:.6f}")
+        report_skills(skill_runs)
+        print(f"\ntotal ${total:.6f}")
+        return
     if "apps" in sys.argv[1:]:
         # Only the triage agent's app pick: `... jev_checks_calibrate.py apps 2`
         app_runs, total = [], 0.0
@@ -471,6 +649,7 @@ def main() -> None:
             total += spent
             print(f"app run {n + 1}: {len(rows)} calls, ${spent:.6f}")
         report_apps(app_runs)
+        report_platform(app_runs)
         print(f"\ntotal ${total:.6f}")
         return
     cases = requests()

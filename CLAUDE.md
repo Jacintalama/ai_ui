@@ -368,8 +368,26 @@ Connect buttons under the answer. Two rules worth knowing:
 - **Only an app NOT connected changes anything**, and it is offered once per
   conversation (`app_triage.already_offered`): with context, "thanks!" after
   a recommendation scored the same app 0.94.
+- **The platform's own Publish and Deploy to Vercel are in it too
+  (2026-11-13)**, `app_triage.PLATFORM`, asked in the same Jev call after the
+  apps but cut on their own (`platform_pick`, 0.60): they score lower than
+  apps, and the apps' 0.90 missed every deploy question. Only for apps built in
+  the App Builder; recommended as the straightforward way, the how-to line is
+  the service's, and outside hosts are ruled out in the brief. Vercel is its
+  own entry because "deploy it to Vercel" did not reach Publish.
+- **Skills (2026-11-13)**: `agent_jev.pick_skills_for_message`, a fourth
+  question, 0.90, BUILT-IN skills only (the cut was measured on them),
+  timeboxed. A picked skill runs the assistant with the `skills` tool and the
+  skill's own tools the person has, pinned for the follow-up.
+- **Facts said to the free model are remembered (2026-11-13)**:
+  `_remember_free_turn` -> `agent_memory.schedule_stated_facts` on the
+  route_only path: facts the PERSON states, only on a sure yes from Jev, its
+  own 90 s slot, no notes, switch `MAIN_CHAT_REMEMBER=0`. They reach
+  `public.memory`, which the knowledge graph filter puts in front of every
+  chat. Before, only agent and assistant turns were reflected on.
 `MAIN_CHAT_TRIAGE=0` switches it off. Design:
-`docs/plans/2026-11-12-triage-agent-design.md`.
+`docs/plans/2026-11-12-triage-agent-design.md`,
+`docs/plans/2026-11-13-triage-sees-more-design.md`.
 
 ### Automation: run an agent from outside (2026-10-27)
 `POST /api/tasks/agents/run` with `Authorization: Bearer iok_...` runs one of

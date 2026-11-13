@@ -43,6 +43,10 @@ PURPOSE_RELEASE = "release"
 PURPOSE_TOOLS = "tool_pick"
 PURPOSE_SKILLS = "skill_pick"
 PURPOSE_APPS = "app_pick"
+PURPOSE_SKILL_FOR = "skill_for_message"
+#: Not its own call: the cut for the platform's own features inside the
+#: app pick (app_triage.PLATFORM), which score on a different level.
+PURPOSE_PLATFORM = "platform_pick"
 
 #: Where each check acts. A Choice (plain question, rollback version) and the
 #: release yes act at or above their cut; the reflection and reply checks act
@@ -69,7 +73,20 @@ CUTS = {PURPOSE_PLAIN: 0.6, PURPOSE_ROLLBACK: 0.6, PURPOSE_RELEASE: 0.6,
         # either run (0.85 had one, 0.75 four), and no need was missed at
         # it. Ordinary questions topped out at 0.62. A wrong pick puts a
         # Connect button under an answer that needed none.
-        PURPOSE_APPS: 0.9}
+        PURPOSE_APPS: 0.9,
+        # A skill for the message in the main chat (2026-11-13). Measured
+        # with scripts/jev_checks_calibrate.py skills 2 (17 messages, 68
+        # skills): every skill asked for scored 0.94 to 0.98, no everyday
+        # question rose above 0.75, and 0.90 is the only cut with no wrong
+        # pick in both runs (see SKILL_CASES for the one label decided
+        # after the first run). A skill sends the message through the
+        # assistant, so a wrong one costs a slower answer.
+        PURPOSE_SKILL_FOR: 0.9,
+        # Publish (2026-11-13), cut on its own inside the app pick. Measured
+        # with scripts/jev_checks_calibrate.py apps 2: real deploy questions
+        # scored it 0.66 to 0.83 and nothing else rose above 0.21, so the
+        # apps' 0.90 would have missed every one. See report_platform.
+        PURPOSE_PLATFORM: 0.6}
 
 
 def cut(purpose: str) -> float:
@@ -707,11 +724,16 @@ def apps_request(text: str, context: str = "") -> tuple[str, dict]:
     """
     import app_triage
     questions = {}
-    for i, app in enumerate(app_triage.APPS.values()):
+    entries = ([(a.label, "an app for " + a.note) for a in app_triage.APPS.values()]
+               # The platform's own features after the apps, numbered on
+               # from them (app_triage.catalogue_ids). 2026-11-13.
+               + [(p.label, "the platform's own feature for " + p.note)
+                  for p in app_triage.PLATFORM.values()])
+    for i, (label, what) in enumerate(entries):
         questions[f"a{i}"] = {
             "type": "noul",
-            "instructions": f"To do what the person wants, would {app.label}, "
-                            f"an app for {app.note}, be a good app to use, "
+            "instructions": f"To do what the person wants, would {label}, "
+                            f"{what}, be a good one to use, "
                             f"even if they did not name it?",
             "criteria": {
                 "true": "what the person wants is the kind of thing this app "
@@ -734,13 +756,17 @@ async def pick_apps(email: str, text: str,
     import app_triage
     if not str(text or "").strip():
         return []
-    ids = list(app_triage.APPS)
+    ids = app_triage.catalogue_ids()
     state, questions = apps_request(text, context)
     least = cut(PURPOSE_APPS)
+    least_platform = cut(PURPOSE_PLATFORM)
+
+    def bar(app_id: str) -> float:
+        return least_platform if app_id in app_triage.PLATFORM else least
 
     def ranked(answers: dict) -> list[tuple[str, float]]:
         scored = [(ids[int(q[1:])], a.value) for q, a in answers.items()
-                  if a.value >= least]
+                  if a.value >= bar(ids[int(q[1:])])]
         scored.sort(key=lambda pair: (-pair[1], pair[0]))
         return scored
 
@@ -749,5 +775,61 @@ async def pick_apps(email: str, text: str,
         return (",".join(i for i, _v in ranked(answers)) or "none"), top
 
     answers = await ask_many(email, PURPOSE_APPS, state, questions,
+                             outcome=outcome)
+    return None if answers is None else ranked(answers)
+
+
+# --- the triage: which ready-made skill fits the message (2026-11-13) -------
+
+def message_skills_request(text: str, skills: list,
+                           context: str = "") -> tuple[str, dict]:
+    """One Noul per skill, ids s0, s1, ... in the order given. `skills` is
+    [(name, description), ...]. About a MESSAGE in the main chat, where
+    skills_request is about a new agent's description."""
+    questions = {}
+    for i, (name, desc) in enumerate(skills):
+        said = " ".join(str(desc or "").split())[:SKILL_DESC_CHARS]
+        questions[f"s{i}"] = {
+            "type": "noul",
+            "instructions": f"To do what the person asks, would the "
+                            f"ready-made skill '{name}' help: {said}",
+            "criteria": {
+                "true": "what the person asks for is the job this skill is for",
+                "false": "the skill is for some other kind of work, or the "
+                         "message is small talk or a general question",
+            }}
+    if not str(context or "").strip():
+        return "The person wrote:\n" + _clip(text), questions
+    return ("Earlier in this conversation:\n"
+            + " ".join(str(context).split())[:CONTEXT_CHARS]
+            + "\n\nThe person has now written:\n" + _clip(text)), questions
+
+
+async def pick_skills_for_message(email: str, text: str, skills: list,
+                                  context: str = ""
+                                  ) -> list[tuple[str, float]] | None:
+    """The skills Jev is sure fit this message, [(name, score)] surest first:
+    [] when none, None when Jev could not be asked. Never raises.
+
+    Lukas, 2026-11-13: the triage "should see all the different skills that
+    are available".
+    """
+    skills = [(str(n), d) for n, d in skills or [] if n]
+    if not skills or not str(text or "").strip():
+        return []
+    state, questions = message_skills_request(text, skills, context)
+    least = cut(PURPOSE_SKILL_FOR)
+
+    def ranked(answers: dict) -> list[tuple[str, float]]:
+        scored = [(skills[int(q[1:])][0], a.value) for q, a in answers.items()
+                  if a.value >= least]
+        scored.sort(key=lambda pair: (-pair[1], pair[0]))
+        return scored
+
+    def outcome(answers: dict) -> tuple[str, float | None]:
+        top = max((a.value for a in answers.values()), default=None)
+        return (",".join(n for n, _v in ranked(answers)) or "none"), top
+
+    answers = await ask_many(email, PURPOSE_SKILL_FOR, state, questions,
                              outcome=outcome)
     return None if answers is None else ranked(answers)

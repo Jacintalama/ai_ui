@@ -1879,28 +1879,112 @@ async def _triage_pick(body: ChatIn, text: str) -> dict | None:
             return None
         if not agent_llm.can_run(main_assistant.agent()):
             return None
-        picks = await agent_jev.pick_apps(body.user_email, text, context)
-        if picks is None:
+        # Apps and the platform's own features, and beside them the skills
+        # (2026-11-13, Lukas: "it should see all the different skills").
+        picks, (pool, skills) = await asyncio.gather(
+            agent_jev.pick_apps(body.user_email, text, context),
+            _skills_for(body.user_email, text, context))
+        if picks is None and not skills:
             return None
         # Offered once per conversation: with the exchange as context,
         # "thanks!" after an Airtable recommendation scored Airtable 0.94
         # (measured live 2026-11-12), and the button would follow every reply.
-        offered = app_triage.already_offered(body.messages, CONTEXT_TURNS)
-        picks = [(a, s) for a, s in picks if a not in offered]
-        if not picks:
+        offered = app_triage.already_offered(
+            body.messages, CONTEXT_TURNS, skill_names=[n for n, _s in skills])
+        picks = [(a, s) for a, s in picks or [] if a not in offered]
+        skills = [(n, s) for n, s in skills if n not in offered]
+        if not picks and not skills:
             # Nothing fits, which is most messages: no database read.
-            return {"picks": [], "connected": set()}
+            return {"picks": [], "connected": set(), "skills": [], "pool": pool}
         import routes_agents                   # it imports this module
         # Strict: a failed read must not pass for "nothing connected", which
         # would offer Connect buttons for apps the person already has. On a
         # failure the except below recommends nothing.
         connected = await routes_agents._connected_providers(body.user_email,
                                                              strict=True)
-        return {"picks": list(picks), "connected": set(connected or ())}
+        return {"picks": list(picks), "connected": set(connected or ()),
+                "skills": list(skills), "pool": pool}
     except Exception:                                       # noqa: BLE001
         logger.warning("the triage pick failed; nothing is recommended",
                        exc_info=True)
         return None
+
+
+def _remember_on() -> bool:
+    """MAIN_CHAT_REMEMBER=0 stops remembering what is said to the free
+    model; anything else, and the assistant on, leaves it on."""
+    return (os.environ.get("MAIN_CHAT_REMEMBER", "1").strip() != "0"
+            and _assistant_on())
+
+
+def _remember_free_turn(body: ChatIn, text: str):
+    """Remember, in the background, a fact the person states in a message
+    the free model answers, so it reaches their memories (public.memory),
+    which the knowledge graph puts in front of every chat. Lukas,
+    2026-11-13: something "mentioned 10 chats ago ... it should still be
+    able to find it".
+
+    agent_memory.schedule_stated_facts holds every gate: 40 characters, a
+    slot of its own taken only when a completion is spent, a SURE yes from
+    Jev first, and a token minted only after that. Returns the task, or
+    None. Never raises.
+    """
+    try:
+        if not _remember_on() or is_small_talk(text):
+            return None
+        email = body.user_email
+        return agent_memory.schedule_stated_facts(
+            email, text, lambda: _free_turn_token(email))
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not schedule remembering a free turn",
+                       exc_info=True)
+        return None
+
+
+async def _free_turn_token(email: str) -> str:
+    """A short-lived token for the person, for the one completion that
+    writes their facts down. Only this: no tool listing, no agent row."""
+    uid = await agent_memory._owui_user_id(email)
+    if not uid:
+        raise RuntimeError("no Open WebUI user for this email")
+    return mint_owui_token(uid, ttl_seconds=FREE_TURN_TOKEN_SECONDS,
+                           session_stamp=await session_stamp_for(uid))
+
+
+#: Long enough for agent_memory.REFLECT_TIMEOUT_SECONDS with room to spare.
+FREE_TURN_TOKEN_SECONDS = 300
+
+#: The skill pick may not keep the message waiting longer than this. Measured
+#: live 2026-11-13: 244 ms at the median, 362 ms at most, beside the app
+#: pick's 222 and 562; the ceiling only guards a slow day.
+SKILL_PICK_SECONDS = 2.0
+
+
+async def _skills_for(email: str, text: str, context: str) -> tuple:
+    """(the skill pool, [(skill name, score)] Jev is sure fit the message).
+    ({}, []) when Jev cannot be asked, is slow, or anything fails: the app
+    pick beside it stands on its own.
+
+    The BUILT-IN skills only (agent_skills.load_all, read from disk through
+    a cache). They are the ones the 0.90 cut was measured on; a person's own
+    skill with a broad description ("helps with anything") would clear it on
+    every message and send all of their chat through the assistant. It also
+    keeps a database read off every message.
+    """
+    try:
+        if not agent_decider._key():
+            return {}, []
+        pool = agent_skills.load_all() or {}
+        pairs = [(name, (s or {}).get("description"))
+                 for name, s in pool.items() if isinstance(s, dict)]
+        got = await asyncio.wait_for(
+            agent_jev.pick_skills_for_message(email, text, pairs, context),
+            timeout=SKILL_PICK_SECONDS)
+        return pool, list(got or [])
+    except Exception:                                       # noqa: BLE001
+        logger.warning("the skill pick failed or was slow; no skill is "
+                       "suggested", exc_info=True)
+        return {}, []
 
 
 async def _skill_connect_needs(email: str) -> list:
@@ -1991,7 +2075,8 @@ async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
         if triage:
             plan = app_triage.plan(triage.get("picks"),
                                    triage.get("connected"), picked or [],
-                                   text=text)
+                                   text=text, skills=triage.get("skills"),
+                                   pool=triage.get("pool"))
         # Only a recommendation to make changes anything: with every fitting
         # app already connected, the tool path is exactly what it was.
         if not app_triage.needs_assistant(plan):
@@ -2011,6 +2096,25 @@ async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
         if not picked and plan is None and not facts:
             return None
         picked = list(picked or [])
+        # A ready-made skill fits: the assistant reads it with the skills
+        # tool and follows its steps, so it needs that tool for this turn,
+        # and the tools the skill itself works with that this person has
+        # (review 2026-11-13: "summarise my week" ran weekly-review with no
+        # tracker and no mailbox, and a free model told to follow its steps
+        # makes the summary up). Kept for the follow-up as well, so "yes,
+        # do that" does not lose them.
+        shown_tools = list(picked)
+        if plan and plan.get("skills"):
+            if "skills" not in picked:            # a core tool, everyone's
+                picked.append("skills")
+            have = await _every_tool_for(body.user_email)
+            for s in plan["skills"]:
+                wanted = (triage or {}).get("pool", {}).get(s["name"], {})
+                for tool in list(wanted.get("tools") or []):
+                    if tool in have and tool not in picked:
+                        picked.append(tool)
+            await _write_tools_pin(
+                _tools_pin_key(body.chat_id, body.user_email), picked)
         assistant = main_assistant.agent()
         names = [a.get("name") for a in agents if a.get("name")]
         # The slowest thing the main chat does, and until now the most
@@ -2035,8 +2139,13 @@ async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
         if not pending and "skills" in picked:
             turn = await _with_connect_links(body.user_email, turn)
         if not pending and (plan or can_plan):
-            turn = dict(turn, answer=app_triage.with_buttons(
-                turn.get("answer"), plan or can_plan))
+            # Both, when both exist: a skill or Publish pick must not cost a
+            # can_do answer its Connect button (review 2026-11-13).
+            # with_buttons never repeats a link already in the answer.
+            for p in (plan, can_plan):
+                if p:
+                    turn = dict(turn, answer=app_triage.with_buttons(
+                        turn.get("answer"), p))
             # Its own pass, because the rules are different: a
             # recommendation offers an app NOBODY has connected, and this
             # offers one whose credential stopped working, which is
@@ -2064,7 +2173,9 @@ async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
         # own mailbox used to be indistinguishable from one the model made
         # up, which is the difference between information and a guess.
         return _reply([turn], queue=[], marker="",
-                      status=agent_progress.used_line(picked))
+                      status=agent_progress.used_line(
+                          shown_tools if plan and plan.get("skills")
+                          else picked))
     except Exception:                                       # noqa: BLE001
         logger.warning("the main chat's assistant could not answer; the free "
                        "model answers instead", exc_info=True)
@@ -2454,6 +2565,11 @@ async def _route_chat(body: ChatIn, x_internal_secret: str = "") -> dict:
         # The caller will answer for itself. Saying so with an empty list
         # rather than an IO answer is what keeps the Auto pipe from asking
         # IO, which would ask Auto, which would ask here again.
+        #
+        # What the person said here is still worth remembering (2026-11-13,
+        # Lukas: "something we mentioned 10 chats ago ... it should still be
+        # able to find it"). Detached, never awaited.
+        _remember_free_turn(body, text)
         return _reply([], queue=[], marker="")
 
     if agent is None:
