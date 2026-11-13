@@ -36,7 +36,12 @@ def test_a_page_with_a_link_does_not_close_itself():
     page = _page(R._oauth_done(False, "One more step.",
                                link="https://example.com/x", link_text="Go"))
     assert "window.close" in page, "the close helper should still be defined"
-    assert re.search(r"if \(!_h\) \{ setTimeout", page), (
+    # The guard gained a second half on 2026-11-13: a page with no opener
+    # cannot close itself at all. The behaviour both halves describe is
+    # driven in a real browser now, in
+    # tests/browser/test_the_connect_page_in_a_tab.py; this stays as the
+    # cheap check that the guard is still in front of the close.
+    assert re.search(r"if \(opener && !href\) \{ setTimeout", page), (
         "a page carrying a link must not schedule its own close")
 
 
