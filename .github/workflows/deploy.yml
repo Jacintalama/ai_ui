@@ -84,7 +84,30 @@ jobs:
       #
       # Still fails honestly when there is genuinely no browser, because
       # the fallback has to succeed on its own.
+      # The browser is CACHED, keyed on the playwright version pip
+      # actually resolved. requirements.txt says `playwright>=1.40.0`, so
+      # the version and its browser build id both move, and a key built
+      # from the requirements file would serve a stale browser.
+      #
+      # On a hit the install step is skipped entirely, apt included. That
+      # is the point: the fragile part was never the browser download from
+      # Playwright's CDN, it was `--with-deps` running apt against
+      # Ubuntu's mirrors, which on 2026-11-11 was unresolvable for twenty
+      # minutes and blocked every deploy behind it, other people's as
+      # well. The fallback below already accepted a browser-only install
+      # as sufficient, which is how that day was survived, so skipping apt
+      # on a hit is the behaviour that already shipped and worked.
+      - name: playwright version for the cache key
+        id: pw
+        run: echo "v=$(python -c 'import playwright; print(playwright.__version__)')" >> "$GITHUB_OUTPUT"
+      - name: cache the browser
+        id: browser_cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ steps.pw.outputs.v }}
       - name: chromium for the browser tests
+        if: steps.browser_cache.outputs.cache-hit != 'true'
         run: |
           python -m playwright install --with-deps chromium ||
             python -m playwright install chromium
