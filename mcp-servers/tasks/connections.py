@@ -140,6 +140,24 @@ def _http_base(values: Dict[str, str], name: str = "base_url",
     return raw.rstrip("/")
 
 
+def types_a_url(provider_id: str) -> bool:
+    """Whether this provider asks the person for an address of their own.
+
+    True for n8n, whose server is theirs, and Jira, whose site is one
+    address per customer. False for every vendor whose host is written in
+    our own source, which is not user input.
+
+    One definition, read by the tool-call guard in `mytools`, because the
+    rule has to be the same in both places: a host checked at the connect
+    and never again is a host that can be repointed inside afterwards.
+    """
+    provider = PROVIDERS.get(provider_id or "")
+    if provider is None:
+        return False
+    return any(f.name.endswith("_url") or f.name == "url"
+               for f in provider.fields)
+
+
 def _clickup_auth(v):
     """ClickUp takes the SAME field two different ways.
 

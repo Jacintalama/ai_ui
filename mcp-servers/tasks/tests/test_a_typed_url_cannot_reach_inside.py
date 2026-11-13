@@ -309,3 +309,113 @@ def test_every_provider_that_takes_a_typed_url_refuses_a_private_one():
     assert unguarded == [], (
         "these let a person name an address inside our network: "
         + ", ".join(unguarded))
+
+
+# --- the tool-call path, which the connect check does not cover -----------
+#
+# The connect resolves once. A hostname that answers public then and points
+# inside a week later is requested on every tool call after that, and the
+# literal rule cannot see it because it is a name, not an address. So the
+# lookup runs on the call too, for the providers that take a typed URL and
+# only for those: a vendor host written in our own source is not user input
+# and asking DNS about it on every call would be pure cost.
+
+import mytools as M                                         # noqa: E402
+
+TOOLS = {"n8n": "list_my_workflows", "trello": "list_my_boards"}
+
+CREDS = {"n8n": {"base_url": "https://n8n.example.com", "api_key": "k"},
+         "trello": {"api_key": "k", "token": "t"}}
+
+
+def _tool(provider_id):
+    name = TOOLS[provider_id]
+    for t in M.PROVIDER_TOOLS[provider_id]:
+        if t.name == name:
+            return t
+    raise AssertionError("no %s tool called %s any more" % (provider_id, name))
+
+
+@pytest.fixture
+def calling(monkeypatch):
+    """Drive `mytools._call` with the vendor and the resolver both faked."""
+    state = {"requested": [], "resolved": [], "addrs": ["8.8.8.8"]}
+
+    async def secrets(email, provider):
+        return dict(CREDS.get(provider, {}))
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"data": []}
+
+        text = "{}"
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def request(self, method, url, **k):
+            state["requested"].append(url)
+            return _Resp()
+
+    def resolve(host):
+        state["resolved"].append(host)
+        return list(state["addrs"])
+
+    monkeypatch.setattr(M, "_secrets_for", secrets)
+    monkeypatch.setattr(M.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(G, "_resolve", resolve)
+    return state
+
+
+async def test_a_tool_call_to_a_host_that_now_points_inside_is_refused(
+        calling):
+    """The hole the connect check leaves. The address was public when they
+    connected and resolves to 127.0.0.1 now."""
+    calling["addrs"] = ["127.0.0.1"]
+    out = await M._call("n8n", _tool("n8n"), "me@example.com", {})
+    assert calling["requested"] == [], "it asked an address inside our network"
+    said = out.get("error") or ""
+    assert "internet" in said.lower(), said
+
+
+async def test_a_tool_call_to_a_host_that_is_still_public_goes_through(
+        calling):
+    """Teeth: without this, refusing every n8n call would pass the test
+    above and nobody could use the connector at all."""
+    out = await M._call("n8n", _tool("n8n"), "me@example.com", {})
+    assert len(calling["requested"]) == 1
+    assert "n8n.example.com" in calling["requested"][0]
+    assert not out.get("error"), out
+
+
+async def test_a_vendor_with_a_fixed_host_is_not_looked_up_on_every_call(
+        calling):
+    """Trello's host is written in our own source, so it is not user input
+    and asking DNS about it on every single tool call would be cost with
+    nothing bought. This is what keeps the check targeted."""
+    out = await M._call("trello", _tool("trello"), "me@example.com", {})
+    assert len(calling["requested"]) == 1
+    assert calling["resolved"] == [], (
+        "it resolved a host nobody typed: " + repr(calling["resolved"]))
+    assert not out.get("error"), out
+
+
+def test_which_providers_take_a_typed_url_has_one_definition():
+    """`types_a_url` and the registry must not drift apart: the tool-call
+    check reads the first and the property test above reads the second."""
+    from_fields = {pid for pid, p in C.PROVIDERS.items()
+                   for f in p.fields
+                   if f.name.endswith("_url") or f.name == "url"}
+    from_helper = {pid for pid in C.PROVIDERS if C.types_a_url(pid)}
+    assert from_helper == from_fields
+    assert "n8n" in from_helper and "jira" in from_helper
+    assert "trello" not in from_helper

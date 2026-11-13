@@ -37,6 +37,7 @@ from fastapi import Depends, FastAPI
 from pydantic import BaseModel, Field
 
 import connection_health as H
+import host_guard
 import connections as C
 from auth import current_user, CurrentUser
 
@@ -537,6 +538,29 @@ async def _call(provider_id: str, tool: Tool, email: str,
     except ValueError:
         return _err("Your " + label + " connection is incomplete. Reconnect it "
                     "from Connections.")
+
+    # The connect resolved this host once. A name that answered public then
+    # and points inside a week later is requested on every call after that,
+    # and the literal rule in `vendor_auth` above cannot see it because it
+    # is a name rather than an address. So the lookup runs here too, before
+    # ANY of the three request paths below: the single call, a prepare
+    # step's reads, and a composite tool's walk.
+    #
+    # Only for a provider whose address the person typed. A vendor host
+    # written in our own source is not user input, and asking DNS about
+    # api.trello.com on every tool call would be cost with nothing bought.
+    #
+    # What is still not claimed: a name that answers public to this lookup
+    # and private to the socket a moment later. That needs the resolved
+    # address pinned through to the connection, which httpx does not hand
+    # over without reaching under it. This closes the week-long window; it
+    # does not close the millisecond one.
+    if C.types_a_url(provider_id):
+        inside = await host_guard.problem(auth.base_url)
+        if inside:
+            logger.warning("mytools: %s points at an address inside the "
+                           "network; refused", provider_id)
+            return _err(inside)
 
     # Before prepare, because prepare exists to fix up the arguments of a
     # call to one endpoint, and a composite tool has no such call behind

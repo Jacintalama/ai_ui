@@ -22,17 +22,24 @@ TWO LAYERS, because either on its own is cosmetic:
     stored credential. It refuses the addresses that need no lookup: a
     private, loopback, link-local, multicast or reserved literal, and any
     name that is local by shape.
-  - `problem` adds the lookup, for the connect and the Test button, where
-    somebody is waiting and can read the answer. It is needed because
-    `localtest.me` is a real, registered, public name whose A record is
-    127.0.0.1, so a literal-only rule is walked around by typing a domain.
+  - `problem` adds the lookup. It is needed because `localtest.me` is a
+    real, registered, public name whose A record is 127.0.0.1, so a
+    literal-only rule is walked around by typing a domain. It runs at the
+    connect and the Test button, where somebody is waiting and can read the
+    answer, AND on each tool call for a provider whose address the person
+    typed (`connections.types_a_url`), because a name that answered public
+    at the connect can be repointed inside the week after it. Not for a
+    vendor host written in our own source: that is not user input, and
+    asking DNS about api.trello.com on every tool call is cost with nothing
+    bought.
 
-WHAT THIS DOES NOT CLAIM. A host that resolves public here and private when
-the socket is opened a moment later is not caught, because catching it means
-pinning the resolved address through to the connection itself. That is a
-bigger change than this, and worth knowing rather than assuming: the sync
-rule still refuses every literal, and the DNS rule still refuses every name
-that points inside at the moment it is connected.
+WHAT THIS DOES NOT CLAIM. A host that answers public to the lookup and
+private to the socket a moment later is not caught, because catching that
+means pinning the resolved address through to the connection itself, and
+httpx does not hand that over without reaching under it. So the window is a
+millisecond rather than a week: the lookup runs again on every call that
+uses a typed address, the sync rule refuses every literal, and nothing is
+assumed about a name that was checked once and never again.
 
 A BARE NAME WITH NO DOT IS REFUSED, and that is the cheapest and most
 valuable line here. `http://mcp-proxy:8000` is literally how this service
