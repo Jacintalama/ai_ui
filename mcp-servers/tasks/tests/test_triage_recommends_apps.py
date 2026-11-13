@@ -554,7 +554,7 @@ def _cal():
 
 def test_every_calibration_case_names_real_apps():
     cal = _cal()
-    for msg, needs, fine in cal.APP_CASES:
+    for msg, needs, fine, *_context in cal.APP_CASES:
         for app in set().union(*needs, fine) if needs else fine:
             assert app in app_triage.catalogue_ids(), (msg, app)
 

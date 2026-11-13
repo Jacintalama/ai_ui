@@ -282,7 +282,12 @@ def report_tools(runs: list) -> float:
 
 # --- the triage agent's app pick (2026-11-12) -------------------------------
 
-#: (message, needs, fine). `needs` is a list of sets, and each set is met by
+#: An App Builder build said just before a follow-up (cases with context).
+BUILT = ("person: make me a landing page for my bakery\nreply: Done. Your "
+         "bakery landing page is built in the App Builder as "
+         "bakery-landing-3f2a, with a hero, menu and contact form.")
+
+#: (message, needs, fine[, context]). `needs` is a list of sets, and each set is met by
 #: ANY one of its apps ("track my to-dos" is Notion, ClickUp or Trello, and
 #: any of them is right). `fine` may be picked without being wrong. Anything
 #: else picked is a wrong recommendation, which is the expensive mistake: a
@@ -324,12 +329,28 @@ APP_CASES = [
     # The platform's own Publish (2026-11-13). Lukas: "it should just
     # recommend the most straightforward one".
     ("how do I put my landing page online so people can visit it",
-     [{"publish"}], {"github"}),
-    ("can I deploy my app to Vercel", [{"publish"}], {"github"}),
-    ("I want my bakery site live on my own domain", [{"publish"}], {"github"}),
+     [{"publish"}], {"github", "vercel"}),
+    ("can I deploy my app to Vercel", [{"vercel"}], {"github", "publish"}),
+    # Not built here: Publish serves App Builder apps from apps/<slug>/ and
+    # cannot host anything else (review 2026-11-13).
+    ("how do I deploy my Django app from my laptop", [], {"github"}),
+    ("how do I deploy my Django app from my laptop to Vercel", [], {"github"}),
+    ("where should I host my company's existing WordPress site", [], set()),
+    ("I want my bakery site live on my own domain", [{"publish"}],
+     {"github", "vercel"}),
     ("I have this website for a cup landing page, I want to make a lot of "
      "changes, have it stored and versioned, and I want other people to "
-     "visit it", [{"github"}], {"publish", "gdrive"}),
+     "visit it", [{"github"}], {"publish", "gdrive", "vercel"}),
+    # With the build in the conversation, as people really ask it. The
+    # fourth element is what was said before (review 2026-11-13: no case
+    # carried context, which is where follow-ups score high).
+    ("can I deploy it to Vercel?", [{"vercel"}], {"publish", "github"}, BUILT),
+    ("how do I put it online so customers can visit?", [{"publish"}],
+     {"vercel", "github"}, BUILT),
+    ("can I use my own domain for it?", [{"publish", "vercel"}], {"github"},
+     BUILT),
+    ("thanks, looks great", [], set(), BUILT),
+    ("make the header blue", [], {"github"}, BUILT),
 ]
 
 
@@ -403,7 +424,8 @@ async def run_apps(key: str, cap_usd: float):
         if spent + last > cap_usd:
             print(f"stopped at the ${cap_usd} cap")
             break
-        state, questions = agent_jev.apps_request(case[0])
+        state, questions = agent_jev.apps_request(
+            case[0], case[3] if len(case) > 3 else "")
         data = await agent_decider._post(
             {"model": agent_decider.model(), "state": state,
              "questions": questions}, key)

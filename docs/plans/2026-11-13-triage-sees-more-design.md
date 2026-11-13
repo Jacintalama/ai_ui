@@ -95,3 +95,43 @@ Vercel" Publish 0.65 (close to the cut); "summarise my week" weekly-review
 0.96; "write an apology to a customer" apology-note and draft-reply; "save my
 leads somewhere" Airtable 0.94; "capital of Australia" and "explain a REST
 API": nothing, no assistant turn.
+
+## After review (2026-11-13)
+
+An independent review of the first commit, each point checked against the
+code and, where it said so, measured:
+
+- **Memory got its own path** (`agent_memory.schedule_stated_facts`). The
+  first version reused the agents' reflection: it resolved the whole agent row
+  (tool listing, model list) before any gate, shared the assistant's 90-second
+  slot, stored notes for an assistant that did nothing, and spent a free
+  completion whenever Jev was unsure. Now: facts only, its own slot taken only
+  when a completion is spent, a SURE yes from Jev first, a token minted only
+  after that, a prompt that ignores text the person asks to have translated,
+  rewritten, summarised or quoted, and its own switch (`MAIN_CHAT_REMEMBER=0`).
+- **Skills are the built-in ones only**, the ones the 0.90 cut was measured on;
+  a person's own broadly described skill would have cleared it on every
+  message. That also took a database read off every message. Timeboxed at 2 s
+  (measured live: 244 ms median, 362 ms max, beside the app pick's 222/562).
+- **A skill brings its own tools** that the person has, and they are pinned for
+  the follow-up, so "yes, do that" keeps them. The status line no longer claims
+  "Used your skills" for a tool the service added.
+- **Both plans get their buttons**: a skill or Publish pick no longer drops
+  can_do's Connect button.
+- **Publish is for App Builder apps only**, and the how-line says Vercel must be
+  connected the first time. Measured: "deploy my Django app from my laptop"
+  0.19, "host my company's existing WordPress site" 0.06.
+- **Deploy to Vercel is its own entry.** Asked about Publish alone, "deploy it
+  to Vercel" scored 0.46 to 0.51 even after a build. Its first wording scored a
+  BUILD request ("make me a landing page") 0.75; "a request to deploy an app
+  they ALREADY built ... never a request to build" took that to 0.05 with no
+  wrong pick at any cut. When both are picked, only Publish is shown unless the
+  person said Vercel.
+- **Calibration carries context now** (a fourth element on a case): after a
+  build, "deploy it to Vercel" 0.92, "put it online" 0.95, "own domain" 0.81,
+  "thanks" 0.29, "make the header blue" 0.06. Platform cut stays 0.60 by the
+  rule. Two questions asked out of the blue, with no build in the chat, fall
+  just under it and go to the normal chat: "can I deploy my app to Vercel"
+  0.58 and "my bakery site live on my own domain" 0.57.
+- **Offered once, strictly**: a reply that said "publish" counts as offered;
+  skill names match only hyphenated, "<name> skill" or in backticks.

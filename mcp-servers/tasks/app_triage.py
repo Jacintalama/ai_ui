@@ -193,15 +193,28 @@ class Platform:
 #: window (routes_vercel.py, static/integration-docs.html).
 _PLATFORM = (
     Platform("publish", "Publish",
-             "putting a website or app they already have online so other "
-             "people can visit it: publishing or deploying it, hosting it, "
-             "making it live, a link to share it, a custom domain, or "
-             "putting it on Vercel. Not building a new one or changing one",
+             "putting a website or app they built here in the App Builder "
+             "online so other people can visit it: publishing or deploying "
+             "it, hosting it, making it live, a link to share it, or a "
+             "custom domain. Not building a new one or changing one, and not "
+             "an app made somewhere else",
              "To put it online, open the app in the App Builder (or its "
              "preview) and click Publish: it goes live at its own link "
-             "straight away, and the same window can deploy it to your own "
-             "Vercel account instead.",
+             "straight away. The same window can deploy it to your own "
+             "Vercel account instead, once you connect Vercel there.",
              says=("publish",)),
+    # Its own entry: asked about Publish alone, "deploy it to Vercel" scored
+    # 0.46 to 0.51 even with the build in the conversation, because Vercel
+    # reads as somewhere else. Measured 2026-11-13.
+    Platform("vercel", "Deploy to Vercel",
+             "a request to deploy or host an app they ALREADY built here in "
+             "the App Builder on Vercel: their own Vercel account or a "
+             "vercel.app link. Never a request to build, design or change a "
+             "site or page, and never an app made somewhere else",
+             "To put it on your own Vercel, open the app in the App Builder "
+             "(or its preview), click Publish and choose Deploy to your "
+             "Vercel account; the first time it asks you to connect Vercel.",
+             says=("vercel",)),
 )
 PLATFORM = {p.id: p for p in _PLATFORM}
 
@@ -300,10 +313,16 @@ def plan(picks, connected, tools, text: str = "", skills=None,
                      "cannot": a.cannot, "group": a.group, "pros": a.pros,
                      "score": jev.get(app_id)})
     features = [FEATURES[t] for t in tools or [] if t in FEATURES]
+    plat_ids = [i for i, _s in sorted(((str(i), float(s)) for i, s in picks or []
+                                       if str(i) in PLATFORM), key=lambda p: -p[1])]
+    # Publish's line already mentions Vercel, so both picked is Publish
+    # alone unless they said Vercel ("put it online" scored Publish 0.95 and
+    # Vercel 0.87, 2026-11-13).
+    if "publish" in plat_ids and "vercel" in plat_ids \
+            and "vercel" not in str(text or "").lower():
+        plat_ids.remove("vercel")
     platform = [{"id": PLATFORM[i].id, "label": PLATFORM[i].label,
-                 "how": PLATFORM[i].how}
-                for i, _s in sorted(((str(i), float(s)) for i, s in picks or []
-                                     if str(i) in PLATFORM), key=lambda p: -p[1])]
+                 "how": PLATFORM[i].how} for i in plat_ids]
     return {"apps": apps, "features": features, "platform": platform,
             "skills": _skills(skills, pool, have)}
 
@@ -458,6 +477,30 @@ def already_offered(messages, turns: int = 6, skill_names=()) -> set:
             continue
         said = str(m.get("content") or "").lower()
         out |= {i for i in APPS if connect_href(i) in said}
-        out |= {i for i, x in PLATFORM.items() if x.how[:60].lower() in said}
-        out |= {str(n) for n in skill_names or () if str(n).lower() in said}
+        # A reply that said "publish" at all: in the usual case the model
+        # writes "click Publish" itself, the how-line is never added, and
+        # matching only that line re-offered Publish on every follow-up
+        # (review 2026-11-13).
+        out |= {i for i, x in PLATFORM.items()
+                if any(w in said for w in x.says)}
+    return out | skills_offered(messages, skill_names, turns)
+
+
+def skills_offered(messages, names, turns: int = 6) -> set:
+    """Skill names a recent assistant reply already offered. Strict, because
+    a bare substring suppressed `spreadsheet` under any reply about a
+    spreadsheet (review 2026-11-13): a hyphenated name as written, or a
+    one-word name followed by "skill" or in backticks."""
+    out = set()
+    for m in list(messages or [])[-(turns + 1):-1]:
+        if not isinstance(m, dict) or m.get("role") != "assistant":
+            continue
+        said = str(m.get("content") or "").lower()
+        for name in names or ():
+            n = str(name).lower()
+            if not n:
+                continue
+            if ("-" in n and n in said) or (n + " skill") in said \
+                    or ("`" + n + "`") in said:
+                out.add(str(name))
     return out
