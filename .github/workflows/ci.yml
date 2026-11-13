@@ -86,9 +86,23 @@ jobs:
       # well. The fallback below already accepted a browser-only install
       # as sufficient, which is how that day was survived, so skipping apt
       # on a hit is the behaviour that already shipped and worked.
+      # importlib.metadata, NOT playwright.__version__, which does not
+      # exist: the package has no such attribute. The first version of
+      # this step read it anyway, `python -c` failed, the `$( )` was
+      # empty, `echo` succeeded, and the step went green with a cache key
+      # of "ms-playwright-Linux-" and no version in it. Measured in the
+      # run logs of 2026-11-13: three runs, three "Cache not found for
+      # input keys: ms-playwright-Linux-".
+      #
+      # So the value is checked before it is written. An empty one fails
+      # the step rather than keying every playwright version to one
+      # cache, which is the silent staleness this key exists to avoid.
       - name: playwright version for the cache key
         id: pw
-        run: echo "v=$(python -c 'import playwright; print(playwright.__version__)')" >> "$GITHUB_OUTPUT"
+        run: |
+          v=$(python -c 'from importlib.metadata import version; print(version("playwright"))')
+          test -n "$v"
+          echo "v=$v" >> "$GITHUB_OUTPUT"
       - name: cache the browser
         id: browser_cache
         uses: actions/cache@v4
@@ -146,9 +160,23 @@ jobs:
       # well. The fallback below already accepted a browser-only install
       # as sufficient, which is how that day was survived, so skipping apt
       # on a hit is the behaviour that already shipped and worked.
+      # importlib.metadata, NOT playwright.__version__, which does not
+      # exist: the package has no such attribute. The first version of
+      # this step read it anyway, `python -c` failed, the `$( )` was
+      # empty, `echo` succeeded, and the step went green with a cache key
+      # of "ms-playwright-Linux-" and no version in it. Measured in the
+      # run logs of 2026-11-13: three runs, three "Cache not found for
+      # input keys: ms-playwright-Linux-".
+      #
+      # So the value is checked before it is written. An empty one fails
+      # the step rather than keying every playwright version to one
+      # cache, which is the silent staleness this key exists to avoid.
       - name: playwright version for the cache key
         id: pw
-        run: echo "v=$(python -c 'import playwright; print(playwright.__version__)')" >> "$GITHUB_OUTPUT"
+        run: |
+          v=$(python -c 'from importlib.metadata import version; print(version("playwright"))')
+          test -n "$v"
+          echo "v=$v" >> "$GITHUB_OUTPUT"
       - name: cache the browser
         id: browser_cache
         uses: actions/cache@v4
