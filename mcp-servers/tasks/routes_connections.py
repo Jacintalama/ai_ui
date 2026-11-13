@@ -517,8 +517,10 @@ async def oauth_callback(provider_id: str, code: str = "", state: str = "",
             True, _github_said(label, await _github_repos(values)),
             link=O.install_url(), link_text="Choose which repositories")
 
-    return _oauth_done(True, "Connected to " + label
-                       + ". You can close this window.")
+    # No "you can close this window" here: whether that is the right thing
+    # to say depends on whether this is a popup or a tab, and only the page
+    # itself knows that.
+    return _oauth_done(True, "Connected to " + label + ".")
 
 
 def _oauth_done(ok: bool, message: str, link: str = "",
@@ -550,28 +552,64 @@ def _oauth_done(ok: bool, message: str, link: str = "",
     safe = _js(str(message))
     href = _js(str(link or ""))
     label = _js(str(link_text or "Continue"))
+    back = _js(PUBLIC_BASE_URL.rstrip("/") + "/")
     style = ("font-family:-apple-system,Segoe UI,sans-serif;background:#111113;"
              "color:#ededee;display:flex;align-items:center;"
              "justify-content:center;height:100vh;margin:0;text-align:center")
-    # Assembled first, then unescaped once. Attaching .replace to the last
-    # literal of a concatenation chain only rewrites that literal, which left
-    # eight placeholders sitting in the markup.
+    # Quotes written as quotes.
+    #
+    # This markup used to be assembled with "@" standing in for a double
+    # quote and unescaped once at the end. Every "@" in the page became a
+    # quote, INCLUDING the ones inside the message, and the message is
+    # "Connected to Airtable as aiui.teams@gmail.com": that closed the JS
+    # string early, the whole script was a SyntaxError, and nothing in it
+    # ran. Not the text, not the postMessage, not the close. Which is
+    # exactly what Ralph was looking at on 2026-11-11 while the connection
+    # itself had already been stored.
+    #
+    # Attribute values come through _js, which is a JSON string and
+    # therefore already quoted, the same way _trello_catch_fragment does
+    # it. There is no placeholder left to collide with anybody's data.
     page = (
-        "<!doctype html><meta charset=@utf-8@><title>Connection</title>"
-        "<body style=@" + style + "@>"
-        "<div><p id=@m@ style=@font-size:15px@></p>"
-        "<p><a id=@a@ hidden style=@color:#8ab4f8;font-size:15px@></a></p></div>"
-        "<script>"
-        "document.getElementById('m').textContent = " + safe + ";"
-        "var _h = " + href + ", _a = document.getElementById('a');"
-        "if (_h) { _a.href = _h; _a.textContent = " + label + "; _a.hidden = false; }"
-        "try { window.opener && window.opener.postMessage(" + payload +
-        ", '*'); } catch (e) {}"
-        "if (!_h) { setTimeout(function () "
+        "<!doctype html><meta charset=utf-8><title>Connection</title>"
+        "<body style=" + _js(style) + ">"
+        "<div><p id=m style=" + _js("font-size:15px;line-height:1.5") + "></p>"
+        "<p><a id=a hidden style="
+        + _js("color:#8ab4f8;font-size:15px") + "></a></p></div>"
+        "<script>(function () {"
+        # The function is load-bearing. At global scope `var opener = null`
+        # IS `window.opener = null`: a var declaration there writes through
+        # to the window object, so the page blinded itself to its own
+        # opener one line before reading it, and every popup took the tab
+        # branch. Found by the browser test, which is the only thing that
+        # could have found it.
+        "var m = document.getElementById('m'),"
+        "    a = document.getElementById('a');"
+        "var said = " + safe + ", href = " + href + ";"
+        # The whole page turns on this. A popup has somebody to tell and
+        # can close itself; a TAB has neither, and window.close() on a
+        # window a script did not open is refused silently, so a page
+        # written for the popup leaves a person staring at nothing.
+        "var opener = null;"
+        "try { opener = (window.opener && window.opener !== window)"
+        "               ? window.opener : null; } catch (e) { opener = null; }"
+        "m.textContent = said + (opener ? ' You can close this window.'"
+        "                               : ' You can go back to IO now.');"
+        "if (href) { a.href = href; a.textContent = " + label + ";"
+        "            a.hidden = false; }"
+        "else if (!opener) { a.href = " + back + ";"
+        "                    a.textContent = 'Back to IO'; a.hidden = false; }"
+        "if (!opener) { m.style.fontSize = '22px'; }"
+        "if (opener) { try { opener.postMessage(" + payload + ", '*'); }"
+        "              catch (e) {} }"
+        # A page carrying a link does NOT close itself: a popup that
+        # vanishes before anybody can read, let alone click, it is the
+        # same as no link at all.
+        "if (opener && !href) { setTimeout(function () "
         "{ try { window.close(); } catch (e) {} }, 2500); }"
-        "</script></body>"
+        "})();</script></body>"
     )
-    return HTMLResponse(page.replace("@", chr(34)))
+    return HTMLResponse(page)
 
 
 def _trello_catch_fragment(state: str) -> HTMLResponse:

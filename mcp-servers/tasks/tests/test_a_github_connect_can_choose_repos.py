@@ -104,9 +104,15 @@ def test_a_page_with_a_link_does_not_close_itself():
     # there is nowhere to go, so the string is legitimately in the source.
     # Asserting it is missing fails on correct code, which is what this
     # test did first.
-    assert "if (!_h) { setTimeout(" in page, (
+    #
+    # The guard gained a second half on 2026-11-13: a page with no opener
+    # cannot close itself at all, and pretending otherwise is what left
+    # Ralph looking at a finished connect that looked broken. The
+    # behaviour itself is driven in a real browser now, in
+    # tests/browser/test_the_connect_page_in_a_tab.py.
+    assert "if (opener && !href) { setTimeout(" in page, (
         "the popup closes itself whether or not it carries a link")
-    assert page.index("if (!_h)") < page.index("window.close()")
+    assert page.index("if (opener && !href)") < page.index("window.close()")
 
 
 def test_a_page_with_nothing_to_do_still_closes_itself():
