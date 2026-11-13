@@ -167,7 +167,8 @@ def test_a_normal_user_reaches_the_expected_live_servers():
         "dashboard", "meeting-kb",
         # Per-user servers: each acts as the CALLER's own third-party account.
         "my-clickup", "my-github", "my-trello", "my-notion", "my-n8n",
-        "my-airtable", "my-hubspot", "my-zapier", "my-jira"}
+        "my-airtable", "my-hubspot", "my-zapier", "my-jira",
+        "my-dropbox"}
 
 
 def test_the_per_user_servers_are_public_and_the_shared_ones_are_not():
@@ -176,7 +177,7 @@ def test_the_per_user_servers_are_public_and_the_shared_ones_are_not():
     else. clickup is SHARED because it spends one token belonging to one real
     person, so every task it creates is created by him."""
     for pid in ("clickup", "github", "trello", "notion", "n8n",
-                "airtable", "hubspot", "zapier", "jira"):
+                "airtable", "hubspot", "zapier", "jira", "dropbox"):
         if pid in ALL_SERVERS:
             assert ALL_SERVERS[pid].access_class is not AccessClass.PUBLIC, pid
         assert ALL_SERVERS["my-" + pid].access_class is AccessClass.PUBLIC, pid
@@ -186,7 +187,7 @@ def test_a_per_user_server_points_at_our_own_service_not_a_vendor():
     """These carry decrypted credentials, so the endpoint must be the tasks
     service on the internal network, never something reachable from outside."""
     for pid in ("clickup", "github", "trello", "notion", "n8n",
-                "airtable", "hubspot", "zapier", "jira"):
+                "airtable", "hubspot", "zapier", "jira", "dropbox"):
         url = ALL_SERVERS["my-" + pid].endpoint_url
         assert url.startswith("http://tasks:") or url.startswith("http://localhost"), url
 
@@ -240,7 +241,8 @@ def fake_db(monkeypatch):
 LIVE_PUBLIC = {"google-drive", "calendar", "filesystem", "web-search",
                "excel", "dashboard", "meeting-kb",
                "my-clickup", "my-github", "my-trello", "my-notion", "my-n8n",
-        "my-airtable", "my-hubspot", "my-zapier", "my-jira"}
+        "my-airtable", "my-hubspot", "my-zapier", "my-jira",
+        "my-dropbox"}
 
 
 async def test_a_user_with_nothing_configured_now_gets_the_public_set(fake_db):
@@ -333,7 +335,8 @@ async def test_a_per_user_server_is_executable_without_any_grant(fake_db):
     call, because only the search path knew about access classes."""
     fake_db()
     for pid in ("my-github", "my-clickup", "my-trello", "my-notion", "my-n8n",
-                "my-airtable", "my-hubspot", "my-zapier", "my-jira"):
+                "my-airtable", "my-hubspot", "my-zapier", "my-jira",
+                "my-dropbox"):
         assert await tenants_mod.user_has_tenant_access_async(
             "nobody@example.com", pid), pid
 

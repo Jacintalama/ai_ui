@@ -1547,6 +1547,110 @@ JIRA_TOOLS = [
          keep=("accountId", "displayName", "emailAddress", "timeZone")),
 ]
 
+# --- Dropbox ---------------------------------------------------------------
+#
+# Three vendor facts shape these, and each one is a connector that quietly
+# does not work if it is got wrong.
+#
+# THE ROOT FOLDER IS THE EMPTY STRING. "/" is not the root to Dropbox, it
+# is an invalid path, and "Documents" with no leading slash is invalid
+# too. A model asked to list somebody's files writes one of those about
+# half the time, so the normalising is on this side.
+#
+# EVERYTHING IS A POST, reads included, with the arguments in a JSON body.
+# There is no GET endpoint anywhere in the v2 API, which is also why the
+# connect probe is a POST.
+#
+# search_v2 BURIES EACH FILE TWO LEVELS DOWN, under
+# matches[].metadata.metadata. One level of unwrapping leaves a list of
+# envelopes with no name in them.
+
+#: Fields worth keeping off a file or folder entry. ".tag" is how a folder
+#: is told from a file, and without it a listing is ambiguous.
+_DROPBOX_KEEP = (".tag", "name", "path_display", "id", "size",
+                 "server_modified")
+
+
+def _dropbox_path(given: Any) -> str:
+    """A path Dropbox will accept.
+
+    The root is "", not "/". A leading slash is required everywhere else.
+    """
+    path = str(given or "").strip()
+    if path in ("", "/", "root", "~", "."):
+        return ""
+    if not path.startswith("/"):
+        path = "/" + path
+    return path.rstrip("/") or ""
+
+
+def _dropbox_limit(given: Any) -> int:
+    try:
+        limit = int(given)
+    except (TypeError, ValueError):
+        return MAX_ITEMS
+    return max(1, min(limit, MAX_ITEMS))
+
+
+def _dropbox_folder_body(args: Dict[str, Any]) -> Dict[str, Any]:
+    return {"path": _dropbox_path(args.get("path")),
+            "limit": _dropbox_limit(args.get("limit")),
+            # Recursive on a real account is a very long answer to "what
+            # is in my Dropbox", and the result is capped anyway, so it
+            # would be a long wait for an arbitrary slice.
+            "recursive": False}
+
+
+def _dropbox_search_body(args: Dict[str, Any]) -> Dict[str, Any]:
+    query = str(args.get("query") or "").strip()
+    if not query:
+        # Dropbox answers 400 to an empty query, and by then the model has
+        # spent a round to be told nothing.
+        return {}
+    return {"query": query,
+            "options": {"max_results": _dropbox_limit(args.get("limit"))}}
+
+
+DROPBOX_TOOLS = [
+    Tool(name="list_folder",
+         summary="List the files and folders in one of your Dropbox "
+                 "folders. Leave the path out for the top level.",
+         method="POST", path="/files/list_folder",
+         args={"path": ("string",
+                        "The folder, like /Documents. Leave it out or "
+                        "give \"/\" for the top level.", False),
+               "limit": ("integer", "How many entries to return", False)},
+         shape=_dropbox_folder_body,
+         writes=False,
+         unwrap=lambda d: (d or {}).get("entries", []),
+         keep=_DROPBOX_KEEP),
+    Tool(name="search_files",
+         summary="Search your Dropbox for files and folders by name.",
+         method="POST", path="/files/search_v2",
+         args={"query": ("string", "Words to look for in the name", True),
+               "limit": ("integer", "How many results to return", False)},
+         shape=_dropbox_search_body,
+         writes=False,
+         unwrap=lambda d: [
+             (m.get("metadata") or {}).get("metadata") or {}
+             for m in ((d or {}).get("matches") or [])],
+         keep=_DROPBOX_KEEP),
+    Tool(name="get_metadata",
+         summary="Read the details of one Dropbox file or folder: its "
+                 "size, when it changed, and whether it is a folder.",
+         method="POST", path="/files/get_metadata",
+         args={"path": ("string", "The file or folder, like /a/b.pdf", True)},
+         shape=lambda a: {"path": _dropbox_path(a.get("path"))},
+         writes=False,
+         keep=_DROPBOX_KEEP),
+    Tool(name="whoami",
+         summary="Show which Dropbox account is currently connected to "
+                 "your assistant.",
+         method="POST", path="/users/get_current_account",
+         writes=False,
+         keep=("account_id", "email", "name")),
+]
+
 PROVIDER_TOOLS: Dict[str, List[Tool]] = {
     "github": GITHUB_TOOLS,
     "clickup": CLICKUP_TOOLS,
@@ -1557,6 +1661,7 @@ PROVIDER_TOOLS: Dict[str, List[Tool]] = {
     "hubspot": HUBSPOT_TOOLS,
     "zapier": ZAPIER_TOOLS,
     "jira": JIRA_TOOLS,
+    "dropbox": DROPBOX_TOOLS,
 }
 
 #: Every tool of every provider, for checks that should hold everywhere.

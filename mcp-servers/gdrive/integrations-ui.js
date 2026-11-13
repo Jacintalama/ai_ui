@@ -765,7 +765,7 @@
       { id: 'x', name: 'X (Twitter)', domain: 'x.com', cat: 'Social' },
       { id: 'linkedin', name: 'LinkedIn', domain: 'linkedin.com', cat: 'Social' },
       { id: 'facebook', name: 'Facebook', domain: 'facebook.com', cat: 'Social' },
-      { id: 'dropbox', name: 'Dropbox', domain: 'dropbox.com', cat: 'Platform' },
+      { id: 'dropbox', real: true, token: true, name: 'Dropbox', domain: 'dropbox.com', cat: 'Platform' },
       { id: 'stripe', name: 'Stripe', domain: 'stripe.com', cat: 'Platform' }
     ];
 
@@ -1153,12 +1153,31 @@
         });
         box.appendChild(go1);
 
-        var orLine = document.createElement('div');
-        orLine.style.cssText = 'color:#6b6b6b;font-size:11px;text-align:center;'
-          + 'margin:-4px 0 12px;';
-        orLine.textContent = replacing ? 'or paste a different credential'
-                                       : 'or paste a token';
-        box.appendChild(orLine);
+        // Only when there IS something to paste. Dropbox has no fields
+        // at all, by design, so "or paste a token" there points at an
+        // empty space.
+        if (fields.length) {
+          var orLine = document.createElement('div');
+          orLine.style.cssText = 'color:#6b6b6b;font-size:11px;text-align:center;'
+            + 'margin:-4px 0 12px;';
+          orLine.textContent = replacing ? 'or paste a different credential'
+                                         : 'or paste a token';
+          box.appendChild(orLine);
+        }
+      }
+
+      // No fields and no OAuth: this deployment cannot connect this app at
+      // all. Dropbox is the first provider in that state, having no paste
+      // form on purpose, because a token from its App Console lasts about
+      // four hours. Without this the panel drew a Connect button over
+      // nothing, which answers "Not connected: missing token".
+      if (!fields.length && !meta.oauth) {
+        var none = document.createElement('div');
+        none.style.cssText = 'color:#c9c9c9;font-size:12.5px;line-height:1.55;';
+        none.textContent = app.name + " connects by signing in, and IO's "
+          + app.name + ' app is not set up on this server yet. Nothing to '
+          + 'paste.';
+        box.appendChild(none);
       }
 
       var inputs = {};
@@ -1312,6 +1331,9 @@
       go.textContent = 'Connect';
       go.style.cssText = 'background:#fff;color:#111;border:none;border-radius:9px;'
         + 'padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;' + KEEP_WHOLE;
+      // Nothing to submit for a provider with no fields: the only way in
+      // is the sign-in button above, when there is one.
+      if (!fields.length) go.hidden = true;
       go.addEventListener('click', function () {
         var values = {};
         for (var k in inputs) values[k] = inputs[k].value;

@@ -878,6 +878,19 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
                     "them to have connected Jira under Connections.",
         enabled=True,
     ),
+    "my-dropbox": MCPServerConfig(
+        server_id="my-dropbox",
+        access_class=AccessClass.PUBLIC,
+        display_name="Dropbox (your account)",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_MYTOOLS_URL + "/dropbox",
+        auth_type="none",
+        api_key_env=None,
+        description="Dropbox acting as the signed-in user's own account. "
+                    "Requires them to have connected Dropbox under "
+                    "Connections.",
+        enabled=True,
+    ),
     "meeting-kb": MCPServerConfig(
         server_id="meeting-kb",
         access_class=AccessClass.PUBLIC,

@@ -1840,6 +1840,19 @@
         return;
       }
 
+      // An app with NO fields and no OAuth cannot be connected from this
+      // deployment at all: it signs in, and nobody has set up the app's
+      // client id and secret here. Dropbox is the first provider in that
+      // state, having no paste form by design (a Dropbox console token
+      // lasts four hours). Without this it drew an empty form with a Save
+      // button that answers "Not connected: missing token".
+      if (!pr.fields.length) {
+        body.innerHTML = '<div class="conn-where">' + esc(pr.label)
+          + " connects by signing in, and IO's " + esc(pr.label)
+          + " app is not set up on this server yet. Nothing to paste.</div>";
+        return;
+      }
+
       var html = "";
       if (pr.where) html += '<div class="conn-where">' + esc(pr.where) + "</div>";
       html += '<div class="conn-err" hidden></div>';

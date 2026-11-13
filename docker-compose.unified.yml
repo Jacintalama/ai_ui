@@ -461,6 +461,17 @@ services:
       # is ever issued, so the connection would die in an hour with
       # nothing able to renew it.
       - JIRA_SCOPE=${JIRA_SCOPE:-}
+      - DROPBOX_CLIENT_ID=${DROPBOX_CLIENT_ID:-}
+      - DROPBOX_CLIENT_SECRET=${DROPBOX_CLIENT_SECRET:-}
+      # What the person approves on Dropbox's consent screen. The default
+      # is what the four Dropbox tools read and nothing else, and it lives
+      # in oauth_providers.DROPBOX_SCOPE. `:-` as above: an empty scope is
+      # meaningless to Dropbox, so it has to fall back to the default.
+      #
+      # A scope also has to be ticked in the app's own Permissions tab in
+      # Dropbox's App Console. Asking for one the app was never granted is
+      # an authorize URL that refuses.
+      - DROPBOX_SCOPE=${DROPBOX_SCOPE:-}
       # tasks mints an Open WebUI token per gateway turn, so it must sign
       # with the SAME secret Open WebUI verifies with. Declared for
       # api-gateway, mcp-proxy and open-webui but never for tasks: it was
