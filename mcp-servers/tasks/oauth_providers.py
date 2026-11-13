@@ -372,6 +372,35 @@ DROPBOX_SCOPE = (os.environ.get("DROPBOX_SCOPE")
                  or "account_info.read files.metadata.read").strip()
 
 
+#: What the person approves on LinkedIn's consent screen.
+#:
+#: These four are the ONLY permissions open to every developer, and they
+#: come from two products that are added in the Developer Portal with no
+#: approval: Sign In with LinkedIn using OpenID Connect (openid, profile,
+#: email) and Share on LinkedIn (w_member_social). Asking for one more
+#: makes this a partner application nobody has approved, and the
+#: authorize URL simply refuses.
+LINKEDIN_SCOPE = (os.environ.get("LINKEDIN_SCOPE")
+                  or "openid profile email w_member_social").strip()
+
+
+def _linkedin_token(payload: dict) -> Tuple[Dict[str, str], str]:
+    """LinkedIn's token response.
+
+    NO REFRESH TOKEN. LinkedIn issues those to approved programs only, so
+    an ordinary app gets an access token good for about sixty days and
+    nothing to renew it with. `_bare_token` keeps the expiry, which is
+    what makes the card able to say a connection has run out rather than
+    a call failing for no stated reason.
+
+    The `id_token` is deliberately dropped: it is a signed claim about who
+    signed in, not a credential for calling anything, and storing it would
+    put the longest string in the response into the credential blob for no
+    use at all.
+    """
+    return _bare_token(payload, "LinkedIn")
+
+
 def _dropbox_token(payload: dict) -> Tuple[Dict[str, str], str]:
     """Dropbox's token response.
 
@@ -401,6 +430,16 @@ PROVIDERS: Dict[str, OAuthProvider] = {
         authorize_extra={"response_type": "code", "owner": "user"},
         read_token=_notion_token,
         token_auth="basic",
+    ),
+    "linkedin": OAuthProvider(
+        id="linkedin",
+        label="LinkedIn",
+        authorize_endpoint="https://www.linkedin.com/oauth/v2/authorization",
+        token_endpoint="https://www.linkedin.com/oauth/v2/accessToken",
+        authorize_extra={"response_type": "code", "scope": LINKEDIN_SCOPE},
+        read_token=_linkedin_token,
+        token_auth="body",
+        token_body="form",
     ),
     "dropbox": OAuthProvider(
         id="dropbox",

@@ -253,6 +253,28 @@ def _jira_label(d):
     return d.get("displayName") or d.get("emailAddress") or ""
 
 
+def _linkedin_auth(v):
+    """LinkedIn, signed as the person, with an OAuth access token.
+
+    NO PASTE FORM: LinkedIn issues no personal API key of any kind, so
+    `fields` is empty and the only way in is the sign-in.
+
+    The protocol header is not optional. LinkedIn's own documentation says
+    "All requests require the following header: X-Restli-Protocol-Version:
+    2.0.0", and without it the API answers in a different serialisation
+    than every example shows.
+    """
+    return VendorAuth(
+        base_url="https://api.linkedin.com/v2",
+        headers={"Authorization": "Bearer " + _require(v, "token"),
+                 "X-Restli-Protocol-Version": "2.0.0"})
+
+
+def _linkedin_label(d):
+    d = d or {}
+    return d.get("name") or d.get("email") or ""
+
+
 def _dropbox_auth(v):
     """Dropbox, signed as the person, with an OAuth access token.
 
@@ -394,6 +416,20 @@ PROVIDERS: Dict[str, Provider] = {
         build_auth=_jira_auth,
         probe_path="/myself",
         read_label=_jira_label,
+    ),
+    "linkedin": Provider(
+        id="linkedin",
+        label="LinkedIn",
+        # Nothing to paste: LinkedIn has no personal API key.
+        fields=[],
+        where="LinkedIn connects by signing in, so there is nothing to "
+              "paste. If no Connect button appears, IO's LinkedIn app is "
+              "not set up on this server yet.",
+        build_auth=_linkedin_auth,
+        # The OpenID Connect endpoint, which is what the three open
+        # permissions give access to.
+        probe_path="/userinfo",
+        read_label=_linkedin_label,
     ),
     "dropbox": Provider(
         id="dropbox",

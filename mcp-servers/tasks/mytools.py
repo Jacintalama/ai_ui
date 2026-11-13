@@ -362,7 +362,29 @@ def _github_prepare(tool_name, args, get):
 #:
 #: Each of these returns early for a tool it has nothing to do for, because
 #: this runs on EVERY call to that provider.
+async def _linkedin_prepare(tool_name, args, get):
+    """Fill in the author's Person URN for a share.
+
+    Returns (args, problem). A lookup that could not be made REFUSES,
+    rather than letting the share go out with no author: that is a 400
+    from LinkedIn after the model has already been told the post went
+    live.
+    """
+    args = dict(args or {})
+    if tool_name != "create_post" or args.get("author"):
+        return args, None
+    me = await get("/userinfo")
+    sub = (me or {}).get("sub") if isinstance(me, dict) else None
+    if not sub:
+        return args, ("LinkedIn did not say who you are, so there is "
+                      "nobody to post as. Reconnect LinkedIn from "
+                      "Connections and try again.")
+    args["author"] = "urn:li:person:" + str(sub)
+    return args, None
+
+
 PREPARE = {"clickup": _clickup_prepare, "trello": _trello_prepare,
+           "linkedin": _linkedin_prepare,
            "github": _github_prepare}
 
 
@@ -1651,6 +1673,81 @@ DROPBOX_TOOLS = [
          keep=("account_id", "email", "name")),
 ]
 
+# --- LinkedIn --------------------------------------------------------------
+#
+# The narrowest connector here, because LinkedIn's open permissions are
+# narrow: openid, profile and email name the person, w_member_social
+# posts as them, and everything else (a feed, connections, a company page,
+# any analytics) is partner-gated. Read off LinkedIn's own documentation
+# on 2026-11-13, not from a guide.
+#
+# THE ENDPOINT IS /v2/ugcPosts. The newer /rest/posts belongs to the
+# Versioned API that Community Management uses, so a connector written
+# from the newest-looking page asks for access nobody has granted us.
+#
+# A SHARE NEEDS THE AUTHOR'S PERSON URN, and no tool call carries it. The
+# prepare step fetches it from /userinfo, which is the same seam ClickUp
+# uses to turn a list name into an id.
+
+#: The word, and only this word, that narrows a post to first-degree
+#: connections. Anything else means public, because a typo must not
+#: quietly change who can see somebody's post.
+_LINKEDIN_CONNECTIONS = "connections"
+
+
+def _linkedin_post_body(args: Dict[str, Any]) -> Dict[str, Any]:
+    text = str(args.get("text") or "").strip()
+    author = str(args.get("author") or "").strip()
+    if not text or not author:
+        return {}
+    audience = str(args.get("audience") or "").strip().lower()
+    content: Dict[str, Any] = {
+        "shareCommentary": {"text": text},
+        "shareMediaCategory": "NONE",
+    }
+    url = str(args.get("url") or "").strip()
+    if url:
+        media: Dict[str, Any] = {"status": "READY", "originalUrl": url}
+        title = str(args.get("title") or "").strip()
+        if title:
+            media["title"] = {"text": title}
+        content["shareMediaCategory"] = "ARTICLE"
+        content["media"] = [media]
+    return {
+        "author": author,
+        "lifecycleState": "PUBLISHED",
+        "specificContent": {"com.linkedin.ugc.ShareContent": content},
+        "visibility": {
+            "com.linkedin.ugc.MemberNetworkVisibility":
+                "CONNECTIONS" if audience == _LINKEDIN_CONNECTIONS
+                else "PUBLIC"},
+    }
+
+
+LINKEDIN_TOOLS = [
+    Tool(name="whoami",
+         summary="Show which LinkedIn account is currently connected to "
+                 "your assistant.",
+         method="GET", path="/userinfo",
+         writes=False,
+         keep=("sub", "name", "email")),
+    Tool(name="create_post",
+         summary="Publish a post on LinkedIn as you. It goes out under "
+                 "your own name and is PUBLIC unless you ask for "
+                 "connections only.",
+         method="POST", path="/ugcPosts",
+         args={"text": ("string", "What the post says", True),
+               "url": ("string",
+                       "Optional link to share. The post then shows a "
+                       "preview card for it.", False),
+               "title": ("string", "Optional title for the link", False),
+               "audience": ("string",
+                            'Who can see it: "public" (the default) or '
+                            '"connections".', False)},
+         shape=_linkedin_post_body,
+         keep=("id",)),
+]
+
 PROVIDER_TOOLS: Dict[str, List[Tool]] = {
     "github": GITHUB_TOOLS,
     "clickup": CLICKUP_TOOLS,
@@ -1662,6 +1759,7 @@ PROVIDER_TOOLS: Dict[str, List[Tool]] = {
     "zapier": ZAPIER_TOOLS,
     "jira": JIRA_TOOLS,
     "dropbox": DROPBOX_TOOLS,
+    "linkedin": LINKEDIN_TOOLS,
 }
 
 #: Every tool of every provider, for checks that should hold everywhere.

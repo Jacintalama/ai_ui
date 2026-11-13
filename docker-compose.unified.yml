@@ -472,6 +472,15 @@ services:
       # Dropbox's App Console. Asking for one the app was never granted is
       # an authorize URL that refuses.
       - DROPBOX_SCOPE=${DROPBOX_SCOPE:-}
+      - LINKEDIN_CLIENT_ID=${LINKEDIN_CLIENT_ID:-}
+      - LINKEDIN_CLIENT_SECRET=${LINKEDIN_CLIENT_SECRET:-}
+      # The four permissions open to every LinkedIn developer and no more:
+      # openid, profile and email from Sign In with LinkedIn using OpenID
+      # Connect, and w_member_social from Share on LinkedIn. BOTH products
+      # have to be added to the app in LinkedIn's Developer Portal, and
+      # asking for a fifth scope makes this a partner application nobody
+      # has approved. Default in oauth_providers.LINKEDIN_SCOPE.
+      - LINKEDIN_SCOPE=${LINKEDIN_SCOPE:-}
       # tasks mints an Open WebUI token per gateway turn, so it must sign
       # with the SAME secret Open WebUI verifies with. Declared for
       # api-gateway, mcp-proxy and open-webui but never for tasks: it was
