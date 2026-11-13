@@ -24,7 +24,6 @@ The key routes below are for the Agents page and need a signed-in person.
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import logging
 import os
 import socket
@@ -38,6 +37,7 @@ from pydantic import BaseModel, Field
 import agent_access
 import agent_approvals
 import automation_keys
+import host_guard
 from auth import CurrentUser, current_user
 from routes_agent_turn import _agents_for, _run_turn
 
@@ -101,12 +101,15 @@ def find_agent(agents: list[dict], wanted: str) -> dict | None:
 # --- the callback URL -----------------------------------------------------------
 
 def _private(ip: str) -> bool:
-    try:
-        addr = ipaddress.ip_address(ip)
-    except ValueError:
-        return True
-    return (addr.is_private or addr.is_loopback or addr.is_link_local
-            or addr.is_multicast or addr.is_reserved or addr.is_unspecified)
+    """The same rule a typed connection URL is now held to.
+
+    The name stays here because `callback_problem` reads it, but the rule
+    itself moved to `host_guard` when n8n and Jira needed it too. One rule
+    rather than two that drift apart: `oauth_state.py` exists four times in
+    this repository and the note about keeping those in sync is exactly the
+    mistake worth not repeating with a security check.
+    """
+    return host_guard.private_address(ip)
 
 
 def _resolve(host: str) -> list[str]:
