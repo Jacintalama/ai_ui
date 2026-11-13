@@ -368,8 +368,21 @@ Connect buttons under the answer. Two rules worth knowing:
 - **Only an app NOT connected changes anything**, and it is offered once per
   conversation (`app_triage.already_offered`): with context, "thanks!" after
   a recommendation scored the same app 0.94.
+- **The platform's own Publish is in it too (2026-11-13)**, `app_triage.PLATFORM`,
+  asked in the same Jev call after the apps but cut on its own
+  (`platform_pick`, 0.60): it scores lower than apps do, and the apps' 0.90
+  missed every deploy question. Recommended as the straightforward way, the
+  how-to line is the service's, and outside hosts are ruled out in the brief.
+- **Skills (2026-11-13)**: `agent_jev.pick_skills_for_message`, a fourth
+  question, 0.90. A picked skill runs the assistant with the `skills` tool.
+- **Facts said to the free model are remembered (2026-11-13)**:
+  `_remember_free_turn` reflects on the person's message in the background
+  on the route_only path, so they reach `public.memory`, which the knowledge
+  graph filter puts in front of every chat. Before, only agent and assistant
+  turns were reflected on.
 `MAIN_CHAT_TRIAGE=0` switches it off. Design:
-`docs/plans/2026-11-12-triage-agent-design.md`.
+`docs/plans/2026-11-12-triage-agent-design.md`,
+`docs/plans/2026-11-13-triage-sees-more-design.md`.
 
 ### Automation: run an agent from outside (2026-10-27)
 `POST /api/tasks/agents/run` with `Authorization: Bearer iok_...` runs one of

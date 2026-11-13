@@ -68,7 +68,8 @@ def test_n8n_and_zapier_are_offered_as_a_choice_with_pros_and_cons():
 
 def test_one_yes_no_per_app_in_the_catalogue_order():
     state, questions = agent_jev.apps_request("save my leads somewhere")
-    assert list(questions) == [f"a{i}" for i in range(len(app_triage.APPS))]
+    # The apps first, then the platform's own features (2026-11-13).
+    assert list(questions) == [f"a{i}" for i in range(len(app_triage.catalogue_ids()))]
     for qid, app in zip(questions, app_triage.APPS.values()):
         q = questions[qid]
         assert q["type"] == "noul"
@@ -397,7 +398,8 @@ def test_triage_pick_reads_jev_and_connections_together(monkeypatch):
     monkeypatch.setattr(rt.agent_jev, "pick_apps", pick_apps)
     monkeypatch.setattr(routes_agents, "_connected_providers", connected)
     got = asyncio.run(rt._triage_pick(_Body(LEADS), LEADS))
-    assert got == {"picks": [("airtable", 0.9)], "connected": {"gmail"}}
+    assert got == {"picks": [("airtable", 0.9)], "connected": {"gmail"},
+                   "skills": [], "pool": {}}
 
 
 def test_an_app_already_offered_in_this_chat_is_not_offered_again(monkeypatch):
@@ -418,7 +420,8 @@ def test_an_app_already_offered_in_this_chat_is_not_offered_again(monkeypatch):
     before = [{"role": "user", "content": LEADS},
               {"role": "assistant", "content": "Airtable fits.\n\n" + AIR}]
     got = asyncio.run(rt._triage_pick(_Body("thanks!", before), "thanks!"))
-    assert got == {"picks": [("hubspot", 0.91)], "connected": set()}
+    assert got == {"picks": [("hubspot", 0.91)], "connected": set(),
+                   "skills": [], "pool": {}}
 
 
 def test_only_the_assistants_own_buttons_count_as_offered():
@@ -473,7 +476,7 @@ def test_nothing_picked_reads_no_connections(monkeypatch):
     monkeypatch.setattr(rt.agent_jev, "pick_apps", pick_apps)
     monkeypatch.setattr(routes_agents, "_connected_providers", connected)
     got = asyncio.run(rt._triage_pick(_Body(LEADS), LEADS))
-    assert got == {"picks": [], "connected": set()}
+    assert got == {"picks": [], "connected": set(), "skills": [], "pool": {}}
 
 
 @pytest.mark.parametrize("why", ["off", "greeting", "switch", "jev_down", "boom"])
@@ -553,7 +556,7 @@ def test_every_calibration_case_names_real_apps():
     cal = _cal()
     for msg, needs, fine in cal.APP_CASES:
         for app in set().union(*needs, fine) if needs else fine:
-            assert app in app_triage.APPS, (msg, app)
+            assert app in app_triage.catalogue_ids(), (msg, app)
 
 
 def test_lukas_examples_are_calibration_cases():
@@ -708,3 +711,11 @@ def test_the_button_has_room_around_it():
     assert "container.style.cssText" in body
     assert "inline-block" in body and "margin:" in body
 
+
+
+def test_every_skill_case_names_real_skills():
+    import agent_skills
+    pool = agent_skills.load_all()
+    for msg, needs, fine in _cal().SKILL_CASES:
+        for name in (set().union(*needs) if needs else set()) | set(fine):
+            assert name in pool, (msg, name)

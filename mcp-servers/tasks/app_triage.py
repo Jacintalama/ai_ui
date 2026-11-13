@@ -170,6 +170,50 @@ _APPS = (
 #: Every app the platform can connect, in the order Jev is asked about them.
 APPS = {a.id: a for a in _APPS}
 
+
+@dataclass(frozen=True)
+class Platform:
+    """Something AIUI does itself, with no connection: picked by Jev in the
+    same call as the apps, recommended as the straightforward way, and said
+    by the service under the answer (`how`), because the model left alone
+    suggests whatever host it read about."""
+    id: str
+    label: str
+    note: str
+    how: str
+    #: Words that mean the answer already said it.
+    says: tuple = ()
+
+
+#: Lukas, 2026-11-13: "we can deploy the application if they build it, so it
+#: wouldn't need to recommend some place to deploy the application, it should
+#: just recommend the most straightforward one. But see that there is a
+#: possibility to deploy in Vercel." Publishing is the Publish button in the
+#: App Builder (routes_projects.publish_app); Deploy to Vercel is in the same
+#: window (routes_vercel.py, static/integration-docs.html).
+_PLATFORM = (
+    Platform("publish", "Publish",
+             "putting a website or app they already have online so other "
+             "people can visit it: publishing or deploying it, hosting it, "
+             "making it live, a link to share it, a custom domain, or "
+             "putting it on Vercel. Not building a new one or changing one",
+             "To put it online, open the app in the App Builder (or its "
+             "preview) and click Publish: it goes live at its own link "
+             "straight away, and the same window can deploy it to your own "
+             "Vercel account instead.",
+             says=("publish",)),
+)
+PLATFORM = {p.id: p for p in _PLATFORM}
+
+#: Skills recommended in one answer.
+MAX_SKILLS = 2
+
+
+def catalogue_ids() -> list:
+    """Every id Jev is asked about, in order: the apps, then the platform's
+    own features. agent_jev.apps_request numbers its questions by this."""
+    return list(APPS) + list(PLATFORM)
+
 #: Said while the assistant works out a recommendation with no tool to run,
 #: so the chat is not silent (agent_progress, 2026-10-29: a line only when it
 #: is true of this message).
@@ -212,7 +256,8 @@ def _named(app: App, text: str) -> bool:
     return app.label.lower() in str(text or "").lower()
 
 
-def plan(picks, connected, tools, text: str = "") -> dict:
+def plan(picks, connected, tools, text: str = "", skills=None,
+         pool=None) -> dict:
     """What the assistant is told and the buttons are drawn from.
 
     `picks` is [(app id, score)] from Jev, `connected` the person's
@@ -255,23 +300,70 @@ def plan(picks, connected, tools, text: str = "") -> dict:
                      "cannot": a.cannot, "group": a.group, "pros": a.pros,
                      "score": jev.get(app_id)})
     features = [FEATURES[t] for t in tools or [] if t in FEATURES]
-    return {"apps": apps, "features": features}
+    platform = [{"id": PLATFORM[i].id, "label": PLATFORM[i].label,
+                 "how": PLATFORM[i].how}
+                for i, _s in sorted(((str(i), float(s)) for i, s in picks or []
+                                     if str(i) in PLATFORM), key=lambda p: -p[1])]
+    return {"apps": apps, "features": features, "platform": platform,
+            "skills": _skills(skills, pool, have)}
+
+
+def _skills(skills, pool, have) -> list:
+    """Skills Jev picked for the message, best first, at most MAX_SKILLS, each
+    with the apps it needs that this person has not connected (skill_fit)."""
+    import skill_fit
+    out = []
+    for name, _score in sorted(((str(n), float(s)) for n, s in skills or []),
+                               key=lambda p: -p[1]):
+        skill = (pool or {}).get(name)
+        if not isinstance(skill, dict) or len(out) >= MAX_SKILLS:
+            continue
+        out.append({"name": name,
+                    "description": " ".join(
+                        str(skill.get("description") or "").split())[:240],
+                    "missing": skill_fit.missing(skill, have)})
+    return out
+
+
+def _skill_app_label(need: str) -> str:
+    import skill_fit
+    return skill_fit.LABELS.get(need, need)
 
 
 def needs_assistant(p) -> bool:
-    """True when something must be recommended that the person has not
-    connected. Everything else is already handled by the tool pick."""
-    return bool(p) and any(not a["connected"] for a in p.get("apps") or [])
+    """True when something must be recommended: an app the person has not
+    connected, something the platform does itself, or a ready-made skill.
+    Everything else is already handled by the tool pick."""
+    return bool(p) and (any(not a["connected"] for a in p.get("apps") or [])
+                        or bool(p.get("platform")) or bool(p.get("skills")))
 
 
 def brief(p) -> str:
     """The block put in front of the assistant: per app, connected or not,
     what IO can and cannot do, and for a choice the case for each side."""
     apps = (p or {}).get("apps") or []
-    if not apps:
+    platform = (p or {}).get("platform") or []
+    skills = (p or {}).get("skills") or []
+    if not (apps or platform or skills):
         return ""
-    lines = ["Separate from the account above: apps that fit what the person "
-             "wants now, connected or not (decided for this message):"]
+    lines = ["Separate from the account above: what fits what the person "
+             "wants now (decided for this message):"]
+    if platform:
+        lines.append("The platform does this itself, so recommend it as the "
+                     "straightforward way:")
+        lines += ["- %s: %s" % (x["label"], x["how"]) for x in platform]
+        lines.append("Do not suggest other hosting services or sites.")
+    if skills:
+        lines.append("Ready-made skills that fit (read one with the skills "
+                     "tool and follow its steps):")
+        for s in skills:
+            line = "- %s: %s" % (s["name"], s["description"])
+            if s["missing"]:
+                line += " It needs %s connected, which they have not." % (
+                    " and ".join(_skill_app_label(a) for a in s["missing"]))
+            lines.append(line)
+    if apps:
+        lines.append("Apps, connected or not:")
     for a in apps:
         state = "connected" if a["connected"] else "not connected"
         line = "- %s (%s). IO can %s." % (a["label"], state, a["can"])
@@ -329,23 +421,43 @@ def with_buttons(answer: str, p) -> str:
             # is the limit, which is why this branch exists.
             lines.append("%s cannot %s yet." % (app.label, app.cannot))
         buttons.append(_button(app))
+    # A skill that needs an app the person has not connected: that app's
+    # button, the same one skill_fit draws for the skills answers.
+    import skill_fit
+    for s in (p or {}).get("skills") or []:
+        for need in s.get("missing") or []:
+            href = CONNECT + skill_fit.CONNECT_ID.get(need, need)
+            button = "[%s](%s)" % (skill_fit.BUTTON.get(need, "Connect"), href)
+            if href not in low and button not in buttons:
+                buttons.append(button)
+    # What the platform does itself: how, in the service's words, unless the
+    # answer already said it (2026-11-13: left alone, the model suggests
+    # whatever host it read about).
+    for x in (p or {}).get("platform") or []:
+        if not any(w in low for w in PLATFORM[x["id"]].says):
+            lines.append(x["how"])
     if not buttons:
-        return answer
+        return (answer.rstrip() + "\n\n" + "\n".join(lines)) if lines else answer
     # The buttons go last, together on one line: one paragraph, so they sit
     # side by side. One per line stacked them, touching (live, 2026-11-12).
     return answer.rstrip() + "\n\n" + "\n".join(lines + [" ".join(buttons)])
 
 
-def already_offered(messages, turns: int = 6) -> set:
+def already_offered(messages, turns: int = 6, skill_names=()) -> set:
     """Apps whose Connect button one of the assistant's recent replies already
     carries. Measured live 2026-11-12: after Airtable was recommended,
     "thanks!" scored Airtable 0.94 with the exchange as context, so without
     this the button came back under every follow-up. Only the assistant's
-    own messages count: a person pasting a link is not an offer made."""
+    own messages count: a person pasting a link is not an offer made.
+
+    Also the platform's own features whose how-to a reply already gave, and
+    any of `skill_names` a reply already named (2026-11-13)."""
     out = set()
     for m in list(messages or [])[-(turns + 1):-1]:
         if not isinstance(m, dict) or m.get("role") != "assistant":
             continue
         said = str(m.get("content") or "").lower()
         out |= {i for i in APPS if connect_href(i) in said}
+        out |= {i for i, x in PLATFORM.items() if x.how[:60].lower() in said}
+        out |= {str(n) for n in skill_names or () if str(n).lower() in said}
     return out
