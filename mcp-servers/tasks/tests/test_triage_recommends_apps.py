@@ -646,6 +646,32 @@ def test_a_named_app_with_a_limit_still_gets_the_limit_said():
     assert out.index(limit) < out.index(AIR)
 
 
+def test_the_limit_is_said_without_repeating_what_the_answer_just_said():
+    """Measured on the live site 2026-11-13, two real turns about Jira. The
+    model wrote "Once you connect it, I'll be able to list your projects,
+    search and read issues, and create or comment on issues", and the
+    service then appended "Once Jira is connected, IO can list your
+    projects, search issues with JQL, read one issue, create an issue and
+    comment on one. It cannot change an issue's status or assignee, or
+    delete anything yet."
+
+    The same thing twice, in two voices. The reason this branch exists is
+    the LIMIT, which the model does get wrong, and not the abilities,
+    which it had just listed correctly. So it says the limit.
+    """
+    p = app_triage.plan([("jira", 0.95)], set(), [])
+    said = ("Jira is the classic fit for bugs and sprints, and once you "
+            "connect it I can list your projects and create issues.")
+    out = app_triage.with_buttons(said, p)
+    cannot = app_triage.APPS["jira"].cannot
+    assert "cannot " + cannot in out
+    can = app_triage.APPS["jira"].can
+    assert can not in out, (
+        "the whole capability list is repeated after the answer that just "
+        "gave it: " + out)
+    assert out.count("search issues with JQL") == 0
+
+
 def test_a_named_app_without_a_limit_gets_only_its_button():
     p = app_triage.plan([("trello", 0.96)], set(), [])
     out = app_triage.with_buttons("Trello fits your to-dos.", p)

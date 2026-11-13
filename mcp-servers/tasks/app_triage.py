@@ -297,8 +297,13 @@ def with_buttons(answer: str, p) -> str:
                 line += " (it cannot %s yet)" % app.cannot
             lines.append(line + ".")
         elif app.cannot:
-            lines.append("Once %s is connected, IO can %s. It cannot %s yet."
-                         % (app.label, app.can, app.cannot))
+            # The LIMIT alone, because the answer already named the app and
+            # described it. Measured on the live site 2026-11-13, two real
+            # turns about Jira: the model wrote what it would be able to do
+            # and the service then appended the same list in its own words,
+            # the same thing twice in two voices. What the model gets wrong
+            # is the limit, which is why this branch exists.
+            lines.append("%s cannot %s yet." % (app.label, app.cannot))
         buttons.append(_button(app))
     if not buttons:
         return answer
