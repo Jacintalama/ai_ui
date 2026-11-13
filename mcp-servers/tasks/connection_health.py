@@ -125,6 +125,49 @@ async def note(email: str, provider: str, status_code) -> None:
     _SAID[key] = says
 
 
+async def looked(email: str, provider: str) -> None:
+    """Write down that we ASKED, whatever the answer was.
+
+    `note` above records what an answer says about a credential and
+    deliberately records nothing when it says nothing, 403 first among
+    them. That is right for a tool call, which is somebody else's request
+    that happens to teach us something. It is wrong for the daily sweep
+    (`connection_sweep`), whose whole schedule rests on knowing when each
+    connection was last asked about: a row that is only ever stamped when
+    something was learned stays due for ever and is probed on every tick.
+
+    So `checked_at` means "when we last looked", which is what its name
+    says and what the automations page already calls it ("Last looked").
+    `check_ok` is untouched here: not learning anything is not evidence,
+    and overwriting a known verdict with silence would be worse than the
+    gap it fills.
+
+    Never raises. It is bookkeeping in a background task.
+    """
+    try:
+        conn = await _connect()
+    except Exception as err:                                # noqa: BLE001
+        logger.warning("health: could not reach the database (%s)",
+                       type(err).__name__)
+        return
+    try:
+        await conn.execute(
+            """
+            UPDATE tasks.user_connections
+               SET checked_at = now()
+             WHERE email = $1 AND provider = $2
+            """,
+            email, provider)
+    except Exception as err:                                # noqa: BLE001
+        logger.warning("health: could not record a look at %s (%s)", provider,
+                       type(err).__name__)
+    finally:
+        try:
+            await conn.close()
+        except Exception:                                   # noqa: BLE001
+            pass
+
+
 async def rejected(email: str) -> set:
     """The providers whose credential was rejected the last time it was
     used, as a set of provider ids.

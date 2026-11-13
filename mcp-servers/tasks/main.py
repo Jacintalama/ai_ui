@@ -170,6 +170,18 @@ async def lifespan(app: FastAPI):
     except Exception as exc:                                # noqa: BLE001
         logger.warning("trello_poll_loop NOT started: %s", exc)
 
+    # Ask each connected account, about once a day, whether its credential
+    # still works (2026-11-13). `connection_health` learns from the calls
+    # people make, which leaves out every connector nobody used this week:
+    # a GitHub token answered 401 for days here while the card said
+    # Connected. Same guard as the pollers above.
+    try:
+        from connection_sweep import sweep_loop
+        asyncio.create_task(sweep_loop())
+        logger.info("connection sweep scheduled")
+    except Exception as exc:                                # noqa: BLE001
+        logger.warning("connection sweep NOT started: %s", exc)
+
     yield
 
 
