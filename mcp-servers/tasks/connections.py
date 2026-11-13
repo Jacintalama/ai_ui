@@ -32,6 +32,8 @@ from dataclasses import dataclass, field as _dc_field
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlparse
 
+import host_guard
+
 #: Keys stored beside a credential that are NOT secrets: bookkeeping a
 #: renewal needs (`oauth_refresh`), plus whether ClickUp's token is sent raw
 #: or as a Bearer. Everything else in the blob is treated as a secret,
@@ -122,11 +124,19 @@ def _http_base(values: Dict[str, str], name: str = "base_url",
     The example is a parameter because the message is read by whoever is
     connecting: showing an n8n address to somebody typing their Jira site
     is an error message that teaches the wrong thing.
+
+    "Attacker-controlled by definition" was in this docstring for weeks with
+    nothing acting on it. `host_guard` is that rule now, and it is applied
+    HERE rather than at the connect alone, because this function runs on
+    every tool call made with a stored credential: a row written before the
+    rule existed, or edited in the database, still cannot name an address
+    inside this network. The DNS half runs at the connect, where somebody is
+    waiting and can read why.
     """
     raw = _clean(values, name)
-    parsed = urlparse(raw)
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        raise ValueError("Enter a full http(s) URL, for example " + example)
+    said = host_guard.literal_problem(raw, example=example)
+    if said:
+        raise ValueError(said)
     return raw.rstrip("/")
 
 

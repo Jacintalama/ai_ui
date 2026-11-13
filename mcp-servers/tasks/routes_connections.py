@@ -24,6 +24,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 import connection_health as H
+import host_guard
 import connections as C
 import crypto_utils
 import oauth_refresh as F
@@ -209,6 +210,20 @@ async def _ask_vendor(provider: C.Provider, values: Dict[str, str],
         req = C.verify_request(provider.id, values)
     except ValueError as e:
         return False, None, str(e)
+
+    # Every address this name resolves to has to be public, and this is the
+    # one place to ask: both the connect and the Test button come through
+    # here, and here somebody is waiting and can read the answer. The
+    # literal half of the rule lives in `vendor_auth` instead, because that
+    # runs on every tool call; this half needs DNS and `localtest.me` is a
+    # real registered name whose A record is 127.0.0.1, so without it the
+    # literal half is a speed bump. Asked for every provider rather than
+    # only the two with a typed URL: for a fixed vendor host it can fail
+    # only when the request was going to fail anyway, and a connector added
+    # later is covered without anybody remembering to add it here.
+    said = await host_guard.problem(req.url)
+    if said:
+        return False, None, said
 
     try:
         async with httpx.AsyncClient(timeout=VERIFY_TIMEOUT_SEC) as client:
