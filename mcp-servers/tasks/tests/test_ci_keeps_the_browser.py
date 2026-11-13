@@ -87,11 +87,70 @@ def test_the_cache_key_follows_the_installed_playwright_not_the_file():
             + wf + ":" + job + " -> " + key)
 
 
-def test_the_version_is_read_from_the_installed_package():
-    """The step the key depends on has to exist and has to ask the package,
-    not parse a file."""
+def _version_step(steps):
+    for s in steps:
+        if s.get("id") == "pw":
+            return s
+    return None
+
+
+def test_the_version_step_exists_and_can_be_referenced():
     for wf, job, steps in _browser_jobs():
-        reads = [s for s in steps
-                 if "playwright.__version__" in str(s.get("run") or "")]
-        assert reads, (wf + ":" + job + " never reads the resolved version")
-        assert reads[0].get("id"), "that step needs an id to be referenced"
+        step = _version_step(steps)
+        assert step is not None, (
+            wf + ":" + job + " has no step that reads the resolved version")
+        assert step.get("run"), (wf, job)
+
+
+def test_the_version_step_actually_prints_a_version():
+    """RUN IT, rather than read it.
+
+    The first version of this test asserted that some step mentioned
+    `playwright.__version__` and that the cache key mentioned
+    `steps.`/`outputs.`. Both were true and both passed, while the step
+    produced NOTHING: the playwright package has no `__version__`
+    attribute, so `python -c` failed, the `$( )` was empty, `echo`
+    succeeded, and the key was "ms-playwright-Linux-" with no version in
+    it. Three runs in the logs of 2026-11-13 say "Cache not found for
+    input keys: ms-playwright-Linux-".
+
+    That is the exact mistake this file was written to prevent, made by
+    the file itself, so the check is now the script's own behaviour: run
+    what the workflow runs, with GITHUB_OUTPUT pointed at a temp file,
+    and read what it wrote.
+    """
+    import os
+    import shutil
+    import subprocess
+    import tempfile
+
+    bash = shutil.which("bash")
+    if not bash:
+        pytest.skip("no bash to run the step's script with")
+
+    for wf, job, steps in _browser_jobs():
+        script = _version_step(steps)["run"]
+        with tempfile.TemporaryDirectory() as tmp:
+            out_file = os.path.join(tmp, "out")
+            open(out_file, "w").close()
+            env = dict(os.environ, GITHUB_OUTPUT=out_file)
+            r = subprocess.run([bash, "-e", "-c", script], env=env,
+                               capture_output=True, text=True)
+            wrote = open(out_file, encoding="utf-8").read().strip()
+        assert r.returncode == 0, (wf, job, r.stdout, r.stderr)
+        assert wrote.startswith("v="), (wf, job, wrote)
+        version = wrote.split("=", 1)[1].strip()
+        assert version, (
+            wf + ":" + job + " wrote an EMPTY version, so every playwright "
+            "release would share one cache key")
+        assert version[0].isdigit(), (wf, job, version)
+
+
+def test_an_unreadable_version_fails_the_step_rather_than_keying_on_nothing():
+    """The guard that makes the above impossible to break silently again.
+    Without it a failing lookup leaves an empty key and a green step."""
+    for wf, job, steps in _browser_jobs():
+        script = _version_step(steps)["run"]
+        assert "test -n" in script or "[ -n" in script, (
+            wf + ":" + job + " writes the version without checking it is "
+            "not empty")
