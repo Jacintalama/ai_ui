@@ -761,7 +761,7 @@
       { id: 'github', real: true, token: true, name: 'GitHub', domain: 'github.com', cat: 'Tools & Automation' },
       { id: 'n8n', real: true, token: true, name: 'n8n', domain: 'n8n.io', cat: 'Tools & Automation' },
       { id: 'zapier', real: true, token: true, name: 'Zapier', domain: 'zapier.com', cat: 'Tools & Automation' },
-      { id: 'jira', name: 'Jira', domain: 'atlassian.com', cat: 'Tools & Automation' },
+      { id: 'jira', real: true, token: true, name: 'Jira', domain: 'atlassian.com', cat: 'Tools & Automation' },
       { id: 'x', name: 'X (Twitter)', domain: 'x.com', cat: 'Social' },
       { id: 'linkedin', name: 'LinkedIn', domain: 'linkedin.com', cat: 'Social' },
       { id: 'facebook', name: 'Facebook', domain: 'facebook.com', cat: 'Social' },

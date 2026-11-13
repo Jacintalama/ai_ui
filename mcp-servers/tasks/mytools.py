@@ -113,6 +113,25 @@ class Tool:
     #:
     #: Signature is `shape(args) -> dict`. It wins over `body`.
     shape: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None
+    #: Query parameters sent when the caller named none, vendor param name
+    #: -> value.
+    #:
+    #: The same reason `defaults` exists, for the other half of a request.
+    #: Jira's `GET /issue/{key}` with no `fields` returns EVERY field the
+    #: site has, custom ones included, which is hundreds of keys of a
+    #: model's context spent on a question about a summary. A default in a
+    #: comment is not sent, so it has to be here.
+    query_defaults: Dict[str, Any] = _dc_field(default_factory=dict)
+    #: Whether this tool changes anything at the vendor. `None` means "ask
+    #: the method", which is right almost everywhere.
+    #:
+    #: It is overridable because a POST is not always a write. Jira's JQL
+    #: search takes GET or POST and we send POST, so it can carry a default
+    #: `fields` list. `writes` drives one sentence: a 403 on a write adds
+    #: "reconnect it from Connections to allow that". On a search that
+    #: sentence is a wrong instruction, because a 403 there means this
+    #: person cannot see that project and reconnecting changes nothing.
+    writes: Optional[bool] = None
 
 
 def _payload_for(tool: "Tool", args: Optional[Dict[str, Any]]) -> Optional[Dict]:
@@ -135,6 +154,32 @@ def _payload_for(tool: "Tool", args: Optional[Dict[str, Any]]) -> Optional[Dict]
         if value not in (None, ""):
             out[key] = value
     return {tool.wrap_body: out} if tool.wrap_body else out
+
+
+def _query_for(tool: "Tool", args: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """The query string for one call: what the caller named, then the tool's
+    own defaults for anything they did not.
+
+    Its own function for the same reason as `_payload_for`: a test can read
+    what would be sent with no vendor and no network.
+    """
+    given = args or {}
+    params: Dict[str, Any] = {}
+    for param_name, arg_name in (tool.query or {}).items():
+        v = given.get(arg_name)
+        if v not in (None, ""):
+            params[param_name] = v
+    for param_name, value in (tool.query_defaults or {}).items():
+        if params.get(param_name) in (None, "") and value not in (None, ""):
+            params[param_name] = value
+    return params
+
+
+def _writes(tool: "Tool") -> bool:
+    """Whether this tool changes anything at the vendor."""
+    if tool.writes is not None:
+        return bool(tool.writes)
+    return str(tool.method or "").upper() != "GET"
 
 
 async def _secrets_for(email: str, provider: str) -> Dict[str, str]:
@@ -489,10 +534,7 @@ async def _call(provider_id: str, tool: Tool, email: str,
     path = path.rstrip("/") or "/"
 
     params = dict(auth.params)
-    for param_name, arg_name in (tool.query or {}).items():
-        v = (args or {}).get(arg_name)
-        if v not in (None, ""):
-            params[param_name] = v
+    params.update(_query_for(tool, args))
 
     payload = _payload_for(tool, args)
 
@@ -512,7 +554,7 @@ async def _call(provider_id: str, tool: Tool, email: str,
     await H.note(email, provider_id, r.status_code)
 
     problem = _refusal(r, label, creds, provider_id, tool.name,
-                       writes=str(tool.method or "").upper() != "GET")
+                       writes=_writes(tool))
     if problem:
         return _err(problem)
 
@@ -1326,6 +1368,166 @@ ZAPIER_TOOLS = [
          keep=("status", "id", "request_id")),
 ]
 
+# --- Jira -----------------------------------------------------------------
+#
+# Two vendor facts shape every tool below, and both are things a connector
+# written from memory gets wrong.
+#
+# `/rest/api/3/search` is GONE from Jira Cloud. The replacement is
+# `/rest/api/3/search/jql`, which pages with `nextPageToken` instead of
+# `startAt` and, unless it is given `fields`, answers with bare ids and
+# keys. So the search is a POST carrying a default field list, rather than
+# a GET hoping a model thought to ask for a summary.
+#
+# v3 takes RICH TEXT. A description or a comment is an Atlassian Document
+# Format document, and a plain string is a 400. Asking a model to write
+# that nesting itself is the Airtable field-types mistake again, so it is
+# built here where it can be read and tested without a vendor.
+
+#: What a search and a single issue read bring back when nobody says
+#: otherwise. Enough to answer "what is on my board", short enough not to
+#: bury it.
+_JIRA_FIELDS = ("summary", "status", "assignee", "issuetype", "priority",
+                "updated")
+
+#: Jira requires an issue type on every create and a project has no
+#: universal default. Task exists in every stock Jira project.
+_JIRA_DEFAULT_TYPE = "Task"
+
+
+def _jira_adf(text: Any) -> Optional[Dict[str, Any]]:
+    """Plain text as an Atlassian Document Format document.
+
+    Returns None for nothing, because an empty document is NOT an empty
+    string to Jira: a text node with no text is invalid and the whole
+    request is refused after the person has approved it.
+    """
+    body = str(text or "").strip()
+    if not body:
+        return None
+    paragraphs = [p.strip() for p in body.split("\n\n")]
+    return {
+        "type": "doc",
+        "version": 1,
+        "content": [{"type": "paragraph",
+                     "content": [{"type": "text", "text": p}]}
+                    for p in paragraphs if p],
+    }
+
+
+def _jira_field_list(given: Any) -> List[str]:
+    """The fields to ask for, however the caller wrote them.
+
+    A list is the documented shape and a comma-separated string is what a
+    model writes about half the time, so both are accepted rather than one
+    of them becoming a silent request for a field called
+    "summary, status".
+    """
+    if isinstance(given, str):
+        names = [n.strip() for n in given.split(",")]
+    elif isinstance(given, (list, tuple)):
+        names = [str(n).strip() for n in given]
+    else:
+        names = []
+    names = [n for n in names if n]
+    return names or list(_JIRA_FIELDS)
+
+
+def _jira_search_body(args: Dict[str, Any]) -> Dict[str, Any]:
+    limit = args.get("limit")
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = MAX_ITEMS
+    limit = max(1, min(limit, MAX_ITEMS))
+    return {"jql": str(args.get("jql") or "").strip(),
+            "maxResults": limit,
+            "fields": _jira_field_list(args.get("fields"))}
+
+
+def _jira_issue_body(args: Dict[str, Any]) -> Dict[str, Any]:
+    fields: Dict[str, Any] = {
+        "project": {"key": str(args.get("project_key") or "").strip()},
+        "summary": str(args.get("summary") or "").strip(),
+        "issuetype": {"name": str(args.get("issue_type")
+                                  or _JIRA_DEFAULT_TYPE).strip()
+                      or _JIRA_DEFAULT_TYPE},
+    }
+    doc = _jira_adf(args.get("description"))
+    if doc:
+        fields["description"] = doc
+    return {"fields": fields}
+
+
+def _jira_comment_body(args: Dict[str, Any]) -> Dict[str, Any]:
+    doc = _jira_adf(args.get("comment"))
+    return {"body": doc} if doc else {}
+
+
+JIRA_TOOLS = [
+    Tool(name="list_my_projects",
+         summary="List the Jira projects you can see, with the key each one "
+                 "uses for its issues.",
+         method="GET", path="/project/search",
+         unwrap=lambda d: (d or {}).get("values", []),
+         keep=("id", "key", "name", "projectTypeKey")),
+    Tool(name="search_issues",
+         summary="Search your Jira issues with JQL, for example "
+                 '"project = IO AND status != Done ORDER BY updated DESC".',
+         method="POST", path="/search/jql",
+         args={"jql": ("string",
+                       "A JQL query. Fields are Jira's own: project, "
+                       "status, assignee, created, updated. "
+                       '"assignee = currentUser() AND resolution = '
+                       'Unresolved" is everything open and mine.', True),
+               "limit": ("integer", "How many issues to return, up to 25",
+                         False),
+               "fields": ("array",
+                          "Which issue fields to bring back, as a list of "
+                          'names like ["summary", "status"]. Leave it out '
+                          "for the usual ones.", False)},
+         shape=_jira_search_body,
+         # A search changes nothing, whatever the method says.
+         writes=False,
+         unwrap=lambda d: (d or {}).get("issues", []),
+         keep=("id", "key", "fields")),
+    Tool(name="get_issue",
+         summary="Read one Jira issue by its key, like IO-42.",
+         method="GET", path="/issue/{issue_key}",
+         args={"issue_key": ("string", "The issue key, like IO-42", True),
+               "fields": ("string",
+                          "Optional comma-separated field names. Leave it "
+                          "out for the usual ones.", False)},
+         query={"fields": "fields"},
+         query_defaults={"fields": ",".join(_JIRA_FIELDS)},
+         keep=("id", "key", "fields")),
+    Tool(name="create_issue",
+         summary="Create a Jira issue in one of your projects.",
+         method="POST", path="/issue",
+         args={"project_key": ("string",
+                               "The project key from list_my_projects, like "
+                               "IO", True),
+               "summary": ("string", "The issue's title", True),
+               "description": ("string", "Optional detail", False),
+               "issue_type": ("string",
+                              'The issue type, like Task, Bug or Story. '
+                              "Defaults to Task.", False)},
+         shape=_jira_issue_body,
+         keep=("id", "key", "self")),
+    Tool(name="comment_on_issue",
+         summary="Add a comment to one of your Jira issues.",
+         method="POST", path="/issue/{issue_key}/comment",
+         args={"issue_key": ("string", "The issue key, like IO-42", True),
+               "comment": ("string", "What to say", True)},
+         shape=_jira_comment_body,
+         keep=("id", "created", "author")),
+    Tool(name="whoami",
+         summary="Show which Jira account is currently connected to your "
+                 "assistant.",
+         method="GET", path="/myself",
+         keep=("accountId", "displayName", "emailAddress", "timeZone")),
+]
+
 PROVIDER_TOOLS: Dict[str, List[Tool]] = {
     "github": GITHUB_TOOLS,
     "clickup": CLICKUP_TOOLS,
@@ -1335,6 +1537,7 @@ PROVIDER_TOOLS: Dict[str, List[Tool]] = {
     "airtable": AIRTABLE_TOOLS,
     "hubspot": HUBSPOT_TOOLS,
     "zapier": ZAPIER_TOOLS,
+    "jira": JIRA_TOOLS,
 }
 
 #: Every tool of every provider, for checks that should hold everywhere.

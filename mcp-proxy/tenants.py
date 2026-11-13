@@ -866,6 +866,18 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
                     "them to have connected Zapier under Connections.",
         enabled=True,
     ),
+    "my-jira": MCPServerConfig(
+        server_id="my-jira",
+        access_class=AccessClass.PUBLIC,
+        display_name="Jira (your account)",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_MYTOOLS_URL + "/jira",
+        auth_type="none",
+        api_key_env=None,
+        description="Jira acting as the signed-in user's own account. Requires "
+                    "them to have connected Jira under Connections.",
+        enabled=True,
+    ),
     "meeting-kb": MCPServerConfig(
         server_id="meeting-kb",
         access_class=AccessClass.PUBLIC,

@@ -76,15 +76,25 @@ async def test_nobody_gets_nothing(email):
     assert out["connected"] == [] and out["not_connected"] == []
 
 
-def test_the_universe_is_exactly_eleven_real_apps():
+def test_the_universe_is_exactly_the_apps_you_can_connect():
     """The whole point of this fix: the assistant offers apps a person can
     actually connect, not whatever routes_agents.tools_for_email happens to
-    list. Eleven is three Google services plus the eight Connect Your Own
-    App providers, no more and no less."""
-    assert len(acc.ALL_PROVIDER_IDS) == 11
+    list. That is the three Google services plus every Connect Your Own App
+    provider, no more and no less.
+
+    The count is READ OFF the registry rather than written here. It said
+    eleven until 2026-11-13, when adding Jira made it twelve and this test
+    failed for a connector that was correct, which is a test that costs
+    time and catches nothing. The assertion below is the real one: it
+    fails for an app offered that cannot be connected, and for a provider
+    the assistant never offers.
+    """
+    assert len(acc.ALL_PROVIDER_IDS) == 3 + len(CANONICAL_PROVIDERS)
     assert set(acc.ALL_PROVIDER_IDS) == (
         {"gmail", "calendar", "gdrive"} | set(CANONICAL_PROVIDERS)
     )
+    assert len(set(acc.ALL_PROVIDER_IDS)) == len(acc.ALL_PROVIDER_IDS), (
+        "the same app is offered twice")
 
 
 async def test_tools_never_appear_only_connectable_apps_do(nothing_connected):
