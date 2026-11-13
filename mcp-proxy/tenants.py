@@ -878,6 +878,19 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
                     "them to have connected Jira under Connections.",
         enabled=True,
     ),
+    "my-linkedin": MCPServerConfig(
+        server_id="my-linkedin",
+        access_class=AccessClass.PUBLIC,
+        display_name="LinkedIn (your account)",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_MYTOOLS_URL + "/linkedin",
+        auth_type="none",
+        api_key_env=None,
+        description="LinkedIn acting as the signed-in user's own account. "
+                    "Requires them to have connected LinkedIn under "
+                    "Connections.",
+        enabled=True,
+    ),
     "my-dropbox": MCPServerConfig(
         server_id="my-dropbox",
         access_class=AccessClass.PUBLIC,

@@ -763,7 +763,7 @@
       { id: 'zapier', real: true, token: true, name: 'Zapier', domain: 'zapier.com', cat: 'Tools & Automation' },
       { id: 'jira', real: true, token: true, name: 'Jira', domain: 'atlassian.com', cat: 'Tools & Automation' },
       { id: 'x', name: 'X (Twitter)', domain: 'x.com', cat: 'Social' },
-      { id: 'linkedin', name: 'LinkedIn', domain: 'linkedin.com', cat: 'Social' },
+      { id: 'linkedin', real: true, token: true, name: 'LinkedIn', domain: 'linkedin.com', cat: 'Social' },
       { id: 'facebook', name: 'Facebook', domain: 'facebook.com', cat: 'Social' },
       { id: 'dropbox', real: true, token: true, name: 'Dropbox', domain: 'dropbox.com', cat: 'Platform' },
       { id: 'stripe', name: 'Stripe', domain: 'stripe.com', cat: 'Platform' }

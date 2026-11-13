@@ -115,6 +115,19 @@ _APPS = (
         # checking their board and a person wondering why it did not move.
         cannot="change an issue's status or assignee, or delete anything",
         says=("jira",)),
+    App("linkedin", "LinkedIn",
+        "posting to LinkedIn: sharing an update, an article or a link "
+        "with your professional network",
+        "post an update or a link on LinkedIn as you, publicly or to your "
+        "connections only",
+        ("create_post",),
+        # LinkedIn's open permissions are these and no more. Everything
+        # else is partner-gated, and saying so is the difference between
+        # a person connecting it for the right reason and connecting it
+        # expecting a feed reader.
+        cannot="read your feed, your connections, anybody's profile, a "
+               "company page or any analytics",
+        says=("linkedin",)),
     App("dropbox", "Dropbox",
         "cloud storage for files and folders: finding a file, seeing what "
         "is in a folder, when something was last changed",

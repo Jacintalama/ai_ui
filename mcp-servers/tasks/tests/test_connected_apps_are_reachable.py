@@ -53,6 +53,7 @@ SPOKEN = {
     "zapier": "zapier",
     "jira": "jira",
     "dropbox": "dropbox",
+    "linkedin": "linkedin",
 }
 
 
