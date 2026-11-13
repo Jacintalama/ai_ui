@@ -134,11 +134,22 @@ def test_nothing_is_connected_before_anyone_connects(client):
 
 def test_the_dialog_is_told_where_to_find_the_credential(client):
     """A form saying "paste your API token" is useless if you do not know
-    where the vendor keeps it."""
+    where the vendor keeps it.
+
+    `fields` is no longer universal, as of 2026-11-13: Dropbox has NONE,
+    on purpose, because a token from its App Console lasts about four
+    hours and a form that took one would produce a connection that reads
+    Connected today and Needs reconnecting tomorrow, for ever. So the
+    rule is weaker and more honest: either there is something to paste,
+    or there is a sign-in to do, and `where` says which. A provider with
+    neither would be a card nobody can use, and that is what this now
+    fails for.
+    """
     c, _, _, _ = client
+    import oauth_providers as O
     for x in c.get("/connections").json()["connections"]:
         assert x["where"].strip(), x["provider"]
-        assert x["fields"]
+        assert x["fields"] or O.supports_oauth(x["provider"]), x["provider"]
 
 
 # --- a credential is checked before it is believed ------------------------

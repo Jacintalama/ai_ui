@@ -115,6 +115,17 @@ _APPS = (
         # checking their board and a person wondering why it did not move.
         cannot="change an issue's status or assignee, or delete anything",
         says=("jira",)),
+    App("dropbox", "Dropbox",
+        "cloud storage for files and folders: finding a file, seeing what "
+        "is in a folder, when something was last changed",
+        "list a folder, search your files by name and read one file's "
+        "details",
+        ("list_folder", "search_files", "get_metadata"),
+        # Read only on purpose, and the scopes on the consent screen say
+        # so too. Upload and share links are each their own card.
+        cannot="read the contents of a file, download it, upload, change "
+               "or delete anything, or make a share link",
+        says=("dropbox",)),
     App("notion", "Notion",
         "pages and databases for notes, documents, a wiki or to-do lists",
         "search pages and databases, read a page's properties and list a "

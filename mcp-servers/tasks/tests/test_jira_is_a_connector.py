@@ -253,13 +253,31 @@ def test_a_search_is_not_treated_as_a_write():
     assert mytools._writes(_tool("get_issue")) is False
 
 
+#: Every tool that is a POST and does NOT change anything at the vendor.
+#: Listed here rather than derived, so adding one is a deliberate act: the
+#: whole risk of `Tool.writes` is that it silently turns a vendor write
+#: into something the 403 path treats as a read.
+#:
+#: Jira's search takes GET or POST and we send POST so it can carry a
+#: default field list. Dropbox has NO GET endpoints at all, so every one
+#: of its reads is a POST.
+POSTS_THAT_READ = [
+    ("dropbox", "get_metadata"),
+    ("dropbox", "list_folder"),
+    ("dropbox", "search_files"),
+    ("dropbox", "whoami"),
+    ("jira", "search_issues"),
+]
+
+
 def test_every_other_post_in_the_catalogue_still_counts_as_a_write():
     """The override must be opt-in, or one new field quietly turns every
     vendor write into a read."""
-    reads = [(pid, t.name) for pid, tools in mytools.PROVIDER_TOOLS.items()
-             for t in tools
-             if str(t.method).upper() != "GET" and not mytools._writes(t)]
-    assert reads == [("jira", "search_issues")], reads
+    reads = sorted((pid, t.name)
+                   for pid, tools in mytools.PROVIDER_TOOLS.items()
+                   for t in tools
+                   if str(t.method).upper() != "GET" and not mytools._writes(t))
+    assert reads == POSTS_THAT_READ, reads
 
 
 # --- the rest of the wiring, which is where connectors go wrong ------------

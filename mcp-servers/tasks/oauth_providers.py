@@ -358,6 +358,31 @@ def _jira_token(payload: dict) -> Tuple[Dict[str, str], str]:
     return _bare_token(payload, "Jira", {"scheme": "bearer"})
 
 
+#: What the person approves on Dropbox's consent screen.
+#:
+#: Read only, and exactly what the four tools call: account_info.read for
+#: the probe and the card's name, files.metadata.read for listing,
+#: searching and reading one file's details. Upload, delete, download and
+#: share links each need another scope and each is a separate card.
+#:
+#: A scope here also has to be ticked in the app's own Permissions tab in
+#: the App Console, which is the half nobody remembers: asking for a scope
+#: the app was never granted is an authorize URL that refuses.
+DROPBOX_SCOPE = (os.environ.get("DROPBOX_SCOPE")
+                 or "account_info.read files.metadata.read").strip()
+
+
+def _dropbox_token(payload: dict) -> Tuple[Dict[str, str], str]:
+    """Dropbox's token response.
+
+    It carries an account_id and a uid but no name and no email, so the
+    label is left empty and the route asks
+    /2/users/get_current_account, which proves the token in the same
+    breath.
+    """
+    return _bare_token(payload, "Dropbox")
+
+
 def _clickup_token(payload: dict) -> Tuple[Dict[str, str], str]:
     # ClickUp sends a personal token raw and an OAuth token as a Bearer, and
     # both arrive in the same `token` field, so which one this is has to be
@@ -376,6 +401,27 @@ PROVIDERS: Dict[str, OAuthProvider] = {
         authorize_extra={"response_type": "code", "owner": "user"},
         read_token=_notion_token,
         token_auth="basic",
+    ),
+    "dropbox": OAuthProvider(
+        id="dropbox",
+        label="Dropbox",
+        authorize_endpoint="https://www.dropbox.com/oauth2/authorize",
+        token_endpoint="https://api.dropboxapi.com/oauth2/token",
+        authorize_extra={
+            "response_type": "code",
+            "scope": DROPBOX_SCOPE,
+            # The whole reason Dropbox is viable at all. Without this the
+            # grant returns a short-lived access token and NO refresh
+            # token, so the connection is dead in about four hours with
+            # nothing able to renew it.
+            "token_access_type": "offline",
+        },
+        read_token=_dropbox_token,
+        # Dropbox documents both Basic and the client in the body; the
+        # body is what their own curl example sends, and it is the one
+        # shape this service already has working for GitHub and HubSpot.
+        token_auth="body",
+        token_body="form",
     ),
     "jira": OAuthProvider(
         id="jira",

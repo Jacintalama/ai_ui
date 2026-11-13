@@ -253,6 +253,31 @@ def _jira_label(d):
     return d.get("displayName") or d.get("emailAddress") or ""
 
 
+def _dropbox_auth(v):
+    """Dropbox, signed as the person, with an OAuth access token.
+
+    NO PASTE FORM, which is why `fields` is empty. Creating long-lived
+    access tokens is deprecated, and a token generated in the App Console
+    today is short-lived: about four hours, with an `sl.` prefix. A form
+    that took one would produce a card reading Connected this afternoon
+    and Needs reconnecting tomorrow, for ever, which is worse than a card
+    that says Coming soon.
+
+    So the only credential here is an OAuth one, and the refresh token
+    that comes with `token_access_type=offline` is what keeps it alive.
+    """
+    return VendorAuth(
+        base_url="https://api.dropboxapi.com/2",
+        headers={"Authorization": "Bearer " + _require(v, "token")})
+
+
+def _dropbox_label(d):
+    d = d or {}
+    name = d.get("name")
+    display = name.get("display_name") if isinstance(name, dict) else ""
+    return d.get("email") or display or ""
+
+
 def _zapier_auth(v):
     """Zapier has no account API a user can hand us a key for. What they DO
     have is a Catch Hook: a per-Zap URL that is itself the credential, because
@@ -369,6 +394,22 @@ PROVIDERS: Dict[str, Provider] = {
         build_auth=_jira_auth,
         probe_path="/myself",
         read_label=_jira_label,
+    ),
+    "dropbox": Provider(
+        id="dropbox",
+        label="Dropbox",
+        # Deliberately NO fields: see _dropbox_auth. A console token lasts
+        # four hours, so there is nothing worth asking anybody to paste.
+        fields=[],
+        where="Dropbox connects by signing in, so there is nothing to "
+              "paste. If no Connect button appears, IO's Dropbox app is "
+              "not set up on this server yet.",
+        build_auth=_dropbox_auth,
+        probe_path="/users/get_current_account",
+        # Dropbox has NO GET endpoints. A GET probe is a 400 on every
+        # connect, which would read as a bad credential.
+        probe_method="POST",
+        read_label=_dropbox_label,
     ),
     "zapier": Provider(
         id="zapier",

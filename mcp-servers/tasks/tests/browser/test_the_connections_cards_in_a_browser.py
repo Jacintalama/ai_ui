@@ -220,17 +220,20 @@ def test_jira_is_no_longer_coming_soon(cards):
 
 
 def test_an_app_with_no_connector_still_says_coming_soon(cards):
-    """Five are left, each with its own card on the board. A card that
+    """Four are left, each with its own card on the board. A card that
     offered a Connect for one of them would open a form the server cannot
-    answer."""
-    for app_id in ("dropbox", "stripe", "linkedin", "facebook", "x"):
+    answer. Dropbox left this list on 2026-11-13 when its connector
+    shipped, and Jira before it."""
+    for app_id in ("stripe", "linkedin", "facebook", "x"):
         assert "Coming soon" in _said(cards, app_id), app_id
+    for shipped in ("jira", "dropbox"):
+        assert "Coming soon" not in _said(cards, shipped), shipped
 
 
 def test_a_card_nobody_can_connect_is_dimmed(cards):
     """The status line is 11px. The opacity is what carries that at a
     glance, across a grid of sixteen."""
-    assert _card(cards, "dropbox").evaluate(
+    assert _card(cards, "stripe").evaluate(
         "e => e.style.opacity") == "0.45"
     assert _card(cards, "trello").evaluate("e => e.style.opacity") in ("", "1")
 
