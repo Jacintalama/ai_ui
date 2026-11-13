@@ -128,6 +128,9 @@ def cards(browser):
                      "      g.appendChild(c);"
                      "    });"
                      "    window.__apps = APPS.map(function (a) { return a.id; });"
+                     "    window.__real = APPS.filter(function (a) "
+                     "      { return a.real; }).map(function (a) "
+                     "      { return a.id; });"
                      "  };\n})();\n__render();</script></body></html>")
     pg.wait_for_function("() => window.__apps && window.__apps.length")
     yield pg
@@ -219,15 +222,25 @@ def test_jira_is_no_longer_coming_soon(cards):
     assert "Connect" in _said(cards, "jira")
 
 
-def test_an_app_with_no_connector_still_says_coming_soon(cards):
-    """Four are left, each with its own card on the board. A card that
-    offered a Connect for one of them would open a form the server cannot
-    answer. Dropbox left this list on 2026-11-13 when its connector
-    shipped, and Jira before it."""
-    for app_id in ("stripe", "linkedin", "facebook", "x"):
-        assert "Coming soon" in _said(cards, app_id), app_id
-    for shipped in ("jira", "dropbox"):
-        assert "Coming soon" not in _said(cards, shipped), shipped
+def test_coming_soon_is_exactly_the_cards_with_no_connector(cards):
+    """READ OFF THE FILE, both ways round, rather than listed here.
+
+    This named the apps by hand and went red twice in one afternoon:
+    Dropbox shipped and left the list, then LinkedIn shipped an hour later
+    and the test still expected it to say Coming soon. The panel is the
+    thing that decides, so the panel is what this reads: every card
+    without `real` says Coming soon, and every card with it does not.
+    """
+    ids = cards.evaluate("() => window.__apps")
+    real = set(cards.evaluate("() => window.__real"))
+    assert real, "no card is real, so this would pass vacuously"
+    assert set(ids) - real, "every card is real, so this would pass vacuously"
+    for app_id in ids:
+        said = _said(cards, app_id)
+        if app_id in real:
+            assert "Coming soon" not in said, app_id
+        else:
+            assert "Coming soon" in said, app_id
 
 
 def test_a_card_nobody_can_connect_is_dimmed(cards):
