@@ -12,13 +12,16 @@ everyone. Eighteen skills name only `server:mcp-proxy`. Read one by one on
 2026-11-04: the ten in TRACKER_SKILLS read a task tracker, the other eight
 need only web search, which is a shared server and so needs nothing.
 
-**A task tracker is the person's own** Trello, GitHub or ClickUp. The shared
-proxy servers hold the team's boards; the ask is what THIS person connected.
+**A task tracker is the person's own** Trello, GitHub, ClickUp or Jira. The
+shared proxy servers hold the team's boards; the ask is what THIS person
+connected. The list and the label it is written into are kept honest by
+test_the_tracker_label_names_every_tracker_that_satisfies_it: a tracker
+added to one and not the other reads as not counting.
 """
 from __future__ import annotations
 
 GOOGLE = ("gmail", "calendar", "gdrive")
-TRACKERS = ("trello", "github", "clickup")
+TRACKERS = ("trello", "github", "clickup", "jira")
 TRACKER = "tracker"
 
 TRACKER_SKILLS = frozenset({
@@ -33,7 +36,7 @@ ORDER = ("gmail", "calendar", "gdrive", TRACKER)
 
 LABELS = {"gmail": "Gmail", "calendar": "Google Calendar",
           "gdrive": "Google Drive",
-          TRACKER: "a task tracker (Trello, GitHub or ClickUp)"}
+          TRACKER: "a task tracker (Trello, GitHub, ClickUp or Jira)"}
 
 #: The words on the button. The tracker's full label is too long for one.
 BUTTON = {"gmail": "Connect Gmail", "calendar": "Connect Google Calendar",

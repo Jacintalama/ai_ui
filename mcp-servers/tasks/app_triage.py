@@ -102,6 +102,19 @@ _APPS = (
         "create, move, assign, comment on and complete cards",
         ("create_card", "update_card", "assign_member_to_card",
          "comment_on_card", "complete_card")),
+    App("jira", "Jira",
+        "issue tracking for a software team: bugs, stories, epics, a "
+        "backlog, sprints and moving work through a workflow of statuses",
+        "list your projects, search issues with JQL, read one issue, create "
+        "an issue and comment on one",
+        ("list_my_projects", "search_issues", "get_issue", "create_issue",
+         "comment_on_issue"),
+        # Both need a second call to look an id up first: a transition by
+        # its id from /issue/{key}/transitions, an assignee by accountId.
+        # Until those exist, saying so is the difference between a person
+        # checking their board and a person wondering why it did not move.
+        cannot="change an issue's status or assignee, or delete anything",
+        says=("jira",)),
     App("notion", "Notion",
         "pages and databases for notes, documents, a wiki or to-do lists",
         "search pages and databases, read a page's properties and list a "

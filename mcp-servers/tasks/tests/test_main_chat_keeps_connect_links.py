@@ -7,10 +7,12 @@ import asyncio
 
 import routes_agent_turn as rt
 
-TRACKER_NEED = [{"app": "tracker", "label": "a task tracker (Trello, GitHub or ClickUp)",
+TRACKER_NEED = [{"app": "tracker",
+                 "label": "a task tracker (Trello, GitHub, ClickUp or Jira)",
                  "skills": ["daily-standup"], "connect": "#aiui-connect:trello",
                  "button": "Connect a task tracker"}]
-DROPPED = ("A task tracker (Trello, GitHub or ClickUp) would add daily-standup. "
+DROPPED = ("A task tracker (Trello, GitHub, ClickUp or Jira) would add "
+           "daily-standup. "
            "There's a Connect button above if you want that.")
 
 

@@ -51,6 +51,7 @@ SPOKEN = {
     "airtable": "airtable",
     "hubspot": "hubspot",
     "zapier": "zapier",
+    "jira": "jira",
 }
 
 

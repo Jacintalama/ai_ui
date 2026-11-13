@@ -31,6 +31,25 @@ def test_missing_reads_the_persons_connections():
     assert F.missing(t, None) == ["tracker"]
 
 
+def test_jira_is_a_task_tracker_like_the_others():
+    """Added 2026-11-13 with the Jira connector. The ten tracker skills name
+    only `server:mcp-proxy`, the gateway over whatever this person
+    connected, so they run on Jira's tools exactly as they run on Trello's.
+    Leaving Jira out of TRACKERS would tell somebody who tracks their work
+    in Jira to go and connect a task tracker."""
+    t = sk("daily-standup", ["server:mcp-proxy"])
+    assert F.missing(t, {"jira"}) == []
+
+
+def test_the_tracker_label_names_every_tracker_that_satisfies_it():
+    """The label is prose and the list is code, so they drift. They drifted
+    the moment Jira was added: a person reading "Trello, GitHub or ClickUp"
+    would not know their Jira counts."""
+    label = F.LABELS["tracker"].lower()
+    unnamed = [t for t in F.TRACKERS if t not in label]
+    assert unnamed == [], "not named in the label: " + ", ".join(unnamed)
+
+
 def test_every_tracker_skill_is_a_real_skill():
     """A typo in the set would make a skill look ready when it is not."""
     import agent_skills
@@ -57,7 +76,8 @@ def test_connect_lines_name_the_skills_and_give_a_button_link():
     assert lines == [
         "Connect Google Calendar to add: day-ahead",
         "[Connect Google Calendar](#aiui-connect:calendar)",
-        "Connect a task tracker (Trello, GitHub or ClickUp) to add: daily-standup",
+        "Connect a task tracker (Trello, GitHub, ClickUp or Jira) to add: "
+        "daily-standup",
         "[Connect a task tracker](#aiui-connect:trello)"]
     assert F.connect_lines({}) == []
 
@@ -136,7 +156,8 @@ GMAIL_NEED = {"app": "gmail", "label": "Gmail", "skills": ["inbox-triage"],
 
 
 def test_an_app_the_answer_talks_about_connecting_gets_its_link():
-    said = ("A task tracker connection (Trello, GitHub or ClickUp) would add "
+    said = ("A task tracker connection (Trello, GitHub, ClickUp or Jira) would "
+            "add "
             "daily-standup. There's a Connect button above if you want that.")
     assert F.missing_links(said, [TRACKER_NEED, GMAIL_NEED]) == [
         "[Connect a task tracker](#aiui-connect:trello)"]

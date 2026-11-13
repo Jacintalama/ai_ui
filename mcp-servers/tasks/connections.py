@@ -27,6 +27,7 @@ cannot leak one by accident.
 from __future__ import annotations
 
 import re
+from base64 import b64encode
 from dataclasses import dataclass, field as _dc_field
 from typing import Callable, Dict, List, Optional
 from urllib.parse import urlparse
@@ -112,15 +113,20 @@ def _require(values: Dict[str, str], name: str) -> str:
     return v
 
 
-def _http_base(values: Dict[str, str], name: str = "base_url") -> str:
-    """A self-hosted base URL, validated. n8n has no fixed vendor host, so the
-    user supplies one, which makes it attacker-controlled input by definition.
+def _http_base(values: Dict[str, str], name: str = "base_url",
+               example: str = "https://n8n.yourdomain.com") -> str:
+    """A per-user base URL, validated. n8n has no fixed vendor host, and a
+    Jira site is one address per customer, so the user supplies one, which
+    makes it attacker-controlled input by definition.
+
+    The example is a parameter because the message is read by whoever is
+    connecting: showing an n8n address to somebody typing their Jira site
+    is an error message that teaches the wrong thing.
     """
     raw = _clean(values, name)
     parsed = urlparse(raw)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        raise ValueError("Enter a full http(s) URL, for example "
-                         "https://n8n.yourdomain.com")
+        raise ValueError("Enter a full http(s) URL, for example " + example)
     return raw.rstrip("/")
 
 
@@ -181,6 +187,38 @@ def _airtable_auth(v):
 def _hubspot_auth(v):
     return VendorAuth(base_url="https://api.hubapi.com",
                       headers={"Authorization": "Bearer " + _require(v, "token")})
+
+
+def _jira_auth(v):
+    """Jira Cloud, signed as the person with their own API token.
+
+    Basic auth, not Bearer: on Jira Cloud an API token is sent as the
+    PASSWORD with the account's email as the username, and the same token
+    sent as a Bearer header is a 401. Bearer belongs to the OAuth half of
+    this work, which is a separate card.
+
+    The site is part of the credential because there is no single Jira
+    host: every customer has their own, and a custom domain is allowed now,
+    so it is validated rather than pattern matched to atlassian.net.
+
+    v3 rather than v2 on purpose. v3 is the version Atlassian documents for
+    Cloud, and it takes rich text as an Atlassian Document Format document,
+    which is why mytools shapes descriptions and comments instead of
+    passing a string through. Jira Data Center has no v3, so this connector
+    is Cloud only and `where` says so.
+    """
+    site = _http_base(v, "site_url", example="https://yourteam.atlassian.net")
+    pair = _require(v, "email") + ":" + _require(v, "token")
+    return VendorAuth(
+        base_url=site + "/rest/api/3",
+        headers={"Authorization": "Basic " + b64encode(
+            pair.encode("utf-8")).decode("ascii"),
+                 "Accept": "application/json"})
+
+
+def _jira_label(d):
+    d = d or {}
+    return d.get("displayName") or d.get("emailAddress") or ""
 
 
 def _zapier_auth(v):
@@ -283,6 +321,22 @@ PROVIDERS: Dict[str, Provider] = {
         build_auth=_hubspot_auth,
         probe_path="/account-info/v3/details",
         read_label=_hubspot_label,
+    ),
+    "jira": Provider(
+        id="jira",
+        label="Jira",
+        fields=[Field("site_url", "Your Jira site", secret=False,
+                      placeholder="https://yourteam.atlassian.net"),
+                Field("email", "The email you sign in with", secret=False,
+                      placeholder="you@example.com"),
+                Field("token", "API token", placeholder="ATATT...")],
+        where="Jira Cloud: id.atlassian.com/manage-profile/security/api-tokens, "
+              "Create API token, then paste your site address, the email you "
+              "sign in with, and the token. Jira Server and Data Center are "
+              "not supported: this uses the Cloud v3 API.",
+        build_auth=_jira_auth,
+        probe_path="/myself",
+        read_label=_jira_label,
     ),
     "zapier": Provider(
         id="zapier",

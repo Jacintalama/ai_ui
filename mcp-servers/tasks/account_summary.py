@@ -5,9 +5,10 @@ ClickUp" rather than guessing, and it is what every offer it makes depends
 on. Nothing here changes anything, which is why it needs no confirmation
 step and can be handed to every model.
 
-The universe of connectable apps is eleven: the three Google services
-(Gmail, Calendar, Drive) plus the eight Connect Your Own App providers in
-connections.PROVIDERS. This used to read routes_agents.tools_for_email,
+The universe of connectable apps is the three Google services (Gmail,
+Calendar, Drive) plus every Connect Your Own App provider in
+connections.PROVIDERS. It is derived, never counted here: it was eleven
+until Jira made it twelve on 2026-11-13. This used to read routes_agents.tools_for_email,
 which lists INSTALLED OPEN WEBUI TOOLS, not connectable apps: on a real
 account that list is calendar, documents, excel_creator,
 executive_dashboard, gdrive, gmail, remember and server:mcp-proxy, so the
@@ -35,8 +36,8 @@ logger = logging.getLogger(__name__)
 
 #: The three Google services, each with its own login already wired
 #: (auth/google/start) and no dependency on oauth_providers.py. Labels live
-#: here because connections.PROVIDERS only carries the eight Connect Your
-#: Own App providers; the Google ones are not in it.
+#: here because connections.PROVIDERS carries only the Connect Your Own
+#: App providers; the Google ones are not in it.
 GOOGLE_LABELS = {
     "gmail": "Gmail",
     "calendar": "Google Calendar",
@@ -44,8 +45,8 @@ GOOGLE_LABELS = {
 }
 GOOGLE_SERVICES = frozenset(GOOGLE_LABELS)
 
-#: Every connectable app: the three Google services, then the eight in
-#: connections.PROVIDERS, in that module's own order. Eleven total.
+#: Every connectable app: the three Google services, then every provider
+#: in connections.PROVIDERS, in that module's own order.
 ALL_PROVIDER_IDS = tuple(GOOGLE_LABELS) + tuple(CANONICAL_PROVIDERS)
 
 
@@ -122,7 +123,7 @@ async def summarise(email: str) -> dict:
     except Exception:                                       # noqa: BLE001
         logger.warning("could not read what is connected", exc_info=True)
         # Not "nothing is connected": we could not tell. Falling through would
-        # list all eleven providers as unconnected and have the assistant
+        # list every provider as unconnected and have the assistant
         # offer to connect Gmail to somebody who already has it. The agents
         # half is independent and still worth answering.
         return {"connected": [], "not_connected": [],
