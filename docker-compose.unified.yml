@@ -447,6 +447,20 @@ services:
       # empty scope is not merely meaningless to HubSpot, it is a required
       # parameter, so an empty value has to fall back to the default.
       - HUBSPOT_SCOPE=${HUBSPOT_SCOPE:-}
+      - JIRA_CLIENT_ID=${JIRA_CLIENT_ID:-}
+      - JIRA_CLIENT_SECRET=${JIRA_CLIENT_SECRET:-}
+      # What the person approves on Atlassian's consent screen. The default
+      # is what the six Jira tools actually call plus `offline_access`, and
+      # it lives in oauth_providers.JIRA_SCOPE; this only exists so a
+      # deployment can widen it without a release. `:-` for the same reason
+      # as the two above: an empty scope is meaningless to Atlassian, so an
+      # empty value has to fall back to the default.
+      #
+      # `offline_access` is the one nobody should remove. An Atlassian
+      # access token lasts an hour and without that scope no refresh token
+      # is ever issued, so the connection would die in an hour with
+      # nothing able to renew it.
+      - JIRA_SCOPE=${JIRA_SCOPE:-}
       # tasks mints an Open WebUI token per gateway turn, so it must sign
       # with the SAME secret Open WebUI verifies with. Declared for
       # api-gateway, mcp-proxy and open-webui but never for tasks: it was

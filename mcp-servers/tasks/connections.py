@@ -189,6 +189,12 @@ def _hubspot_auth(v):
                       headers={"Authorization": "Bearer " + _require(v, "token")})
 
 
+#: A cloud id goes into a URL path, so it is checked before it gets there.
+#: Atlassian's are UUIDs; this allows a little more and no character that
+#: could change the host or add a segment.
+_JIRA_CLOUD_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
 def _jira_auth(v):
     """Jira Cloud, signed as the person with their own API token.
 
@@ -206,7 +212,33 @@ def _jira_auth(v):
     which is why mytools shapes descriptions and comments instead of
     passing a string through. Jira Data Center has no v3, so this connector
     is Cloud only and `where` says so.
+
+    TWO KINDS OF CREDENTIAL, and they do not talk to the same host.
+
+    An OAuth credential carries a CLOUD ID and no site address, because an
+    Atlassian OAuth token has no idea which Jira it is for: the callback
+    asks accessible-resources, which names the sites that token can reach
+    and gives each an id, and every call then goes to
+    api.atlassian.com/ex/jira/<cloudid>. Sending such a token to the site
+    address instead is a 401, and sending a basic-auth email and token to
+    api.atlassian.com is a 401 the other way.
+
+    So the cloud id decides, not the scheme: it is the thing that changes
+    the URL. A credential holding one is an OAuth one, and the people who
+    connected with a pasted token before one-click existed keep working
+    unchanged.
     """
+    cloud = _clean(v, "cloud_id")
+    if cloud:
+        if not _JIRA_CLOUD_ID.match(cloud):
+            raise ValueError("That Jira site id does not look right. "
+                             "Reconnect Jira from Connections.")
+        return VendorAuth(
+            base_url="https://api.atlassian.com/ex/jira/" + cloud
+                     + "/rest/api/3",
+            headers={"Authorization": "Bearer " + _require(v, "token"),
+                     "Accept": "application/json"})
+
     site = _http_base(v, "site_url", example="https://yourteam.atlassian.net")
     pair = _require(v, "email") + ":" + _require(v, "token")
     return VendorAuth(

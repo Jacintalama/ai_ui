@@ -85,13 +85,30 @@ def test_a_successful_github_connect_always_offers_the_chooser():
 
 def test_the_chooser_is_not_gated_on_having_no_installation():
     """The whole bug. Offering it only when reach == 0 means the people
-    who most want to change their selection are the ones never shown it."""
+    who most want to change their selection are the ones never shown it.
+
+    ANCHORED, not windowed. This read 1400 characters from the first
+    `if provider_id == "github":` and asserted the word "reach" was not in
+    them, which made it a test of what happens to sit nearby: on
+    2026-11-13 a new helper's docstring, about Jira, used the word "reach"
+    and failed this while the chooser was untouched. The block is bounded
+    by its own return now.
+
+    The behaviour itself is DRIVEN in
+    tests/test_a_connect_always_has_a_next_step.py, where
+    test_an_installed_app_is_stored_and_still_offered_the_chooser runs the
+    real callback with one installation and reads the page. This stays as
+    the cheap structural guard.
+    """
     src = open(os.path.join(os.path.dirname(__file__), "..",
                             "routes_connections.py"), encoding="utf-8").read()
-    start = src.index('if provider_id == "github":')
-    block = src[start:start + 1400]
+    start = src.index('if provider_id == "github":', src.index("_store_connection("))
+    end = src.index('link_text="Choose which repositories")', start)
+    block = src[start:end]
     assert "reach" not in block, (
         "the repository chooser is gated on the installation count again")
+    assert block.count("if ") == 1, (
+        "the chooser gained a condition: " + block)
 
 
 def test_a_page_with_a_link_does_not_close_itself():

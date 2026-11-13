@@ -366,7 +366,7 @@ async def oauth_callback_public(provider_id: str, code: str = "",
 
 @router.get("/{provider_id}/oauth/callback")
 async def oauth_callback(provider_id: str, code: str = "", state: str = "",
-                         error: str = ""):
+                         error: str = "", error_description: str = ""):
     """Where the vendor sends the browser back.
 
     Deliberately NOT authenticated by the session. The user this grant belongs
@@ -391,8 +391,15 @@ async def oauth_callback(provider_id: str, code: str = "", state: str = "",
     if not provider or not O.supports_oauth(provider_id):
         return _oauth_done(False, "Unknown app.")
     if error:
+        # The vendor's own reason, when it gave one that is not simply
+        # "they pressed Cancel". Without it a mistake in OUR authorize URL
+        # and a person changing their mind produce the same sentence, and
+        # the first real connect of a new provider is exactly when that
+        # difference matters: `invalid_scope` means the scope string or its
+        # encoding is wrong, which nobody can guess from "Cancelled".
         return _oauth_done(False, "Cancelled, or " + provider.label
-                           + " refused the request.")
+                           + " refused the request." + _vendor_reason(error,
+                                                                      error_description))
 
     started = O.STATES.take(state)
     if not started:
@@ -457,6 +464,37 @@ async def oauth_callback(provider_id: str, code: str = "", state: str = "",
         return _oauth_done(False, provider.label
                            + " did not return a usable token.")
 
+    # An Atlassian OAuth token does not know which Jira it is for, and
+    # cannot address one until this call has been made: accessible-resources
+    # names the sites the token can reach and gives each a CLOUD ID, and
+    # every later call goes to api.atlassian.com/ex/jira/<cloudid>.
+    #
+    # So this hop runs BEFORE the usual vendor probe, because the probe
+    # builds its URL from the credential and there is no URL to build yet.
+    # It is also the proof the token works, being an authenticated call
+    # Atlassian answered, which is why the label is taken from it.
+    jira_sites = []
+    if provider_id == "jira":
+        jira_sites = await _jira_sites(values)
+        if jira_sites is None:
+            logger.warning("oauth: jira approved, could not read the sites")
+            return _oauth_done(False, "Approved, but IO could not ask which "
+                                      "Jira site to use. Try connecting "
+                                      "again in a moment.")
+        if not jira_sites:
+            # Approved, token works, reaches nothing. Same shape as a
+            # GitHub App installed nowhere, and the same answer: refuse,
+            # rather than store a connection that passes every check and
+            # does nothing.
+            logger.warning("oauth: jira token reaches no site")
+            return _oauth_done(
+                False, "Approved, but that account can reach no Jira site. "
+                       "Open Jira in your browser first, then connect again.")
+        first = jira_sites[0]
+        values["cloud_id"] = str(first.get("id") or "")
+        values["site_url"] = str(first.get("url") or "")
+        label = str(first.get("name") or first.get("url") or provider.label)
+
     # GitHub and ClickUp hand back a token and nothing else, so the account
     # has to be asked for by name. Doing it here also proves the token works
     # before any card claims a connection, which is the same question the
@@ -517,10 +555,86 @@ async def oauth_callback(provider_id: str, code: str = "", state: str = "",
             True, _github_said(label, await _github_repos(values)),
             link=O.install_url(), link_text="Choose which repositories")
 
+    if provider_id == "jira":
+        return _oauth_done(True, _jira_said(label, jira_sites))
+
     # No "you can close this window" here: whether that is the right thing
     # to say depends on whether this is a popup or a tab, and only the page
     # itself knows that.
     return _oauth_done(True, "Connected to " + label + ".")
+
+
+#: Most of a vendor's refusal we will repeat. Theirs is a sentence;
+#: anything longer is not a sentence, and this one lands on a page.
+MAX_REASON = 200
+
+#: The codes that mean "they pressed Cancel". Repeating a reason for these
+#: turns a person changing their mind into something that reads like a
+#: fault.
+_CANCELLED = frozenset({"access_denied", "user_cancelled_authorize",
+                        "user_denied"})
+
+
+def _vendor_reason(error: str, description: str = "") -> str:
+    """The vendor's own account of a refusal, when it is worth repeating.
+
+    Safe to show: this is the BROWSER leg of OAuth, which never carries
+    the client secret, and it goes onto the page through textContent like
+    every other message here. The code is kept as well as the sentence,
+    because `invalid_scope` is the searchable half.
+    """
+    code = " ".join(str(error or "").split())[:60]
+    said = " ".join(str(description or "").split())[:MAX_REASON]
+    if code in _CANCELLED and not said:
+        return ""
+    bits = [b for b in (said, "(" + code + ")" if code else "") if b]
+    return (" " + " ".join(bits)) if bits else ""
+
+
+async def _jira_sites(values: dict):
+    """Which Jira sites this OAuth token can reach.
+
+    `None` when the question could not be asked, which is deliberately not
+    an empty list: a network blip must not read as "this account has no
+    Jira", and a credential with no cloud id cannot address any Jira at
+    all, so neither answer may be stored.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=VERIFY_TIMEOUT_SEC) as client:
+            r = await client.get(
+                "https://api.atlassian.com/oauth/token/accessible-resources",
+                headers={"Authorization": "Bearer "
+                                          + str((values or {}).get("token") or ""),
+                         "Accept": "application/json"})
+    except Exception:                                       # noqa: BLE001
+        logger.warning("jira: could not ask which sites the token covers")
+        return None
+    if r.status_code != 200:
+        logger.warning("jira: accessible-resources returned %s", r.status_code)
+        return None
+    try:
+        got = r.json()
+    except Exception:                                       # noqa: BLE001
+        return None
+    if not isinstance(got, list):
+        return None
+    return [s for s in got if isinstance(s, dict) and s.get("id")]
+
+
+def _jira_said(label: str, sites: list) -> str:
+    """What the done page says about a Jira connect.
+
+    One site is the ordinary case and says what every other connect says.
+    SEVERAL has to be named: accessible-resources can list more than one,
+    IO uses the first, and somebody whose work is on the second has no way
+    to tell from a card that only says Connected.
+    """
+    n = len(sites or [])
+    if n <= 1:
+        return "Connected to Jira as " + label + "."
+    return ("Connected to Jira as " + label + ". That account can reach "
+            + str(n) + " Jira sites and IO is using this one. Choosing a "
+            "different site is not built yet, so say which one you need.")
 
 
 def _oauth_done(ok: bool, message: str, link: str = "",

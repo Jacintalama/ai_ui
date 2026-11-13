@@ -318,6 +318,46 @@ def _hubspot_token(payload: dict) -> Tuple[Dict[str, str], str]:
     return _bare_token(payload, "HubSpot")
 
 
+#: What the person approves on Atlassian's consent screen.
+#:
+#: Exactly what the six Jira tools call: work read for list_my_projects,
+#: search_issues and get_issue, work write for create_issue and
+#: comment_on_issue, and user read so the card can name the account.
+#:
+#: `offline_access` is not optional. An Atlassian access token lasts an
+#: hour, and without this scope no refresh token is ever issued, so a
+#: one-click connect would be a connection that dies in an hour with
+#: nothing able to renew it. That is worse than the paste form it
+#: replaces, which is the same trap HubSpot was held back for.
+#:
+#: Nothing with `delete:` in it, because no tool here deletes anything and
+#: a consent screen is something a person reads.
+#:
+#: `or` rather than a default argument to `get`, for the reason spelled out
+#: above AIRTABLE_SCOPE: compose declares these as `${JIRA_SCOPE:-}`, so an
+#: unset one arrives as an empty string and `get(name, default)` would hand
+#: back that empty string: a connect asking for no scopes at all.
+JIRA_SCOPE = (os.environ.get("JIRA_SCOPE")
+              or "read:jira-work write:jira-work read:jira-user "
+                 "offline_access").strip()
+
+
+def _jira_token(payload: dict) -> Tuple[Dict[str, str], str]:
+    """Atlassian's token response, which names no site.
+
+    The label is left empty and NOT filled in by the usual vendor probe,
+    because at this moment there is nothing to probe: an OAuth token for
+    Jira cannot address any Jira until the callback has asked
+    accessible-resources which sites it can reach. That hop supplies both
+    the cloud id and the name on the card.
+
+    `scheme` is recorded for the same reason ClickUp records it: so a
+    later reader knows what kind of credential this is without inferring
+    it from the token's shape.
+    """
+    return _bare_token(payload, "Jira", {"scheme": "bearer"})
+
+
 def _clickup_token(payload: dict) -> Tuple[Dict[str, str], str]:
     # ClickUp sends a personal token raw and an OAuth token as a Bearer, and
     # both arrive in the same `token` field, so which one this is has to be
@@ -336,6 +376,33 @@ PROVIDERS: Dict[str, OAuthProvider] = {
         authorize_extra={"response_type": "code", "owner": "user"},
         read_token=_notion_token,
         token_auth="basic",
+    ),
+    "jira": OAuthProvider(
+        id="jira",
+        label="Jira",
+        # Atlassian's OAuth 2.0 (3LO) endpoints. Note the host: the
+        # approval happens at auth.atlassian.com, NOT at the person's own
+        # site, and the API afterwards is at api.atlassian.com. None of
+        # the three is the address they type into a browser.
+        authorize_endpoint="https://auth.atlassian.com/authorize",
+        token_endpoint="https://auth.atlassian.com/oauth/token",
+        authorize_extra={
+            "response_type": "code",
+            "scope": JIRA_SCOPE,
+            # Without this the token is issued for the wrong audience: the
+            # connect succeeds, the card says Connected, and every API
+            # call answers 401 with nothing in it pointing here.
+            "audience": "api.atlassian.com",
+            # A second approval by somebody who has already approved
+            # returns NO refresh token otherwise, so a reconnect would
+            # quietly produce a credential that cannot be renewed.
+            "prompt": "consent",
+        },
+        read_token=_jira_token,
+        # Atlassian documents a JSON body carrying the client id and
+        # secret, not HTTP Basic.
+        token_auth="body",
+        token_body="json",
     ),
     "github": OAuthProvider(
         id="github",
