@@ -44,6 +44,18 @@ def app_and_creds(monkeypatch):
 
     monkeypatch.setattr(mytools, "_secrets_for", _fake_secrets)
 
+    # n8n and Jira take an address the person types, so a tool call to
+    # one now checks that every address it resolves to is outside our
+    # own network (`host_guard`, via `connections.types_a_url`). A unit
+    # test must not depend on real DNS, and the n8n host used below is
+    # `n8n.ralph.example`, which CANNOT resolve: `.example` is a
+    # reserved TLD. So the resolver answers one public address here,
+    # and the refusal itself is tested properly in
+    # tests/test_a_typed_url_cannot_reach_inside.py.
+    import host_guard
+    monkeypatch.setattr(host_guard, "_resolve",
+                        lambda host: ["8.8.8.8"])
+
     class _Resp:
         def __init__(self, status_code=200, payload=None, text=""):
             self.status_code = status_code
