@@ -472,6 +472,29 @@ services:
       # Dropbox's App Console. Asking for one the app was never granted is
       # an authorize URL that refuses.
       - DROPBOX_SCOPE=${DROPBOX_SCOPE:-}
+      - OUTLOOK_CLIENT_ID=${OUTLOOK_CLIENT_ID:-}
+      - OUTLOOK_CLIENT_SECRET=${OUTLOOK_CLIENT_SECRET:-}
+      # DELIBERATELY NOT MICROSOFT_CLIENT_ID. That one is already set
+      # on this box and belongs to Open WebUI's "Continue with
+      # Microsoft" sign-in button: a consumers-tenant app pointed at
+      # /oauth/microsoft/callback with no Graph permissions at all.
+      # Sharing it would tie the sign-in everybody uses to the
+      # connector's permissions and secret, and `_env_names` would
+      # have read it as configured on day one, offering a one-click
+      # button that cannot work.
+      #
+      # Which Microsoft accounts may connect: `common` is work AND
+      # personal, `organizations` excludes personal Outlook.com,
+      # `consumers` excludes every business. Its own variable, never
+      # MICROSOFT_TENANT_ID, which is set to `consumers` here for the
+      # sign-in app and would quietly lock every business account out.
+      - OUTLOOK_TENANT=${OUTLOOK_TENANT:-}
+      # Mail, calendar and contacts, plus offline_access, which is
+      # what returns the refresh token: a Graph access token lasts
+      # about an hour, so without it the connection is dead before
+      # lunch. No Files.* scope, because there are no file tools yet.
+      # Default in oauth_providers.OUTLOOK_SCOPE.
+      - OUTLOOK_SCOPE=${OUTLOOK_SCOPE:-}
       - LINKEDIN_CLIENT_ID=${LINKEDIN_CLIENT_ID:-}
       - LINKEDIN_CLIENT_SECRET=${LINKEDIN_CLIENT_SECRET:-}
       # The four permissions open to every LinkedIn developer and no more:
