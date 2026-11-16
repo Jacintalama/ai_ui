@@ -38,7 +38,11 @@ def _section():
     src = UI_JS.read_text(encoding="utf-8")
     start = src.index("  // ===== The assistant's connect links =====")
     end = src.index("  function wireAiuiConnectLinks()")
-    return src[start:end]
+    # The real one-message helper the section leans on, which lives
+    # further down the file.
+    at = src.index("  function aiuiMessageRowOf(")
+    helper = src[at:src.index("\n  }\n", at) + 5]
+    return src[start:end] + "\n" + helper
 
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8"></head><body>

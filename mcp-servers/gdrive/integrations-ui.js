@@ -3049,7 +3049,7 @@
     return Promise.all(asks).then(function () { return { now: now, names: names }; });
   }
 
-  function aiuiComposer() { return document.querySelector('#chat-input'); }
+  function aiuiChatBox() { return document.querySelector('#chat-input'); }
 
   function aiuiComposerEmpty(box) {
     return !!box && !String(box.value != null ? box.value : box.innerText || '').trim();
@@ -3073,7 +3073,7 @@
   // text already there is never touched, and our own text is taken back
   // out when Send never came (a reply still running shows Stop instead).
   function aiuiSendToChat(text, done) {
-    var box = aiuiComposer();
+    var box = aiuiChatBox();
     if (!aiuiComposerEmpty(box)) { done(false); return; }
     box.focus();
     if (box.tagName === 'TEXTAREA') {
@@ -3092,9 +3092,9 @@
     })();
   }
 
-  function aiuiMessageOf(el) {
-    return el && el.closest ? el.closest('[id^="message-"]') : null;
-  }
+  // The one message row `el` sits in (aiuiMessageRowOf, which walks up by
+  // id: a prefix selector would also match the composer's container).
+  function aiuiMessageOf(el) { return el ? aiuiMessageRowOf(el) : null; }
 
   function aiuiLastReply() {
     var all = document.querySelectorAll('.chat-assistant');
@@ -3124,7 +3124,7 @@
   function aiuiStillHere(w) {
     var live = aiuiLiveContainer(w);
     var focus = document.activeElement;
-    var typingElsewhere = focus && focus !== document.body && focus !== aiuiComposer()
+    var typingElsewhere = focus && focus !== document.body && focus !== aiuiChatBox()
       && (focus.tagName === 'INPUT' || focus.tagName === 'TEXTAREA'
           || focus.tagName === 'SELECT' || focus.isContentEditable);
     return !!live && location.pathname === w.chatPath
