@@ -569,11 +569,29 @@ TOOL_NOTES = {
                         "Notion pages, "
                         "Airtable bases, Dropbox files, LinkedIn posts, "
                         "HubSpot contacts, "
+                        "Outlook mail, calendar and contacts, "
                         "n8n workflows "
                         "and Zapier zaps, plus web search, flights and the "
                         "knowledge graph of past chats and meetings. Seeing "
-                        "what is in one of them, listing it, or adding to "
-                        "it",
+                        "what is in one of them, listing it, adding to it, "
+                        # The verbs describe what the tools now DO. They
+                        # used to stop at "adding to it", which was true
+                        # when every one of these was a read or an append;
+                        # it is not true now that a table, an event and an
+                        # issue can all be created.
+                        #
+                        # Written on a hypothesis that the narrow wording
+                        # was why the chat answered "I do not see a tool
+                        # for creating a table" on 2026-11-16. MEASURED
+                        # THE SAME DAY, and that was wrong: the same
+                        # request succeeded on the old note once the write
+                        # tools were deployed and the token carried
+                        # schema.bases:write. The cause was a missing tool
+                        # and a missing scope, not this sentence. Kept
+                        # because it is accurate, not because it fixed
+                        # anything.
+                        "sending mail from it, or making a new table, "
+                        "board, list, page, record, event or issue in it",
 }
 
 
