@@ -91,6 +91,20 @@ _APPS = (
         cannot="make a new base, delete a table or a row, or change a "
                "column's type once it exists, such as turning a text "
                "column into a dropdown"),
+    # Deliberately NO `says=("vercel",)`. PLATFORM already has a Vercel
+    # entry and it owns that word: "deploy it to Vercel" is a request to
+    # use the App Builder's own button, not to read an account. This entry
+    # is for the other half, which nothing could answer before: "what is
+    # in my Vercel", "did my deploy work".
+    App("vercel", "Vercel",
+        "looking at what is already in their own Vercel account: which "
+        "projects exist, which deployments ran, and whether one is ready "
+        "or failed. Not a request to deploy or publish anything",
+        "list your Vercel projects and recent deployments, and say "
+        "whether each one is ready, building or failed",
+        ("list_projects", "list_deployments", "get_project", "whoami"),
+        cannot="deploy, publish or delete anything. Deploying an app "
+               "built here is the Publish button in the App Builder"),
     App("outlook", "Outlook",
         "email, calendar and contacts on Microsoft 365 or Outlook.com: "
         "reading and sending mail, what is on the calendar, booking a "

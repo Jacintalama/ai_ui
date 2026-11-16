@@ -1731,6 +1731,57 @@ DROPBOX_TOOLS = [
          keep=("account_id", "email", "name")),
 ]
 
+# --- Vercel ----------------------------------------------------------------
+
+#: Vercel pages its collections under a key named after the thing.
+def _vercel_projects(d):
+    return (d or {}).get("projects", [])
+
+
+def _vercel_deployments(d):
+    return (d or {}).get("deployments", [])
+
+
+VERCEL_TOOLS = [
+    Tool(name="whoami",
+         summary="Show which Vercel account is connected to your "
+                 "assistant.",
+         method="GET", path="/v2/user",
+         writes=False,
+         unwrap=lambda d: (d or {}).get("user") or {},
+         keep=("id", "username", "email", "name")),
+    Tool(name="list_projects",
+         summary="List the projects in your own Vercel account.",
+         method="GET", path="/v9/projects",
+         args={"limit": ("integer", "How many projects to return", False)},
+         query={"limit": "limit"},
+         query_defaults={"limit": "20"},
+         writes=False,
+         unwrap=_vercel_projects,
+         keep=("id", "name", "framework", "updatedAt")),
+    Tool(name="list_deployments",
+         summary="List recent deployments in your own Vercel account, "
+                 "with whether each one is ready or failed.",
+         method="GET", path="/v6/deployments",
+         args={"limit": ("integer", "How many deployments to return",
+                         False),
+               "project_id": ("string",
+                              "Only this project, by its id", False)},
+         query={"limit": "limit", "projectId": "project_id"},
+         query_defaults={"limit": "20"},
+         writes=False,
+         unwrap=_vercel_deployments,
+         # `state` is the one people actually want: READY, ERROR, BUILDING.
+         keep=("uid", "name", "url", "state", "target", "created")),
+    Tool(name="get_project",
+         summary="Read one of your Vercel projects by name or id.",
+         method="GET", path="/v9/projects/{project_id}",
+         args={"project_id": ("string",
+                              "The project's name or id", True)},
+         writes=False,
+         keep=("id", "name", "framework", "updatedAt", "targets")),
+]
+
 # --- Outlook ---------------------------------------------------------------
 
 #: How far ahead a calendar read looks when nobody said.
@@ -2003,6 +2054,7 @@ LINKEDIN_TOOLS = [
 PROVIDER_TOOLS: Dict[str, List[Tool]] = {
     "github": GITHUB_TOOLS,
     "outlook": OUTLOOK_TOOLS,
+    "vercel": VERCEL_TOOLS,
     "clickup": CLICKUP_TOOLS,
     "trello": TRELLO_TOOLS,
     "notion": NOTION_TOOLS,

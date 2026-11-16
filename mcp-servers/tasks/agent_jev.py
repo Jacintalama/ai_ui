@@ -570,6 +570,7 @@ TOOL_NOTES = {
                         "Airtable bases, Dropbox files, LinkedIn posts, "
                         "HubSpot contacts, "
                         "Outlook mail, calendar and contacts, "
+                        "Vercel projects and deployments, "
                         "n8n workflows "
                         "and Zapier zaps, plus web search, flights and the "
                         "knowledge graph of past chats and meetings. Seeing "
