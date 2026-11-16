@@ -32,13 +32,14 @@ def test_the_how_line_and_the_button_both_come_when_publish_was_not_said():
 
 def test_vercel_alone_gets_its_own_label_and_the_same_place():
     out = app_triage.with_buttons(
-        "Click Publish and choose Vercel.", _plan("vercel", text="vercel"))
+        "Click Publish and choose Vercel.",
+        _plan("deploy_vercel", text="vercel"))
     assert out.rstrip().endswith("[Deploy to Vercel in App Builder](%s)" % OPEN)
 
 
 def test_publish_and_vercel_together_make_one_button():
     """Both open the same window, so two buttons would be one place twice."""
-    p = _plan("publish", "vercel", text="put it on vercel")
+    p = _plan("publish", "deploy_vercel", text="put it on vercel")
     out = app_triage.with_buttons("Click Publish, then Vercel.", p)
     assert out.count(OPEN) == 1
 
