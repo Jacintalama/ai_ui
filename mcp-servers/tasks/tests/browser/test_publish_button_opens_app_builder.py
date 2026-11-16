@@ -144,7 +144,7 @@ def test_without_the_shell_it_opens_the_page_in_a_tab(browser):
 
 
 def test_a_place_not_on_the_list_stays_a_plain_link(browser):
-    for href in ("#aiui-open:cronjobs", "#aiui-open:javascript:alert(1)",
+    for href in ("#aiui-open:graph", "#aiui-open:javascript:alert(1)",
                  "#aiui-open:", "#aiui-open:__proto__"):
         pg = _reply_page(browser, href, with_shell=True)
         try:

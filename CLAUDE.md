@@ -370,7 +370,7 @@ Connect buttons under the answer. Two rules worth knowing:
   a recommendation scored the same app 0.94.
 - **The platform's own Publish and Deploy to Vercel are in it too
   (2026-11-13)**, `app_triage.PLATFORM`, asked in the same Jev call after the
-  apps but cut on their own (`platform_pick`, 0.60): they score lower than
+  apps but cut on their own (`platform_pick`, 0.70 since 2026-11-17): they score lower than
   apps, and the apps' 0.90 missed every deploy question. Only for apps built in
   the App Builder; recommended as the straightforward way, the how-to line is
   the service's, and outside hosts are ruled out in the brief. Vercel is its
@@ -380,6 +380,23 @@ Connect buttons under the answer. Two rules worth knowing:
   button that opens the App Builder pane through `window.aiuiOpenPane`
   (`task-panel.js`), a tab where there is no shell. Only places in
   `app_triage.OPEN_PLACES`, and the page keeps the same list.
+- **The rest of the platform too (2026-11-17)**: App Builder, Cron Jobs, AI
+  Agents, Automations, Video Generation and Channels are `PLATFORM` entries
+  with their own button (`Platform.opens`), and `Platform.rule` holds an
+  entry's own "do not suggest X" line. Re-measured `platform_pick` with all
+  of them: AI Agents first scored 0.88 on "put a meeting on my calendar"
+  and 0.67 on a poem, App Builder 0.82 on "a contact form on my site"; the
+  notes now say what each is NOT, and nothing is wrong from 0.60 up.
+- **Connect, then carry on (2026-11-17)**: after a Connect click from a
+  reply, `integrations-ui.js` ("Connect, then carry on") waits for the
+  callback's message (only from the window that button opened) or a 3 s
+  poll, confirms with `/api/tasks/connections` (Google: each app's status
+  route), then sends "I've connected X. Please go ahead with what I asked."
+  The tool pick reads the turns before it, so the request is answered with
+  the app. Sent only when nothing moved on (same chat, still the last
+  reply, nothing sent since, empty box), else a Continue button. Every app
+  with `oauth: true` now opens its own login from the chat, not the panel;
+  "Connect a task tracker" is `#aiui-connect:tracker` and opens the panel.
 - **Skills (2026-11-13)**: `agent_jev.pick_skills_for_message`, a fourth
   question, 0.90, BUILT-IN skills only (the cut was measured on them),
   timeboxed. A picked skill runs the assistant with the `skills` tool and the

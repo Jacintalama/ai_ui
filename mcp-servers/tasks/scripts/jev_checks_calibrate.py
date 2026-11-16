@@ -295,62 +295,95 @@ BUILT = ("person: make me a landing page for my bakery\nreply: Done. Your "
 #: the 2026-11-12 call.
 APP_CASES = [
     ("I want to scrape and find a bunch of customers and save them somewhere",
-     [{"airtable", "hubspot"}], {"gdrive", "notion", "gmail"}),
-    ("every 8am read my email and send me a summary", [{"gmail"}],
-     {"calendar", "n8n", "zapier"}),
+     [{"airtable", "hubspot"}], {"gdrive", "notion", "gmail", "ai_agents"}),
+    # Lukas, 2026-11-12: "it's going to use cron jobs and it's going to use
+    # Gmail integration". Cron Jobs joined the catalogue 2026-11-17.
+    ("every 8am read my email and send me a summary",
+     [{"gmail", "outlook"}, {"cron_jobs"}],
+     {"calendar", "n8n", "zapier", "ai_agents", "automations"}),
     ("I have a landing page for my cup shop, I want to make lots of changes, "
      "keep every version and be able to come back to an old one",
-     [{"github"}], {"gdrive"}),
+     [{"github"}], {"gdrive", "app_builder"}),
     ("I need something to track my to-dos and calendar", [{"notion", "clickup",
                                                            "trello"}],
-     {"calendar", "airtable"}),
+     {"calendar", "airtable", "outlook", "jira"}),
     ("I need an automation workflow that connects my apps",
-     [{"n8n", "zapier"}], set()),
+     [{"n8n", "zapier"}], {"automations"}),
     ("set up a board for my team's tasks and assign them to people",
      [{"clickup", "trello"}], {"notion", "airtable", "github", "jira"}),
     ("keep track of my sales leads and follow up with each customer",
-     [{"hubspot", "airtable"}], {"gmail", "notion", "clickup", "trello"}),
+     [{"hubspot", "airtable"}], {"gmail", "notion", "clickup", "trello",
+                                 "outlook", "automations", "ai_agents"}),
     ("put a meeting with Ana on my calendar for Friday at 3pm",
-     [{"calendar"}], {"gmail"}),
-    # Dropbox and Jira joined the catalogue on 2026-11-13 (Ralph); a shared
-    # file can live in Dropbox and a team board in Jira, so both are fair.
+     [{"calendar", "outlook"}], {"gmail"}),
     ("where is the budget spreadsheet I shared last week", [{"gdrive"}],
-     {"airtable", "gmail", "dropbox"}),
+     {"airtable", "gmail", "dropbox", "outlook"}),
     ("when a new order comes into my shop, add the customer to a list and "
-     "email them a thank you", [{"n8n", "zapier"}],
-     {"airtable", "hubspot", "gmail", "gdrive"}),
+     "email them a thank you", [{"n8n", "zapier", "automations"}],
+     {"airtable", "hubspot", "gmail", "gdrive", "outlook", "ai_agents"}),
     ("tell me a joke about coffee", [], set()),
     ("what is the capital of Australia", [], set()),
     ("write a short poem about autumn", [], set()),
     ("thanks, that looks great", [], set()),
     ("explain what a REST API is in two sentences", [], set()),
-    ("make me a landing page for a bakery", [], {"github"}),
+    # The App Builder joined the catalogue 2026-11-17: building one is now
+    # a recommendation of the platform's own builder, with a button.
+    ("make me a landing page for a bakery", [{"app_builder"}], {"github"}),
     ("how many days are there until Christmas", [], set()),
     # The platform's own Publish (2026-11-13). Lukas: "it should just
-    # recommend the most straightforward one".
+    # recommend the most straightforward one". `deploy_vercel` is the
+    # platform's deploy button; `vercel` the account (Ralph, 2026-11-16).
     ("how do I put my landing page online so people can visit it",
-     [{"publish"}], {"github", "vercel"}),
-    ("can I deploy my app to Vercel", [{"vercel"}], {"github", "publish"}),
+     [{"publish"}], {"github", "deploy_vercel", "vercel", "app_builder"}),
+    ("can I deploy my app to Vercel", [{"deploy_vercel"}],
+     {"github", "publish", "vercel", "app_builder"}),
     # Not built here: Publish serves App Builder apps from apps/<slug>/ and
     # cannot host anything else (review 2026-11-13).
     ("how do I deploy my Django app from my laptop", [], {"github"}),
-    ("how do I deploy my Django app from my laptop to Vercel", [], {"github"}),
+    ("how do I deploy my Django app from my laptop to Vercel", [],
+     {"github", "vercel"}),
     ("where should I host my company's existing WordPress site", [], set()),
     ("I want my bakery site live on my own domain", [{"publish"}],
-     {"github", "vercel"}),
+     {"github", "deploy_vercel", "vercel", "app_builder"}),
     ("I have this website for a cup landing page, I want to make a lot of "
      "changes, have it stored and versioned, and I want other people to "
-     "visit it", [{"github"}], {"publish", "gdrive", "vercel"}),
+     "visit it", [{"github"}],
+     {"publish", "gdrive", "deploy_vercel", "vercel", "app_builder"}),
     # With the build in the conversation, as people really ask it. The
     # fourth element is what was said before (review 2026-11-13: no case
     # carried context, which is where follow-ups score high).
-    ("can I deploy it to Vercel?", [{"vercel"}], {"publish", "github"}, BUILT),
+    ("can I deploy it to Vercel?", [{"deploy_vercel"}],
+     {"publish", "github", "vercel", "app_builder"}, BUILT),
     ("how do I put it online so customers can visit?", [{"publish"}],
-     {"vercel", "github"}, BUILT),
-    ("can I use my own domain for it?", [{"publish", "vercel"}], {"github"},
-     BUILT),
+     {"deploy_vercel", "github", "app_builder"}, BUILT),
+    ("can I use my own domain for it?", [{"publish", "deploy_vercel"}],
+     {"github", "vercel", "app_builder"}, BUILT),
     ("thanks, looks great", [], set(), BUILT),
-    ("make the header blue", [], {"github"}, BUILT),
+    ("make the header blue", [], {"github", "app_builder"}, BUILT),
+    # The rest of the platform (Lukas, 2026-11-16: "That's what I would
+    # like for the other parts, like the app builder"), with the same
+    # words used for something else as the controls.
+    # n8n and Zapier fine, as for "every 8am" above: in the chat the timer
+    # rule drops them once the tool pick chose schedules.
+    ("remind me every Monday at 9am to send the team update",
+     [{"cron_jobs"}],
+     {"calendar", "outlook", "gmail", "clickup", "trello", "notion", "n8n",
+      "zapier"}),
+    ("I want an assistant of my own that answers customer questions about "
+     "my shop", [{"ai_agents"}],
+     {"gmail", "outlook", "hubspot", "automations"}),
+    ("when someone fills in the contact form on my site, have my agent "
+     "email them back", [{"automations", "n8n", "zapier"}],
+     {"gmail", "outlook", "ai_agents", "hubspot", "airtable"}),
+    ("make a short demo video of my app from these screenshots",
+     [{"video"}], {"app_builder"}),
+    ("can I talk to my agents from Telegram?", [{"channels"}],
+     {"ai_agents"}),
+    ("what is a cron job, in one sentence", [], {"cron_jobs"}),
+    ("my video calls keep dropping, any tips?", [], set()),
+    ("write me a short story about a robot secret agent", [], set()),
+    ("tell me a bit about the history of Telegram", [], set()),
+    ("how do websites work, in simple words", [], set()),
 ]
 
 

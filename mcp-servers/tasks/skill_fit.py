@@ -43,10 +43,13 @@ BUTTON = {"gmail": "Connect Gmail", "calendar": "Connect Google Calendar",
           "gdrive": "Connect Google Drive", TRACKER: "Connect a task tracker"}
 
 #: What `#aiui-connect:<id>` opens. Google apps go straight to their login;
-#: Trello has no login to open, so the button opens the Connections panel,
-#: where GitHub and ClickUp sit beside it.
+#: "tracker" opens the Connections panel, where Trello, GitHub, ClickUp and
+#: Jira sit side by side, and the chat carries on when any one of them is
+#: connected (integrations-ui.js, AIUI_TRACKERS). It was "trello" until
+#: 2026-11-17, which once the chat opened each app's own login would have
+#: sent everybody to Trello's.
 CONNECT_ID = {"gmail": "gmail", "calendar": "calendar", "gdrive": "gdrive",
-              TRACKER: "trello"}
+              TRACKER: "tracker"}
 
 
 def needs(skill) -> list:

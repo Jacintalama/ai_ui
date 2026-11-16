@@ -86,7 +86,14 @@ CUTS = {PURPOSE_PLAIN: 0.6, PURPOSE_ROLLBACK: 0.6, PURPOSE_RELEASE: 0.6,
         # with scripts/jev_checks_calibrate.py apps 2: real deploy questions
         # scored it 0.66 to 0.83 and nothing else rose above 0.21, so the
         # apps' 0.90 would have missed every one. See report_platform.
-        PURPOSE_PLATFORM: 0.6}
+        # Re-measured 2026-11-17 with the rest of the platform in the
+        # catalogue (App Builder, Cron Jobs, AI Agents, Automations, Video,
+        # Channels), two runs of 39 cases: no wrong pick from 0.60 up in
+        # either run, so by the rule 0.60 plus one step. What 0.70 gives up
+        # is cold deploy questions (Publish 0.60 for "my bakery site live on
+        # my own domain") and "remind me every Monday" (Cron Jobs 0.69),
+        # where the tool pick still creates the job.
+        PURPOSE_PLATFORM: 0.7}
 
 
 def cut(purpose: str) -> float:

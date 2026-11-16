@@ -24,15 +24,18 @@ from dataclasses import dataclass
 MAX_APPS = 3
 
 #: What `#aiui-connect:<id>` opens in the main chat (integrations-ui.js): the
-#: Google apps go straight to their sign-in, Notion to its OAuth start, and
-#: every other id opens the Connections panel, where its card is.
+#: Google apps go straight to their sign-in, an app whose OAuth is ready on
+#: this server to its own login (2026-11-17), and every other id opens the
+#: Connections panel, where its card is. The chat then carries on once the
+#: app is connected.
 CONNECT = "#aiui-connect:"
 
 #: What `#aiui-open:<place>` opens in the main chat (integrations-ui.js): a
 #: page of the platform, in its pane, as its sidebar entry would. Only the
 #: places listed here; the page keeps the same list.
 OPEN = "#aiui-open:"
-OPEN_PLACES = ("app-builder",)
+OPEN_PLACES = ("app-builder", "cronjobs", "ai-agents", "video-generation",
+               "channel")
 
 
 @dataclass(frozen=True)
@@ -234,7 +237,18 @@ class Platform:
     #: gave nothing to click (2026-11-16).
     button: str = ""
     opens: str = "app-builder"
+    #: What the assistant must not suggest instead, said in the brief for
+    #: this entry only: "other hosting services" under a cron job made no
+    #: sense once more than hosting was here (2026-11-17).
+    rule: str = ""
+    #: The main chat's tool that does this itself. When the tool pick chose
+    #: it, the assistant is doing the job, so the button stays and the
+    #: how-line goes: "say here what to do" under "Done, it runs every
+    #: Monday" (review 2026-11-17).
+    tool: str = ""
 
+
+HOSTING_RULE = "Do not suggest other hosting services or sites."
 
 #: Lukas, 2026-11-13: "we can deploy the application if they build it, so it
 #: wouldn't need to recommend some place to deploy the application, it should
@@ -253,7 +267,8 @@ _PLATFORM = (
              "preview) and click Publish: it goes live at its own link "
              "straight away. The same window can deploy it to your own "
              "Vercel account instead, once you connect Vercel there.",
-             says=("publish",), button="Publish in App Builder"),
+             says=("publish",), button="Publish in App Builder",
+             rule=HOSTING_RULE),
     # Its own entry: asked about Publish alone, "deploy it to Vercel" scored
     # 0.46 to 0.51 even with the build in the conversation, because Vercel
     # reads as somewhere else. Measured 2026-11-13.
@@ -271,7 +286,72 @@ _PLATFORM = (
              "To put it on your own Vercel, open the app in the App Builder "
              "(or its preview), click Publish and choose Deploy to your "
              "Vercel account; the first time it asks you to connect Vercel.",
-             says=("vercel",), button="Deploy to Vercel in App Builder"),
+             says=("vercel",), button="Deploy to Vercel in App Builder",
+             rule=HOSTING_RULE),
+    # The rest of the platform (Lukas, 2026-11-16: "That's what I would like
+    # for the other parts, like the app builder"). Each how-line names the
+    # page by its sidebar name and says only what that page or the main
+    # chat's own tool does (task-panel.js NAV_ENTRIES titles,
+    # agent_jev.TOOL_NOTES).
+    Platform("app_builder", "App Builder",
+             "having a website, landing page, web app, online shop or "
+             "dashboard built for them, or changing the look or content of "
+             "one they built here. Not something that should happen when "
+             "people use a site (a form filled in, an order arriving), not "
+             "keeping track of records, not putting a site online, and not "
+             "a question about how websites work",
+             "IO builds it for you in the App Builder: open it, click "
+             "New Project and describe what you want, or just ask for it "
+             "here. Every version is kept, so an older one can be brought "
+             "back.",
+             says=("new project",), button="Open App Builder",
+             opens="app-builder", tool="code",
+             rule="Do not suggest other site builders or hosting services."),
+    Platform("cron_jobs", "Cron Jobs",
+             "something to run for them by itself on a timer or a repeating "
+             "schedule, such as every morning at 8am or every Monday. Not a "
+             "meeting or an appointment, which is a calendar",
+             "IO runs it for you on a schedule in Cron Jobs: say here what "
+             "to do and when. Cron Jobs shows your jobs, where you can pause, "
+             "run or delete one; ask here to change one.",
+             says=("cron job",), button="Open Cron Jobs", opens="cronjobs",
+             tool="schedules"),
+    Platform("ai_agents", "AI Agents",
+             "setting up a new AI agent of their own: a named assistant they "
+             "make once, with its own instructions, to do one kind of job "
+             "for them again and again, or a team of such agents. Not "
+             "asking for help with something now, which this chat does "
+             "itself",
+             "In AI Agents you make an assistant with your own "
+             "instructions, give it skills and the apps it may use, and talk "
+             "to it; you can also ask here to make one.",
+             # Not "ai agents": Automations' own button says that.
+             says=("open ai agents",), button="Open AI Agents",
+             opens="ai-agents", tool="agent_builder"),
+    Platform("automations", "Automations",
+             "running one of their agents by itself when something happens "
+             "or arrives, such as a webhook, a form being filled in, a new "
+             "lead or a matching email. Not on a timer",
+             "An automation runs one of your agents when something arrives: "
+             "a webhook, a form or a matching email. Set it up in AI Agents "
+             "under Automation, or ask here.",
+             says=("under automation",), button="Set up in AI Agents",
+             opens="ai-agents", tool="automations"),
+    Platform("video", "Video Generation",
+             "making a short narrated video from screenshots, such as a demo "
+             "or walkthrough of an app or website",
+             "Video Generation turns your screenshots into a short narrated "
+             "video: open it and add them.",
+             says=("video generation",), button="Open Video Generation",
+             opens="video-generation", tool="video"),
+    Platform("channels", "Channels",
+             "connecting a messaging app such as Telegram, or a terminal, "
+             "so they can talk to IO or their agents from there instead of "
+             "this website",
+             "Channels lets you talk to IO from Telegram, a terminal and "
+             "more: open Channels to connect one.",
+             says=("open channels",), button="Open Channels",
+             opens="channel"),
 )
 PLATFORM = {p.id: p for p in _PLATFORM}
 
@@ -379,7 +459,9 @@ def plan(picks, connected, tools, text: str = "", skills=None,
             and "vercel" not in str(text or "").lower():
         plat_ids.remove("deploy_vercel")
     platform = [{"id": PLATFORM[i].id, "label": PLATFORM[i].label,
-                 "how": PLATFORM[i].how} for i in plat_ids]
+                 "how": PLATFORM[i].how,
+                 "acting": bool(PLATFORM[i].tool)
+                 and PLATFORM[i].tool in (tools or [])} for i in plat_ids]
     return {"apps": apps, "features": features, "platform": platform,
             "skills": _skills(skills, pool, have)}
 
@@ -425,10 +507,20 @@ def brief(p) -> str:
     lines = ["Separate from the account above: what fits what the person "
              "wants now (decided for this message):"]
     if platform:
-        lines.append("The platform does this itself, so recommend it as the "
-                     "straightforward way:")
-        lines += ["- %s: %s" % (x["label"], x["how"]) for x in platform]
-        lines.append("Do not suggest other hosting services or sites.")
+        advise = [x for x in platform if not x.get("acting")]
+        doing = [x for x in platform if x.get("acting")]
+        if advise:
+            lines.append("The platform does this itself, so recommend it as "
+                         "the straightforward way:")
+            lines += ["- %s: %s" % (x["label"], x["how"]) for x in advise]
+        if doing:
+            lines.append("You are doing this now with your tools, so do it "
+                         "rather than explain how: "
+                         + ", ".join(x["label"] for x in doing) + ".")
+        lines += list(dict.fromkeys(PLATFORM[x["id"]].rule for x in platform
+                                    if PLATFORM[x["id"]].rule))
+        lines.append("Its button is added under your answer, so do not "
+                     "write a link to it yourself.")
     if skills:
         lines.append("Ready-made skills that fit (read one with the skills "
                      "tool and follow its steps):")
@@ -513,7 +605,7 @@ def with_buttons(answer: str, p) -> str:
     # one per place, since Publish and Vercel open the same window.
     for x in (p or {}).get("platform") or []:
         feat = PLATFORM[x["id"]]
-        if not any(w in low for w in feat.says):
+        if not x.get("acting") and not any(w in low for w in feat.says):
             lines.append(x["how"])
         href = OPEN + feat.opens
         if feat.button and href not in low and not any(href in b for b in buttons):
@@ -544,8 +636,13 @@ def already_offered(messages, turns: int = 6, skill_names=()) -> set:
         # writes "click Publish" itself, the how-line is never added, and
         # matching only that line re-offered Publish on every follow-up
         # (review 2026-11-13).
+        # Its own words or its OWN button: several parts open one page
+        # (App Builder, Publish, Vercel; AI Agents, Automations), and the
+        # page alone counted all of them as offered (review 2026-11-17).
         out |= {i for i, x in PLATFORM.items()
-                if any(w in said for w in x.says) or OPEN + x.opens in said}
+                if any(w in said for w in x.says)
+                or (x.button and ("[%s](%s)" % (x.button, OPEN + x.opens)).lower()
+                    in said)}
     return out | skills_offered(messages, skill_names, turns)
 
 

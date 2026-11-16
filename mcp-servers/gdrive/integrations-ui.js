@@ -2878,6 +2878,7 @@
 
     var container = document.createElement('span');
     container.className = 'aiui-connect-inline';
+    container.setAttribute('data-aiui-provider', provider);
     // Room around each button: two in a row had nothing between them, and
     // the last one sat against the reply's toolbar (2026-11-12).
     container.style.cssText = 'display:inline-block;margin:10px 8px 8px 0;'
@@ -2888,17 +2889,32 @@
       + 'border-radius:8px;font-size:13.5px;font-weight:600;cursor:pointer;';
     container.appendChild(btn);
     if (anchor.parentNode) anchor.parentNode.replaceChild(container, anchor);
+    // Connected from another button on this page already: say so rather
+    // than offer it again (a reply drawn again after the connect).
+    if (aiuiConnectedHere[provider]) aiuiDrawConnected(container, aiuiConnectedHere[provider]);
+
+    // Which apps can open their own login here, read once (see "Connect,
+    // then carry on" below). Never waited on: a click before it arrives
+    // takes the panel, as every app but Notion always did.
+    aiuiLoadConnections();
 
     btn.addEventListener('click', function () {
+      // Watch for this connect to finish, then carry on with what the
+      // person asked (Lukas, 2026-11-16). Set going before the login opens,
+      // so the watch exists before anything can answer it.
+      var watch = aiuiCarryOn(provider, btn.textContent, container);
       // Three cases. A Google app has a direct URL and opens immediately.
-      // Notion needs its start URL fetched from our API, so the window is
-      // opened synchronously right here and navigated once the URL
-      // arrives, because a window opened after an await has lost the
-      // click that justified it and gets blocked. Anything else has no
-      // login to open at all, so it goes straight to the panel.
+      // An app that can log in here (Notion, and since 2026-11-17 every
+      // app the service says has OAuth ready) needs its start URL fetched
+      // from our API, so the window is opened synchronously right here and
+      // navigated once the URL arrives, because a window opened after an
+      // await has lost the click that justified it and gets blocked.
+      // Anything else has no login to open at all, so it goes straight to
+      // the panel.
       var url = aiuiConnectUrlFor(provider);
       if (url) {
         var win = window.open(url, '_blank');
+        if (watch) watch.win = win;
         if (aiuiPopupBlocked(win)) {
           aiuiSayBlocked(container);
           window.aiuiOpenConnections();
@@ -2906,12 +2922,13 @@
         return;
       }
 
-      if (provider === 'notion') {
+      if (provider === 'notion' || aiuiOauthReady(provider)) {
         // Notion's connect URL has to be fetched, but a window opened
         // after an await has lost the click that justified it and gets
         // blocked. So open synchronously first and navigate it once the
         // URL arrives.
         var notionWin = window.open('', '_blank');
+        if (watch) watch.win = notionWin;
         if (aiuiPopupBlocked(notionWin)) {
           aiuiSayBlocked(container);
           window.aiuiOpenConnections();
@@ -2934,6 +2951,299 @@
     });
   }
 
+  // ===== Connect, then carry on =====
+  // Lukas, 2026-11-16: "say we have automation, so we should connect n8n
+  // and pop up the connect field and then they connect it and then it
+  // starts using it." Until now the chat stopped at the button.
+  //
+  // After a Connect click from a reply, this waits for that app to be
+  // connected: the callback's own message from the tab THIS button opened
+  // (Google posts aiui-<app>-connected, every other OAuth app {aiuiOauth,
+  // ok}; a message from any other window is ignored), or a poll, which is
+  // the only signal for an app connected in the panel. A message alone is
+  // never enough: the service has to say the app is connected now, and
+  // was not when the button was clicked, unless the message came from the
+  // login this button opened.
+  //
+  // Then the button says so, and the chat sends "I've connected X. Please
+  // go ahead with what I asked." The conversation already holds the
+  // request and the tool pick reads the turns before it, so the next turn
+  // uses the app. It is sent by itself only when nothing has moved on: the
+  // person is on that chat, the reply is still the last one, they have
+  // sent nothing since, the message box is empty and nothing else has the
+  // cursor. Otherwise a Continue button waits for them. Two apps finishing
+  // together (one Google sign-in links Gmail and Calendar) are one message.
+  // Design: docs/plans/2026-11-17-triage-connect-and-continue-design.md.
+  var AIUI_CARRY_ON_POLL_MS = 3000;
+  var AIUI_CARRY_ON_FOR_MS = 10 * 60 * 1000;
+  var AIUI_CARRY_ON_GATHER_MS = 1200;
+  var AIUI_CARRY_ON_TEXT = "I've connected %s. Please go ahead with what I asked.";
+  var AIUI_GOOGLE_NAMES = { gmail: 'Gmail', gdrive: 'Google Drive',
+                            calendar: 'Google Calendar' };
+  var AIUI_GOOGLE_SIGNAL = { gmail: 'aiui-gmail-connected',
+                             gdrive: 'aiui-gdrive-connected',
+                             calendar: 'aiui-calendar-connected' };
+  // skill_fit.TRACKERS: "Connect a task tracker" is any one of them, and
+  // opens the panel where they sit side by side.
+  var AIUI_TRACKERS = ['trello', 'github', 'clickup', 'jira'];
+  var aiuiConnList = null;
+  var aiuiConnLoading = false;
+  var aiuiWatches = {};
+  var aiuiConnectedHere = {};
+  var aiuiFinishedQueue = [];
+  var aiuiGatherTimer = null;
+
+  function aiuiFetchConnections() {
+    return fetch('/api/tasks/connections', { headers: aiuiAuthHeaders() })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { return (d && d.connections) || null; })
+      .catch(function () { return null; });
+  }
+
+  function aiuiLoadConnections() {
+    if (aiuiConnList || aiuiConnLoading) return;
+    aiuiConnLoading = true;
+    aiuiFetchConnections().then(function (list) {
+      aiuiConnLoading = false;
+      if (list) aiuiConnList = list;
+    });
+  }
+
+  function aiuiOauthReady(provider) {
+    return !!(aiuiConnList || []).filter(function (c) {
+      return c && c.provider === provider && c.oauth;
+    }).length;
+  }
+
+  function aiuiGoogleConnected(id) {
+    var url = id === 'calendar'
+      // Calendar has no session-authenticated status route; this is the
+      // one the page already asks (styleConnectButton).
+      ? CALENDAR_API + '/auth/google/status?user_email='
+        + encodeURIComponent(getEffectiveEmail() || '')
+      : (id === 'gmail' ? GMAIL_API : GDRIVE_API) + '/auth/status';
+    return fetch(url, { headers: aiuiAuthHeaders() })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { return !!(d && d.connected === true); })
+      .catch(function () { return false; });
+  }
+
+  // {id: true|false} for `ids`, and {id: label}. Never rejects.
+  function aiuiStatus(ids) {
+    var google = ids.filter(function (id) { return AIUI_GOOGLE_NAMES[id]; });
+    var rest = ids.filter(function (id) { return !AIUI_GOOGLE_NAMES[id]; });
+    var now = {}, names = {};
+    var asks = google.map(function (id) {
+      names[id] = AIUI_GOOGLE_NAMES[id];
+      return aiuiGoogleConnected(id).then(function (yes) { now[id] = yes; });
+    });
+    if (rest.length) {
+      asks.push(aiuiFetchConnections().then(function (list) {
+        rest.forEach(function (id) {
+          var hit = (list || []).filter(function (c) { return c && c.provider === id; })[0];
+          now[id] = !!(hit && hit.connected);
+          if (hit && hit.label) names[id] = hit.label;
+        });
+      }));
+    }
+    return Promise.all(asks).then(function () { return { now: now, names: names }; });
+  }
+
+  function aiuiChatBox() { return document.querySelector('#chat-input'); }
+
+  function aiuiComposerEmpty(box) {
+    return !!box && !String(box.value != null ? box.value : box.innerText || '').trim();
+  }
+
+  function aiuiClearComposer(box) {
+    if (!box) return;
+    if (box.tagName === 'TEXTAREA') {
+      var set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+      set.call(box, '');
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+      return;
+    }
+    box.focus();
+    document.execCommand('selectAll', false, null);
+    document.execCommand('delete', false, null);
+  }
+
+  // Types `text` into the EMPTY message box and presses Send, as the person
+  // would. done(true) once sent. done(false) leaves the box as it was:
+  // text already there is never touched, and our own text is taken back
+  // out when Send never came (a reply still running shows Stop instead).
+  function aiuiSendToChat(text, done) {
+    var box = aiuiChatBox();
+    if (!aiuiComposerEmpty(box)) { done(false); return; }
+    box.focus();
+    if (box.tagName === 'TEXTAREA') {
+      var set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+      set.call(box, text);
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+    } else {
+      document.execCommand('insertText', false, text);
+    }
+    var tries = 0;
+    (function press() {
+      var send = document.querySelector('#send-message-button');
+      if (send && !send.disabled) { send.click(); done(true); return; }
+      if (++tries > 20) { aiuiClearComposer(box); done(false); return; }
+      setTimeout(press, 100);
+    })();
+  }
+
+  // The one message row `el` sits in (aiuiMessageRowOf, which walks up by
+  // id: a prefix selector would also match the composer's container).
+  function aiuiMessageOf(el) { return el ? aiuiMessageRowOf(el) : null; }
+
+  function aiuiLastReply() {
+    var all = document.querySelectorAll('.chat-assistant');
+    return all.length ? aiuiMessageOf(all[all.length - 1]) : null;
+  }
+
+  function aiuiUserTurns() { return document.querySelectorAll('.chat-user').length; }
+
+  // The live button for a watch: Open WebUI may have drawn the message
+  // again since the click, and the old node is then gone.
+  function aiuiLiveContainer(w) {
+    if (document.body.contains(w.container)) return w.container;
+    var msg = w.msgId && document.getElementById(w.msgId);
+    return msg ? msg.querySelector('.aiui-connect-inline[data-aiui-provider="'
+                                   + w.provider + '"]') : null;
+  }
+
+  function aiuiDrawConnected(container, name) {
+    var btn = container && container.querySelector('button');
+    if (!btn) return;
+    btn.textContent = '✓ ' + name + ' connected';
+    btn.disabled = true;
+    btn.style.cursor = 'default';
+  }
+
+  // Nothing has moved on since the click, so sending is what they meant.
+  function aiuiStillHere(w) {
+    var live = aiuiLiveContainer(w);
+    var focus = document.activeElement;
+    var typingElsewhere = focus && focus !== document.body && focus !== aiuiChatBox()
+      && (focus.tagName === 'INPUT' || focus.tagName === 'TEXTAREA'
+          || focus.tagName === 'SELECT' || focus.isContentEditable);
+    return !!live && location.pathname === w.chatPath
+      && aiuiMessageOf(live) === aiuiLastReply()
+      && aiuiUserTurns() === w.userTurns
+      && !document.getElementById('aiui-integrations-overlay')
+      && !typingElsewhere;
+  }
+
+  function aiuiCarryOnButton(container, text) {
+    if (!container || container.querySelector('.aiui-carry-on')) return;
+    var go = document.createElement('button');
+    go.type = 'button';
+    go.className = 'aiui-carry-on';
+    go.textContent = 'Continue';
+    go.style.cssText = 'margin-left:8px;padding:8px 16px;background:#2563eb;color:#fff;'
+      + 'border:none;border-radius:8px;font-size:13.5px;font-weight:600;cursor:pointer;';
+    go.addEventListener('click', function () {
+      aiuiSendToChat(text, function (sent) {
+        if (sent) { go.remove(); return; }
+        go.textContent = 'Send or clear your message first, then Continue';
+      });
+    });
+    container.appendChild(go);
+  }
+
+  function aiuiJoinNames(names) {
+    if (names.length < 2) return names[0] || '';
+    return names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+  }
+
+  // Everything that finished within a moment of each other goes out as one.
+  function aiuiFlushFinished() {
+    aiuiGatherTimer = null;
+    var done = aiuiFinishedQueue;
+    aiuiFinishedQueue = [];
+    if (!done.length) return;
+    var names = [];
+    done.forEach(function (d) { if (names.indexOf(d.name) === -1) names.push(d.name); });
+    var text = AIUI_CARRY_ON_TEXT.replace('%s', aiuiJoinNames(names));
+    var here = done.every(function (d) { return aiuiStillHere(d.watch); });
+    function offer() {
+      done.forEach(function (d) { aiuiCarryOnButton(aiuiLiveContainer(d.watch), text); });
+    }
+    if (!here) { offer(); return; }
+    aiuiSendToChat(text, function (sent) { if (!sent) offer(); });
+  }
+
+  function aiuiFinish(w, name) {
+    if (w.finished) return;
+    w.finished = true;
+    aiuiStopWatch(w);
+    aiuiConnectedHere[w.provider] = name;
+    aiuiDrawConnected(aiuiLiveContainer(w), name);
+    aiuiFinishedQueue.push({ watch: w, name: name });
+    if (!aiuiGatherTimer) aiuiGatherTimer = setTimeout(aiuiFlushFinished, AIUI_CARRY_ON_GATHER_MS);
+  }
+
+  function aiuiStopWatch(w) {
+    if (w.timer) clearInterval(w.timer);
+    if (w.expire) clearTimeout(w.expire);
+    w.timer = null;
+    window.removeEventListener('message', w.onMessage);
+    // A watch that ran out can be started again by the next click.
+    if (aiuiWatches[w.provider] === w) delete aiuiWatches[w.provider];
+  }
+
+  // `fromLogin`: the login this button opened said it finished, which is
+  // enough for an app that was connected already (a reconnect). Otherwise
+  // only an app that was NOT connected at the click and is now counts.
+  function aiuiConfirm(w, fromLogin) {
+    aiuiStatus(w.ids).then(function (s) {
+      if (w.finished) return;
+      var fresh = w.ids.filter(function (id) {
+        return s.now[id] && (fromLogin || (w.before && w.before[id] === false));
+      });
+      if (fresh.length) aiuiFinish(w, w.single ? w.name : (s.names[fresh[0]] || fresh[0]));
+    });
+  }
+
+  function aiuiCarryOn(provider, label, container) {
+    if (aiuiWatches[provider] || aiuiConnectedHere[provider]) return null;
+    var tracker = provider === 'tracker';
+    var w = {
+      provider: provider,
+      ids: tracker ? AIUI_TRACKERS.slice() : [provider],
+      single: !tracker,
+      name: String(label || provider).replace(/^Connect\s+/i, ''),
+      container: container,
+      msgId: (aiuiMessageOf(container) || {}).id || '',
+      chatPath: location.pathname,
+      userTurns: aiuiUserTurns(),
+      started: Date.now(),
+      before: null,
+      win: null,
+      finished: false,
+      timer: null
+    };
+    aiuiWatches[provider] = w;
+    w.onMessage = function (e) {
+      if (e.origin !== location.origin || !w.win || e.source !== w.win) return;
+      var d = e.data || {};
+      var google = AIUI_GOOGLE_SIGNAL[provider];
+      // The Gmail link connects all three Google apps by default.
+      var hit = google ? (d.type === google || d.type === 'aiui-gmail-connected')
+                       : (d.aiuiOauth === true && d.ok === true);
+      if (hit) aiuiConfirm(w, true);
+    };
+    window.addEventListener('message', w.onMessage);
+    aiuiStatus(w.ids).then(function (s) {
+      if (w.finished || aiuiWatches[provider] !== w) return;
+      w.before = s.now;
+      if (!w.ids.some(function (id) { return s.now[id] === false; })) return;
+      w.timer = setInterval(function () { aiuiConfirm(w, false); }, AIUI_CARRY_ON_POLL_MS);
+    });
+    w.expire = setTimeout(function () { aiuiStopWatch(w); }, AIUI_CARRY_ON_FOR_MS);
+    return w;
+  }
+
   // ===== The assistant's open links =====
   // [Publish in App Builder](#aiui-open:app-builder) goes under a Publish
   // recommendation (app_triage.with_buttons). Live 2026-11-13 the answer said
@@ -2942,7 +3252,13 @@
   // window.aiuiOpenPane), or in a tab where there is no shell. Only the
   // places listed here, the same list as app_triage.OPEN_PLACES.
   var AIUI_OPEN_MARKER = '#aiui-open:';
-  var AIUI_OPEN_PLACES = { 'app-builder': '/app-builder' };
+  var AIUI_OPEN_PLACES = {
+    'app-builder': '/app-builder',
+    'cronjobs': '/cronjobs',
+    'ai-agents': '/ai-agents',
+    'video-generation': '/video-generation',
+    'channel': '/channel'
+  };
 
   function aiuiOpenPlace(place) {
     var path = AIUI_OPEN_PLACES[place];
