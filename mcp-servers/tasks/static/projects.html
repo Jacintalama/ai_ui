@@ -3035,14 +3035,17 @@
       } catch (e) { /* fail open: buttons still work, connect will prompt */ }
     }
 
-    // One-click OAuth connect: opens the Vercel install popup and waits for
+    // One-click OAuth connect: opens the Vercel install tab and waits for
     // the connection to land. Used automatically when the server has the
     // Vercel Integration configured; otherwise we fall back to token paste.
     async function vercelOauthFlow() {
       const s = await fetch("/api/tasks/vercel/oauth/start", { headers: authHeaders(), credentials: "include" });
       const body = await s.json().catch(() => ({}));
       if (!s.ok || !body.url) { alert(body.detail || "Could not start the Vercel connect."); return false; }
-      const win = window.open(body.url, "_blank", "width=740,height=800");
+      // A tab, not a popup: a popup lands behind the window that opened it. Still after
+      // an await, so it can still be blocked; hoisting it into the
+      // click is on card lk6b59yN.
+      const win = window.open(body.url, "_blank");
       for (let i = 0; i < 60; i++) {
         await new Promise((r) => setTimeout(r, 2500));
         try {

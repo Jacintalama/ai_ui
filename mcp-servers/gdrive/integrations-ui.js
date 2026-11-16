@@ -216,7 +216,10 @@
     overlay.appendChild(modal);
 
     modal.querySelector('#aiui-reconnect-btn').addEventListener('click', function() {
-      window.open(GDRIVE_API + '/auth/google/link', 'aiui-oauth', 'width=600,height=700');
+      // A tab, not a popup. A popup lands behind the window that
+      // opened it, and on 2026-11-16 an Airtable approval popup
+      // could not be found or clicked at all.
+      window.open(GDRIVE_API + '/auth/google/link', 'aiui-oauth');
       overlay.remove();
     });
 
@@ -1092,14 +1095,38 @@
           sawOk = null;
           go1.disabled = true;
           go1.textContent = 'Opening ' + app.name + '…';
+          // Opened synchronously, inside the click, and navigated once
+          // the start URL arrives. A window opened after a fetch has
+          // lost the click that justified it and Chrome blocks it,
+          // which is what the inline connect buttons below already
+          // work around. This flow never got the same treatment, and
+          // on 2026-11-16 that is what stalled an Airtable reconnect
+          // four deployed write tools were waiting on.
+          //
+          // A TAB, not a popup: no width and no height. A popup
+          // lands behind the window that opened it, which is how
+          // that same approval went missing.
+          var win = window.open('', 'aiui-oauth');
+          if (aiuiPopupBlocked(win)) {
+            go1.disabled = false;
+            go1.textContent = ONE_CLICK;
+            msg.style.color = '#e07070';
+            msg.textContent = 'Your browser blocked that tab. Click the '
+              + 'blocked icon in your address bar, allow it for this '
+              + 'site, then try again.';
+            return;
+          }
           fetch('/api/tasks/connections/' + app.id + '/oauth/start',
                 { headers: authHeaders() })
             .then(function (r) { return r.json(); })
             .then(function (d) {
-              if (!d || !d.url) throw new Error('no url');
-              var win = window.open(d.url, 'aiui-oauth', 'width=760,height=820');
-              // The popup posts back when it lands on our callback page. Also
-              // poll for it closing, because a user can dismiss the window and
+              if (!d || !d.url) {
+                try { win.close(); } catch (e) {}
+                throw new Error('no url');
+              }
+              win.location = d.url;
+              // The tab posts back when it lands on our callback page. Also
+              // poll for it closing, because a user can dismiss the tab and
               // no message ever arrives.
               function finish() {
                 window.removeEventListener('message', onMsg);
@@ -1128,7 +1155,7 @@
                       ? (sawOk === false
                          ? 'That did not complete, so nothing changed. Your '
                            + 'existing connection is still in place.'
-                         : 'That window closed before it finished. Nothing '
+                         : 'That tab closed before it finished. Nothing '
                            + 'changed.')
                       : 'That did not complete. Try again, or paste a token below.';
                   });
@@ -1145,6 +1172,7 @@
               }, 700);
             })
             .catch(function () {
+              try { win.close(); } catch (e) {}
               go1.disabled = false;
               go1.textContent = ONE_CLICK;
               msg.style.color = '#e07070';
