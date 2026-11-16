@@ -374,7 +374,12 @@ Connect buttons under the answer. Two rules worth knowing:
   apps, and the apps' 0.90 missed every deploy question. Only for apps built in
   the App Builder; recommended as the straightforward way, the how-to line is
   the service's, and outside hosts are ruled out in the brief. Vercel is its
-  own entry because "deploy it to Vercel" did not reach Publish.
+  own entry because "deploy it to Vercel" did not reach Publish. Under the
+  answer goes a **Publish in App Builder** button (2026-11-16):
+  `[...](#aiui-open:app-builder)`, which `integrations-ui.js` turns into a
+  button that opens the App Builder pane through `window.aiuiOpenPane`
+  (`task-panel.js`), a tab where there is no shell. Only places in
+  `app_triage.OPEN_PLACES`, and the page keeps the same list.
 - **Skills (2026-11-13)**: `agent_jev.pick_skills_for_message`, a fourth
   question, 0.90, BUILT-IN skills only (the cut was measured on them),
   timeboxed. A picked skill runs the assistant with the `skills` tool and the

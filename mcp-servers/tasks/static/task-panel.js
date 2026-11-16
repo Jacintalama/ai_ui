@@ -667,6 +667,21 @@
       }
     });
 
+    // --- window.aiuiOpenPane ---------------------------------------------
+    // The same for the chat itself: a button under a reply ("Publish in App
+    // Builder", integrations-ui.js "#aiui-open:") opens a pane exactly as its
+    // sidebar entry would, rather than throwing the person out of the shell
+    // (2026-11-16). Only the urlPath of an entry open to everyone; returns
+    // whether it opened, so the caller can fall back to a tab.
+    window.aiuiOpenPane = (path) => {
+      if (typeof path !== "string") return false;
+      const cfg = NAV_ENTRIES.find(
+        (c) => c.embed && c.allUsers && c.urlPath === path);
+      if (!cfg) return false;
+      openAiuiEmbed(cfg);
+      return true;
+    };
+
     // Mirrors the original App Builder cloning logic exactly, parameterized
     // by `cfg` (label / title / target href / icon).
     function buildEntry(rowWrapper, cfg) {

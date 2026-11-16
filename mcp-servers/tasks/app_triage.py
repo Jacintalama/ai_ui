@@ -28,6 +28,12 @@ MAX_APPS = 3
 #: every other id opens the Connections panel, where its card is.
 CONNECT = "#aiui-connect:"
 
+#: What `#aiui-open:<place>` opens in the main chat (integrations-ui.js): a
+#: page of the platform, in its pane, as its sidebar entry would. Only the
+#: places listed here; the page keeps the same list.
+OPEN = "#aiui-open:"
+OPEN_PLACES = ("app-builder",)
+
 
 @dataclass(frozen=True)
 class App:
@@ -183,6 +189,11 @@ class Platform:
     how: str
     #: Words that mean the answer already said it.
     says: tuple = ()
+    #: The button under the answer: its words, and the place it opens (one
+    #: of OPEN_PLACES). Live 2026-11-13 the answer said "click Publish" and
+    #: gave nothing to click (2026-11-16).
+    button: str = ""
+    opens: str = "app-builder"
 
 
 #: Lukas, 2026-11-13: "we can deploy the application if they build it, so it
@@ -202,7 +213,7 @@ _PLATFORM = (
              "preview) and click Publish: it goes live at its own link "
              "straight away. The same window can deploy it to your own "
              "Vercel account instead, once you connect Vercel there.",
-             says=("publish",)),
+             says=("publish",), button="Publish in App Builder"),
     # Its own entry: asked about Publish alone, "deploy it to Vercel" scored
     # 0.46 to 0.51 even with the build in the conversation, because Vercel
     # reads as somewhere else. Measured 2026-11-13.
@@ -214,7 +225,7 @@ _PLATFORM = (
              "To put it on your own Vercel, open the app in the App Builder "
              "(or its preview), click Publish and choose Deploy to your "
              "Vercel account; the first time it asks you to connect Vercel.",
-             says=("vercel",)),
+             says=("vercel",), button="Deploy to Vercel in App Builder"),
 )
 PLATFORM = {p.id: p for p in _PLATFORM}
 
@@ -452,9 +463,15 @@ def with_buttons(answer: str, p) -> str:
     # What the platform does itself: how, in the service's words, unless the
     # answer already said it (2026-11-13: left alone, the model suggests
     # whatever host it read about).
+    # And a button to the place where it is done, whatever the answer said:
+    # one per place, since Publish and Vercel open the same window.
     for x in (p or {}).get("platform") or []:
-        if not any(w in low for w in PLATFORM[x["id"]].says):
+        feat = PLATFORM[x["id"]]
+        if not any(w in low for w in feat.says):
             lines.append(x["how"])
+        href = OPEN + feat.opens
+        if feat.button and href not in low and not any(href in b for b in buttons):
+            buttons.append("[%s](%s)" % (feat.button, href))
     if not buttons:
         return (answer.rstrip() + "\n\n" + "\n".join(lines)) if lines else answer
     # The buttons go last, together on one line: one paragraph, so they sit
@@ -482,7 +499,7 @@ def already_offered(messages, turns: int = 6, skill_names=()) -> set:
         # matching only that line re-offered Publish on every follow-up
         # (review 2026-11-13).
         out |= {i for i, x in PLATFORM.items()
-                if any(w in said for w in x.says)}
+                if any(w in said for w in x.says) or OPEN + x.opens in said}
     return out | skills_offered(messages, skill_names, turns)
 
 
