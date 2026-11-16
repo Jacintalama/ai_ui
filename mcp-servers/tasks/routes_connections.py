@@ -24,6 +24,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 import connection_health as H
+import connect_attempt as CA
 import host_guard
 import connections as C
 import crypto_utils
@@ -320,6 +321,11 @@ async def oauth_start(provider_id: str,
     # oauth/start calls and zero callbacks when this route pointed every
     # connect at the install page, so the two cases genuinely differ and
     # the ordinary authorize URL is what a reconnect needs.
+    # Recorded the moment we send them out, because the commonest
+    # failure of all is a person who never comes back, and until now that
+    # left no trace whatsoever.
+    await CA.record(user.email, provider_id, "started")
+
     if provider_id == "github" and not await _has_connection(user.email,
                                                              provider_id):
         install = O.install_url(state)
@@ -412,17 +418,25 @@ async def oauth_callback(provider_id: str, code: str = "", state: str = "",
         # the first real connect of a new provider is exactly when that
         # difference matters: `invalid_scope` means the scope string or its
         # encoding is wrong, which nobody can guess from "Cancelled".
+        # Either they pressed Cancel or the vendor refused because OUR
+        # authorize URL is wrong: `invalid_scope` is us, not them. No email,
+        # because the state that carries it has not been opened yet, and
+        # opening it here would spend a one-use value on a dead end.
+        await CA.record("", provider_id, "declined")
         return _oauth_done(False, "Cancelled, or " + provider.label
                            + " refused the request." + _vendor_reason(error,
                                                                       error_description))
 
     started = O.STATES.take(state)
     if not started:
-        # Expired, replayed or forged. All three get the same answer.
+        # Expired, replayed or forged. All three get the same answer. The
+        # email is unknown for the same reason: the state was what carried it.
+        await CA.record("", provider_id, "state_bad")
         return _oauth_done(False, "That approval link has expired. Start the "
                                   "connection again.")
     email = started.email
     if not code:
+        await CA.record(email, provider_id, "no_code")
         return _oauth_done(False, provider.label + " did not return a code.")
 
     client_id, client_secret = O.client_credentials(provider_id)
@@ -433,6 +447,7 @@ async def oauth_callback(provider_id: str, code: str = "", state: str = "",
     # `invalid_grant` the person has no way to act on.
     if prov.pkce and not started.verifier:
         logger.warning("oauth: %s callback had no PKCE verifier", provider_id)
+        await CA.record(email, provider_id, "verifier_missing")
         return _oauth_done(False, "That approval link has expired. Start the "
                                   "connection again.")
 
@@ -462,6 +477,7 @@ async def oauth_callback(provider_id: str, code: str = "", state: str = "",
     except Exception as e:
         logger.warning("oauth: %s token exchange unreachable (%s)",
                        provider_id, type(e).__name__)
+        await CA.record(email, provider_id, "exchange_unreachable")
         return _oauth_done(False, "Could not reach " + provider.label + ".")
 
     if r.status_code >= 400:
@@ -469,6 +485,7 @@ async def oauth_callback(provider_id: str, code: str = "", state: str = "",
         # carries the client secret.
         logger.warning("oauth: %s token exchange returned %s",
                        provider_id, r.status_code)
+        await CA.record(email, provider_id, "exchange_refused", r.status_code)
         return _oauth_done(False, provider.label + " rejected the approval.")
 
     try:
@@ -476,6 +493,7 @@ async def oauth_callback(provider_id: str, code: str = "", state: str = "",
     except Exception as e:
         logger.warning("oauth: %s token response unusable (%s)",
                        provider_id, type(e).__name__)
+        await CA.record(email, provider_id, "token_unusable")
         return _oauth_done(False, provider.label
                            + " did not return a usable token.")
 
@@ -493,6 +511,7 @@ async def oauth_callback(provider_id: str, code: str = "", state: str = "",
         jira_sites = await _jira_sites(values)
         if jira_sites is None:
             logger.warning("oauth: jira approved, could not read the sites")
+            await CA.record(email, provider_id, "probe_unreachable")
             return _oauth_done(False, "Approved, but IO could not ask which "
                                       "Jira site to use. Try connecting "
                                       "again in a moment.")
@@ -502,6 +521,7 @@ async def oauth_callback(provider_id: str, code: str = "", state: str = "",
             # rather than store a connection that passes every check and
             # does nothing.
             logger.warning("oauth: jira token reaches no site")
+            await CA.record(email, provider_id, "no_site")
             return _oauth_done(
                 False, "Approved, but that account can reach no Jira site. "
                        "Open Jira in your browser first, then connect again.")
@@ -519,6 +539,7 @@ async def oauth_callback(provider_id: str, code: str = "", state: str = "",
         if not ok:
             logger.warning("oauth: %s approved but the token did not work "
                            "(%s)", provider_id, why)
+            await CA.record(email, provider_id, "token_rejected")
             return _oauth_done(False, provider.label + " approved the "
                                "connection, but the token it gave back did "
                                "not work.")
@@ -539,6 +560,7 @@ async def oauth_callback(provider_id: str, code: str = "", state: str = "",
             # are two acts, this is the second one, and the person has no
             # way to find that page on their own.
             logger.warning("oauth: github authorised with no installation")
+            await CA.record(email, provider_id, "no_install")
             return _oauth_done(
                 False, "Authorised. One more step: IO needs to be installed "
                        "on the account that holds your repositories before "
@@ -550,9 +572,11 @@ async def oauth_callback(provider_id: str, code: str = "", state: str = "",
     except Exception as e:
         logger.warning("oauth: %s could not store (%s)", provider_id,
                        type(e).__name__)
+        await CA.record(email, provider_id, "store_failed")
         return _oauth_done(False, "Could not save that connection.")
 
     logger.info("oauth: %s connected %s as %s", email, provider_id, label)
+    await CA.record(email, provider_id, "connected")
 
     if provider_id == "github":
         # A GitHub connect ALWAYS ends with a way to choose repositories,
@@ -1015,6 +1039,9 @@ async def connect(provider_id: str, body: ConnectBody,
         # said no. Telling someone their token is wrong because ClickUp was
         # down sends them off to regenerate a perfectly good credential.
         unreachable = error and error.startswith("Could not reach")
+        await CA.record(user.email, provider_id,
+                        "probe_unreachable" if unreachable
+                        else "token_rejected")
         raise HTTPException(status_code=502 if unreachable else 400,
                             detail=error)
 
@@ -1022,10 +1049,12 @@ async def connect(provider_id: str, body: ConnectBody,
         await _store_connection(user.email, provider_id, values, label)
     except Exception as e:
         logger.warning("connections: write failed: %s", e)
+        await CA.record(user.email, provider_id, "store_failed")
         raise HTTPException(status_code=503, detail="Connections unavailable.")
 
     logger.info("connections: %s connected %s as %s",
                 user.email, provider_id, label)
+    await CA.record(user.email, provider_id, "connected")
     return {"provider": provider_id, "connected": True, "account_label": label}
 
 
