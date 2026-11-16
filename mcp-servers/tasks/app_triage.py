@@ -75,7 +75,16 @@ _APPS = (
         "change a row",
         ("list_my_bases", "list_tables", "list_records", "create_table",
          "create_record", "create_records", "update_record"),
-        cannot="make a new base, or delete a table or a row"),
+        # "cannot change a column from text to a dropdown" is measured,
+        # not assumed: PATCH on a field answers 422 "Changing a
+        # field's type or number precision is not currently
+        # supported", and there is no delete-table endpoint at all
+        # (404). Both checked against a real base on 2026-11-16. A
+        # person who asks for either should be told, not left with a
+        # 422 that reads like a broken connector.
+        cannot="make a new base, delete a table or a row, or change a "
+               "column's type once it exists, such as turning a text "
+               "column into a dropdown"),
     App("outlook", "Outlook",
         "email, calendar and contacts on Microsoft 365 or Outlook.com: "
         "reading and sending mail, what is on the calendar, booking a "
