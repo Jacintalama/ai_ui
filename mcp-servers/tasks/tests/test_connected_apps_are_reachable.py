@@ -54,6 +54,7 @@ SPOKEN = {
     "jira": "jira",
     "dropbox": "dropbox",
     "linkedin": "linkedin",
+    "outlook": "outlook",
 }
 
 

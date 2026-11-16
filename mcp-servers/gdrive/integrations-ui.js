@@ -769,6 +769,7 @@
       { id: 'linkedin', real: true, token: true, name: 'LinkedIn', domain: 'linkedin.com', cat: 'Social' },
       { id: 'facebook', name: 'Facebook', domain: 'facebook.com', cat: 'Social' },
       { id: 'dropbox', real: true, token: true, name: 'Dropbox', domain: 'dropbox.com', cat: 'Platform' },
+      { id: 'outlook', real: true, token: true, name: 'Outlook', domain: 'outlook.com', cat: 'Productivity' },
       { id: 'stripe', name: 'Stripe', domain: 'stripe.com', cat: 'Platform' }
     ];
 

@@ -76,6 +76,19 @@ _APPS = (
         ("list_my_bases", "list_tables", "list_records", "create_table",
          "create_record", "create_records", "update_record"),
         cannot="make a new base, or delete a table or a row"),
+    App("outlook", "Outlook",
+        "email, calendar and contacts on Microsoft 365 or Outlook.com: "
+        "reading and sending mail, what is on the calendar, booking a "
+        "meeting, and the address book. Half of business is not on "
+        "Gmail",
+        "read and search your mail, send mail as you, see your calendar "
+        "including recurring meetings, add an event, and list your "
+        "contacts",
+        ("list_mail", "search_mail", "get_mail", "send_mail",
+         "list_events", "create_event", "list_contacts"),
+        cannot="delete mail, reply to a thread, or change or cancel an "
+               "event once it is made",
+        says=("outlook", "microsoft", "office 365", "microsoft 365")),
     App("hubspot", "HubSpot",
         "a CRM for sales: leads, contacts, companies and deals, and keeping "
         "track of following up with customers",

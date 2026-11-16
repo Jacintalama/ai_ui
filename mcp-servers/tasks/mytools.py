@@ -28,6 +28,7 @@ is a model, and a 5xx reaches it as a tool-call failure with nothing usable in
 it, whereas a sentence gets read and acted on. "You have not connected your
 GitHub yet" is a thing a model can relay; a vendor 401 is not.
 """
+import datetime
 import logging
 from dataclasses import dataclass, field as _dc_field
 from typing import Any, Callable, Dict, List, Optional
@@ -155,6 +156,23 @@ def _payload_for(tool: "Tool", args: Optional[Dict[str, Any]]) -> Optional[Dict]
         if value not in (None, ""):
             out[key] = value
     return {tool.wrap_body: out} if tool.wrap_body else out
+
+
+def _no_body_result(tool: "Tool") -> Dict[str, Any]:
+    """What to answer when the vendor sent no body at all.
+
+    Graph answers sendMail with 202 Accepted and nothing else, and it is
+    not alone in that. The old blanket fallback was `items: []`, which is
+    the right answer to a search that found nothing and exactly the wrong
+    answer to a send: a model told "items: []" after being asked to send
+    an email has every reason to believe it did not go, and to try again.
+
+    So a WRITE that came back empty says it was done, and a read that came
+    back empty still says nothing was found.
+    """
+    if getattr(tool, "writes", False):
+        return {"ok": True, "done": True}
+    return {"ok": True, "items": []}
 
 
 def _query_for(tool: "Tool", args: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -384,8 +402,24 @@ async def _linkedin_prepare(tool_name, args, get):
     return args, None
 
 
+async def _outlook_prepare(tool_name, args, get):
+    """Put a time window on a calendar read.
+
+    calendarView REQUIRES startDateTime and endDateTime and answers
+    400 without them. A model asked "what is on my calendar" has no
+    reason to know that, so the window is supplied here rather than
+    left to be discovered.
+    """
+    if tool_name != "list_events":
+        return args, None
+    args = dict(args or {})
+    args.update(_outlook_window(args))
+    return args, None
+
+
 PREPARE = {"clickup": _clickup_prepare, "trello": _trello_prepare,
            "linkedin": _linkedin_prepare,
+           "outlook": _outlook_prepare,
            "github": _github_prepare}
 
 
@@ -623,7 +657,7 @@ async def _call(provider_id: str, tool: Tool, email: str,
     try:
         data = r.json()
     except Exception:
-        return {"ok": True, "items": []}
+        return _no_body_result(tool)
 
     data = _as_list(data, tool)
     if isinstance(data, list):
@@ -1697,6 +1731,200 @@ DROPBOX_TOOLS = [
          keep=("account_id", "email", "name")),
 ]
 
+# --- Outlook ---------------------------------------------------------------
+
+#: How far ahead a calendar read looks when nobody said.
+_OUTLOOK_DEFAULT_DAYS = 7
+
+#: What is worth keeping off a message. Graph returns about forty fields
+#: per message, most of them routing metadata nobody reads.
+_OUTLOOK_MAIL_KEEP = ("id", "subject", "from", "toRecipients",
+                      "receivedDateTime", "bodyPreview", "isRead", "webLink")
+
+_OUTLOOK_EVENT_KEEP = ("id", "subject", "start", "end", "location",
+                       "organizer", "attendees", "isAllDay", "webLink")
+
+#: Graph wraps every collection in {"value": [...]}.
+def _odata_value(d):
+    return (d or {}).get("value", [])
+
+
+def _outlook_stamp(when) -> str:
+    """ISO 8601 with an explicit offset.
+
+    A value with no offset is read as UTC, which moves somebody's day by
+    up to thirteen hours without saying so.
+    """
+    return when.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _outlook_window(args):
+    """startDateTime and endDateTime, which calendarView REQUIRES.
+
+    Pure, so a test can read what would be sent with no clock stubbing
+    beyond what it chooses to pass in.
+    """
+    given = args or {}
+    start = str(given.get("start") or "").strip()
+    end = str(given.get("end") or "").strip()
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if not start:
+        start = _outlook_stamp(now)
+    if not end:
+        base = now
+        try:
+            base = datetime.datetime.fromisoformat(
+                start.replace("Z", "+00:00"))
+        except Exception:                                   # noqa: BLE001
+            pass
+        end = _outlook_stamp(base + datetime.timedelta(
+            days=_OUTLOOK_DEFAULT_DAYS))
+    return {"startDateTime": start, "endDateTime": end}
+
+
+def _outlook_people(given):
+    """One string of addresses into Graph's recipient shape.
+
+    A model writes "a@x.com, b@y.com" far more often than it builds a list
+    of objects, and semicolons are what Outlook itself puts between
+    addresses, so both separators are accepted.
+    """
+    raw = str(given or "").replace(";", ",")
+    return [{"emailAddress": {"address": a.strip()}}
+            for a in raw.split(",") if a.strip()]
+
+
+def _outlook_send_body(args):
+    given = args or {}
+    body = {"message": {
+        "subject": given.get("subject") or "",
+        "body": {"contentType": "Text", "content": given.get("body") or ""},
+        "toRecipients": _outlook_people(given.get("to"))},
+        # Named rather than left out: Graph defaults it to true, and a sent
+        # mail missing from Sent Items is the kind of thing somebody
+        # notices a week later.
+        "saveToSentItems": True}
+    cc = _outlook_people(given.get("cc"))
+    if cc:
+        body["message"]["ccRecipients"] = cc
+    return body
+
+
+def _outlook_event_body(args):
+    given = args or {}
+    window = _outlook_window({"start": given.get("start"),
+                              "end": given.get("end")})
+    event = {
+        "subject": given.get("subject") or "",
+        "start": {"dateTime": window["startDateTime"], "timeZone": "UTC"},
+        "end": {"dateTime": window["endDateTime"], "timeZone": "UTC"},
+    }
+    if given.get("body"):
+        event["body"] = {"contentType": "Text", "content": given["body"]}
+    if given.get("location"):
+        event["location"] = {"displayName": given["location"]}
+    people = _outlook_people(given.get("attendees"))
+    if people:
+        event["attendees"] = [dict(p, type="required") for p in people]
+    return event
+
+
+OUTLOOK_TOOLS = [
+    Tool(name="whoami",
+         summary="Show which Outlook or Microsoft account is connected to "
+                 "your assistant.",
+         method="GET", path="/me",
+         writes=False,
+         keep=("id", "displayName", "mail", "userPrincipalName")),
+    Tool(name="list_mail",
+         summary="List the most recent messages in your Outlook inbox.",
+         method="GET", path="/me/messages",
+         args={"limit": ("integer", "How many messages to return", False)},
+         query={"$top": "limit"},
+         query_defaults={
+             "$top": "25",
+             "$select": ",".join(_OUTLOOK_MAIL_KEEP),
+             "$orderby": "receivedDateTime desc"},
+         writes=False,
+         unwrap=_odata_value,
+         keep=_OUTLOOK_MAIL_KEEP),
+    Tool(name="search_mail",
+         summary="Search your Outlook mail for words in the subject, body "
+                 "or sender.",
+         method="GET", path="/me/messages",
+         args={"query": ("string", "Words to look for", True),
+               "limit": ("integer", "How many messages to return", False)},
+         query={"$search": "query", "$top": "limit"},
+         # NO $orderby here, deliberately. Graph refuses $search combined
+         # with $orderby, so copying the listing's defaults would make
+         # every search a 400.
+         query_defaults={"$top": "25"},
+         writes=False,
+         unwrap=_odata_value,
+         keep=_OUTLOOK_MAIL_KEEP),
+    Tool(name="get_mail",
+         summary="Read one Outlook message in full, by its id.",
+         method="GET", path="/me/messages/{message_id}",
+         args={"message_id": ("string", "The message id", True)},
+         writes=False,
+         keep=_OUTLOOK_MAIL_KEEP + ("body",)),
+    Tool(name="send_mail",
+         summary="Send an email from your own Outlook account. It goes out "
+                 "under your name and lands in your Sent Items.",
+         method="POST", path="/me/sendMail",
+         args={"to": ("string",
+                      "Who to send it to. Several addresses can be "
+                      "separated by commas.", True),
+               "subject": ("string", "The subject line", True),
+               "body": ("string", "What to say", True),
+               "cc": ("string", "Anyone to copy, comma separated", False)},
+         shape=_outlook_send_body,
+         writes=True),
+    Tool(name="list_events",
+         summary="List what is on your Outlook calendar, including "
+                 "recurring meetings. Defaults to the next seven days.",
+         # calendarView, NOT /me/events. events returns the series master
+         # of a recurring meeting; calendarView expands it into the
+         # occurrences that are actually in the week somebody asked about.
+         method="GET", path="/me/calendarView",
+         args={"start": ("string",
+                         "When to look from, like 2026-11-16T00:00:00Z. "
+                         "Leave it out for now.", False),
+               "end": ("string", "When to look until. Leave it out for "
+                                 "seven days ahead.", False),
+               "limit": ("integer", "How many events to return", False)},
+         query={"startDateTime": "startDateTime",
+                "endDateTime": "endDateTime", "$top": "limit"},
+         query_defaults={"$top": "50", "$orderby": "start/dateTime"},
+         writes=False,
+         unwrap=_odata_value,
+         keep=_OUTLOOK_EVENT_KEEP),
+    Tool(name="create_event",
+         summary="Put a new event on your own Outlook calendar.",
+         method="POST", path="/me/events",
+         args={"subject": ("string", "What the event is called", True),
+               "start": ("string",
+                         "When it starts, like 2026-11-17T09:00:00Z", True),
+               "end": ("string", "When it ends", False),
+               "body": ("string", "Any notes", False),
+               "location": ("string", "Where it is", False),
+               "attendees": ("string",
+                             "Who to invite, comma separated", False)},
+         shape=_outlook_event_body,
+         writes=True,
+         keep=_OUTLOOK_EVENT_KEEP),
+    Tool(name="list_contacts",
+         summary="List the contacts saved in your own Outlook address book.",
+         method="GET", path="/me/contacts",
+         args={"limit": ("integer", "How many contacts to return", False)},
+         query={"$top": "limit"},
+         query_defaults={"$top": "50"},
+         writes=False,
+         unwrap=_odata_value,
+         keep=("id", "displayName", "emailAddresses", "companyName",
+               "mobilePhone")),
+]
+
 # --- LinkedIn --------------------------------------------------------------
 #
 # The narrowest connector here, because LinkedIn's open permissions are
@@ -1774,6 +2002,7 @@ LINKEDIN_TOOLS = [
 
 PROVIDER_TOOLS: Dict[str, List[Tool]] = {
     "github": GITHUB_TOOLS,
+    "outlook": OUTLOOK_TOOLS,
     "clickup": CLICKUP_TOOLS,
     "trello": TRELLO_TOOLS,
     "notion": NOTION_TOOLS,
