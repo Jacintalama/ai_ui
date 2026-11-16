@@ -21,6 +21,28 @@ def test_every_app_the_platform_can_connect_is_in_the_catalogue():
     assert set(app_triage.APPS) == connectable
 
 
+def test_no_id_appears_twice_in_the_catalogue():
+    """catalogue_ids() is list(APPS) + list(PLATFORM), and Jev's questions
+    are numbered by its order, so a repeated id is not a tidiness problem.
+
+    `plan` filters the same pick into BOTH lists, so one score would
+    recommend connecting an app AND using a platform feature at once.
+
+    It nearly happened on 2026-11-16: Vercel became a connectable
+    provider, which forces an APPS entry with the id `vercel`, and
+    PLATFORM already had one. The platform entry is `deploy_vercel` now,
+    because APPS ids are forced to match connections.PROVIDERS and
+    PLATFORM ids are ours to choose.
+    """
+    ids = app_triage.catalogue_ids()
+    seen, twice = set(), []
+    for i in ids:
+        (twice.append(i) if i in seen else seen.add(i))
+    assert twice == [], (
+        "these ids appear twice in the catalogue Jev is asked about, so a "
+        "single answer lands in two places: " + ", ".join(twice))
+
+
 def test_every_can_line_rests_on_tools_that_exist():
     """No guessing: an 'IO can' sentence names its tools, and they are real."""
     for app in app_triage.APPS.values():

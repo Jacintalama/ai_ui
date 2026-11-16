@@ -217,6 +217,24 @@ def _hubspot_auth(v):
                       headers={"Authorization": "Bearer " + _require(v, "token")})
 
 
+def _vercel_auth(v):
+    """Vercel's REST API.
+
+    The team id is a QUERY parameter, not a header, and it is not
+    cosmetic: a call made without it reads the personal account, which is
+    a different set of projects from the team's. Somebody whose work
+    lives in a team would be told they have no projects.
+    """
+    params = {}
+    team = (v or {}).get("team_id")
+    if team:
+        params["teamId"] = team
+    return VendorAuth(base_url="https://api.vercel.com",
+                      headers={"Authorization": "Bearer "
+                                                + _require(v, "token")},
+                      params=params)
+
+
 def _outlook_auth(v):
     """Microsoft Graph, v1.0. Not the beta endpoint: beta changes
     without notice and is not supported for anything real."""
@@ -362,6 +380,12 @@ def _hubspot_label(d):
     d = d or {}
     portal = d.get("portalId")
     return ("HubSpot portal " + str(portal)) if portal else ""
+
+
+def _vercel_label(d):
+    """Vercel nests the account one level down, under "user"."""
+    user = (d or {}).get("user") or {}
+    return user.get("username") or user.get("email") or ""
 
 
 def _outlook_label(d):
@@ -512,6 +536,21 @@ PROVIDERS: Dict[str, Provider] = {
         build_auth=_outlook_auth,
         probe_path="/me",
         read_label=_outlook_label,
+    ),
+    "vercel": Provider(
+        id="vercel",
+        label="Vercel",
+        # It has had a paste path since it existed (routes_vercel's
+        # /connect), and a Vercel access token does not expire, so unlike
+        # Dropbox and Outlook a pasted one is a real connection rather
+        # than an afternoon's.
+        fields=[Field("token", "Access token", placeholder="Vercel token")],
+        where="Vercel: vercel.com/account/tokens. Give the token access "
+              "to the team whose projects you want to deploy to, not just "
+              "your personal account.",
+        build_auth=_vercel_auth,
+        probe_path="/v2/user",
+        read_label=_vercel_label,
     ),
     "zapier": Provider(
         id="zapier",

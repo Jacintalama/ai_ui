@@ -10,6 +10,7 @@ never logged, and never returned to the client after connect.
 """
 import asyncio
 import base64
+import json
 import logging
 import os
 import re
@@ -275,17 +276,145 @@ async def ensure_tables(conn) -> None:
         """)
 
 
-async def _stored_token(conn, email: str):
-    row = await conn.fetchrow(
-        "SELECT token_enc, team_id, username FROM vercel_tokens "
-        "WHERE user_email = $1", email)
+#: Vercel's name in the shared credential store, where every other
+#: connection lives.
+SHARED_PROVIDER = "vercel"
+
+
+async def _shared_token(conn, email: str):
+    """The credential from tasks.user_connections, decrypted."""
+    try:
+        row = await conn.fetchrow(
+            "SELECT secrets_encrypted, account_label "
+            "FROM tasks.user_connections "
+            "WHERE email = $1 AND provider = $2", email, SHARED_PROVIDER)
+    except Exception:                                       # noqa: BLE001
+        return None
     if not row:
         return None
     try:
-        return {"token": crypto_utils.decrypt(row["token_enc"]),
-                "team_id": row["team_id"], "username": row["username"]}
-    except Exception:
+        values = json.loads(crypto_utils.decrypt(row["secrets_encrypted"]))
+    except Exception:                                       # noqa: BLE001
         return None  # wrong key / tampered -> treat as not connected
+    if not isinstance(values, dict) or not values.get("token"):
+        return None
+    return {"token": values["token"],
+            "team_id": values.get("team_id"),
+            "username": values.get("username")
+                        or row["account_label"] or ""}
+
+
+async def _promote(conn, email: str, values: dict, label: str) -> None:
+    """Move a credential out of the old table into the shared one.
+
+    check_ok and checked_at are left NULL on purpose. The shared store
+    sets them TRUE where a credential has just been proved with the
+    vendor; nothing has been proved here, and "nobody has checked this
+    yet" is a different thing from "this works". The daily sweep will
+    decide, which is the whole point of moving it.
+
+    Fails open: a promotion that does not happen costs one extra read
+    next time, while raising here would break somebody's deploy.
+    """
+    try:
+        await conn.execute(
+            """
+            INSERT INTO tasks.user_connections
+                (email, provider, secrets_encrypted, account_label,
+                 updated_at, check_ok, checked_at)
+            VALUES ($1, $2, $3, $4, now(), NULL, NULL)
+            ON CONFLICT (email, provider) DO UPDATE
+                SET secrets_encrypted = EXCLUDED.secrets_encrypted,
+                    account_label = EXCLUDED.account_label,
+                    updated_at = now()
+            """,
+            email, SHARED_PROVIDER,
+            crypto_utils.encrypt(json.dumps(values)), label or "")
+    except Exception as e:                                  # noqa: BLE001
+        logger.warning("vercel: could not promote a credential (%s)",
+                       type(e).__name__)
+
+
+async def _save_token(conn, email: str, values: dict, label: str,
+                      verified: bool) -> None:
+    """Store a Vercel credential where every other credential lives.
+
+    `verified` says whether the vendor has just confirmed this token. The
+    paste path has: `_vercel_username` raises and the route answers 502,
+    so nothing unverified reaches here. The OAuth callback has NOT always:
+    it falls back to the label "connected" when that lookup fails, and a
+    token nobody has proved must not be recorded as proved. check_ok is
+    left NULL in that case, which the sweep reads as "nobody has used
+    this yet" rather than as "this works".
+    """
+    await conn.execute(
+        """
+        INSERT INTO tasks.user_connections
+            (email, provider, secrets_encrypted, account_label,
+             updated_at, check_ok, checked_at)
+        VALUES ($1, $2, $3, $4, now(), $5,
+                CASE WHEN $5 IS TRUE THEN now() ELSE NULL END)
+        ON CONFLICT (email, provider) DO UPDATE
+            SET secrets_encrypted = EXCLUDED.secrets_encrypted,
+                account_label = EXCLUDED.account_label,
+                updated_at = now(),
+                check_ok = EXCLUDED.check_ok,
+                checked_at = EXCLUDED.checked_at
+        """,
+        email, SHARED_PROVIDER, crypto_utils.encrypt(json.dumps(values)),
+        label or "", True if verified else None)
+
+
+async def _forget_token(conn, email: str) -> None:
+    """Disconnect, from BOTH stores.
+
+    Deleting only one is how a disconnect becomes a lie: the credential
+    is still there and the next read promotes it straight back.
+    """
+    await conn.execute(
+        "DELETE FROM tasks.user_connections "
+        "WHERE email = $1 AND provider = $2", email, SHARED_PROVIDER)
+    await conn.execute("DELETE FROM vercel_tokens WHERE user_email = $1",
+                       email)
+
+
+async def _stored_token(conn, email: str):
+    """This person's Vercel credential, from whichever store holds it.
+
+    There were two. `vercel_tokens` was Vercel's own, known to this file
+    and to nothing else in the codebase, which is why a Vercel token had
+    no card, no tools, and was never once asked whether it still worked
+    while every other credential was swept daily. The shared store is
+    tasks.user_connections.
+
+    The migration is LAZY rather than a SQL move, because a SQL move
+    needs a window in which the token is in neither place and there is a
+    live one with three published apps behind it. So: read the shared
+    store, fall back to the old table, and promote what is found there.
+    Safe to run twice, harmless if it never runs for somebody, and the
+    old table can be dropped once it is empty.
+    """
+    shared = await _shared_token(conn, email)
+    if shared:
+        return shared
+
+    try:
+        row = await conn.fetchrow(
+            "SELECT token_enc, team_id, username FROM vercel_tokens "
+            "WHERE user_email = $1", email)
+    except Exception:                                       # noqa: BLE001
+        return None
+    if not row:
+        return None
+    try:
+        token = crypto_utils.decrypt(row["token_enc"])
+    except Exception:                                       # noqa: BLE001
+        return None  # wrong key / tampered -> treat as not connected
+
+    values = {"token": token, "team_id": row["team_id"],
+              "username": row["username"]}
+    await _promote(conn, email, values, row["username"] or "")
+    return values
 
 
 # --- Vercel API --------------------------------------------------------------
@@ -366,13 +495,15 @@ async def oauth_callback(
     conn = await _connect_db()
     try:
         await ensure_tables(conn)
-        await conn.execute(
-            "INSERT INTO vercel_tokens (user_email, token_enc, team_id, username, configuration_id) "
-            "VALUES ($1, $2, $3, $4, $5) "
-            "ON CONFLICT (user_email) DO UPDATE SET token_enc = $2, team_id = $3, "
-            "username = $4, configuration_id = $5, created_at = now()",
-            user.email, crypto_utils.encrypt(token), team_id, username,
-            (configurationId or None))
+        await _save_token(
+            conn, user.email,
+            {"token": token, "team_id": team_id, "username": username,
+             "configuration_id": configurationId or None},
+            username,
+            # `username` falls back to the literal "connected" above when
+            # the lookup failed, and that is exactly the case where the
+            # token has NOT been proved.
+            verified=(username != "connected"))
     finally:
         await conn.close()
     print(f"[vercel] oauth connected {user.email} (team={bool(team_id)})", flush=True)
@@ -416,13 +547,13 @@ async def vercel_connect(body: ConnectBody,
     conn = await _connect_db()
     try:
         await ensure_tables(conn)
-        await conn.execute(
-            "INSERT INTO vercel_tokens (user_email, token_enc, team_id, username) "
-            "VALUES ($1, $2, $3, $4) "
-            "ON CONFLICT (user_email) DO UPDATE SET token_enc = $2, "
-            "team_id = $3, username = $4, created_at = now()",
-            user.email, crypto_utils.encrypt(token),
-            (body.team_id or None), username)
+        # Verified by construction: _vercel_username above raises on a bad
+        # token and this route answers 502, so nothing unproved gets here.
+        await _save_token(
+            conn, user.email,
+            {"token": token, "team_id": body.team_id or None,
+             "username": username},
+            username, verified=True)
     finally:
         await conn.close()
     return {"connected": True, "username": username}
@@ -433,8 +564,7 @@ async def vercel_disconnect(user: CurrentUser = Depends(current_user)):
     conn = await _connect_db()
     try:
         await ensure_tables(conn)
-        await conn.execute("DELETE FROM vercel_tokens WHERE user_email = $1",
-                           user.email)
+        await _forget_token(conn, user.email)
     finally:
         await conn.close()
     return {"connected": False}

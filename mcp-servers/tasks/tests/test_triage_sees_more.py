@@ -24,7 +24,7 @@ def test_publish_is_in_the_catalogue_jev_is_asked_about():
     assert len(questions) == len(ids)
     pub = questions[f"a{ids.index('publish')}"]["instructions"]
     assert "Publish" in pub and "online" in pub
-    ver = questions[f"a{ids.index('vercel')}"]["instructions"]
+    ver = questions[f"a{ids.index('deploy_vercel')}"]["instructions"]
     assert "Vercel" in ver and "Never a request to build" in ver
 
 
@@ -579,10 +579,10 @@ def test_the_skill_pick_is_timeboxed(monkeypatch):
 def test_vercel_is_its_own_entry_with_its_own_how():
     """Asked about Publish alone, "deploy it to Vercel" scored 0.46 to 0.51
     even after a build; as its own entry 0.92 (2026-11-13)."""
-    v = app_triage.PLATFORM["vercel"]
+    v = app_triage.PLATFORM["deploy_vercel"]
     assert "Vercel" in v.how and "connect Vercel" in v.how
     assert "Publish" in v.how and "App Builder" in v.how
-    p = app_triage.plan([("vercel", 0.92)], set(), [])
+    p = app_triage.plan([("deploy_vercel", 0.92)], set(), [])
     out = app_triage.with_buttons("Sure, here is how.", p)
     assert out.rstrip().splitlines()[-2] == v.how
 
@@ -590,9 +590,9 @@ def test_vercel_is_its_own_entry_with_its_own_how():
 def test_publish_and_vercel_together_show_publish_unless_vercel_was_said():
     """"put it online" scored Publish 0.95 and Vercel 0.87; Publish's line
     already mentions Vercel, so only it is shown, unless they said Vercel."""
-    p = app_triage.plan([("publish", 0.95), ("vercel", 0.87)], set(), [],
+    p = app_triage.plan([("publish", 0.95), ("deploy_vercel", 0.87)], set(), [],
                         text="how do I put it online")
     assert [x["id"] for x in p["platform"]] == ["publish"]
-    p = app_triage.plan([("publish", 0.6), ("vercel", 0.92)], set(), [],
+    p = app_triage.plan([("publish", 0.6), ("deploy_vercel", 0.92)], set(), [],
                         text="can I deploy it to Vercel?")
-    assert [x["id"] for x in p["platform"]] == ["vercel", "publish"]
+    assert [x["id"] for x in p["platform"]] == ["deploy_vercel", "publish"]

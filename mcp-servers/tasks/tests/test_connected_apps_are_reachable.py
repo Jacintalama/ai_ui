@@ -55,6 +55,7 @@ SPOKEN = {
     "dropbox": "dropbox",
     "linkedin": "linkedin",
     "outlook": "outlook",
+    "vercel": "vercel",
 }
 
 

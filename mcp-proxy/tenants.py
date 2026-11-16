@@ -904,6 +904,19 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
                     "Connections.",
         enabled=True,
     ),
+    "my-vercel": MCPServerConfig(
+        server_id="my-vercel",
+        access_class=AccessClass.PUBLIC,
+        display_name="Vercel (your account)",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_MYTOOLS_URL + "/vercel",
+        auth_type="none",
+        api_key_env=None,
+        description="Vercel projects and deployments, read as the "
+                    "signed-in user's own account. Requires them "
+                    "to have connected Vercel under Connections.",
+        enabled=True,
+    ),
     "my-outlook": MCPServerConfig(
         server_id="my-outlook",
         access_class=AccessClass.PUBLIC,
