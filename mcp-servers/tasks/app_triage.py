@@ -253,7 +253,13 @@ _PLATFORM = (
     # Its own entry: asked about Publish alone, "deploy it to Vercel" scored
     # 0.46 to 0.51 even with the build in the conversation, because Vercel
     # reads as somewhere else. Measured 2026-11-13.
-    Platform("vercel", "Deploy to Vercel",
+    # `deploy_vercel`, not `vercel`. Vercel became a connectable provider
+    # on 2026-11-16, which forces an APPS entry with the id `vercel`, and
+    # catalogue_ids() is list(APPS) + list(PLATFORM) numbered in order.
+    # Two entries sharing one id in that list is not a cosmetic clash:
+    # `plan` filters the same pick into BOTH lists, so one score would
+    # have recommended connecting Vercel and deploying to it at once.
+    Platform("deploy_vercel", "Deploy to Vercel",
              "a request to deploy or host an app they ALREADY built here in "
              "the App Builder on Vercel: their own Vercel account or a "
              "vercel.app link. Never a request to build, design or change a "
@@ -365,9 +371,9 @@ def plan(picks, connected, tools, text: str = "", skills=None,
     # Publish's line already mentions Vercel, so both picked is Publish
     # alone unless they said Vercel ("put it online" scored Publish 0.95 and
     # Vercel 0.87, 2026-11-13).
-    if "publish" in plat_ids and "vercel" in plat_ids \
+    if "publish" in plat_ids and "deploy_vercel" in plat_ids \
             and "vercel" not in str(text or "").lower():
-        plat_ids.remove("vercel")
+        plat_ids.remove("deploy_vercel")
     platform = [{"id": PLATFORM[i].id, "label": PLATFORM[i].label,
                  "how": PLATFORM[i].how} for i in plat_ids]
     return {"apps": apps, "features": features, "platform": platform,
