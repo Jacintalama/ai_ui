@@ -217,6 +217,14 @@ def _hubspot_auth(v):
                       headers={"Authorization": "Bearer " + _require(v, "token")})
 
 
+def _outlook_auth(v):
+    """Microsoft Graph, v1.0. Not the beta endpoint: beta changes
+    without notice and is not supported for anything real."""
+    return VendorAuth(base_url="https://graph.microsoft.com/v1.0",
+                      headers={"Authorization": "Bearer "
+                                                + _require(v, "token")})
+
+
 #: A cloud id goes into a URL path, so it is checked before it gets there.
 #: Atlassian's are UUIDs; this allows a little more and no character that
 #: could change the host or add a segment.
@@ -356,6 +364,15 @@ def _hubspot_label(d):
     return ("HubSpot portal " + str(portal)) if portal else ""
 
 
+def _outlook_label(d):
+    """Work accounts have a userPrincipalName, personal ones often do
+    not, and either may be missing a mail address, so there are three
+    ways to end up with a card that says nothing."""
+    d = d or {}
+    return (d.get("userPrincipalName") or d.get("mail")
+            or d.get("displayName") or "")
+
+
 def _notion_label(d):
     d = d or {}
     bot = d.get("bot") or {}
@@ -474,6 +491,20 @@ PROVIDERS: Dict[str, Provider] = {
         # connect, which would read as a bad credential.
         probe_method="POST",
         read_label=_dropbox_label,
+    ),
+    "outlook": Provider(
+        id="outlook",
+        label="Outlook",
+        # Deliberately NO fields. A Graph access token lasts about an
+        # hour, so a paste form would be a connection that dies the
+        # same afternoon, every time. Same reasoning as Dropbox.
+        fields=[],
+        where="Outlook connects by signing in, so there is nothing to "
+              "paste. If no Connect button appears, IO's Outlook app "
+              "is not set up on this server yet.",
+        build_auth=_outlook_auth,
+        probe_path="/me",
+        read_label=_outlook_label,
     ),
     "zapier": Provider(
         id="zapier",

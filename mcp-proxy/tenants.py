@@ -904,6 +904,20 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
                     "Connections.",
         enabled=True,
     ),
+    "my-outlook": MCPServerConfig(
+        server_id="my-outlook",
+        access_class=AccessClass.PUBLIC,
+        display_name="Outlook (your account)",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_MYTOOLS_URL + "/outlook",
+        auth_type="none",
+        api_key_env=None,
+        description="Outlook mail, calendar and contacts acting as "
+                    "the signed-in user's own Microsoft account. "
+                    "Requires them to have connected Outlook under "
+                    "Connections.",
+        enabled=True,
+    ),
     "meeting-kb": MCPServerConfig(
         server_id="meeting-kb",
         access_class=AccessClass.PUBLIC,

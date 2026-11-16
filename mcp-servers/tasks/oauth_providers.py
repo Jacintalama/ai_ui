@@ -383,6 +383,40 @@ DROPBOX_SCOPE = (os.environ.get("DROPBOX_SCOPE")
 LINKEDIN_SCOPE = (os.environ.get("LINKEDIN_SCOPE")
                   or "openid profile email w_member_social").strip()
 
+#: Which Microsoft accounts may connect.
+#:
+#: `common` is both work and personal, `organizations` excludes
+#: personal Outlook.com, `consumers` excludes every business.
+#:
+#: Read from its OWN variable, never from MICROSOFT_TENANT_ID. That
+#: one belongs to Open WebUI's "Continue with Microsoft" sign-in app,
+#: it is set to `consumers` on this deployment, and inheriting it
+#: would quietly lock every business account out of the connector.
+OUTLOOK_TENANT = (os.environ.get("OUTLOOK_TENANT") or "common").strip()
+OUTLOOK_AUTHORITY = "https://login.microsoftonline.com/%s/oauth2/v2.0" \
+    % OUTLOOK_TENANT
+
+#: What the person approves on Microsoft's consent screen.
+#:
+#: offline_access is not optional: without it Graph returns an access
+#: token good for about an hour and NO refresh token, so nothing can
+#: renew the connection and it is dead before lunch.
+#:
+#: No Files.* scope. There are no file tools yet, and permission we do
+#: not use is permission we should not hold.
+OUTLOOK_SCOPE = (os.environ.get("OUTLOOK_SCOPE")
+                 or "offline_access User.Read Mail.Read Mail.Send "
+                    "Calendars.ReadWrite Contacts.Read").strip()
+
+
+def _outlook_token(payload: dict) -> Tuple[Dict[str, str], str]:
+    """Microsoft's token response.
+
+    It names no account, so the label is left empty and the route asks
+    /me, which proves the token in the same breath.
+    """
+    return _bare_token(payload, "Outlook")
+
 
 def _linkedin_token(payload: dict) -> Tuple[Dict[str, str], str]:
     """LinkedIn's token response.
@@ -525,6 +559,24 @@ PROVIDERS: Dict[str, OAuthProvider] = {
         # base64URL of client_id:client_secret, which their docs state and
         # httpx's BasicAuth cannot produce.
         token_auth="basic_urlsafe",
+        token_body="form",
+        pkce=True,
+    ),
+    "outlook": OAuthProvider(
+        id="outlook",
+        label="Outlook",
+        # Read off Microsoft's own Graph and identity reference on
+        # 2026-11-16.
+        authorize_endpoint=OUTLOOK_AUTHORITY + "/authorize",
+        token_endpoint=OUTLOOK_AUTHORITY + "/token",
+        authorize_extra={"response_type": "code",
+                         "scope": OUTLOOK_SCOPE,
+                         # Without this a second connect silently
+                         # reuses the first consent, so a widened
+                         # scope never reaches the token.
+                         "prompt": "select_account"},
+        read_token=_outlook_token,
+        token_auth="body",
         token_body="form",
         pkce=True,
     ),
