@@ -9,7 +9,7 @@ import routes_agent_turn as rt
 
 TRACKER_NEED = [{"app": "tracker",
                  "label": "a task tracker (Trello, GitHub, ClickUp or Jira)",
-                 "skills": ["daily-standup"], "connect": "#aiui-connect:trello",
+                 "skills": ["daily-standup"], "connect": "#aiui-connect:tracker",
                  "button": "Connect a task tracker"}]
 DROPPED = ("A task tracker (Trello, GitHub, ClickUp or Jira) would add "
            "daily-standup. "
@@ -54,8 +54,8 @@ def test_a_dropped_connect_link_is_put_back(monkeypatch):
     out, asked = _run(monkeypatch, DROPPED, ["skills"])
     said = out["turns"][0]["answer"]
     assert said.startswith(DROPPED)
-    assert said.rstrip().endswith("[Connect a task tracker](#aiui-connect:trello)")
-    assert "[Connect a task tracker](#aiui-connect:trello)" in out["rendered_web"]
+    assert said.rstrip().endswith("[Connect a task tracker](#aiui-connect:tracker)")
+    assert "[Connect a task tracker](#aiui-connect:tracker)" in out["rendered_web"]
     assert asked == ["owner@example.com"]
 
 
@@ -67,9 +67,9 @@ def test_a_turn_without_the_skills_tool_is_left_alone(monkeypatch):
 
 
 def test_a_kept_link_is_not_doubled(monkeypatch):
-    kept = DROPPED + "\n\n[Connect a task tracker](#aiui-connect:trello)"
+    kept = DROPPED + "\n\n[Connect a task tracker](#aiui-connect:tracker)"
     out, _ = _run(monkeypatch, kept, ["skills"])
-    assert out["turns"][0]["answer"].count("#aiui-connect:trello") == 1
+    assert out["turns"][0]["answer"].count("#aiui-connect:tracker") == 1
 
 
 def test_a_failure_reading_connections_leaves_the_answer_as_it_was(monkeypatch):
@@ -109,7 +109,7 @@ def test_the_needs_are_read_the_way_the_suggest_route_reads_them(monkeypatch):
     monkeypatch.setattr(routes_agents, "_connected_providers", connected)
     got = asyncio.run(rt._skill_connect_needs("owner@example.com"))
     assert [(n["app"], n["skills"], n["connect"]) for n in got] == [
-        ("tracker", ["daily-standup"], "#aiui-connect:trello")]
+        ("tracker", ["daily-standup"], "#aiui-connect:tracker")]
 
 
 def test_the_answer_measured_live_gets_its_button():
@@ -120,4 +120,4 @@ def test_the_answer_measured_live_gets_its_button():
             "and meeting-to-tasks, which would fit how your team (Ada, Dev, "
             "Mia) works. There's a Connect button above if you want that.")
     assert skill_fit.missing_links(live, TRACKER_NEED) == [
-        "[Connect a task tracker](#aiui-connect:trello)"]
+        "[Connect a task tracker](#aiui-connect:tracker)"]

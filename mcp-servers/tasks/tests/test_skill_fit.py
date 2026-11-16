@@ -78,7 +78,7 @@ def test_connect_lines_name_the_skills_and_give_a_button_link():
         "[Connect Google Calendar](#aiui-connect:calendar)",
         "Connect a task tracker (Trello, GitHub, ClickUp or Jira) to add: "
         "daily-standup",
-        "[Connect a task tracker](#aiui-connect:trello)"]
+        "[Connect a task tracker](#aiui-connect:tracker)"]
     assert F.connect_lines({}) == []
 
 
@@ -149,7 +149,7 @@ def test_a_long_group_is_cut_with_a_count():
 # links belong under an answer is decided here, not by the model.
 
 TRACKER_NEED = {"app": "tracker", "label": F.LABELS["tracker"],
-                "skills": ["daily-standup"], "connect": "#aiui-connect:trello",
+                "skills": ["daily-standup"], "connect": "#aiui-connect:tracker",
                 "button": "Connect a task tracker"}
 GMAIL_NEED = {"app": "gmail", "label": "Gmail", "skills": ["inbox-triage"],
               "connect": "#aiui-connect:gmail", "button": "Connect Gmail"}
@@ -160,11 +160,11 @@ def test_an_app_the_answer_talks_about_connecting_gets_its_link():
             "add "
             "daily-standup. There's a Connect button above if you want that.")
     assert F.missing_links(said, [TRACKER_NEED, GMAIL_NEED]) == [
-        "[Connect a task tracker](#aiui-connect:trello)"]
+        "[Connect a task tracker](#aiui-connect:tracker)"]
 
 
 def test_a_link_already_in_the_answer_is_not_added_twice():
-    said = "Connect one. [Connect a task tracker](#aiui-connect:trello)"
+    said = "Connect one. [Connect a task tracker](#aiui-connect:tracker)"
     assert F.missing_links(said, [TRACKER_NEED]) == []
 
 

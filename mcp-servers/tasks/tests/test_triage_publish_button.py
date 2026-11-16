@@ -65,6 +65,7 @@ def test_a_reply_that_carried_the_button_counts_as_offered():
     assert "publish" in app_triage.already_offered(msgs)
 
 
-def test_only_the_app_builder_can_be_opened_from_a_reply():
-    """The marker names a place; the page only honours places on this list."""
-    assert app_triage.OPEN_PLACES == ("app-builder",)
+def test_the_app_builder_is_one_of_the_places_a_reply_can_open():
+    """The marker names a place; the page only honours places on the list
+    (the rest of the list: test_triage_sees_the_platform.py)."""
+    assert "app-builder" in app_triage.OPEN_PLACES
