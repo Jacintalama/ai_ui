@@ -2933,12 +2933,53 @@
     });
   }
 
+  // ===== The assistant's open links =====
+  // [Publish in App Builder](#aiui-open:app-builder) goes under a Publish
+  // recommendation (app_triage.with_buttons). Live 2026-11-13 the answer said
+  // "click Publish" and gave nothing to click (2026-11-16). The button opens
+  // the page in its pane, as its sidebar entry would (task-panel.js,
+  // window.aiuiOpenPane), or in a tab where there is no shell. Only the
+  // places listed here, the same list as app_triage.OPEN_PLACES.
+  var AIUI_OPEN_MARKER = '#aiui-open:';
+  var AIUI_OPEN_PLACES = { 'app-builder': '/app-builder' };
+
+  function aiuiOpenPlace(place) {
+    var path = AIUI_OPEN_PLACES[place];
+    if (typeof window.aiuiOpenPane === 'function' && window.aiuiOpenPane(path)) return;
+    window.open(location.origin + path, '_blank', 'noopener');
+  }
+
+  function wireAiuiOpenLink(anchor) {
+    if (!anchor || anchor.getAttribute('data-aiui-wired')) return;
+    var href = anchor.getAttribute('href') || '';
+    var i = href.indexOf(AIUI_OPEN_MARKER);
+    if (i === -1) return;
+    var place = href.slice(i + AIUI_OPEN_MARKER.length).trim();
+    if (!Object.prototype.hasOwnProperty.call(AIUI_OPEN_PLACES, place)) return;
+    anchor.setAttribute('data-aiui-wired', '1');
+
+    var container = document.createElement('span');
+    container.className = 'aiui-open-inline';
+    container.style.cssText = 'display:inline-block;margin:10px 8px 8px 0;'
+      + 'vertical-align:middle;';
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = anchor.textContent || 'Open';
+    btn.style.cssText = 'padding:8px 16px;background:#4CAF50;color:#fff;border:none;'
+      + 'border-radius:8px;font-size:13.5px;font-weight:600;cursor:pointer;';
+    container.appendChild(btn);
+    if (anchor.parentNode) anchor.parentNode.replaceChild(container, anchor);
+    btn.addEventListener('click', function () { aiuiOpenPlace(place); });
+  }
+
   function wireAiuiConnectLinks() {
     var pending = false;
     function scan() {
       pending = false;
       var anchors = document.querySelectorAll('a[href*="' + AIUI_CONNECT_MARKER + '"]');
       for (var i = 0; i < anchors.length; i++) wireAiuiConnectLink(anchors[i]);
+      var opens = document.querySelectorAll('a[href*="' + AIUI_OPEN_MARKER + '"]');
+      for (var j = 0; j < opens.length; j++) wireAiuiOpenLink(opens[j]);
     }
     var obs = new MutationObserver(function () {
       if (pending) return;

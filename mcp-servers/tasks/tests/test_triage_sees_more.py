@@ -68,13 +68,19 @@ def test_the_brief_says_the_platform_does_it_and_no_outside_hosts():
 def test_the_how_line_is_added_when_the_answer_skips_publish():
     p = app_triage.plan([("publish", 0.97)], set(), [])
     out = app_triage.with_buttons("You could use Netlify for that.", p)
-    assert out.rstrip().endswith(app_triage.PLATFORM["publish"].how)
+    # The how-line, then the Publish button under it (2026-11-16).
+    lines = out.rstrip().splitlines()
+    assert lines[-2] == app_triage.PLATFORM["publish"].how
+    assert lines[-1] == "[Publish in App Builder](#aiui-open:app-builder)"
 
 
 def test_the_how_line_is_not_repeated_when_the_answer_says_publish():
     p = app_triage.plan([("publish", 0.97)], set(), [])
     said = "Open it in the App Builder and click Publish."
-    assert app_triage.with_buttons(said, p) == said
+    out = app_triage.with_buttons(said, p)
+    assert app_triage.PLATFORM["publish"].how not in out
+    # Only the button is added (2026-11-16).
+    assert out == said + "\n\n[Publish in App Builder](#aiui-open:app-builder)"
 
 
 # --- 2. skills ------------------------------------------------------------------------
@@ -578,7 +584,7 @@ def test_vercel_is_its_own_entry_with_its_own_how():
     assert "Publish" in v.how and "App Builder" in v.how
     p = app_triage.plan([("vercel", 0.92)], set(), [])
     out = app_triage.with_buttons("Sure, here is how.", p)
-    assert out.rstrip().endswith(v.how)
+    assert out.rstrip().splitlines()[-2] == v.how
 
 
 def test_publish_and_vercel_together_show_publish_unless_vercel_was_said():
