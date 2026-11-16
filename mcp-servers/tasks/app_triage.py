@@ -103,8 +103,12 @@ _APPS = (
         "list your Vercel projects and recent deployments, and say "
         "whether each one is ready, building or failed",
         ("list_projects", "list_deployments", "get_project", "whoami"),
-        cannot="deploy, publish or delete anything. Deploying an app "
-               "built here is the Publish button in the App Builder"),
+        # A bare verb phrase, because the brief drops it into two
+        # slots: "IO cannot %s yet, so do not offer to %s with it".
+        # Two sentences here rendered "...is the Publish button in
+        # the App Builder yet." How to deploy belongs to the PLATFORM
+        # entry, which already says it.
+        cannot="deploy, publish or delete anything"),
     App("outlook", "Outlook",
         "email, calendar and contacts on Microsoft 365 or Outlook.com: "
         "reading and sending mail, what is on the calendar, booking a "
