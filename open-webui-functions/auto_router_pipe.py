@@ -30,6 +30,24 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 #: accident or because somebody told it to, which makes it text from a model
 #: and not ours to trust. Strip on the way out, append never.
 AIUI_TURNS_STRIP_RE = re.compile(r"<!--\s*aiui:turns\b[^>]*-->")
+
+#: Said when IO could not be reached at all, so this answer is the free
+#: model's alone and has none of the person's connected apps behind it.
+#:
+#: It exists because the silence was worse than the outage. Measured on
+#: production 2026-11-16: a deploy restarted the service for about twenty
+#: seconds, a plainly-Airtable request landed in that window, and the free
+#: model answered "I don't have the ability to modify Airtable in this
+#: reply" about an account that was connected and working. The routing was
+#: never at fault; the same wording scores its tool 3 out of 3 against the
+#: live picker. The platform simply denied a capability it has, at the
+#: moment somebody asked for it.
+#:
+#: Carries no URL and no host on purpose: an httpx error quotes the
+#: internal address, and that is neither the person's business nor safe to
+#: put on a screen.
+UNREACHABLE_LINE = ("Could not reach your connected apps just now, so this "
+                    "answer does not use them. Try again in a moment.")
 # The line _footer appends, so a background job's answer can drop it.
 FOOTER_RE = re.compile(r"\n\n\*Auto-routed to the free \w+ model `[^`]*`\.\*\s*$")
 
@@ -317,9 +335,25 @@ class Pipe:
                    "messages": body.get("messages") or [],
                    "route_only": True}
         data, may_retry = await self._ask_streaming(payload, emit)
-        if data is None and may_retry:
+        # `may_retry` is True only when the request was never ACCEPTED, so
+        # nothing can have run. That, plus a one-shot POST that also fails,
+        # is the single state in which it is both true and safe to say the
+        # apps were out of reach.
+        #
+        # Everything else stays silent, and both reasons are load-bearing.
+        # IO answering and deciding nobody should take the message is the
+        # ordinary path for most messages, so a line there would be noise
+        # on every greeting. A stream that was accepted and then failed may
+        # ALREADY have run the turn, tools and all, so telling somebody
+        # their apps were unreachable could have them send the same email
+        # twice.
+        never_reached = data is None and may_retry
+        if never_reached:
             data = await self._ask_plain(payload)
+            never_reached = data is None
         if data is None:
+            if never_reached:
+                await self._say(emit, UNREACHABLE_LINE)
             return None
         turns = data.get("turns")
         if not isinstance(turns, list) or not turns:
