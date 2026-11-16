@@ -479,9 +479,19 @@ services:
       # Microsoft" sign-in button: a consumers-tenant app pointed at
       # /oauth/microsoft/callback with no Graph permissions at all.
       # Sharing it would tie the sign-in everybody uses to the
-      # connector's permissions and secret, and `_env_names` would
-      # have read it as configured on day one, offering a one-click
-      # button that cannot work.
+      # connector's permissions and secret.
+      #
+      # Measured on the live box 2026-11-16, because the first
+      # version of this comment overstated it: MICROSOFT_CLIENT_ID is
+      # NOT visible inside the tasks container today, since it is
+      # passed to open-webui only, so configured() would read it as
+      # unset. The trap is one step removed and still real. A test
+      # requires every OAuth provider's id and secret to reach tasks
+      # (tests/test_connect_env_reaches_tasks.py), so a provider named
+      # `microsoft` would have been wired through to satisfy it, and
+      # .env has a value, so configured() would then be true on the
+      # sign-in app's credentials: a one-click button that cannot
+      # work, built by the very guard meant to prevent a dead button.
       #
       # Which Microsoft accounts may connect: `common` is work AND
       # personal, `organizations` excludes personal Outlook.com,
