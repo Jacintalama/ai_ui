@@ -5057,7 +5057,8 @@
   function _openOauthPopup() {
     if (!slug) return;
     const url = "/api/projects/" + encodeURIComponent(slug) + "/supabase/oauth/start";
-    window.open(url, "aiui_supabase_oauth", "width=720,height=820");
+    // A tab, not a popup: a popup lands behind the window that opened it.
+    window.open(url, "aiui_supabase_oauth");
     if ($dbOauthStatus) {
       $dbOauthStatus.style.color = "var(--muted)";
       $dbOauthStatus.textContent = "Waiting for authorization…";
@@ -5689,8 +5690,11 @@
     const s = await fetch("/api/tasks/vercel/oauth/start", { headers: _vcHeaders(), credentials: "include" });
     const body = await s.json().catch(() => ({}));
     if (!s.ok || !body.url) { $vcResult.textContent = body.detail || "Could not start the Vercel connect."; return false; }
-    const win = window.open(body.url, "_blank", "width=740,height=800");
-    $vcResult.textContent = "Finish connecting in the Vercel window…";
+    // A tab, not a popup: a popup lands behind the window that opened it. The open is
+    // still after an await, so it can still be blocked; hoisting it
+    // into the click is on card lk6b59yN with the Vercel connector.
+    const win = window.open(body.url, "_blank");
+    $vcResult.textContent = "Finish connecting in the Vercel tab…";
     for (let i = 0; i < 60; i++) {
       await new Promise((r) => setTimeout(r, 2500));
       try {
@@ -7559,10 +7563,10 @@
     connectBtn.disabled = true;
     skipBtn.disabled = true;
     connectBtn.textContent = "Waiting for Supabase…";
+    // A tab, not a popup: a popup lands behind the window that opened it.
     const popup = window.open(
       "/api/projects/" + encodeURIComponent(slug) + "/supabase/oauth/start",
-      "aiui_supabase_oauth",
-      "width=720,height=820"
+      "aiui_supabase_oauth"
     );
     // Poll the project's Supabase config until it shows linked_project_ref
     // or supabase_url, then call /resume and refresh chat.
