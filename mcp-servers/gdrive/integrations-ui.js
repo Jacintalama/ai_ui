@@ -1071,6 +1071,11 @@
         ? ('Connected as ' + (meta.account_label || app.name) + '. '
            + (meta.oauth ? 'Reconnect to replace it.'
                          : 'Paste a new credential to replace it.'))
+        // Nothing to connect WITH, so the block further down states it
+        // definitely. Printing `where` above that block said the same
+        // thing twice, the first time conditionally ("if no Connect
+        // button appears"), to somebody who had just pressed Connect.
+        : (!fields.length && !meta.oauth) ? ''
         : (meta.where || '');
       box.appendChild(sub);
 

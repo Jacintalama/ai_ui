@@ -467,9 +467,10 @@ PROVIDERS: Dict[str, Provider] = {
         label="LinkedIn",
         # Nothing to paste: LinkedIn has no personal API key.
         fields=[],
-        where="LinkedIn connects by signing in, so there is nothing to "
-              "paste. If no Connect button appears, IO's LinkedIn app is "
-              "not set up on this server yet.",
+        # The panel owns the sentence about whether this deployment can
+        # connect it; see the note on Dropbox below.
+        where="LinkedIn connects by signing in, so there is nothing "
+              "to paste.",
         build_auth=_linkedin_auth,
         # The OpenID Connect endpoint, which is what the three open
         # permissions give access to.
@@ -482,9 +483,14 @@ PROVIDERS: Dict[str, Provider] = {
         # Deliberately NO fields: see _dropbox_auth. A console token lasts
         # four hours, so there is nothing worth asking anybody to paste.
         fields=[],
-        where="Dropbox connects by signing in, so there is nothing to "
-              "paste. If no Connect button appears, IO's Dropbox app is "
-              "not set up on this server yet.",
+        # Just what is true of the vendor. Whether THIS deployment can
+        # connect it at all is the panel's to say, because only the panel
+        # knows whether it drew a button. A string here that guessed at
+        # it printed the same sentence twice on the card, the first time
+        # conditionally, to somebody who had just pressed Connect
+        # (seen live 2026-11-16).
+        where="Dropbox connects by signing in, so there is nothing "
+              "to paste.",
         build_auth=_dropbox_auth,
         probe_path="/users/get_current_account",
         # Dropbox has NO GET endpoints. A GET probe is a 400 on every
@@ -499,9 +505,10 @@ PROVIDERS: Dict[str, Provider] = {
         # hour, so a paste form would be a connection that dies the
         # same afternoon, every time. Same reasoning as Dropbox.
         fields=[],
-        where="Outlook connects by signing in, so there is nothing to "
-              "paste. If no Connect button appears, IO's Outlook app "
-              "is not set up on this server yet.",
+        # Same as Dropbox above: the panel owns the sentence about
+        # whether this deployment can connect it.
+        where="Outlook connects by signing in, so there is nothing "
+              "to paste.",
         build_auth=_outlook_auth,
         probe_path="/me",
         read_label=_outlook_label,
