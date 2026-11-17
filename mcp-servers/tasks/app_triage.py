@@ -107,7 +107,7 @@ _APPS = (
         "whether each one is ready, building or failed",
         ("list_projects", "list_deployments", "get_project", "whoami"),
         # A bare verb phrase, because the brief drops it into two
-        # slots: "IO cannot %s yet, so do not offer to %s with it".
+        # slots: "IO cannot yet %s, so do not offer to %s with it".
         # Two sentences here rendered "...is the Publish button in
         # the App Builder yet." How to deploy belongs to the PLATFORM
         # entry, which already says it.
@@ -309,7 +309,8 @@ _PLATFORM = (
              rule="Do not suggest other site builders or hosting services."),
     Platform("cron_jobs", "Cron Jobs",
              "something to run for them by itself on a timer or a repeating "
-             "schedule, such as every morning at 8am or every Monday. Not a "
+             "schedule, such as every morning at 8am or every Monday, or "
+             "seeing, pausing or changing the jobs they already have. Not a "
              "meeting or an appointment, which is a calendar",
              "IO runs it for you on a schedule in Cron Jobs: say here what "
              "to do and when. Cron Jobs shows your jobs, where you can pause, "
@@ -554,7 +555,7 @@ def brief(p) -> str:
         state = "connected" if a["connected"] else "not connected"
         line = "- %s (%s). IO can %s." % (a["label"], state, a["can"])
         if a["cannot"]:
-            line += (" IO cannot %s yet, so do not offer to %s with it, "
+            line += (" IO cannot yet %s, so do not offer to %s with it, "
                      "even once it is connected." % (a["cannot"], a["cannot"]))
         if a["pros"]:
             line += " " + a["pros"]
@@ -628,7 +629,7 @@ def with_buttons(answer: str, p) -> str:
         if not any(w in low for w in (app.label.lower(),) + app.says):
             line = "Recommended: %s, so IO can %s" % (app.label, app.can)
             if app.cannot:
-                line += " (it cannot %s yet)" % app.cannot
+                line += " (it cannot yet %s)" % app.cannot
             lines.append(line + ".")
         elif app.cannot:
             # The LIMIT alone, because the answer already named the app and
@@ -637,7 +638,9 @@ def with_buttons(answer: str, p) -> str:
             # and the service then appended the same list in its own words,
             # the same thing twice in two voices. What the model gets wrong
             # is the limit, which is why this branch exists.
-            lines.append("%s cannot %s yet." % (app.label, app.cannot))
+            # "cannot yet X", not "cannot X yet": a long limit put "yet" after
+            # "...into a dropdown" (live, 2026-11-17).
+            lines.append("%s cannot yet %s." % (app.label, app.cannot))
         buttons.append(_button(app))
     # THE LIMIT OF AN APP THEY HAVE. Everything above is about apps the
     # person has NOT connected, so the one app actually being used was the
@@ -664,7 +667,7 @@ def with_buttons(answer: str, p) -> str:
             continue
         if any(m in low for m in _LIMIT_SAID):
             continue
-        lines.append("%s cannot %s yet." % (app.label, app.cannot))
+        lines.append("%s cannot yet %s." % (app.label, app.cannot))
     # A skill that needs an app the person has not connected: that app's
     # button, the same one skill_fit draws for the skills answers.
     import skill_fit

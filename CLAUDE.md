@@ -370,7 +370,7 @@ Connect buttons under the answer. Two rules worth knowing:
   a recommendation scored the same app 0.94.
 - **The platform's own Publish and Deploy to Vercel are in it too
   (2026-11-13)**, `app_triage.PLATFORM`, asked in the same Jev call after the
-  apps but cut on their own (`platform_pick`, 0.70 since 2026-11-17): they score lower than
+  apps but cut on their own (`platform_pick`, 0.60; asked as "the part to use or open", how/where questions counting): they score lower than
   apps, and the apps' 0.90 missed every deploy question. Only for apps built in
   the App Builder; recommended as the straightforward way, the how-to line is
   the service's, and outside hosts are ruled out in the brief. Vercel is its

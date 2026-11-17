@@ -266,7 +266,7 @@ def test_the_introduction_says_what_io_cannot_do():
     # The catalogue's own words rather than a copy of them: what Airtable
     # cannot do changed the day it learned to write (PR #203), and a test
     # that pins the sample sentence tests the sample.
-    assert "cannot " + app_triage.APPS["airtable"].cannot in out
+    assert "cannot yet " + app_triage.APPS["airtable"].cannot in out
 
 
 def test_a_google_app_named_the_short_way_is_not_introduced_again():
@@ -665,7 +665,7 @@ LIVE_OVERCLAIM = ("Use Airtable as the place to save them. It's not connected "
 def test_a_named_app_with_a_limit_still_gets_the_limit_said():
     p = app_triage.plan([("airtable", 0.94)], set(), [])
     out = app_triage.with_buttons(LIVE_OVERCLAIM, p)
-    limit = "cannot " + app_triage.APPS["airtable"].cannot
+    limit = "cannot yet " + app_triage.APPS["airtable"].cannot
     assert limit in out
     assert out.rstrip().endswith(AIR)
     assert out.index(limit) < out.index(AIR)
@@ -689,7 +689,7 @@ def test_the_limit_is_said_without_repeating_what_the_answer_just_said():
             "connect it I can list your projects and create issues.")
     out = app_triage.with_buttons(said, p)
     cannot = app_triage.APPS["jira"].cannot
-    assert "cannot " + cannot in out
+    assert "cannot yet " + cannot in out
     can = app_triage.APPS["jira"].can
     assert can not in out, (
         "the whole capability list is repeated after the answer that just "
