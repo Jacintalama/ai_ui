@@ -587,8 +587,27 @@ def with_buttons(answer: str, p) -> str:
     answer = str(answer or "")
     low = answer.lower()
     lines, buttons = [], []
-    for a in (p or {}).get("apps") or []:
+    apps = (p or {}).get("apps") or []
+    # A CHOICE YOU HAVE ALREADY MADE IS NOT A CHOICE. Skipping a connected
+    # app is right for one app on its own and backwards for a group: it
+    # drops the side the person HAS and recommends the side they do not,
+    # so "here are your two options" becomes "go and get the other one".
+    #
+    # Seen live 2026-11-17, with n8n connected and reading 32 of his
+    # workflows in the same reply:
+    #
+    #     Recommended: Zapier, so IO can send data to a Zap you made,
+    #     which starts it (it cannot create or change Zaps yet).
+    #     [Connect Zapier]
+    #
+    # and n8n never mentioned. Somebody who already has an automation
+    # tool connected does not need to be sold its competitor.
+    settled = {a.get("group") for a in apps
+               if a.get("connected") and a.get("group")}
+    for a in apps:
         if a["connected"]:
+            continue
+        if a.get("group") and a["group"] in settled:
             continue
         app = APPS[a["id"]]
         if connect_href(app.id) in low:
