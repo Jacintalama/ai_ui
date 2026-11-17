@@ -438,10 +438,28 @@ def plan(picks, connected, tools, text: str = "", skills=None,
         if len(chosen) >= MAX_APPS:
             break
         group = APPS[app_id].group
+        if not group:
+            chosen.append(app_id)
+            continue
         # A choice is shown whole even past the cap: one side of it alone
         # is a recommendation pretending to be a comparison.
-        chosen += [app_id] + [a.id for a in _APPS if group and a.group == group
+        members = [app_id] + [a.id for a in _APPS if a.group == group
                               and a.id != app_id and a.id not in chosen]
+        # THE ONE THEY ALREADY HAVE LEADS. Ralph, 2026-11-17, with his n8n
+        # API key on screen carrying every scope it offers: "it all have
+        # access... though why the system recommend zappier". Jev had
+        # scored the hosted paid one a hair higher, and `connected` was
+        # written into the brief without ever being used to order, so the
+        # assistant told somebody to go and get a second automation tool
+        # while the first sat connected.
+        #
+        # Narrow on purpose. It reorders WITHIN a group, where both are
+        # shown anyway, so nothing is added, nothing is removed and no
+        # comparison is hidden: it decides only which one is named first.
+        # The sort is stable, so with both connected or neither, Jev's
+        # order stands, because then the message is all there is to go on.
+        members.sort(key=lambda i: 0 if i in have else 1)
+        chosen += members
     apps = []
     for app_id in chosen:
         a = APPS[app_id]
