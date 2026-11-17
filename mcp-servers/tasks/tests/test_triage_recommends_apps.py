@@ -56,9 +56,18 @@ def test_every_can_line_rests_on_tools_that_exist():
 
 
 def test_read_only_apps_say_what_they_cannot_do():
-    """Measured 2026-11-12: these have no tool that writes. Airtable was
-    here until the same afternoon, when it got three (PR #203)."""
-    for app_id in ("notion", "n8n"):
+    """Measured 2026-11-12: these have no tool that writes.
+
+    A tripwire, and it has fired twice. Airtable was here until the
+    same afternoon, when it got three write tools (PR #203). n8n left
+    on 2026-11-17, when Ralph asked for create, update and delete
+    knowing what write access to an automation tool means.
+
+    Both times it fired on the commit that added the tools, before
+    anybody could ship a catalogue that said the opposite of the
+    truth, which is the whole job.
+    """
+    for app_id in ("notion",):
         assert app_triage.APPS[app_id].cannot, app_id
         names = {t.name for t in mytools.PROVIDER_TOOLS[app_id]}
         writes = {"create", "add", "update", "write", "delete"}

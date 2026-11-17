@@ -186,7 +186,13 @@ def test_the_limit_is_stated_when_the_answer_left_it_out():
     answer = ("No IO test workflow exists yet. If you build it in n8n, "
               "let me know and I'll read it back.")
     out = app_triage.with_buttons(answer, _plan_n8n())
-    assert "cannot yet create or change workflows" in out, (
+    # Both halves of a collision kept, not one side taken. The rendering
+    # became "cannot YET x" in PR #243, which moved the word because a
+    # long limit left "yet" stranded at the end of the sentence. n8n's
+    # limit became long on the same day it gained write tools, so that
+    # change is what keeps this readable.
+    want = "cannot yet delete a workflow while it is switched on"
+    assert want in out, (
         "the answer skipped the limit and so did the service:\n" + out)
 
 

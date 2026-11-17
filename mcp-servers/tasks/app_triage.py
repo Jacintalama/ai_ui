@@ -197,9 +197,18 @@ _APPS = (
     App("n8n", "n8n",
         "automation workflows that connect apps and run steps on their own, "
         "when something happens or on a timer",
-        "list your workflows, read one and see its recent runs",
-        ("list_my_workflows", "get_workflow", "list_executions"),
-        cannot="create or change workflows",
+        "list your workflows, read one, see its recent runs, build a "
+        "new workflow, change an existing one, and switch one on or "
+        "off",
+        ("list_my_workflows", "get_workflow", "list_executions",
+         "create_workflow", "update_workflow", "activate_workflow",
+         "deactivate_workflow", "delete_workflow"),
+        # A new workflow is created switched OFF, and a workflow that
+        # is switched ON cannot be deleted until it is switched off:
+        # n8n has no trash, so a delete cannot be undone (measured
+        # 2026-11-17, POST .../archive answers 405).
+        cannot="delete a workflow while it is switched on, or undo a "
+               "delete once it is done",
         group="automation",
         pros="Source-available (fair-code) and can be self-hosted, so it "
              "costs only the server it runs on (or a paid n8n Cloud plan); "

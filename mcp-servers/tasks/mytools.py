@@ -29,6 +29,7 @@ it, whereas a sentence gets read and acted on. "You have not connected your
 GitHub yet" is a thing a model can relay; a vendor 401 is not.
 """
 import datetime
+import json
 import logging
 from dataclasses import dataclass, field as _dc_field
 from typing import Any, Callable, Dict, List, Optional
@@ -417,9 +418,80 @@ async def _outlook_prepare(tool_name, args, get):
     return args, None
 
 
+def _n8n_json(value, field: str):
+    """A list or dict, whether it arrived as one or as JSON in a string.
+
+    A model writes JSON into a string argument far more often than it
+    builds the structure, and n8n answers 400 either way without saying
+    which part it minded.
+    """
+    if isinstance(value, (list, dict)):
+        return value
+    if value in (None, ""):
+        return None
+    try:
+        return json.loads(value)
+    except Exception:                                       # noqa: BLE001
+        raise ValueError(
+            "The %s could not be read as JSON. Send it as a list of node "
+            "objects, or as JSON text." % field)
+
+
+def _n8n_workflow_body(args):
+    given = args or {}
+    nodes = _n8n_json(given.get("nodes"), "nodes")
+    conns = _n8n_json(given.get("connections"), "connections")
+    body = {"name": given.get("name") or "",
+            "nodes": nodes if isinstance(nodes, list) else [],
+            "connections": conns if isinstance(conns, dict) else {},
+            # What n8n's own UI writes, and what the real instance
+            # accepted on 2026-11-17. Some versions refuse a create with
+            # no settings at all.
+            "settings": {"executionOrder": "v1"}}
+    # `active` is DELIBERATELY absent. n8n creates inactive by itself
+    # (measured: active=False straight after a create), and a workflow
+    # that starts running the moment a model wrote it is the thing
+    # nobody asked for.
+    return body
+
+
+async def _n8n_prepare(tool_name, args, get):
+    """Refuse to delete a workflow that is currently running.
+
+    n8n 2.x carries `isArchived` on the record and its public API has no
+    verb to set it (POST .../archive answers 405), so DELETE is a hard
+    delete with nothing to undo it. Twelve of the thirty-two workflows on
+    the instance this was built against run unattended.
+
+    Deactivating first makes destroying a running automation two
+    deliberate steps instead of one mistaken one.
+
+    A lookup that could not be made does NOT refuse: `get` returns None
+    then, and treating an unreachable instance as a protected workflow
+    would turn an outage into a permissions error. The vendor decides in
+    the end either way.
+    """
+    if tool_name != "delete_workflow":
+        return args, None
+    wid = str((args or {}).get("workflow_id") or "").strip()
+    if not wid:
+        return args, None
+    found = await get("/api/v1/workflows/" + wid)
+    if not isinstance(found, dict):
+        return args, None
+    if found.get("active"):
+        name = found.get("name") or wid
+        return args, (
+            "%r is active, so it is running on its own right now, and n8n "
+            "has no way to undo a delete. Deactivate it first, then delete "
+            "it." % name)
+    return args, None
+
+
 PREPARE = {"clickup": _clickup_prepare, "trello": _trello_prepare,
            "linkedin": _linkedin_prepare,
            "outlook": _outlook_prepare,
+           "n8n": _n8n_prepare,
            "github": _github_prepare}
 
 
@@ -1236,11 +1308,13 @@ N8N_TOOLS = [
          query={"limit": "limit"},
          args={"limit": ("integer", "How many to return", False)},
          unwrap=lambda d: d.get("data", d),
+         writes=False,
          keep=("id", "name", "active", "updatedAt")),
     Tool(name="get_workflow",
          summary="Read one workflow from your n8n instance, given its id.",
          method="GET", path="/api/v1/workflows/{workflow_id}",
          args={"workflow_id": ("string", "Workflow id", True)},
+         writes=False,
          keep=("id", "name", "active", "nodes", "updatedAt")),
     Tool(name="list_executions",
          summary="List recent workflow runs on your n8n instance, newest first.",
@@ -1249,7 +1323,67 @@ N8N_TOOLS = [
          args={"limit": ("integer", "How many to return", False),
                "status": ("string", "success, error or waiting", False)},
          unwrap=lambda d: d.get("data", d),
+         writes=False,
          keep=("id", "workflowId", "status", "startedAt", "stoppedAt")),
+    Tool(name="create_workflow",
+         summary="Build a new workflow on your own n8n instance. It "
+                 "is created switched OFF, so nothing runs until you "
+                 "turn it on.",
+         method="POST", path="/api/v1/workflows",
+         args={"name": ("string", "What to call the workflow", True),
+               "nodes": ("array",
+                         "The nodes, as n8n writes them: each with "
+                         "id, name, type, typeVersion, position and "
+                         "parameters", True),
+               "connections": ("object",
+                               "Which node feeds which, keyed by the "
+                               "SOURCE NODE'S NAME, not its id",
+                               False)},
+         shape=_n8n_workflow_body,
+         writes=True,
+         keep=("id", "name", "active", "createdAt")),
+    Tool(name="update_workflow",
+         summary="Change a workflow on your own n8n instance: its "
+                 "name, its nodes or how they connect. Sends the "
+                 "whole workflow, so read it first and send it back "
+                 "with your changes.",
+         method="PUT", path="/api/v1/workflows/{workflow_id}",
+         args={"workflow_id": ("string", "The workflow id", True),
+               "name": ("string", "What to call it", True),
+               "nodes": ("array", "The full set of nodes", True),
+               "connections": ("object",
+                               "Which node feeds which, keyed by the "
+                               "source node's name", False)},
+         shape=_n8n_workflow_body,
+         writes=True,
+         keep=("id", "name", "active", "updatedAt")),
+    Tool(name="activate_workflow",
+         summary="Switch a workflow ON so n8n runs it on its own. It "
+                 "needs a real trigger: a webhook, a schedule or a "
+                 "polling node. A MANUAL trigger is not enough and "
+                 "n8n will refuse it.",
+         method="POST",
+         path="/api/v1/workflows/{workflow_id}/activate",
+         args={"workflow_id": ("string", "The workflow id", True)},
+         writes=True,
+         keep=("id", "name", "active")),
+    Tool(name="deactivate_workflow",
+         summary="Switch a workflow OFF so n8n stops running it on "
+                 "its own.",
+         method="POST",
+         path="/api/v1/workflows/{workflow_id}/deactivate",
+         args={"workflow_id": ("string", "The workflow id", True)},
+         writes=True,
+         keep=("id", "name", "active")),
+    Tool(name="delete_workflow",
+         summary="Delete a workflow from your own n8n instance. This "
+                 "cannot be undone: n8n has no trash. A workflow that "
+                 "is currently switched on has to be switched off "
+                 "first.",
+         method="DELETE", path="/api/v1/workflows/{workflow_id}",
+         args={"workflow_id": ("string", "The workflow id", True)},
+         writes=True,
+         keep=("id", "name")),
 ]
 
 #: Airtable field types that need no `options` block to be created.
