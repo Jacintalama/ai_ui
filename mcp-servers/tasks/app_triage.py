@@ -667,7 +667,7 @@ def with_buttons(answer: str, p) -> str:
             continue
         if any(m in low for m in _LIMIT_SAID):
             continue
-        lines.append("%s cannot %s yet." % (app.label, app.cannot))
+        lines.append("%s cannot yet %s." % (app.label, app.cannot))
     # A skill that needs an app the person has not connected: that app's
     # button, the same one skill_fit draws for the skills answers.
     import skill_fit

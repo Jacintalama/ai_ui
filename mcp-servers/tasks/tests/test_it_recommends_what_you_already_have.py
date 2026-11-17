@@ -186,7 +186,7 @@ def test_the_limit_is_stated_when_the_answer_left_it_out():
     answer = ("No IO test workflow exists yet. If you build it in n8n, "
               "let me know and I'll read it back.")
     out = app_triage.with_buttons(answer, _plan_n8n())
-    assert "cannot create or change workflows" in out, (
+    assert "cannot yet create or change workflows" in out, (
         "the answer skipped the limit and so did the service:\n" + out)
 
 

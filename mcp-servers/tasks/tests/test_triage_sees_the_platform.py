@@ -182,3 +182,10 @@ def test_the_platform_is_asked_as_the_part_to_use_or_open():
     app = qs["a%d" % ids.index("airtable")]
     assert app["instructions"].startswith("To do what the person wants, would Airtable, an app for ")
     assert "a general question" in app["criteria"]["false"]
+
+
+def test_a_long_limit_reads_as_a_sentence_for_an_app_they_have_too():
+    p = app_triage.plan([("airtable", 0.95)], {"airtable"}, [])
+    out = app_triage.with_buttons("Airtable is where your leads go.", p)
+    assert "Airtable cannot yet make a new base" in out
+    assert "dropdown yet" not in out
