@@ -69,6 +69,12 @@
     return typeof v === 'string' && /^[^@\s]+@[^@\s]+$/.test(v.trim());
   }
 
+  //: What getEffectiveEmail returns when Open WebUI has not yet written
+  //: the signed-in user into localStorage. It is a placeholder, not an
+  //: account, and `aiuiEmailIsKnown` is how anything asking a vendor
+  //: about somebody tells the two apart.
+  var AIUI_UNKNOWN_EMAIL = 'default@local';
+
   function getEffectiveEmail() {
     if (_cachedEmail) return _cachedEmail;
 
@@ -92,7 +98,19 @@
     }
     // Not cached: this is a guess, and the next call should get another
     // chance at the real thing.
-    return 'default@local';
+    return AIUI_UNKNOWN_EMAIL;
+  }
+
+  function aiuiEmailIsKnown(email) {
+    // A guess is not an account. Measured against the live endpoint on
+    // 2026-11-17: the real address answers {"connected": true} and the
+    // placeholder answers {"connected": false}, so asking about the
+    // placeholder cannot say anything except "not connected". That is
+    // worse than not asking. An unanswered card says "checking"; a
+    // wrongly answered one says "Connect" about a live account and
+    // invites somebody to reconnect over a working credential.
+    var e = String(email || '').trim();
+    return !!e && e !== AIUI_UNKNOWN_EMAIL && _isEmail(e);
   }
 
   // Fetch actual email from Open WebUI API and update cache
@@ -113,7 +131,9 @@
 
   function syncGmailStateFromServer() {
     var email = getEffectiveEmail();
-    if (!email) return;
+    // A guess is not an account: asking about the placeholder
+    // answers a confident "not connected" about a live one.
+    if (!aiuiEmailIsKnown(email)) return;
     fetch(GMAIL_API + '/auth/google/status?user_email=' + encodeURIComponent(email))
       .then(function(r) { return r.json(); })
       .then(function(data) {
@@ -691,6 +711,56 @@
   window.aiuiOpenConnections = function () {
     document.body.appendChild(createIntegrationsModal());
   };
+
+  //: The addresses a person actually tries when looking for Connections.
+  //:
+  //: Not invented. On 2026-11-16 a capable browser assistant, asked to
+  //: connect Airtable, tried Settings > Connections (model endpoints, a
+  //: decoy with the right name), Settings > Integrations (tool servers, a
+  //: second decoy), then these three, and gave up. The dialog lives in
+  //: the composer's "+" menu, which is a fine place to find by accident
+  //: and a hopeless place to be sent.
+  //:
+  //: tasks.connect_attempt says one of nine people has ever tried to
+  //: connect anything. An address you can put in a message is the
+  //: cheapest thing that changes that.
+  var AIUI_CONNECTIONS_PATHS = ['/connections', '/connect', '/integrations'];
+
+  //: Carried across the navigation to "/" so the chat renders first.
+  var AIUI_OPEN_CONNECTIONS = 'aiui-connections=1';
+
+  //: How many times to look for the signed-in address before opening
+  //: anyway. 20 x 150ms is three seconds, which is far longer than Open
+  //: WebUI takes to write its user object and short enough that somebody
+  //: whose address never resolves still gets the dialog instead of a
+  //: page that does nothing.
+  var AIUI_EMAIL_TRIES = 20;
+
+  function aiuiOpenConnectionsWhenReady(tries) {
+    // NOT a fixed delay. The first version of this opened on a 400ms
+    // timer, which on a cold load fires while Open WebUI is still
+    // booting, so getEffectiveEmail was still the placeholder and the
+    // Google card asked about `default@local` and painted "Connect" over
+    // a live connection (reported 2026-11-17).
+    if (aiuiEmailIsKnown(getEffectiveEmail()) || tries >= AIUI_EMAIL_TRIES) {
+      try { window.aiuiOpenConnections(); } catch (e) {}
+      return;
+    }
+    setTimeout(function () {
+      aiuiOpenConnectionsWhenReady(tries + 1);
+    }, 150);
+  }
+
+  function aiuiWantsConnections(pathname) {
+    // EXACT membership, never a prefix. /connect is also the stem of
+    // /connect/<provider>/callback, the OAuth return address. That page
+    // is served by the tasks service and never loads this script, so the
+    // two cannot collide today, but a matcher that would swallow a
+    // callback is one route change away from eating every connection on
+    // the platform.
+    var p = String(pathname || '').replace(/\/+$/, '').toLowerCase();
+    return AIUI_CONNECTIONS_PATHS.indexOf(p) !== -1;
+  }
 
   window.addEventListener('message', function (ev) {
     var d = ev && ev.data;
@@ -1465,7 +1535,13 @@
         renderGrid();
       });
 
-    APPS.filter(function (a) { return a.real && !a.token; }).forEach(function (app) {
+    // Only when we know WHOSE account to ask about. The status route
+    // takes the address in the query, so asking with the placeholder
+    // returns a confident "not connected" about a live account. Leaving
+    // these unchecked makes the card say "checking", which is true.
+    APPS.filter(function (a) {
+      return a.real && !a.token && aiuiEmailIsKnown(email);
+    }).forEach(function (app) {
       var apis = app.apis || [app.api];
       Promise.all(apis.map(function (api) {
         return fetch(api + '/auth/google/status?user_email=' + encodeURIComponent(email))
@@ -2631,6 +2707,9 @@
     console.log('[AIUI] chatcard: send detected, text=', (text || '').slice(0, 60), 'service=', service);
     if (!service) return;
     var email = getEffectiveEmail();
+    // A guess is not an account: asking about the placeholder
+    // answers a confident "not connected" about a live one.
+    if (!aiuiEmailIsKnown(email)) return;
     var api = service === 'gdrive' ? GDRIVE_API : GMAIL_API;
     fetch(api + '/auth/google/status?user_email=' + encodeURIComponent(email))
       .then(function(r) { return r.json(); })
@@ -2789,6 +2868,10 @@
     // Show Connect immediately, then flip to connected/disconnect if the
     // server says this user is already linked.
     _renderConnectState(container, service, url, email, false);
+    // Leave it reading Connect rather than asking about a guess: the
+    // button works either way, and a wrong answer here is the one
+    // that tells somebody a live connection is gone.
+    if (!aiuiEmailIsKnown(email)) return;
     fetch(api + '/auth/google/status?user_email=' + encodeURIComponent(email))
       .then(function (r) { return r.json(); })
       .then(function (d) {
@@ -3018,11 +3101,19 @@
   }
 
   function aiuiGoogleConnected(id) {
+    // Gmail and Drive have a SESSION-authenticated route, so they need no
+    // address at all. Calendar has only the query one, so it is the only
+    // branch that can be asked about the wrong person, and it does not
+    // get asked until there is a person. Answering false here is right:
+    // "I do not know yet" and "not connected" lead to the same button,
+    // and the alternative is a confident wrong answer.
+    var who = getEffectiveEmail();
+    if (id === 'calendar' && !aiuiEmailIsKnown(who)) {
+      return Promise.resolve(false);
+    }
     var url = id === 'calendar'
-      // Calendar has no session-authenticated status route; this is the
-      // one the page already asks (styleConnectButton).
       ? CALENDAR_API + '/auth/google/status?user_email='
-        + encodeURIComponent(getEffectiveEmail() || '')
+        + encodeURIComponent(who)
       : (id === 'gmail' ? GMAIL_API : GDRIVE_API) + '/auth/status';
     return fetch(url, { headers: aiuiAuthHeaders() })
       .then(function (r) { return r.ok ? r.json() : null; })
@@ -7345,6 +7436,26 @@
   // The scan above runs on a page mutation, and a thread that has finished
   // changing produces none, so the last change could go unread for ever.
   setInterval(aiuiWatchBuilds, AIUI_BUILD_LOOK_MS + 250);
+
+  // Somebody was SENT here, or typed it looking for the dialog.
+  //
+  // A REAL navigation, not history.replaceState. replaceState changes the
+  // address bar without re-rendering, so the first version of this opened
+  // the dialog over the SPA's own "404: Not Found" (reported 2026-11-17).
+  // Going to "/" makes the router draw the chat, and the marker survives
+  // the trip.
+  if (aiuiWantsConnections(location.pathname)) {
+    try {
+      location.replace('/?' + AIUI_OPEN_CONNECTIONS);
+    } catch (e) {}
+  } else if (location.search.indexOf(AIUI_OPEN_CONNECTIONS) !== -1) {
+    // Tidy the marker away so a reload is an ordinary chat, then open
+    // once we know whose account to show.
+    try {
+      history.replaceState({}, '', location.pathname);
+    } catch (e) {}
+    aiuiOpenConnectionsWhenReady(0);
+  }
 
   console.log('[AIUI] Integrations UI v16-connect-your-own loaded');
 })();

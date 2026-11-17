@@ -439,10 +439,28 @@ def plan(picks, connected, tools, text: str = "", skills=None,
         if len(chosen) >= MAX_APPS:
             break
         group = APPS[app_id].group
+        if not group:
+            chosen.append(app_id)
+            continue
         # A choice is shown whole even past the cap: one side of it alone
         # is a recommendation pretending to be a comparison.
-        chosen += [app_id] + [a.id for a in _APPS if group and a.group == group
+        members = [app_id] + [a.id for a in _APPS if a.group == group
                               and a.id != app_id and a.id not in chosen]
+        # THE ONE THEY ALREADY HAVE LEADS. Ralph, 2026-11-17, with his n8n
+        # API key on screen carrying every scope it offers: "it all have
+        # access... though why the system recommend zappier". Jev had
+        # scored the hosted paid one a hair higher, and `connected` was
+        # written into the brief without ever being used to order, so the
+        # assistant told somebody to go and get a second automation tool
+        # while the first sat connected.
+        #
+        # Narrow on purpose. It reorders WITHIN a group, where both are
+        # shown anyway, so nothing is added, nothing is removed and no
+        # comparison is hidden: it decides only which one is named first.
+        # The sort is stable, so with both connected or neither, Jev's
+        # order stands, because then the message is all there is to go on.
+        members.sort(key=lambda i: 0 if i in have else 1)
+        chosen += members
     apps = []
     for app_id in chosen:
         a = APPS[app_id]
@@ -556,6 +574,19 @@ def brief(p) -> str:
     return "\n".join(lines)
 
 
+#: Words that mean the answer has already owned up to a limit, so the
+#: service stays quiet rather than saying it again in a second voice.
+#:
+#: Deliberately loose. A false match costs the silence we had before, on
+#: an answer that was probably honest anyway; a missed one costs a
+#: sentence of mild repetition. The first version of this read "read-only"
+#: alone, which is how one real reply phrased it and not how the next one
+#: did.
+_LIMIT_SAID = ("cannot", "can not", "can't", "cant ", "unable to",
+               "not able to", "read-only", "read only", "no way to",
+               "does not support", "doesn't support")
+
+
 def with_buttons(answer: str, p) -> str:
     """`answer` with a Connect button for every recommended app that is not
     connected, each at most once, and a one-line introduction for one the
@@ -570,8 +601,27 @@ def with_buttons(answer: str, p) -> str:
     answer = str(answer or "")
     low = answer.lower()
     lines, buttons = [], []
-    for a in (p or {}).get("apps") or []:
+    apps = (p or {}).get("apps") or []
+    # A CHOICE YOU HAVE ALREADY MADE IS NOT A CHOICE. Skipping a connected
+    # app is right for one app on its own and backwards for a group: it
+    # drops the side the person HAS and recommends the side they do not,
+    # so "here are your two options" becomes "go and get the other one".
+    #
+    # Seen live 2026-11-17, with n8n connected and reading 32 of his
+    # workflows in the same reply:
+    #
+    #     Recommended: Zapier, so IO can send data to a Zap you made,
+    #     which starts it (it cannot create or change Zaps yet).
+    #     [Connect Zapier]
+    #
+    # and n8n never mentioned. Somebody who already has an automation
+    # tool connected does not need to be sold its competitor.
+    settled = {a.get("group") for a in apps
+               if a.get("connected") and a.get("group")}
+    for a in apps:
         if a["connected"]:
+            continue
+        if a.get("group") and a["group"] in settled:
             continue
         app = APPS[a["id"]]
         if connect_href(app.id) in low:
@@ -592,6 +642,32 @@ def with_buttons(answer: str, p) -> str:
             # "...into a dropdown" (live, 2026-11-17).
             lines.append("%s cannot yet %s." % (app.label, app.cannot))
         buttons.append(_button(app))
+    # THE LIMIT OF AN APP THEY HAVE. Everything above is about apps the
+    # person has NOT connected, so the one app actually being used was the
+    # one whose limit was never guaranteed. That is backwards: it is the
+    # limit somebody is about to walk into.
+    #
+    # Seen live 2026-11-17, the same request run twice. Once: "my n8n
+    # access is read-only: it can list workflows, read one, and view
+    # recent runs, but not create or edit them." Then: "No IO test
+    # workflow exists yet. If you build it in n8n ... I'll read it back",
+    # never saying it COULD not, and the follow-up offered was "Could you
+    # create the IO test workflow?", which it cannot do.
+    #
+    # Only under an answer ABOUT that app, and only when the answer did
+    # not already say it: the same thing twice in two voices is what the
+    # branch above was written to avoid.
+    for a in apps:
+        if not a["connected"]:
+            continue
+        app = APPS[a["id"]]
+        if not app.cannot:
+            continue
+        if not any(w in low for w in (app.label.lower(),) + app.says):
+            continue
+        if any(m in low for m in _LIMIT_SAID):
+            continue
+        lines.append("%s cannot %s yet." % (app.label, app.cannot))
     # A skill that needs an app the person has not connected: that app's
     # button, the same one skill_fit draws for the skills answers.
     import skill_fit
