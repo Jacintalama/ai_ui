@@ -127,6 +127,18 @@ rule (lowest clean cut plus one step). What it gives up: Cron Jobs 0.69 on
 "remind me every Monday at 9am" (the tool pick still makes the job) and
 Publish 0.60 on "my bakery site live on my own domain".
 
+## Live, and the question changed (2026-11-17)
+
+Live, "can I talk to my agents from Telegram?" scored Channels 0.68 and got
+no button; "where can I see my cron jobs?" scored Cron Jobs under 0.40.
+The platform's parts were asked the apps' question, where "a general
+question" means no, so a how/where question about the platform read as
+general. They are now asked whether this is "the part of the platform to
+use or open", and a question about how, where or whether counts. Two runs
+of 47 cases: no wrong platform pick at any cut from 0.50, so
+`platform_pick` is 0.60. Still under it: Publish for "my bakery site live
+on my own domain" (0.45) and the two domain follow-ups.
+
 ## After review (2026-11-17)
 
 An independent review found these, all fixed:

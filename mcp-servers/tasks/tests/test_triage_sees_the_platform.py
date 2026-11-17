@@ -154,3 +154,31 @@ def test_each_part_names_a_tool_the_chat_really_has():
     for feat in app_triage.PLATFORM.values():
         if feat.tool:
             assert feat.tool in agent_jev.TOOL_NOTES, feat.id
+
+
+def test_a_long_limit_reads_as_a_sentence():
+    """Live 2026-11-17: "...such as turning a text column into a dropdown
+    yet." The "yet" goes before the limit, so any length of it reads."""
+    p = app_triage.plan([("airtable", 0.95)], set(), [])
+    out = app_triage.with_buttons("Airtable fits this.", p)
+    assert "Airtable cannot yet make a new base" in out
+    assert "dropdown yet" not in out
+    b = app_triage.brief(p)
+    assert "IO cannot yet make a new base" in b
+    intro = app_triage.with_buttons("Here is a way.", p)
+    assert "(it cannot yet make a new base" in intro
+
+
+def test_the_platform_is_asked_as_the_part_to_use_or_open():
+    """Live 2026-11-17: asked the apps' question, where "a general question"
+    is a no, "can I talk to my agents from Telegram?" scored 0.68 and got no
+    button. The platform's parts are asked their own question; the apps'
+    question, which their 0.90 was measured on, is unchanged."""
+    ids = app_triage.catalogue_ids()
+    _state, qs = agent_jev.apps_request("can I talk to my agents from Telegram?")
+    plat = qs["a%d" % ids.index("channels")]
+    assert "the part of the platform to use or open" in plat["instructions"]
+    assert "how, where or whether" in plat["criteria"]["true"]
+    app = qs["a%d" % ids.index("airtable")]
+    assert app["instructions"].startswith("To do what the person wants, would Airtable, an app for ")
+    assert "a general question" in app["criteria"]["false"]

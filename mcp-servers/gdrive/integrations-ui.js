@@ -2904,8 +2904,10 @@
       // so the watch exists before anything can answer it.
       var watch = aiuiCarryOn(provider, btn.textContent, container);
       // Three cases. A Google app has a direct URL and opens immediately.
-      // An app that can log in here (Notion, and since 2026-11-17 every
-      // app the service says has OAuth ready) needs its start URL fetched
+      // An app that can log in here (every app the service says has OAuth
+      // ready; Notion was always tried, which on a server without its keys
+      // flashed a blank tab before the panel, 2026-11-17) needs its start
+      // URL fetched
       // from our API, so the window is opened synchronously right here and
       // navigated once the URL arrives, because a window opened after an
       // await has lost the click that justified it and gets blocked.
@@ -2922,7 +2924,7 @@
         return;
       }
 
-      if (provider === 'notion' || aiuiOauthReady(provider)) {
+      if (aiuiOauthReady(provider)) {
         // Notion's connect URL has to be fetched, but a window opened
         // after an await has lost the click that justified it and gets
         // blocked. So open synchronously first and navigate it once the

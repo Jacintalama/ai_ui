@@ -93,7 +93,13 @@ CUTS = {PURPOSE_PLAIN: 0.6, PURPOSE_ROLLBACK: 0.6, PURPOSE_RELEASE: 0.6,
         # is cold deploy questions (Publish 0.60 for "my bakery site live on
         # my own domain") and "remind me every Monday" (Cron Jobs 0.69),
         # where the tool pick still creates the job.
-        PURPOSE_PLATFORM: 0.7}
+        # Then the platform's own question (apps_request, 2026-11-17): live,
+        # "can I talk to my agents from Telegram?" scored Channels 0.68 and
+        # missed. Asked as "the part to use or open", with how/where
+        # questions counting, two runs of 47 cases had no wrong pick at any
+        # cut from 0.50, so 0.50 plus one step. Telegram 0.69 to 0.74,
+        # "where can I see my cron jobs?" 0.78, "history of Telegram" 0.02.
+        PURPOSE_PLATFORM: 0.6}
 
 
 def cut(purpose: str) -> float:
@@ -750,22 +756,38 @@ def apps_request(text: str, context: str = "") -> tuple[str, dict]:
     """
     import app_triage
     questions = {}
-    entries = ([(a.label, "an app for " + a.note) for a in app_triage.APPS.values()]
-               # The platform's own features after the apps, numbered on
-               # from them (app_triage.catalogue_ids). 2026-11-13.
-               + [(p.label, "the platform's own feature for " + p.note)
-                  for p in app_triage.PLATFORM.values()])
-    for i, (label, what) in enumerate(entries):
+    for i, a in enumerate(app_triage.APPS.values()):
         questions[f"a{i}"] = {
             "type": "noul",
-            "instructions": f"To do what the person wants, would {label}, "
-                            f"{what}, be a good one to use, "
+            "instructions": f"To do what the person wants, would {a.label}, "
+                            f"an app for {a.note}, be a good one to use, "
                             f"even if they did not name it?",
             "criteria": {
                 "true": "what the person wants is the kind of thing this app "
                         "is made for",
                 "false": "the message is small talk, a general question, or "
                          "about something this app is not made for",
+            }}
+    # The platform's own parts after the apps, numbered on from them
+    # (app_triage.catalogue_ids, 2026-11-13). Asked as "the part to use or
+    # open", and a question about HOW or WHERE to do it counts: measured
+    # 2026-11-17, the apps' wording ("a general question" is a no) put "can
+    # I talk to my agents from Telegram?" at 0.68 to 0.73 for Channels and
+    # "where can I see my cron jobs?" under 0.40 for Cron Jobs, though each
+    # is exactly what that part is for.
+    for j, p in enumerate(app_triage.PLATFORM.values(), start=len(questions)):
+        questions[f"a{j}"] = {
+            "type": "noul",
+            "instructions": f"Is {p.label}, the platform's own feature for "
+                            f"{p.note}, the part of the platform to use or "
+                            f"open for what the person wants or asks about, "
+                            f"even if they did not name it?",
+            "criteria": {
+                "true": "the person wants this done, or asks how, where or "
+                        "whether they can do it here, and it is what this "
+                        "part is for",
+                "false": "the message is small talk, general knowledge or a "
+                         "story, or about something this part is not for",
             }}
     if not str(context or "").strip():
         return "The person wrote:\n" + _clip(text), questions

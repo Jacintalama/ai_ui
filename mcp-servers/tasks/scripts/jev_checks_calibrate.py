@@ -384,6 +384,20 @@ APP_CASES = [
     ("write me a short story about a robot secret agent", [], set()),
     ("tell me a bit about the history of Telegram", [], set()),
     ("how do websites work, in simple words", [], set()),
+    # Asked as a question about the platform itself (2026-11-17): live,
+    # "can I talk to my agents from Telegram?" scored Channels 0.68 and
+    # missed, and "where can I see my cron jobs?" under 0.40.
+    ("how do I chat with IO from Telegram", [{"channels"}], {"ai_agents"}),
+    ("where can I see my cron jobs?", [{"cron_jobs"}], set()),
+    ("where do I make my own AI agent?", [{"ai_agents"}], set()),
+    ("where do I build a website here?", [{"app_builder"}], {"publish"}),
+    ("is there a way to run my agent when someone fills in a form on my "
+     "site?", [{"automations"}], {"ai_agents", "n8n", "zapier"}),
+    ("how do I make a short demo video of my app from screenshots?",
+     [{"video"}], {"app_builder"}),
+    ("what's a good chat app for my team?", [], set()),
+    ("can I connect my agents to my email?", [{"gmail", "outlook"}],
+     {"ai_agents", "automations", "calendar", "n8n", "zapier"}),
 ]
 
 
