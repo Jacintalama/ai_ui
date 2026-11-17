@@ -573,6 +573,19 @@ def brief(p) -> str:
     return "\n".join(lines)
 
 
+#: Words that mean the answer has already owned up to a limit, so the
+#: service stays quiet rather than saying it again in a second voice.
+#:
+#: Deliberately loose. A false match costs the silence we had before, on
+#: an answer that was probably honest anyway; a missed one costs a
+#: sentence of mild repetition. The first version of this read "read-only"
+#: alone, which is how one real reply phrased it and not how the next one
+#: did.
+_LIMIT_SAID = ("cannot", "can not", "can't", "cant ", "unable to",
+               "not able to", "read-only", "read only", "no way to",
+               "does not support", "doesn't support")
+
+
 def with_buttons(answer: str, p) -> str:
     """`answer` with a Connect button for every recommended app that is not
     connected, each at most once, and a one-line introduction for one the
@@ -626,6 +639,32 @@ def with_buttons(answer: str, p) -> str:
             # is the limit, which is why this branch exists.
             lines.append("%s cannot %s yet." % (app.label, app.cannot))
         buttons.append(_button(app))
+    # THE LIMIT OF AN APP THEY HAVE. Everything above is about apps the
+    # person has NOT connected, so the one app actually being used was the
+    # one whose limit was never guaranteed. That is backwards: it is the
+    # limit somebody is about to walk into.
+    #
+    # Seen live 2026-11-17, the same request run twice. Once: "my n8n
+    # access is read-only: it can list workflows, read one, and view
+    # recent runs, but not create or edit them." Then: "No IO test
+    # workflow exists yet. If you build it in n8n ... I'll read it back",
+    # never saying it COULD not, and the follow-up offered was "Could you
+    # create the IO test workflow?", which it cannot do.
+    #
+    # Only under an answer ABOUT that app, and only when the answer did
+    # not already say it: the same thing twice in two voices is what the
+    # branch above was written to avoid.
+    for a in apps:
+        if not a["connected"]:
+            continue
+        app = APPS[a["id"]]
+        if not app.cannot:
+            continue
+        if not any(w in low for w in (app.label.lower(),) + app.says):
+            continue
+        if any(m in low for m in _LIMIT_SAID):
+            continue
+        lines.append("%s cannot %s yet." % (app.label, app.cannot))
     # A skill that needs an app the person has not connected: that app's
     # button, the same one skill_fit draws for the skills answers.
     import skill_fit
