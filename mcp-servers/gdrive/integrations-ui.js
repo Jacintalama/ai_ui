@@ -692,6 +692,31 @@
     document.body.appendChild(createIntegrationsModal());
   };
 
+  //: The addresses a person actually tries when looking for Connections.
+  //:
+  //: Not invented. On 2026-11-16 a capable browser assistant, asked to
+  //: connect Airtable, tried Settings > Connections (model endpoints, a
+  //: decoy with the right name), Settings > Integrations (tool servers, a
+  //: second decoy), then these three, and gave up. The dialog lives in
+  //: the composer's "+" menu, which is a fine place to find by accident
+  //: and a hopeless place to be sent.
+  //:
+  //: tasks.connect_attempt says one of nine people has ever tried to
+  //: connect anything. An address you can put in a message is the
+  //: cheapest thing that changes that.
+  var AIUI_CONNECTIONS_PATHS = ['/connections', '/connect', '/integrations'];
+
+  function aiuiWantsConnections(pathname) {
+    // EXACT membership, never a prefix. /connect is also the stem of
+    // /connect/<provider>/callback, the OAuth return address. That page
+    // is served by the tasks service and never loads this script, so the
+    // two cannot collide today, but a matcher that would swallow a
+    // callback is one route change away from eating every connection on
+    // the platform.
+    var p = String(pathname || '').replace(/\/+$/, '').toLowerCase();
+    return AIUI_CONNECTIONS_PATHS.indexOf(p) !== -1;
+  }
+
   window.addEventListener('message', function (ev) {
     var d = ev && ev.data;
     if (d && d.type === 'aiui:open-connections') {
@@ -7343,6 +7368,20 @@
   // The scan above runs on a page mutation, and a thread that has finished
   // changing produces none, so the last change could go unread for ever.
   setInterval(aiuiWatchBuilds, AIUI_BUILD_LOOK_MS + 250);
+
+  // Somebody was SENT here, or typed it looking for the dialog. The SPA
+  // renders nothing at these routes, so the URL is tidied back to the
+  // chat first and the dialog opens over that: a reload then lands
+  // somewhere real instead of on an empty route.
+  if (aiuiWantsConnections(location.pathname)) {
+    try { history.replaceState({}, '', '/'); } catch (e) {}
+    // After the shell has drawn. The dialog appends to document.body, so
+    // it does not need the composer, but opening into a half-built page
+    // puts it behind the chat's own first paint.
+    setTimeout(function () {
+      try { window.aiuiOpenConnections(); } catch (e) {}
+    }, 400);
+  }
 
   console.log('[AIUI] Integrations UI v16-connect-your-own loaded');
 })();
