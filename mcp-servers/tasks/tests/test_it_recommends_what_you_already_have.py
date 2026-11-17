@@ -155,3 +155,64 @@ def test_an_unrelated_app_is_still_recommended():
                         text="save my leads somewhere")
     out = app_triage.with_buttons("Here is what I found.", p)
     assert "Airtable" in out, out
+
+
+# --- the limit of an app you HAVE is the one that matters -----------------
+
+CONNECTED = {"n8n"}
+PICKS_N8N = [("n8n", 0.94)]
+
+
+def _plan_n8n():
+    return app_triage.plan(PICKS_N8N, CONNECTED, [], text="check n8n")
+
+
+def test_the_limit_is_stated_when_the_answer_left_it_out():
+    """Seen live 2026-11-17, two runs of one request, "create a test
+    workflow in n8n and list my workflows".
+
+    Run one said it plainly: "my n8n access is read-only: it can list
+    workflows, read one, and view recent runs, but not create or edit
+    them." Run two quietly dropped the create half and answered "No IO
+    test workflow exists yet. If you build it in n8n ... I'll read it
+    back", never saying it COULD not.
+
+    The guarantee that the limit gets said lives in the loop over apps the
+    person has NOT connected, and a connected app is skipped before it
+    gets there. So the one app being used is the one whose limit is never
+    guaranteed, which is backwards: that is the limit somebody is about to
+    walk into.
+    """
+    answer = ("No IO test workflow exists yet. If you build it in n8n, "
+              "let me know and I'll read it back.")
+    out = app_triage.with_buttons(answer, _plan_n8n())
+    assert "cannot create or change workflows" in out, (
+        "the answer skipped the limit and so did the service:\n" + out)
+
+
+def test_it_does_not_say_it_twice():
+    """Run one's wording. The model already said it, in better words than
+    ours, so the service stays quiet: the same thing twice in two voices
+    is what the not-connected branch was written to avoid."""
+    answer = ("My n8n access is read-only: it can list workflows, read "
+              "one, and view recent runs, but not create or edit them.")
+    out = app_triage.with_buttons(answer, _plan_n8n())
+    assert out.strip() == answer.strip(), (
+        "said the limit again under an answer that already said it:\n"
+        + out)
+
+
+def test_an_app_the_answer_never_mentioned_stays_quiet():
+    """The limit belongs under an answer about that app, not stapled to
+    every reply because the person happens to have it connected."""
+    out = app_triage.with_buttons("Here are your Trello cards.",
+                                  _plan_n8n())
+    assert "n8n" not in out, out
+
+
+def test_a_connected_app_still_gets_no_connect_button():
+    out = app_triage.with_buttons(
+        "No IO test workflow exists yet in n8n.", _plan_n8n())
+    assert "aiui-connect:n8n" not in out, (
+        "offered a Connect button for something already connected:\n"
+        + out)
