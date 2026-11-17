@@ -53,6 +53,12 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8"></head><body>
   window.__sent = []; window.__frames = []; window.__panels = 0; window.__busy = false;
   var GMAIL_API = '/gmail', GDRIVE_API = '/gdrive', CALENDAR_API = '/calendar';
   function getEffectiveEmail() { return 'person@example.com'; }
+  // Both of these live ABOVE the section this file cuts out, so the lift
+  // cannot see them and the harness stands them in, as it already did for
+  // getEffectiveEmail. aiuiEmailIsKnown is what stops a status route
+  // being asked about `default@local`, the placeholder returned before
+  // Open WebUI has written the signed-in user (2026-11-17).
+  function aiuiEmailIsKnown(e) { return !!e && e !== 'default@local'; }
   window.aiuiOpenConnections = function () { window.__panels++; };
   window.open = function (u) {
     var f = document.createElement('iframe');
