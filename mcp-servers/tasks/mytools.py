@@ -176,6 +176,32 @@ def _no_body_result(tool: "Tool") -> Dict[str, Any]:
     return {"ok": True, "items": []}
 
 
+def _same_host(vendor_base: str, tool_base: str) -> bool:
+    """Whether a tool's base is still the vendor the credential is for.
+
+    No base at all is the ordinary case and is the vendor. Anything that
+    cannot be parsed counts as elsewhere, which is the safe direction:
+    a base nobody can read is not proof it is the same vendor, and the
+    cost of guessing wrong is somebody's credential.
+
+    Scheme counts. http to the same name is still refused, because a
+    credential must not be sent in the clear.
+    """
+    base = str(tool_base or "").strip()
+    if not base:
+        return True
+    try:
+        from urllib.parse import urlsplit
+        a, b = urlsplit(str(vendor_base or "")), urlsplit(base)
+        if not a.hostname or not b.hostname:
+            return False
+        return (a.hostname.lower() == b.hostname.lower()
+                and (a.scheme or "").lower() == (b.scheme or "").lower()
+                and a.port == b.port)
+    except Exception:                                       # noqa: BLE001
+        return False
+
+
 def _query_for(tool: "Tool", args: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """The query string for one call: what the caller named, then the tool's
     own defaults for anything they did not.
@@ -437,10 +463,77 @@ def _n8n_json(value, field: str):
             "objects, or as JSON text." % field)
 
 
+def _n8n_set_is_empty(node) -> bool:
+    """A Set node whose assignments are empty, in either shape.
+
+    v3 nests them, {"assignments": {"assignments": [...]}}, and older
+    ones use {"values": {"string": [...]}}. Only the v3 shape is judged,
+    because a `values` block is what anybody copying a real template
+    will have and refusing those would block the one reliable way to get
+    a node right.
+    """
+    if not isinstance(node, dict):
+        return False
+    if not str(node.get("type") or "").endswith(".set"):
+        return False
+    params = node.get("parameters")
+    if not isinstance(params, dict):
+        return False
+    if "values" in params:
+        return False
+    block = params.get("assignments")
+    if isinstance(block, dict):
+        return not (block.get("assignments") or [])
+    if isinstance(block, list):
+        return not block
+    return False
+
+
+def _n8n_check(nodes, conns) -> None:
+    """Refuse the two shapes that make a workflow which cannot do
+    anything. n8n will not: it has no opinion about whether yours is
+    finished, so it accepts both happily and you find out in the canvas.
+
+    Measured 2026-11-18, from a real request for "a manual trigger and a
+    Set node that sets message = hello from IO":
+
+        nodes: Manual Trigger, Set message with "assignments": []
+        connections: {}
+
+    The model was not being careless. n8n exposes no node schema to an
+    API key at all, so a refusal that says the shape is one of only two
+    places it can learn one; the other is the argument descriptions.
+
+    Deliberately narrow: two shapes we have actually seen, not a
+    validator with opinions about n8n's hundreds of nodes.
+    """
+    named = [n for n in nodes if isinstance(n, dict)]
+    if len(named) > 1 and not conns:
+        first = str(named[0].get("name") or "the first node")
+        second = str(named[1].get("name") or "the next one")
+        raise ValueError(
+            "These %d nodes are not connected to anything, so the "
+            "workflow would do nothing. `connections` is keyed by the "
+            "SOURCE NODE'S NAME, not its id. To join them: "
+            '{"%s": {"main": [[{"node": "%s", "type": "main", '
+            '"index": 0}]]}}' % (len(named), first, second))
+    for node in named:
+        if _n8n_set_is_empty(node):
+            raise ValueError(
+                '"%s" is a Set node with nothing to set, so it would '
+                "pass its input straight through. Its parameters need "
+                'the nested shape: {"mode": "manual", "assignments": '
+                '{"assignments": [{"id": "a1", "name": "message", '
+                '"value": "hello", "type": "string"}]}}'
+                % str(node.get("name") or "A Set node"))
+
+
 def _n8n_workflow_body(args):
     given = args or {}
     nodes = _n8n_json(given.get("nodes"), "nodes")
     conns = _n8n_json(given.get("connections"), "connections")
+    _n8n_check(nodes if isinstance(nodes, list) else [],
+               conns if isinstance(conns, dict) else {})
     body = {"name": given.get("name") or "",
             "nodes": nodes if isinstance(nodes, list) else [],
             "connections": conns if isinstance(conns, dict) else {},
@@ -707,9 +800,25 @@ async def _call(provider_id: str, tool: Tool, email: str,
     payload = _payload_for(tool, args)
 
     url = (tool.base or auth.base_url) + path
+    # A CREDENTIAL ONLY GOES TO ITS OWN VENDOR. `base` lets one tool point
+    # elsewhere, and the headers used to go out whatever it was set to, so
+    # a tool reading n8n's PUBLIC template library at api.n8n.io would have
+    # carried a self-hosted X-N8N-API-KEY to n8n's cloud: a credential
+    # handed to a third party by a tool whose whole point is that it needs
+    # none (2026-11-18, before any such tool existed).
+    #
+    # Same host, different path or version, still gets it: that is what
+    # `base` is documented for ("moving the provider's base to v3"), and
+    # it is the same vendor. Different host does not, because by
+    # definition that is not the vendor the credential belongs to. The
+    # query params go the same way, since Trello's credential rides there.
+    own = _same_host(auth.base_url, tool.base)
+    if not own:
+        params = _query_for(tool, args)
     try:
         async with httpx.AsyncClient(timeout=VENDOR_TIMEOUT_SEC) as client:
-            r = await client.request(tool.method, url, headers=auth.headers,
+            r = await client.request(tool.method, url,
+                                     headers=auth.headers if own else None,
                                      params=params or None, json=payload)
     except Exception as e:
         # The exception text can carry the URL, and Trello's credential rides
@@ -1332,12 +1441,31 @@ N8N_TOOLS = [
          method="POST", path="/api/v1/workflows",
          args={"name": ("string", "What to call the workflow", True),
                "nodes": ("array",
-                         "The nodes, as n8n writes them: each with "
+                         "The nodes, as n8n writes them. Each needs "
                          "id, name, type, typeVersion, position and "
-                         "parameters", True),
+                         "parameters. A manual trigger is "
+                         "{\"id\": \"t1\", \"name\": \"Manual "
+                         "Trigger\", \"type\": "
+                         "\"n8n-nodes-base.manualTrigger\", "
+                         "\"typeVersion\": 1, \"position\": [0,0], "
+                         "\"parameters\": {}}. A Set node needs its "
+                         "assignments NESTED: \"parameters\": "
+                         "{\"mode\": \"manual\", \"assignments\": "
+                         "{\"assignments\": [{\"id\": \"a1\", "
+                         "\"name\": \"message\", \"value\": "
+                         "\"hello\", \"type\": \"string\"}]}}. An "
+                         "empty assignments list sets nothing and is "
+                         "refused.", True),
                "connections": ("object",
                                "Which node feeds which, keyed by the "
-                               "SOURCE NODE'S NAME, not its id",
+                               "SOURCE NODE'S NAME, never its id. To "
+                               "join Manual Trigger to Set message: "
+                               "{\"Manual Trigger\": {\"main\": "
+                               "[[{\"node\": \"Set message\", "
+                               "\"type\": \"main\", \"index\": "
+                               "0}]]}}. Two or more nodes with no "
+                               "connections is refused, because the "
+                               "workflow would do nothing.",
                                False)},
          shape=_n8n_workflow_body,
          writes=True,
