@@ -2093,6 +2093,11 @@ async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
             if not agent_progress.reading_line(picked):
                 agent_progress.say(can_do.CHECKING_LINE)
             facts, can_plan = await _can_do_facts(body.user_email, asked)
+            # The same message may be a deploy the triage recommended; then
+            # can_do's "Vercel cannot deploy" contradicts it (live
+            # 2026-11-18), in the brief and under the answer.
+            if app_triage.share_deploy(plan, can_plan):
+                facts = can_do.brief(can_plan)
         if not picked and plan is None and not facts:
             return None
         picked = list(picked or [])
