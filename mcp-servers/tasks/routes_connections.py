@@ -145,9 +145,11 @@ def _oauth_ready(provider_id: str) -> bool:
         return False
 
 
-def _describe(provider: C.Provider, stored: dict) -> dict:
+def _describe(provider: C.Provider, stored: dict,
+              stuck: dict = None) -> dict:
     """Everything the card needs, and nothing that could be a secret."""
     hit = stored.get(provider.id)
+    walled = (stuck or {}).get(provider.id)
     return {
         "provider": provider.id,
         "label": provider.label,
@@ -170,6 +172,13 @@ def _describe(provider: C.Provider, stored: dict) -> dict:
         "oauth": _oauth_ready(provider.id),
         "fields": [{"name": f.name, "label": f.label, "secret": f.secret,
                     "placeholder": f.placeholder} for f in provider.fields],
+        # Started again and again and never came back. Measured
+        # 2026-11-18: somebody tried Airtable eleven times in an
+        # hour, the vendor never called back once, and the card
+        # showed them the same button every time. None of the
+        # failure stages fired, so nothing else here knows.
+        "stuck": CA.stuck_line(provider.label, walled)
+                 if walled else "",
     }
 
 
@@ -190,7 +199,15 @@ async def list_connections(user: CurrentUser = Depends(current_user)):
             await conn.close()
     except Exception as e:
         logger.warning("connections: read failed: %s", e)
-    return {"connections": [_describe(p, stored)
+    # Never worth failing the listing for: a card with no notice is
+    # where we already were.
+    stuck = {}
+    try:
+        stuck = CA.stuck_for(user.email, await CA.for_email(user.email))
+    except Exception as e:                                  # noqa: BLE001
+        logger.warning("connections: could not read attempts (%s)",
+                       type(e).__name__)
+    return {"connections": [_describe(p, stored, stuck)
                             for p in C.PROVIDERS.values()]}
 
 

@@ -1150,6 +1150,20 @@
         : (meta.where || '');
       box.appendChild(sub);
 
+      // STARTED AGAIN AND AGAIN AND NEVER CAME BACK. The server
+      // counts this. Somebody tried Airtable eleven times in an
+      // hour on 2026-11-17, the vendor never called back once,
+      // and this panel showed them the same button every time.
+      // It sits directly under the heading because it is the
+      // reason the rest of the card has not worked for them.
+      if (meta.stuck) {
+        var walled = document.createElement('div');
+        walled.style.cssText = 'color:#e0b070;font-size:12.5px;'
+          + 'line-height:1.55;margin-bottom:16px;';
+        walled.textContent = meta.stuck;
+        box.appendChild(walled);
+      }
+
       // Offered whether or not they are already connected (2026-11-03).
       // It used to be `meta.oauth && !connected`, so somebody who had
       // connected Trello in one click and wanted to swap accounts was shown
