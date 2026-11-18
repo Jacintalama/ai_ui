@@ -369,6 +369,11 @@ Connect buttons under the answer. Two rules worth knowing:
   platform answers read our instruction back ("A button is added below.");
   `app_triage._drop_button_talk` removes a sentence with "button" and
   "added", and leaves "press the Connect button below" alone.
+- **Deploying is not contradicted by the Vercel account (2026-11-18)**: with
+  Publish or Deploy to Vercel picked, the Vercel ACCOUNT entry keeps its
+  Connect button (the deploy reads that same credential, PR #235) but not its
+  "cannot deploy" limit, which live sat under "choose Deploy to your Vercel
+  account" (`app_triage.DEPLOYS_WITH`).
 - **A timer job is the platform's**: with `schedules` picked, n8n and Zapier
   are dropped unless named ("every 8am read my email" is schedules + Gmail).
 - **Only an app NOT connected changes anything**, and it is offered once per

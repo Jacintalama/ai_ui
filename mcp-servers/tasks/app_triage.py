@@ -366,6 +366,10 @@ _PLATFORM = (
 )
 PLATFORM = {p.id: p for p in _PLATFORM}
 
+#: Apps whose connection the App Builder's own deploy uses, so their
+#: "cannot deploy" limit is not said beside a deploy recommendation.
+DEPLOYS_WITH = ("vercel",)
+
 #: Skills recommended in one answer.
 MAX_SKILLS = 2
 
@@ -487,6 +491,17 @@ def plan(picks, connected, tools, text: str = "", skills=None,
     if "publish" in plat_ids and "deploy_vercel" in plat_ids \
             and "vercel" not in str(text or "").lower():
         plat_ids.remove("deploy_vercel")
+    # Deploying is the App Builder's own (PLATFORM). The Vercel ACCOUNT's
+    # limit, "cannot deploy, publish or delete anything", is about reading
+    # the account, and said under "choose Deploy to your Vercel account" it
+    # contradicted the answer (live 2026-11-18). Its Connect button stays:
+    # it is the same credential the deploy uses (routes_vercel reads
+    # tasks.user_connections, PR #235).
+    if {"publish", "deploy_vercel"} & set(plat_ids):
+        for a in apps:
+            if a["id"] in DEPLOYS_WITH:
+                a["cannot"] = ""
+                a["deploying"] = True
     platform = [{"id": PLATFORM[i].id, "label": PLATFORM[i].label,
                  "how": PLATFORM[i].how,
                  "acting": bool(PLATFORM[i].tool)
@@ -567,6 +582,9 @@ def brief(p) -> str:
         if a["cannot"]:
             line += (" IO cannot yet %s, so do not offer to %s with it, "
                      "even once it is connected." % (a["cannot"], a["cannot"]))
+        if a.get("deploying"):
+            line += (" Connecting it is also what the App Builder's Deploy "
+                     "to Vercel uses.")
         if a["pros"]:
             line += " " + a["pros"]
         lines.append(line)
@@ -660,10 +678,10 @@ def with_buttons(answer: str, p) -> str:
             continue
         if not any(w in low for w in (app.label.lower(),) + app.says):
             line = "Recommended: %s, so IO can %s" % (app.label, app.can)
-            if app.cannot:
-                line += " (it cannot yet %s)" % app.cannot
+            if a["cannot"]:
+                line += " (it cannot yet %s)" % a["cannot"]
             lines.append(line + ".")
-        elif app.cannot:
+        elif a["cannot"]:
             # The LIMIT alone, because the answer already named the app and
             # described it. Measured on the live site 2026-11-13, two real
             # turns about Jira: the model wrote what it would be able to do
@@ -672,7 +690,7 @@ def with_buttons(answer: str, p) -> str:
             # is the limit, which is why this branch exists.
             # "cannot yet X", not "cannot X yet": a long limit put "yet" after
             # "...into a dropdown" (live, 2026-11-17).
-            lines.append("%s cannot yet %s." % (app.label, app.cannot))
+            lines.append("%s cannot yet %s." % (app.label, a["cannot"]))
         buttons.append(_button(app))
     # THE LIMIT OF AN APP THEY HAVE. Everything above is about apps the
     # person has NOT connected, so the one app actually being used was the
@@ -693,13 +711,13 @@ def with_buttons(answer: str, p) -> str:
         if not a["connected"]:
             continue
         app = APPS[a["id"]]
-        if not app.cannot:
+        if not a["cannot"]:
             continue
         if not any(w in low for w in (app.label.lower(),) + app.says):
             continue
         if any(m in low for m in _LIMIT_SAID):
             continue
-        lines.append("%s cannot yet %s." % (app.label, app.cannot))
+        lines.append("%s cannot yet %s." % (app.label, a["cannot"]))
     # A skill that needs an app the person has not connected: that app's
     # button, the same one skill_fit draws for the skills answers.
     import skill_fit

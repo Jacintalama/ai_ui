@@ -232,3 +232,48 @@ def test_the_brief_asks_for_no_talk_of_buttons():
     b = app_triage.brief(app_triage.plan([("channels", 0.9)], set(), []))
     assert "is added under your answer" not in b
     assert "do not say a button is added" in b
+
+
+# --- deploying to Vercel is not contradicted by the Vercel account (2026-11-18) ----
+
+def _deploy_plan(*extra_apps, connected=()):
+    picks = [("deploy_vercel", 0.9), ("vercel", 0.95)] + [(a, 0.95) for a in extra_apps]
+    return app_triage.plan(picks, set(connected), [], text="deploy it to my vercel")
+
+
+def test_a_deploy_answer_does_not_say_vercel_cannot_deploy():
+    """Live 2026-11-18: "click Publish and choose Deploy to your Vercel
+    account" and under it "Vercel cannot yet deploy, publish or delete
+    anything." The limit belongs to reading the account, not to the App
+    Builder's deploy, which is the answer."""
+    out = app_triage.with_buttons(
+        "Open the app in the App Builder and choose Deploy to your Vercel "
+        "account. Connect Vercel first.", _deploy_plan())
+    assert "cannot yet deploy" not in out
+    assert "[Connect Vercel](#aiui-connect:vercel)" in out
+    assert "[Deploy to Vercel in App Builder](#aiui-open:app-builder)" in out
+
+
+def test_nor_once_vercel_is_connected():
+    out = app_triage.with_buttons("Choose Deploy to your Vercel account.",
+                                  _deploy_plan(connected={"vercel"}))
+    assert "cannot yet deploy" not in out
+
+
+def test_the_brief_says_the_connection_is_the_one_the_deploy_uses():
+    b = app_triage.brief(_deploy_plan())
+    assert "do not offer to deploy" not in b
+    assert "the App Builder's Deploy to Vercel uses" in b
+
+
+def test_reading_the_account_alone_still_says_the_limit():
+    p = app_triage.plan([("vercel", 0.95)], set(), [], text="what is in my vercel")
+    out = app_triage.with_buttons("Vercel shows your projects.", p)
+    assert "Vercel cannot yet deploy" in out
+
+
+def test_publish_with_the_vercel_account_is_not_contradicted_either():
+    p = app_triage.plan([("publish", 0.9), ("vercel", 0.95)], set(), [],
+                        text="put my site online")
+    out = app_triage.with_buttons("Click Publish; it can also go to Vercel.", p)
+    assert "cannot yet deploy" not in out
