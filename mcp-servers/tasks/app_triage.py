@@ -18,6 +18,7 @@ Design: docs/plans/2026-11-12-triage-agent-design.md.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 #: Apps recommended in one answer. More is a catalogue, not a recommendation.
@@ -365,6 +366,10 @@ _PLATFORM = (
 )
 PLATFORM = {p.id: p for p in _PLATFORM}
 
+#: Apps whose connection the App Builder's own deploy uses, so their
+#: "cannot deploy" limit is not said beside a deploy recommendation.
+DEPLOYS_WITH = ("vercel",)
+
 #: Skills recommended in one answer.
 MAX_SKILLS = 2
 
@@ -486,6 +491,17 @@ def plan(picks, connected, tools, text: str = "", skills=None,
     if "publish" in plat_ids and "deploy_vercel" in plat_ids \
             and "vercel" not in str(text or "").lower():
         plat_ids.remove("deploy_vercel")
+    # Deploying is the App Builder's own (PLATFORM). The Vercel ACCOUNT's
+    # limit, "cannot deploy, publish or delete anything", is about reading
+    # the account, and said under "choose Deploy to your Vercel account" it
+    # contradicted the answer (live 2026-11-18). Its Connect button stays:
+    # it is the same credential the deploy uses (routes_vercel reads
+    # tasks.user_connections, PR #235).
+    if {"publish", "deploy_vercel"} & set(plat_ids):
+        for a in apps:
+            if a["id"] in DEPLOYS_WITH:
+                a["cannot"] = ""
+                a["deploying"] = True
     platform = [{"id": PLATFORM[i].id, "label": PLATFORM[i].label,
                  "how": PLATFORM[i].how,
                  "acting": bool(PLATFORM[i].tool)
@@ -547,8 +563,8 @@ def brief(p) -> str:
                          + ", ".join(x["label"] for x in doing) + ".")
         lines += list(dict.fromkeys(PLATFORM[x["id"]].rule for x in platform
                                     if PLATFORM[x["id"]].rule))
-        lines.append("Its button is added under your answer, so do not "
-                     "write a link to it yourself.")
+        lines.append("The page shows its button under your answer: do not "
+                     "write a link to it, and do not say a button is added.")
     if skills:
         lines.append("Ready-made skills that fit (read one with the skills "
                      "tool and follow its steps):")
@@ -566,6 +582,9 @@ def brief(p) -> str:
         if a["cannot"]:
             line += (" IO cannot yet %s, so do not offer to %s with it, "
                      "even once it is connected." % (a["cannot"], a["cannot"]))
+        if a.get("deploying"):
+            line += (" Connecting it is also what the App Builder's Deploy "
+                     "to Vercel uses.")
         if a["pros"]:
             line += " " + a["pros"]
         lines.append(line)
@@ -577,8 +596,9 @@ def brief(p) -> str:
         "Recommend the best fit for what they asked in a sentence and say "
         "why, even if they never heard of it. When two apps are a choice, "
         "give the case for each in a sentence and let them choose. If an app "
-        "is not connected, tell them to connect it: a Connect button is "
-        "added under your answer, so do not write a link yourself. Never "
+        "is not connected, tell them to connect it: the page shows a Connect "
+        "button under your answer, so do not write a link yourself, and do "
+        "not say a button is added. Never "
         "say IO can do something listed as what it cannot do yet.")
     return "\n".join(lines)
 
@@ -594,6 +614,27 @@ def brief(p) -> str:
 _LIMIT_SAID = ("cannot", "can not", "can't", "cant ", "unable to",
                "not able to", "read-only", "read only", "no way to",
                "does not support", "doesn't support")
+
+
+#: One sentence of an answer, as far as its end mark.
+_SENTENCE = re.compile(r"[^.!?\n]+[.!?]*[ \t]*")
+
+
+def _drop_button_talk(text: str) -> str:
+    """`text` without a sentence that only announces our button ("A button
+    is added below."). Live 2026-11-17, two of eight platform answers read
+    our instruction back to the person, and an instruction is not a
+    guarantee. Narrow on purpose: it needs "button" AND "added"/"adding",
+    so "Press the Connect button below to hook it up" stays."""
+    def keep(m):
+        said = m.group(0)
+        if re.search(r"\bbuttons?\b", said, re.I) and \
+                re.search(r"\badd(?:ed|ing)\b", said, re.I):
+            return ""
+        return said
+    out = _SENTENCE.sub(keep, str(text or ""))
+    out = re.sub(r"[ \t]+\n", "\n", out)
+    return re.sub(r"\n{3,}", "\n\n", out).rstrip()
 
 
 def with_buttons(answer: str, p) -> str:
@@ -637,10 +678,10 @@ def with_buttons(answer: str, p) -> str:
             continue
         if not any(w in low for w in (app.label.lower(),) + app.says):
             line = "Recommended: %s, so IO can %s" % (app.label, app.can)
-            if app.cannot:
-                line += " (it cannot yet %s)" % app.cannot
+            if a["cannot"]:
+                line += " (it cannot yet %s)" % a["cannot"]
             lines.append(line + ".")
-        elif app.cannot:
+        elif a["cannot"]:
             # The LIMIT alone, because the answer already named the app and
             # described it. Measured on the live site 2026-11-13, two real
             # turns about Jira: the model wrote what it would be able to do
@@ -649,7 +690,7 @@ def with_buttons(answer: str, p) -> str:
             # is the limit, which is why this branch exists.
             # "cannot yet X", not "cannot X yet": a long limit put "yet" after
             # "...into a dropdown" (live, 2026-11-17).
-            lines.append("%s cannot yet %s." % (app.label, app.cannot))
+            lines.append("%s cannot yet %s." % (app.label, a["cannot"]))
         buttons.append(_button(app))
     # THE LIMIT OF AN APP THEY HAVE. Everything above is about apps the
     # person has NOT connected, so the one app actually being used was the
@@ -670,13 +711,13 @@ def with_buttons(answer: str, p) -> str:
         if not a["connected"]:
             continue
         app = APPS[a["id"]]
-        if not app.cannot:
+        if not a["cannot"]:
             continue
         if not any(w in low for w in (app.label.lower(),) + app.says):
             continue
         if any(m in low for m in _LIMIT_SAID):
             continue
-        lines.append("%s cannot yet %s." % (app.label, app.cannot))
+        lines.append("%s cannot yet %s." % (app.label, a["cannot"]))
     # A skill that needs an app the person has not connected: that app's
     # button, the same one skill_fit draws for the skills answers.
     import skill_fit
@@ -700,6 +741,7 @@ def with_buttons(answer: str, p) -> str:
             buttons.append("[%s](%s)" % (feat.button, href))
     if not buttons:
         return (answer.rstrip() + "\n\n" + "\n".join(lines)) if lines else answer
+    answer = _drop_button_talk(answer)
     # The buttons go last, together on one line: one paragraph, so they sit
     # side by side. One per line stacked them, touching (live, 2026-11-12).
     return answer.rstrip() + "\n\n" + "\n".join(lines + [" ".join(buttons)])

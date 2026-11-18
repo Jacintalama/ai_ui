@@ -360,9 +360,20 @@ not connected, the assistant answers even with no tool, with
 `app_triage.brief` in front of it, and `app_triage.with_buttons` adds the
 Connect buttons under the answer. Two rules worth knowing:
 - **Every `can` line rests on real tools** (`App.tools`), checked by
-  `tests/test_triage_recommends_apps.py`. Airtable, Notion and n8n are
-  read-only, GitHub cannot create a repo, Zapier only starts an existing Zap,
-  and `cannot` says so. If you add a write tool, update the catalogue.
+  `tests/test_triage_recommends_apps.py`. As of 2026-11-18: Notion is
+  read-only; Airtable writes rows and tables but makes no base and changes
+  no column type; n8n builds and changes workflows (#244) but cannot undo a
+  delete; GitHub cannot create a repo; Zapier only starts an existing Zap.
+  `cannot` says each. If you add a write tool, update the catalogue.
+- **The answer never narrates the button (2026-11-18)**: two of eight live
+  platform answers read our instruction back ("A button is added below.");
+  `app_triage._drop_button_talk` removes a sentence with "button" and
+  "added", and leaves "press the Connect button below" alone.
+- **Deploying is not contradicted by the Vercel account (2026-11-18)**: with
+  Publish or Deploy to Vercel picked, the Vercel ACCOUNT entry keeps its
+  Connect button (the deploy reads that same credential, PR #235) but not its
+  "cannot deploy" limit, which live sat under "choose Deploy to your Vercel
+  account" (`app_triage.DEPLOYS_WITH`).
 - **A timer job is the platform's**: with `schedules` picked, n8n and Zapier
   are dropped unless named ("every 8am read my email" is schedules + Gmail).
 - **Only an app NOT connected changes anything**, and it is offered once per
