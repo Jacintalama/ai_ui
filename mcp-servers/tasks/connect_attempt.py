@@ -149,6 +149,33 @@ async def record(email: str, provider: str, stage: str,
                        "stage %s", provider, safe_stage, exc_info=True)
 
 
+async def for_email(email: str, limit: int = 200) -> List[Dict[str, Any]]:
+    """One person's attempts, OLDEST first, because `stuck_for` reads them
+    in order and a success has to clear the starts that came before it.
+
+    Fails open to an empty list: a notice that cannot be computed is a
+    notice nobody sees, which is where we already were.
+    """
+    who = str(email or "").strip()
+    if not who:
+        return []
+    try:
+        import asyncpg
+        conn = await asyncpg.connect(DATABASE_URL)
+        try:
+            rows = await conn.fetch(
+                "SELECT email, provider, stage, http_status, at "
+                "FROM tasks.connect_attempt WHERE lower(email) = lower($1) "
+                "ORDER BY at ASC LIMIT $2", who, max(1, int(limit)))
+        finally:
+            await conn.close()
+        return [dict(r) for r in rows]
+    except Exception:                                       # noqa: BLE001
+        logger.warning("connect_attempt: could not read one person's "
+                       "attempts", exc_info=True)
+        return []
+
+
 async def recent(limit: int = 500) -> List[Dict[str, Any]]:
     """The attempts, newest first. Fails open to an empty list, which
     `summary` reports as "nobody tried" rather than as an error, so the
@@ -168,6 +195,79 @@ async def recent(limit: int = 500) -> List[Dict[str, Any]]:
         logger.warning("connect_attempt: could not read the attempts",
                        exc_info=True)
         return []
+
+
+#: How many unanswered starts before a person is told. ONE is somebody
+#: changing their mind, and calling that a fault would train people to
+#: ignore the notice.
+STUCK_AT = 2
+
+
+def stuck_for(email: str, rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+    """Apps this person keeps starting and never getting back from.
+
+    Measured on production 2026-11-18. One of the nine people here tried
+    to connect Airtable eleven times in an hour, every attempt recorded
+    `started` and nothing else, and the tasks log has zero hits on the
+    callback in that window: the vendor never sent him back, because the
+    integration is limited to development use where only its owner can
+    authorize it. He was told nothing, and could not be told on return
+    because he never returned.
+
+    This is what the next visit can say instead of showing him the same
+    Connect button for the twelfth time.
+
+    What counts, and what deliberately does not:
+
+      * only starts with NO success after them. Connecting on the fourth
+        go is connected, and nagging about earlier failures after a
+        success is noise.
+      * `declined` and the other failure stages do NOT count. Those mean
+        the vendor DID come back: pressing cancel is an answer, and a
+        rejected token is a different problem that already shows as
+        Needs reconnecting.
+      * other people's rows are theirs.
+
+    Pure, and never raises: it reads rows written by call sites that may
+    be newer than it is, and a notice is never worth taking a page down
+    for.
+    """
+    who = str(email or "").strip().lower()
+    if not who:
+        return {}
+    per: Dict[str, Dict[str, Any]] = {}
+    for row in rows or ():
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("email") or "").strip().lower() != who:
+            continue
+        provider = str(row.get("provider") or "").strip()
+        if not provider:
+            continue
+        stage = row.get("stage")
+        seen = per.setdefault(provider, {"starts": 0, "since": None})
+        if stage == "started":
+            seen["starts"] += 1
+            if seen["since"] is None:
+                seen["since"] = row.get("at")
+        else:
+            # Anything that is not a start means the vendor answered:
+            # a success, a refusal, a rejected token. The count restarts.
+            seen["starts"] = 0
+            seen["since"] = None
+    return {p: v for p, v in per.items() if v["starts"] >= STUCK_AT}
+
+
+def stuck_line(label: str, info: Dict[str, Any]) -> str:
+    """What the person reads. Says the number, because "a few times" is
+    arguable and eleven is not, and points at the one thing that
+    unblocks them without blaming them for it."""
+    n = int((info or {}).get("starts") or 0)
+    times = "once" if n == 1 else "%d times" % n
+    return ("You have started connecting %s %s and it never came back. "
+            "That usually means this app has not been fully set up for "
+            "other people yet, which is for whoever set it up to finish, "
+            "not something you can fix from here." % (label, times))
 
 
 def summary(rows: Iterable[Dict[str, Any]]) -> Dict[str, Any]:

@@ -162,6 +162,13 @@ def test_the_description_carries_only_the_fields_it_is_meant_to():
     assert set(out) == {
         "provider", "label", "connected", "needs_reconnect", "checked_at",
         "account_label", "connected_at", "where", "oauth", "fields",
+        # Added deliberately 2026-11-18, and this guard is why it is
+        # worth saying what it holds: a sentence built from the
+        # provider LABEL and a COUNT of unanswered starts. No vendor
+        # text, for the same reason migration 069 stores none --
+        # vendors echo the request back in their errors and Trello's
+        # credential rides in its query string.
+        "stuck",
     }, sorted(out)
     assert "secrets_encrypted" not in out
 
