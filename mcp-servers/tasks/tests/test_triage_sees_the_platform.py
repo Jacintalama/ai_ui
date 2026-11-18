@@ -189,3 +189,46 @@ def test_a_long_limit_reads_as_a_sentence_for_an_app_they_have_too():
     out = app_triage.with_buttons("Airtable is where your leads go.", p)
     assert "Airtable cannot yet make a new base" in out
     assert "dropdown yet" not in out
+
+
+# --- the answer does not narrate our machinery (2026-11-18) -------------------------
+
+def test_a_sentence_announcing_the_button_is_taken_out():
+    """Live 2026-11-17: "...open Channels to connect one. A button is added
+    below." That is our instruction to the model read back to the person."""
+    p = app_triage.plan([("channels", 0.9)], set(), [])
+    answer = ("Yes. Channels lets you talk to your agents from Telegram: open "
+              "Channels to connect one. A button is added below.")
+    out = app_triage.with_buttons(answer, p)
+    assert "is added below" not in out
+    assert out.startswith("Yes. Channels lets you talk to your agents from "
+                          "Telegram: open Channels to connect one.")
+    assert out.rstrip().endswith("[Open Channels](#aiui-open:channel)")
+
+
+def test_the_same_in_other_words_is_taken_out_too():
+    p = app_triage.plan([("video", 0.9)], set(), [])
+    for said in ("A button has been added under this message.",
+                 "I've added a button below for it.",
+                 "The button will be added underneath my answer."):
+        out = app_triage.with_buttons("Video Generation does this. " + said, p)
+        assert said not in out, said
+        assert out.startswith("Video Generation does this.")
+
+
+def test_telling_them_to_press_the_button_stays():
+    p = app_triage.plan([("airtable", 0.95)], set(), [])
+    answer = "Airtable fits. Press the Connect button below to hook it up."
+    out = app_triage.with_buttons(answer, p)
+    assert "Press the Connect button below to hook it up." in out
+
+
+def test_nothing_is_taken_out_when_no_button_is_added():
+    answer = "A button is added below."
+    assert app_triage.with_buttons(answer, {"apps": [], "platform": []}) == answer
+
+
+def test_the_brief_asks_for_no_talk_of_buttons():
+    b = app_triage.brief(app_triage.plan([("channels", 0.9)], set(), []))
+    assert "is added under your answer" not in b
+    assert "do not say a button is added" in b

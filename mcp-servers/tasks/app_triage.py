@@ -18,6 +18,7 @@ Design: docs/plans/2026-11-12-triage-agent-design.md.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 #: Apps recommended in one answer. More is a catalogue, not a recommendation.
@@ -547,8 +548,8 @@ def brief(p) -> str:
                          + ", ".join(x["label"] for x in doing) + ".")
         lines += list(dict.fromkeys(PLATFORM[x["id"]].rule for x in platform
                                     if PLATFORM[x["id"]].rule))
-        lines.append("Its button is added under your answer, so do not "
-                     "write a link to it yourself.")
+        lines.append("The page shows its button under your answer: do not "
+                     "write a link to it, and do not say a button is added.")
     if skills:
         lines.append("Ready-made skills that fit (read one with the skills "
                      "tool and follow its steps):")
@@ -577,8 +578,9 @@ def brief(p) -> str:
         "Recommend the best fit for what they asked in a sentence and say "
         "why, even if they never heard of it. When two apps are a choice, "
         "give the case for each in a sentence and let them choose. If an app "
-        "is not connected, tell them to connect it: a Connect button is "
-        "added under your answer, so do not write a link yourself. Never "
+        "is not connected, tell them to connect it: the page shows a Connect "
+        "button under your answer, so do not write a link yourself, and do "
+        "not say a button is added. Never "
         "say IO can do something listed as what it cannot do yet.")
     return "\n".join(lines)
 
@@ -594,6 +596,27 @@ def brief(p) -> str:
 _LIMIT_SAID = ("cannot", "can not", "can't", "cant ", "unable to",
                "not able to", "read-only", "read only", "no way to",
                "does not support", "doesn't support")
+
+
+#: One sentence of an answer, as far as its end mark.
+_SENTENCE = re.compile(r"[^.!?\n]+[.!?]*[ \t]*")
+
+
+def _drop_button_talk(text: str) -> str:
+    """`text` without a sentence that only announces our button ("A button
+    is added below."). Live 2026-11-17, two of eight platform answers read
+    our instruction back to the person, and an instruction is not a
+    guarantee. Narrow on purpose: it needs "button" AND "added"/"adding",
+    so "Press the Connect button below to hook it up" stays."""
+    def keep(m):
+        said = m.group(0)
+        if re.search(r"\bbuttons?\b", said, re.I) and \
+                re.search(r"\badd(?:ed|ing)\b", said, re.I):
+            return ""
+        return said
+    out = _SENTENCE.sub(keep, str(text or ""))
+    out = re.sub(r"[ \t]+\n", "\n", out)
+    return re.sub(r"\n{3,}", "\n\n", out).rstrip()
 
 
 def with_buttons(answer: str, p) -> str:
@@ -700,6 +723,7 @@ def with_buttons(answer: str, p) -> str:
             buttons.append("[%s](%s)" % (feat.button, href))
     if not buttons:
         return (answer.rstrip() + "\n\n" + "\n".join(lines)) if lines else answer
+    answer = _drop_button_talk(answer)
     # The buttons go last, together on one line: one paragraph, so they sit
     # side by side. One per line stacked them, touching (live, 2026-11-12).
     return answer.rstrip() + "\n\n" + "\n".join(lines + [" ".join(buttons)])
