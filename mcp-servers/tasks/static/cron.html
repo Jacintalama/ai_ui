@@ -260,6 +260,23 @@
     /* What needs attention, above the list. Amber rather than red: these
        schedules are not broken, they did not do their job, and the
        difference is what the person has to act on. */
+    /* The line under the heading. */
+    .section-sub { margin: 4px 0 0; font-size: 13px; line-height: 1.5;
+      opacity: 0.62; flex-basis: 100%; }
+
+    /* Filters. A chip is a button, so it keeps its focus ring and reads as
+       pressed to a screen reader through aria-pressed, set in script. */
+    .filter-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 16px; }
+    .chip { min-height: 34px; padding: 7px 13px; font: inherit; font-size: 12.5px;
+      border-radius: 999px; cursor: pointer; background: transparent;
+      color: inherit; border: 1px solid rgba(255,255,255,0.14); opacity: 0.8; }
+    .chip:hover { opacity: 1; border-color: rgba(255,255,255,0.26); }
+    .chip.on { background: rgba(255,255,255,0.10); opacity: 1;
+      border-color: rgba(255,255,255,0.28); font-weight: 600; }
+    .chip.trouble { color: #E8923C; border-color: rgba(232,146,60,0.38); opacity: 1; }
+    .chip.trouble.on { background: rgba(232,146,60,0.16);
+      border-color: rgba(232,146,60,0.55); }
+
     .attention { display: flex; gap: 12px; align-items: flex-start;
       border: 1px solid rgba(232,146,60,0.32); background: rgba(232,146,60,0.08);
       border-radius: 12px; padding: 14px 16px; margin-bottom: 16px; }
@@ -758,6 +775,11 @@
             <h2>Your schedules</h2>
             <span class="count" id="sched-count" hidden>0</span>
           </div>
+          <!-- Says what a schedule IS. The page opened straight onto a form
+               and a grid, so the one thing worth knowing before you make one,
+               that it runs with nobody there to catch it, was nowhere on it. -->
+          <p class="section-sub">Work that runs on its own, with nobody
+            watching.</p>
           <div class="list-tools">
             <label class="search-wrap" for="sched-search">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -773,6 +795,18 @@
               Refresh
             </button>
           </div>
+        </div>
+        <!-- Filters. "Needs attention" is first among the states because it
+             is the only one anybody has to act on; it hides itself when
+             there is nothing wrong, so the page does not carry a permanent
+             tab leading to an empty list. -->
+        <div class="filter-row" id="filter-row" role="group"
+             aria-label="Filter schedules">
+          <button class="chip on" type="button" data-filter="all">All</button>
+          <button class="chip trouble" type="button" data-filter="trouble"
+                  hidden>Needs attention</button>
+          <button class="chip" type="button" data-filter="enabled">Running</button>
+          <button class="chip" type="button" data-filter="disabled">Paused</button>
         </div>
         <div class="error box" id="list-error" hidden></div>
         <div id="list-region">
@@ -924,6 +958,21 @@
     const SCHED_API = "/api/tasks/schedules";
 
     const listRegion = document.getElementById("list-region");
+
+    // One listener on the row rather than one per chip, so the trouble chip
+    // works on the render where it first appears.
+    const filterRow = document.getElementById("filter-row");
+    if (filterRow) {
+      filterRow.addEventListener("click", (e) => {
+        const chip = e.target.closest(".chip");
+        if (!chip || !chip.dataset.filter) return;
+        listFilter = chip.dataset.filter;
+        // Back to page 1: the pages under a different filter are different
+        // pages, and landing on page 3 of a shorter list shows nothing.
+        currentPage = 1;
+        renderList();
+      });
+    }
 
     // Checked as they type and as they choose, not on submit: the point is
     // to be told before the schedule exists, not after it has run wrong.
@@ -1473,9 +1522,49 @@
 ${s.prompt || ""}`.toLowerCase().includes(needle);
     }
 
+    //: Which chip is pressed. Search and chip narrow TOGETHER rather than
+    //: one replacing the other, so a search inside "Needs attention" stays
+    //: inside it.
+    let listFilter = "all";
+
+    function matchesFilter(s) {
+      if (listFilter === "all") return true;
+      if (listFilter === "enabled") return !!s.enabled;
+      if (listFilter === "disabled") return !s.enabled;
+      if (listFilter === "trouble") {
+        return !!s.enabled &&
+          BAD_RUN.includes(String(s.last_run_status || "").toLowerCase());
+      }
+      return true;
+    }
+
     function filteredSchedules() {
       const needle = searchText.trim().toLowerCase();
-      return allSchedules.filter((s) => matchesSearch(s, needle));
+      return allSchedules.filter(
+        (s) => matchesFilter(s) && matchesSearch(s, needle));
+    }
+
+    function syncFilterChips() {
+      const row = document.getElementById("filter-row");
+      if (!row) return;
+      // The trouble chip only exists when there IS trouble. A permanent tab
+      // leading to an empty list trains people to ignore it.
+      const anyTrouble = allSchedules.some(
+        (s) => s.enabled &&
+          BAD_RUN.includes(String(s.last_run_status || "").toLowerCase()));
+      for (const b of row.querySelectorAll(".chip")) {
+        const which = b.dataset.filter;
+        if (which === "trouble") {
+          b.hidden = !anyTrouble;
+          // Falling back to All rather than showing an empty list, for the
+          // case where the last broken schedule was just fixed or deleted
+          // while that filter was the one in use.
+          if (!anyTrouble && listFilter === "trouble") listFilter = "all";
+        }
+        const on = which === listFilter;
+        b.classList.toggle("on", on);
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+      }
     }
 
     function renderNoMatches() {
@@ -1552,6 +1641,7 @@ ${s.prompt || ""}`.toLowerCase().includes(needle);
 
       listRegion.innerHTML = "";
       updateCount(rows.length);
+      syncFilterChips();
 
       // WHAT NEEDS ATTENTION, FIRST. Without this the page is a tidy grid
       // in which a schedule that has not done its job for months looks
