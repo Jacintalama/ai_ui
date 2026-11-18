@@ -223,7 +223,11 @@ def test_the_brief_says_connected_or_not_and_what_io_can_and_cannot_do():
     assert "Airtable" in b and "HubSpot" in b
     assert "not connected" in b
     assert air.can in b and air.cannot in b
-    assert "Connect button" in b
+    # The model is told to have them connect it, and not to write a link,
+    # because the service adds the button. It is no longer told WHERE the
+    # button is: it read that back to the person (live 2026-11-18).
+    assert "tell them to connect it" in b
+    assert "Do not write a link" in b
 
 
 def test_the_brief_is_not_read_as_part_of_the_account():

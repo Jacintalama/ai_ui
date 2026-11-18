@@ -580,8 +580,9 @@ def brief(p) -> str:
                          + ", ".join(x["label"] for x in doing) + ".")
         lines += list(dict.fromkeys(PLATFORM[x["id"]].rule for x in platform
                                     if PLATFORM[x["id"]].rule))
-        lines.append("The page shows its button under your answer: do not "
-                     "write a link to it, and do not say a button is added.")
+        # Not a word about where the button is: each description of it was
+        # read back to the person (live 2026-11-18).
+        lines.append("Do not write a link to it, and do not mention a button.")
     if skills:
         lines.append("Ready-made skills that fit (read one with the skills "
                      "tool and follow its steps):")
@@ -613,9 +614,8 @@ def brief(p) -> str:
         "Recommend the best fit for what they asked in a sentence and say "
         "why, even if they never heard of it. When two apps are a choice, "
         "give the case for each in a sentence and let them choose. If an app "
-        "is not connected, tell them to connect it: the page shows a Connect "
-        "button under your answer, so do not write a link yourself, and do "
-        "not say a button is added. Never "
+        "is not connected, tell them to connect it. Do not write a link, and "
+        "do not mention a button. Never "
         "say IO can do something listed as what it cannot do yet.")
     return "\n".join(lines)
 
@@ -633,6 +633,12 @@ _LIMIT_SAID = ("cannot", "can not", "can't", "cant ", "unable to",
                "does not support", "doesn't support")
 
 
+#: Words that, beside "button", describe our machinery rather than tell
+#: the person what to press: "is added", and once that was reworded, "the
+#: page shows ... under this answer" (both live, 2026-11-17 and -18).
+_NARRATES = (r"\badd(?:ed|ing)\b|\bpage shows\b"
+             r"|\bunder (?:this|my|your|the) (?:answer|message|reply)\b")
+
 #: One sentence of an answer, as far as its end mark.
 _SENTENCE = re.compile(r"[^.!?\n]+[.!?]*[ \t]*")
 
@@ -646,7 +652,7 @@ def _drop_button_talk(text: str) -> str:
     def keep(m):
         said = m.group(0)
         if re.search(r"\bbuttons?\b", said, re.I) and \
-                re.search(r"\badd(?:ed|ing)\b", said, re.I):
+                re.search(_NARRATES, said, re.I):
             return ""
         return said
     out = _SENTENCE.sub(keep, str(text or ""))
