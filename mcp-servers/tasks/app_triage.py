@@ -491,23 +491,40 @@ def plan(picks, connected, tools, text: str = "", skills=None,
     if "publish" in plat_ids and "deploy_vercel" in plat_ids \
             and "vercel" not in str(text or "").lower():
         plat_ids.remove("deploy_vercel")
-    # Deploying is the App Builder's own (PLATFORM). The Vercel ACCOUNT's
-    # limit, "cannot deploy, publish or delete anything", is about reading
-    # the account, and said under "choose Deploy to your Vercel account" it
-    # contradicted the answer (live 2026-11-18). Its Connect button stays:
-    # it is the same credential the deploy uses (routes_vercel reads
-    # tasks.user_connections, PR #235).
-    if {"publish", "deploy_vercel"} & set(plat_ids):
-        for a in apps:
-            if a["id"] in DEPLOYS_WITH:
-                a["cannot"] = ""
-                a["deploying"] = True
     platform = [{"id": PLATFORM[i].id, "label": PLATFORM[i].label,
                  "how": PLATFORM[i].how,
                  "acting": bool(PLATFORM[i].tool)
                  and PLATFORM[i].tool in (tools or [])} for i in plat_ids]
-    return {"apps": apps, "features": features, "platform": platform,
-            "skills": _skills(skills, pool, have)}
+    out = {"apps": apps, "features": features, "platform": platform,
+           "skills": _skills(skills, pool, have)}
+    share_deploy(out, out)
+    return out
+
+
+def share_deploy(p, other) -> bool:
+    """When `p` recommends deploying (Publish or Deploy to Vercel), the
+    apps in `other` whose connection that deploy uses lose their "cannot
+    deploy" limit and are marked `deploying`. True when anything changed.
+
+    Deploying is the App Builder's own (PLATFORM). The Vercel ACCOUNT's
+    limit, "cannot deploy, publish or delete anything", is about reading
+    the account, and said under "choose Deploy to your Vercel account" it
+    contradicted the answer (live 2026-11-18), twice: from this plan, and
+    from can_do's plan for the same message, which is why `other` may be a
+    different plan. The Connect button stays: it is the same credential the
+    deploy uses (routes_vercel reads tasks.user_connections, PR #235)."""
+    if not p or not other:
+        return False
+    if not ({"publish", "deploy_vercel"}
+            & {x.get("id") for x in p.get("platform") or []}):
+        return False
+    changed = False
+    for a in other.get("apps") or []:
+        if a.get("id") in DEPLOYS_WITH and not a.get("deploying"):
+            a["cannot"] = ""
+            a["deploying"] = True
+            changed = True
+    return changed
 
 
 def _skills(skills, pool, have) -> list:
@@ -563,8 +580,9 @@ def brief(p) -> str:
                          + ", ".join(x["label"] for x in doing) + ".")
         lines += list(dict.fromkeys(PLATFORM[x["id"]].rule for x in platform
                                     if PLATFORM[x["id"]].rule))
-        lines.append("The page shows its button under your answer: do not "
-                     "write a link to it, and do not say a button is added.")
+        # Not a word about where the button is: each description of it was
+        # read back to the person (live 2026-11-18).
+        lines.append("Do not write a link to it, and do not mention a button.")
     if skills:
         lines.append("Ready-made skills that fit (read one with the skills "
                      "tool and follow its steps):")
@@ -596,9 +614,8 @@ def brief(p) -> str:
         "Recommend the best fit for what they asked in a sentence and say "
         "why, even if they never heard of it. When two apps are a choice, "
         "give the case for each in a sentence and let them choose. If an app "
-        "is not connected, tell them to connect it: the page shows a Connect "
-        "button under your answer, so do not write a link yourself, and do "
-        "not say a button is added. Never "
+        "is not connected, tell them to connect it. Do not write a link, and "
+        "do not mention a button. Never "
         "say IO can do something listed as what it cannot do yet.")
     return "\n".join(lines)
 
@@ -616,6 +633,12 @@ _LIMIT_SAID = ("cannot", "can not", "can't", "cant ", "unable to",
                "does not support", "doesn't support")
 
 
+#: Words that, beside "button", describe our machinery rather than tell
+#: the person what to press: "is added", and once that was reworded, "the
+#: page shows ... under this answer" (both live, 2026-11-17 and -18).
+_NARRATES = (r"\badd(?:ed|ing)\b|\bpage shows\b"
+             r"|\bunder (?:this|my|your|the) (?:answer|message|reply)\b")
+
 #: One sentence of an answer, as far as its end mark.
 _SENTENCE = re.compile(r"[^.!?\n]+[.!?]*[ \t]*")
 
@@ -629,7 +652,7 @@ def _drop_button_talk(text: str) -> str:
     def keep(m):
         said = m.group(0)
         if re.search(r"\bbuttons?\b", said, re.I) and \
-                re.search(r"\badd(?:ed|ing)\b", said, re.I):
+                re.search(_NARRATES, said, re.I):
             return ""
         return said
     out = _SENTENCE.sub(keep, str(text or ""))

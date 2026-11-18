@@ -365,10 +365,12 @@ Connect buttons under the answer. Two rules worth knowing:
   no column type; n8n builds and changes workflows (#244) but cannot undo a
   delete; GitHub cannot create a repo; Zapier only starts an existing Zap.
   `cannot` says each. If you add a write tool, update the catalogue.
-- **The answer never narrates the button (2026-11-18)**: two of eight live
-  platform answers read our instruction back ("A button is added below.");
-  `app_triage._drop_button_talk` removes a sentence with "button" and
-  "added", and leaves "press the Connect button below" alone.
+- **The answer never narrates the button (2026-11-18)**: the model read our
+  instruction back twice ("A button is added below.", then "The page shows a
+  Connect button under this answer"), so the brief no longer describes the
+  button at all, only "do not write a link, and do not mention a button", and
+  `app_triage._drop_button_talk` removes a sentence pairing "button" with
+  `_NARRATES`. "Press the Connect button below" stays.
 - **Deploying is not contradicted by the Vercel account (2026-11-18)**: with
   Publish or Deploy to Vercel picked, the Vercel ACCOUNT entry keeps its
   Connect button (the deploy reads that same credential, PR #235) but not its

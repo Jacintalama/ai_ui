@@ -596,3 +596,34 @@ def test_publish_and_vercel_together_show_publish_unless_vercel_was_said():
     p = app_triage.plan([("publish", 0.6), ("deploy_vercel", 0.92)], set(), [],
                         text="can I deploy it to Vercel?")
     assert [x["id"] for x in p["platform"]] == ["deploy_vercel", "publish"]
+
+
+def test_a_can_do_plan_does_not_contradict_a_deploy_either(monkeypatch):
+    """Live 2026-11-18: "I built a site in the App Builder. Can I deploy it
+    to my own Vercel account?" is ALSO a can_do question about the Vercel
+    account, and its own plan added "Vercel cannot yet deploy, publish or
+    delete anything." under "choose Deploy to your Vercel account". The
+    triage's deploy decision has to reach that plan too, brief and all."""
+    _wire(monkeypatch, answer="Choose Deploy to your Vercel account in the App Builder.")
+    import can_do
+    can_plan = can_do.plan(["vercel"], set())
+    briefs = []
+
+    async def facts(email, asked):
+        return can_do.brief(can_plan), can_plan
+
+    real_brief = rt.can_do.brief
+    monkeypatch.setattr(rt.can_do, "brief", lambda p: briefs.append(real_brief(p)) or briefs[-1])
+    monkeypatch.setattr(rt.can_do, "question", lambda text: "asked")
+    monkeypatch.setattr(rt, "_can_do_facts", facts)
+    monkeypatch.setattr(rt.can_do, "reconnect_buttons", lambda a, p: a)
+    triage = {"picks": [("deploy_vercel", 0.92)], "connected": set(),
+              "skills": [], "pool": {}}
+    text = "I built a site in the App Builder. Can I deploy it to my own Vercel account?"
+    out = asyncio.run(rt._assistant_reply(_Body(text), text, [], picked=[],
+                                          triage=triage))
+    said = out["turns"][0]["answer"]
+    assert "cannot yet deploy" not in said and "cannot deploy" not in said
+    assert "#aiui-connect:vercel" in said
+    assert "#aiui-open:app-builder" in said
+    assert briefs and "deploy, publish or delete" not in briefs[-1]

@@ -229,9 +229,15 @@ def test_nothing_is_taken_out_when_no_button_is_added():
 
 
 def test_the_brief_asks_for_no_talk_of_buttons():
-    b = app_triage.brief(app_triage.plan([("channels", 0.9)], set(), []))
-    assert "is added under your answer" not in b
-    assert "do not say a button is added" in b
+    """Describing the button to the model is what it read back: first "A
+    button is added below." (our "is added under your answer"), then, with
+    that reworded, "The page shows a Connect button under this answer" (our
+    "the page shows its button under your answer"), live 2026-11-18. So the
+    brief does not describe the button at all."""
+    for picks in ([("channels", 0.9)], [("airtable", 0.95)]):
+        b = app_triage.brief(app_triage.plan(picks, set(), []))
+        assert "under your answer" not in b and "page shows" not in b
+        assert "do not mention a button" in b
 
 
 # --- deploying to Vercel is not contradicted by the Vercel account (2026-11-18) ----
@@ -277,3 +283,20 @@ def test_publish_with_the_vercel_account_is_not_contradicted_either():
                         text="put my site online")
     out = app_triage.with_buttons("Click Publish; it can also go to Vercel.", p)
     assert "cannot yet deploy" not in out
+
+
+
+def test_the_second_way_it_narrated_the_button_is_taken_out_too():
+    p = app_triage.plan([("channels", 0.9)], set(), [])
+    answer = ("Open Channels and connect Telegram.\n\nThe page shows a Connect "
+              "button under this answer to get you set up.")
+    out = app_triage.with_buttons(answer, p)
+    assert "page shows" not in out and "under this answer" not in out
+    assert out.startswith("Open Channels and connect Telegram.")
+
+
+def test_natural_mentions_of_a_button_stay():
+    p = app_triage.plan([("video", 0.9)], set(), [])
+    for said in ("The button for Video Generation is below.",
+                 "Press the Connect button below to hook it up."):
+        assert said in app_triage.with_buttons("Use it. " + said, p), said
