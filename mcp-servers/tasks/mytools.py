@@ -33,6 +33,7 @@ import json
 import logging
 from dataclasses import dataclass, field as _dc_field
 from typing import Any, Callable, Dict, List, Optional
+import n8n_nodes
 
 import httpx
 from fastapi import Depends, FastAPI
@@ -526,6 +527,21 @@ def _n8n_check(nodes, conns) -> None:
                 '{"assignments": [{"id": "a1", "name": "message", '
                 '"value": "hello", "type": "string"}]}}'
                 % str(node.get("name") or "A Set node"))
+
+
+#: What a model is told about building nodes. Generated from the
+#: catalogue rather than written out here, so the shapes a model is
+#: given and the shapes the code builds can never drift apart. The
+#: catalogue itself was read off the live instance; see n8n_nodes.
+_NODE_HELP = (
+    "The nodes, as n8n writes them. Each needs id, name, type, "
+    "typeVersion, position and parameters. Use these exact types and "
+    "typeVersions, which are the ones this n8n writes:\n\n"
+    + n8n_nodes.describe()
+    + "\n\nA workflow needs a trigger to be switched on, and a manual "
+      "trigger does not count. Two or more nodes with nothing joining "
+      "them is refused."
+)
 
 
 def _n8n_workflow_body(args):
@@ -1457,22 +1473,8 @@ N8N_TOOLS = [
                  "turn it on.",
          method="POST", path="/api/v1/workflows",
          args={"name": ("string", "What to call the workflow", True),
-               "nodes": ("array",
-                         "The nodes, as n8n writes them. Each needs "
-                         "id, name, type, typeVersion, position and "
-                         "parameters. A manual trigger is "
-                         "{\"id\": \"t1\", \"name\": \"Manual "
-                         "Trigger\", \"type\": "
-                         "\"n8n-nodes-base.manualTrigger\", "
-                         "\"typeVersion\": 1, \"position\": [0,0], "
-                         "\"parameters\": {}}. A Set node needs its "
-                         "assignments NESTED: \"parameters\": "
-                         "{\"mode\": \"manual\", \"assignments\": "
-                         "{\"assignments\": [{\"id\": \"a1\", "
-                         "\"name\": \"message\", \"value\": "
-                         "\"hello\", \"type\": \"string\"}]}}. An "
-                         "empty assignments list sets nothing and is "
-                         "refused.", True),
+                              "nodes": ("array",
+                         _NODE_HELP, True),
                "connections": ("object",
                                "Which node feeds which, keyed by the "
                                "SOURCE NODE'S NAME, never its id. To "
