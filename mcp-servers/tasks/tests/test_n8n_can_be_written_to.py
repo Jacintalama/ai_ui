@@ -201,3 +201,36 @@ def test_activating_says_a_manual_trigger_is_not_enough():
     assert "manual" in summary, (
         "the one case that fails is the one a model builds by default, "
         "and the tool should say so: " + summary)
+
+
+# --- the read has to carry what the write needs ---------------------------
+
+def test_reading_a_workflow_returns_its_connections():
+    """update_workflow's own summary says "read it first and send it back
+    with your changes". So whatever the read drops, an update silently
+    destroys.
+
+    Found live on 2026-11-18: a workflow was created WITH connections,
+    read back through get_workflow, and came back with none, because
+    `connections` was missing from its keep list. A model following the
+    documented round trip would have disconnected every node in a real
+    workflow. The guard added the same day refuses that, so the damage
+    would have shown up as "I cannot update anything" rather than as a
+    wrecked automation, which is the better failure and still a bug.
+    """
+    keep = _tool("get_workflow").keep
+    assert "connections" in keep, (
+        "get_workflow drops connections, and update_workflow tells the "
+        "model to send back what it read: %s" % (keep,))
+    assert "nodes" in keep, keep
+
+
+def test_every_field_an_update_sends_can_be_read_back():
+    """The general statement, so the next field added to the write does
+    not quietly go missing from the read."""
+    sendable = {"name", "nodes", "connections"}
+    keep = set(_tool("get_workflow").keep)
+    missing = sendable - keep
+    assert missing == set(), (
+        "update_workflow sends these and get_workflow cannot read them "
+        "back: %s" % sorted(missing))

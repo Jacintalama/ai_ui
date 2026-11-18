@@ -344,7 +344,16 @@ async def test_a_refusal_note_is_appended_to_the_delivered_answer(wired):
 
     status, result, _ = await agent_runner.run_agent(_sched())
 
-    assert status == "completed"
+    # "refused" since 2026-11-18, not "completed". This test's own
+    # reasoning above is what drove that change: a run that dropped part
+    # of its job and reported plain success is worse than one that said
+    # so. Folding the note into the result said so to anybody who READ
+    # the result; the status still said the job was done, and the status
+    # is the only part anything else reads. Measured that day, a real
+    # schedule had been writing a draft and reporting completed for
+    # months. Not "failed": the agent did its work and was then declined
+    # a tool, which is a third thing.
+    assert status == "refused"
     assert "Sorted your inbox." in result
     assert "Declined to run send_email" in result
 
@@ -497,7 +506,16 @@ async def test_a_refusal_note_reaches_the_owner_even_with_an_empty_answer(wired)
 
     status, result, _ = await agent_runner.run_agent(_sched())
 
-    assert status == "completed"
+    # "refused" since 2026-11-18, not "completed". This test's own
+    # reasoning above is what drove that change: a run that dropped part
+    # of its job and reported plain success is worse than one that said
+    # so. Folding the note into the result said so to anybody who READ
+    # the result; the status still said the job was done, and the status
+    # is the only part anything else reads. Measured that day, a real
+    # schedule had been writing a draft and reporting completed for
+    # months. Not "failed": the agent did its work and was then declined
+    # a tool, which is a third thing.
+    assert status == "refused"
     assert "Declined to run send_email" in result
 
 

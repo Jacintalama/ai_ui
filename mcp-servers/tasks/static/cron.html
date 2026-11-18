@@ -252,6 +252,10 @@
     .badge.queued   { background: var(--warning-soft); color: var(--warning); border-color: rgba(245,158,11,0.25); }
     .badge.done     { background: var(--success-soft); color: var(--success); border-color: rgba(34,197,94,0.25); }
     .badge.failed   { background: var(--danger-soft);  color: var(--danger);  border-color: rgba(248,113,113,0.25); }
+    /* Refused: the agent worked and was then declined a tool, so the
+       job did not happen. Amber, and deliberately not the green of
+       done nor the red of failed, because it is neither. */
+    .badge.refused  { background: rgba(232,146,60,0.12); color: #E8923C; border-color: rgba(232,146,60,0.30); }
 
     .spinner {
       width: 12px; height: 12px;
@@ -1219,6 +1223,11 @@
       const s = (status || "").toLowerCase();
       if (["success", "ok", "done", "completed"].includes(s)) return "done";
       if (["failed", "error", "errored"].includes(s)) return "failed";
+      // Its own colour on purpose. A refused run is neither: the agent
+      // did its work and was then declined a tool, so the job did not
+      // happen. Shown as done it hides that; shown as failed it says
+      // the whole run was wasted, which is also untrue.
+      if (["refused", "declined"].includes(s)) return "refused";
       if (["running", "in_progress"].includes(s)) return "running";
       if (["queued", "pending"].includes(s)) return "queued";
       return "";

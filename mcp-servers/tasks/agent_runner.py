@@ -710,6 +710,38 @@ def _finished(answer: str, convo: list[dict]) -> str:
     return agent_artifacts.carried(answer, convo)
 
 
+#: How a note about a tool that was NOT run begins. Named once because
+#: the producer and the status decision have to agree: two copies of a
+#: string is how one of them changes and the other quietly stops
+#: matching, with nothing failing to say so.
+DECLINED_NOTE = "Declined to run "
+
+
+def status_for_notes(notes) -> str:
+    """"completed" or "refused", from what the turn had to say about
+    itself.
+
+    A run that was declined a tool did not do its job, whatever it said
+    while not doing it. Measured 2026-11-18: a teammate's daily email
+    summary has been writing a draft and reporting `completed` for
+    months, because the refusal went into the answer text and the status
+    was set regardless.
+
+    NOT "failed". The agent did its work, and a summary WAS written;
+    calling that failed is as wrong in the other direction. Refusing is
+    a third thing that really happened, and it is the one the owner
+    needs to see.
+
+    Matched on how a note STARTS, because the agent's own prose is
+    appended to the same answer and routinely contains the word
+    "declined" mid-sentence.
+    """
+    for note in notes or ():
+        if isinstance(note, str) and note.startswith(DECLINED_NOTE):
+            return "refused"
+    return "completed"
+
+
 async def _chat(token: str, model: str, messages: list[dict],
                 tool_ids: list[str] | None, user_email: str,
                 tool_mode: str | None,
@@ -1038,7 +1070,7 @@ async def _chat(token: str, model: str, messages: list[dict],
                         why = ("your rule" + (" '" + str(ruled.get("label")) + "'"
                                               if ruled.get("label") else "")
                                + " denies it")
-                        notes.append("Declined to run " + label + ", because " + why + ".")
+                        notes.append(DECLINED_NOTE + label + ", because " + why + ".")
                         result = outcome.refused(
                             "Refused: " + why + ", so " + label + " was not run.")
                     elif mode == agent_access.MODE_ASK:
@@ -1052,7 +1084,7 @@ async def _chat(token: str, model: str, messages: list[dict],
                         continue
                     else:
                         notes.append(
-                            "Declined to run " + label + ", because "
+                            DECLINED_NOTE + label + ", because "
                             + refusal_reason + ".")
                         result = outcome.refused(
                             "Refused: " + refusal_reason + ", so "
@@ -1335,12 +1367,16 @@ async def run_agent(sched) -> tuple[str, str, dict]:
                 # at all would be worse than one that said so.
                 note_text = "\n".join(notes)
                 answer = (answer + "\n\n" + note_text) if answer else note_text
-            outcome = "completed"
+            # A tool that was declined means the job did not happen, even
+            # though the turn ended tidily. Same reasoning as the two
+            # checks above, and the one that was left out: see
+            # status_for_notes.
+            outcome = status_for_notes(notes)
             # Guaranteed rather than requested. The brief asks for no long dashes
             # and the model used one in 25 of 36 replies anyway, so a report that
             # lands in the owner's Discord is cleaned on the way out.
             from agent_routing import scrub_long_dashes
-            return ("completed", scrub_long_dashes(answer), {})
+            return (outcome, scrub_long_dashes(answer), {})
         except agent_access.ApprovalRequired:
             # Unreachable today: effective_mode never gives a schedule "ask".
             # Kept so that if it ever becomes reachable the owner is told the

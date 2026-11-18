@@ -1435,7 +1435,13 @@ N8N_TOOLS = [
          method="GET", path="/api/v1/workflows/{workflow_id}",
          args={"workflow_id": ("string", "Workflow id", True)},
          writes=False,
-         keep=("id", "name", "active", "nodes", "updatedAt")),
+         # `connections` is not optional here. update_workflow tells
+         # the model to read a workflow and send it back with its
+         # changes, so anything this drops, an update destroys.
+         # Found live 2026-11-18: created with connections, read
+         # back with none.
+         keep=("id", "name", "active", "nodes", "connections",
+               "updatedAt")),
     Tool(name="list_executions",
          summary="List recent workflow runs on your n8n instance, newest first.",
          method="GET", path="/api/v1/executions",
