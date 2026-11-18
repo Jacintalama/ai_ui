@@ -162,3 +162,67 @@ def test_the_arguments_carry_a_worked_example():
         + nodes_help)
     assert "name" in conns_help.lower(), conns_help
     assert "main" in conns_help, conns_help
+
+
+# --- the refusal has to REACH the model -----------------------------------
+
+def _connected(monkeypatch):
+    """Stand in for a stored n8n credential, and nothing else.
+
+    The real `_call` checks the credential FIRST and answers "you have
+    not connected n8n yet" before any shaping, which is right and is
+    what the first version of this test actually proved. To reach the
+    shaper, the person has to be connected.
+
+    Nothing here stubs the shaping or the refusal: those are the thing
+    under test, and the call never gets as far as the network because
+    the refusal comes first.
+    """
+    async def creds(email, provider):
+        return {"base_url": "https://n8n.example.test", "api_key": "k"}
+    monkeypatch.setattr(mytools, "_secrets_for", creds)
+
+    # And past the SSRF guard, which refuses a host that does not resolve
+    # publicly. Also right, also a precondition, and also not the thing
+    # under test: a made-up hostname in a unit test is exactly what it
+    # exists to stop.
+    async def resolves(url):
+        return ""
+    monkeypatch.setattr(mytools.host_guard, "problem", resolves)
+
+
+async def test_a_refusal_comes_back_as_an_answer_not_an_exception(
+        monkeypatch):
+    _connected(monkeypatch)
+    """Found by running it live, 2026-11-18, after the unit tests above
+    were green.
+
+    They call `_n8n_workflow_body` directly and assert the ValueError,
+    which is right at that level. But `_call` builds the payload OUTSIDE
+    its try, so the exception escaped the whole call: a chat turn got a
+    500 and the model never saw the sentence telling it what to fix.
+
+    A refusal that cannot be read is a crash with good intentions.
+    """
+    tool = _tool("create_workflow")
+    out = await mytools._call("n8n", tool, "someone@example.com",
+                              {"name": "x", "nodes": [TRIGGER, SET_FULL],
+                               "connections": {}})
+    assert isinstance(out, dict), "it raised instead of answering"
+    assert out.get("ok") is False, out
+    said = str(out.get("error") or "")
+    assert "connect" in said.lower(), said
+    # The shape to use has to survive into the answer, or the model
+    # learns only that something was wrong.
+    assert "Manual Trigger" in said, said
+
+
+async def test_unreadable_json_also_comes_back_as_an_answer(
+        monkeypatch):
+    _connected(monkeypatch)
+    tool = _tool("create_workflow")
+    out = await mytools._call("n8n", tool, "someone@example.com",
+                              {"name": "x", "nodes": "not json at all"})
+    assert isinstance(out, dict), "it raised instead of answering"
+    assert out.get("ok") is False
+    assert "nodes" in str(out.get("error") or "")
