@@ -91,3 +91,6 @@ apps/test-project/
 # was made, and it sits next to apps/ where a wildcard `git add` would sweep
 # it into the repo by accident.
 _aiui_demo/
+
+# Hallmark redesign records and screenshots (local only)
+.hallmark/

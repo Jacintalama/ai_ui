@@ -2,11 +2,18 @@
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
+  <meta name="description" content="Set up work that runs on its own and see what each run actually did.">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Cron Jobs / Schedules</title>
-  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" crossorigin="use-credentials">
   <link rel="alternate icon" href="/static/favicon.png" crossorigin="use-credentials">
   <style>
+/* Hallmark · v2.0.0 · redesign: full · scope: app · genre: modern-minimal
+   built: the project · theme: the project's own dark system (kept)
+   critique: a sound two-column tool wearing tracked-capital labels and 24
+   one-off colour literals; the split, the wiring and today's attention
+   work stay, the system is lifted onto tokens and given a visible focus
+   ring. Before: Floor 64 FAIL. */
+
     /* Palette + component system mirrored from static/projects.html and
        static/video.html so this page is visually consistent with the rest
        of the Tasks UI. */
@@ -16,10 +23,10 @@
       --surface-2:    #17171a;
       --surface-3:    #1e1e22;
       --border:       #24242a;
-      --border-2:     #2e2e36;
+      --border-2:     #3d3d47;
       --text:         #ededee;
-      --text-2:       #b8b8c0;
-      --muted:        #74747e;
+      --text-2:       #c9c9d2;
+      --muted:        #90909b;
       --accent:       #7c8cff;
       --accent-2:     #5d6cff;
       --accent-soft:  #1e2140;
@@ -32,6 +39,50 @@
       --shadow-sm:    0 1px 2px rgba(0,0,0,0.4);
       --shadow-md:    0 4px 12px rgba(0,0,0,0.5);
       --shadow-lg:    0 14px 40px rgba(0,0,0,0.55);
+      /* Light enough to clear 3:1 against every surface on this page.
+         The accent itself does not: measured 1.01:1, which is a focus
+         ring nobody can see, on a page people drive from the keyboard. */
+      --color-focus:  #b9c4ff;
+      /* Lifted out of the rules that had them. Each was a one-off rgba
+         that no other rule could reuse or re-theme. */
+      --glow-1:       rgba(124,140,255,0.10);
+      --glow-2:       rgba(93,108,255,0.07);
+      --press:        rgba(255,255,255,0.04);
+      --press-2:      rgba(255,255,255,0.08);
+      --hairline:     rgba(255,255,255,0.14);
+      --hairline-2:   rgba(255,255,255,0.26);
+      --scrim:        rgba(0,0,0,0.55);
+      --warn:         #E8923C;
+      --warn-edge:    rgba(232,146,60,0.30);
+      --warn-edge-2:  rgba(232,146,60,0.38);
+      --warn-wash:    rgba(232,146,60,0.08);
+      --warn-wash-2:  rgba(232,146,60,0.16);
+      /* Edges and washes, one per role rather than one per rule. These
+         were 24 one-off rgba values, each reachable only by the single
+         rule that held it, so no theme could move them together and no
+         two of them could be kept in step by anything but memory. */
+      --on-accent:    #0a0a0b;
+      --veil:         rgba(17,17,19,0.82);
+      --shade:        rgba(0,0,0,0.6);
+      --accent-edge:  rgba(124,140,255,0.25);
+      --accent-edge-2: rgba(124,140,255,0.35);
+      --accent-glow:  rgba(124,140,255,0.16);
+      --accent-halo:  rgba(124,140,255,0.30);
+      --accent-wash:  rgba(124,140,255,0.22);
+      --accent-soft-2: #aab4ff;
+      --ok-edge:      rgba(34,197,94,0.25);
+      --ok-edge-2:    rgba(34,197,94,0.35);
+      --warning-edge: rgba(245,158,11,0.25);
+      --warning-edge-2: rgba(245,158,11,0.35);
+      --warning-halo: rgba(245,158,11,0.30);
+      --danger-edge:  rgba(248,113,113,0.25);
+      --danger-edge-2: rgba(248,113,113,0.35);
+      --discord:      rgba(88,101,242,0.38);
+      --discord-wash: rgba(88,101,242,0.13);
+      --slack:        rgba(46,182,125,0.34);
+      --slack-wash:   rgba(46,182,125,0.13);
+      --slack-ink:    #54cd94;
+      --hairline-3:   rgba(255,255,255,0.28);
     }
     :root {
       --radius-sm: 4px;
@@ -42,11 +93,30 @@
     }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     [hidden] { display: none !important; }
-    html, body { height: 100%; }
+    /* clip, not hidden, and never 100vw: hidden on html makes position
+       sticky stop working, and 100vw counts the scrollbar, which is what
+       put a sideways scroll on a 320px screen. */
+    html, body { height: 100%; overflow-x: clip; }
+    /* One ring, every control, instant. Without this the only focus
+       indicator was the browser default, which measured 1.01:1 here. */
+    :focus-visible {
+      outline: 2px solid var(--color-focus);
+      outline-offset: 2px;
+      border-radius: var(--radius-sm);
+    }
+    h1, h2, h3 { text-wrap: balance; }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
     body {
       background:
-        radial-gradient(900px 480px at 88% -8%, rgba(124,140,255,0.10), transparent 60%),
-        radial-gradient(720px 420px at -6% 4%, rgba(93,108,255,0.07), transparent 55%),
+        radial-gradient(900px 480px at 88% -8%, var(--glow-1), transparent 60%),
+        radial-gradient(720px 420px at -6% 4%, var(--glow-2), transparent 55%),
         var(--bg);
       background-attachment: fixed;
       color: var(--text);
@@ -71,7 +141,7 @@
       align-items: center;
       justify-content: space-between;
       padding: 0 24px;
-      background: rgba(17,17,19,0.82);
+      background: var(--veil);
       backdrop-filter: saturate(140%) blur(10px);
       -webkit-backdrop-filter: saturate(140%) blur(10px);
       border-bottom: 1px solid var(--border);
@@ -85,7 +155,7 @@
       display: flex; align-items: center; justify-content: center;
       flex-shrink: 0;
     }
-    .topbar .brand-logo img { width: 34px; height: 34px; display: block; }
+    .topbar .brand-logo svg { width: 20px; height: 20px; display: block; color: var(--accent); }
     .topbar .brand-text { display: flex; flex-direction: column; line-height: 1.2; }
     .topbar .brand-title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
     .topbar .brand-subtitle { font-size: 11px; color: var(--muted); }
@@ -113,8 +183,8 @@
       display: flex; align-items: center; justify-content: center;
       border-radius: var(--radius-lg);
       background: linear-gradient(150deg, var(--accent), var(--accent-2));
-      color: #0a0a0b;
-      box-shadow: 0 6px 18px rgba(124,140,255,0.30);
+      color: var(--on-accent);
+      box-shadow: 0 6px 18px var(--accent-halo);
     }
     .page-head .head-icon svg { width: 24px; height: 24px; }
     .page-head h1 { font-size: 24px; font-weight: 650; letter-spacing: -0.025em; }
@@ -124,7 +194,12 @@
       display: inline-flex; align-items: center; gap: 6px;
       font-size: 12px; color: var(--muted); margin-top: 9px;
     }
-    .page-head .delivery-note svg { width: 13px; height: 13px; opacity: 0.85; }
+    /* Not scoped to .page-head: the standalone note sits OUTSIDE it, so
+       this rule never matched and that icon drew at its natural size, a
+       100px grey speech bubble above the form. Only a render shows it;
+       no gate can. */
+    .delivery-note svg { width: 13px; height: 13px; opacity: 0.85;
+      flex: 0 0 auto; }
 
     /* Two-column responsive layout */
     .layout {
@@ -154,15 +229,17 @@
 
     .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
     .field:last-child { margin-bottom: 0; }
+    /* Sentence case, untracked. Tracked capitals on every field is the
+       single clearest tell that a screen was generated rather than
+       designed, and it costs legibility at 12px for nothing. */
     .form-label {
-      font-size: 12px; font-weight: 500; color: var(--text-2);
-      letter-spacing: 0.02em; text-transform: uppercase;
+      font-size: 12.5px; font-weight: 500; color: var(--text-2);
     }
     .form-input, .form-textarea {
       width: 100%;
       padding: 10px 12px;
-      background: var(--surface-2);
-      border: 1px solid var(--border-2);
+      background: var(--surface-3);
+      border: 1px solid var(--muted);
       border-radius: var(--radius);
       color: var(--text);
       font-family: inherit;
@@ -172,7 +249,7 @@
     }
     .form-input:focus, .form-textarea:focus {
       border-color: var(--accent);
-      box-shadow: 0 0 0 3px rgba(124,140,255,0.16);
+      box-shadow: 0 0 0 3px var(--accent-glow);
     }
     .form-input.mono { font-family: var(--font-mono); letter-spacing: 0.02em; }
     .form-textarea { resize: vertical; min-height: 92px; font-family: var(--font-ui); }
@@ -203,12 +280,12 @@
     .cron-preview svg { width: 15px; height: 15px; flex-shrink: 0; }
     .cron-preview .cron-preview-text { color: inherit; }
     .cron-preview.active {
-      border-color: rgba(124,140,255,0.35);
+      border-color: var(--accent-edge-2);
       background: var(--accent-soft);
       color: var(--accent);
     }
     .cron-preview.active.fallback {
-      border-color: rgba(245,158,11,0.30);
+      border-color: var(--warning-halo);
       background: var(--warning-soft);
       color: var(--warning);
     }
@@ -232,10 +309,10 @@
     .btn:active:not(:disabled) { transform: translateY(1px); }
     .btn svg { width: 14px; height: 14px; }
     .btn.block { width: 100%; }
-    .btn.primary { background: var(--accent); border-color: var(--accent); color: #0a0a0b; font-weight: 600; }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
     .btn.primary:hover:not(:disabled) { background: var(--accent-2); border-color: var(--accent-2); }
     .btn.sm { padding: 6px 11px; font-size: 12px; }
-    .btn.danger { color: var(--danger); border-color: rgba(248,113,113,0.35); }
+    .btn.danger { color: var(--danger); border-color: var(--danger-edge-2); }
     .btn.danger:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger); }
 
     .badge {
@@ -246,16 +323,16 @@
       text-transform: capitalize;
     }
     .badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-    .badge.enabled  { background: var(--success-soft); color: var(--success); border-color: rgba(34,197,94,0.25); }
+    .badge.enabled  { background: var(--success-soft); color: var(--success); border-color: var(--ok-edge); }
     .badge.disabled { background: var(--surface-2); color: var(--muted); border-color: var(--border-2); }
-    .badge.running  { background: var(--accent-soft); color: var(--accent); border-color: rgba(124,140,255,0.25); }
-    .badge.queued   { background: var(--warning-soft); color: var(--warning); border-color: rgba(245,158,11,0.25); }
-    .badge.done     { background: var(--success-soft); color: var(--success); border-color: rgba(34,197,94,0.25); }
-    .badge.failed   { background: var(--danger-soft);  color: var(--danger);  border-color: rgba(248,113,113,0.25); }
+    .badge.running  { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-edge); }
+    .badge.queued   { background: var(--warning-soft); color: var(--warning); border-color: var(--warning-edge); }
+    .badge.done     { background: var(--success-soft); color: var(--success); border-color: var(--ok-edge); }
+    .badge.failed   { background: var(--danger-soft);  color: var(--danger);  border-color: var(--danger-edge); }
     /* Refused: the agent worked and was then declined a tool, so the
        job did not happen. Amber, and deliberately not the green of
        done nor the red of failed, because it is neither. */
-    .badge.refused  { background: rgba(232,146,60,0.12); color: #E8923C; border-color: rgba(232,146,60,0.30); }
+    .badge.refused  { background: var(--warn-wash-2); color: var(--warn); border-color: var(--warn-edge); }
 
     /* What needs attention, above the list. Amber rather than red: these
        schedules are not broken, they did not do their job, and the
@@ -289,36 +366,36 @@
     .filter-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 16px; }
     .chip { min-height: 34px; padding: 7px 13px; font: inherit; font-size: 12.5px;
       border-radius: 999px; cursor: pointer; background: transparent;
-      color: inherit; border: 1px solid rgba(255,255,255,0.14); opacity: 0.8; }
-    .chip:hover { opacity: 1; border-color: rgba(255,255,255,0.26); }
-    .chip.on { background: rgba(255,255,255,0.10); opacity: 1;
-      border-color: rgba(255,255,255,0.28); font-weight: 600; }
-    .chip.trouble { color: #E8923C; border-color: rgba(232,146,60,0.38); opacity: 1; }
-    .chip.trouble.on { background: rgba(232,146,60,0.16);
-      border-color: rgba(232,146,60,0.55); }
+      color: inherit; border: 1px solid var(--hairline); opacity: 0.8; }
+    .chip:hover { opacity: 1; border-color: var(--hairline-2); }
+    .chip.on { background: var(--press-2); opacity: 1;
+      border-color: var(--hairline-3); font-weight: 600; }
+    .chip.trouble { color: var(--warn); border-color: var(--warn-edge-2); opacity: 1; }
+    .chip.trouble.on { background: var(--warn-wash-2);
+      border-color: var(--warn-edge-2); }
 
     .attention { display: flex; gap: 12px; align-items: flex-start;
-      border: 1px solid rgba(232,146,60,0.32); background: rgba(232,146,60,0.08);
+      border: 1px solid var(--warn-edge-2); background: var(--warn-wash);
       border-radius: 12px; padding: 14px 16px; margin-bottom: 16px; }
     .attention-dot { width: 10px; height: 10px; border-radius: 50%;
-      background: #E8923C; margin-top: 6px; flex: 0 0 auto; }
+      background: var(--warn); margin-top: 6px; flex: 0 0 auto; }
     .attention-head { font-size: 14px; font-weight: 600; margin-bottom: 3px; }
     .attention-why { font-size: 13px; line-height: 1.5; opacity: 0.85; }
 
     /* The agent's own account of what it could not do, on the card rather
        than collapsed in the drawer with everything else. */
-    .sched-problem { border-left: 3px solid #E8923C;
-      background: rgba(232,146,60,0.07); border-radius: 0 8px 8px 0;
+    .sched-problem { border-left: 3px solid var(--warn);
+      background: var(--warn-wash); border-radius: 0 8px 8px 0;
       padding: 10px 12px; margin: 10px 0; }
-    .sched-problem-head { font-size: 12px; font-weight: 600; color: #E8923C;
+    .sched-problem-head { font-size: 12px; font-weight: 600; color: var(--warn);
       margin-bottom: 4px; }
     .sched-problem-body { font-size: 12.5px; line-height: 1.55;
       white-space: pre-line; opacity: 0.9; }
 
     /* Said at the moment the schedule is set up, which is the only moment
        it can still be chosen differently. */
-    .mismatch-note { margin-top: 8px; border: 1px solid rgba(232,146,60,0.32);
-      background: rgba(232,146,60,0.08); border-radius: 8px;
+    .mismatch-note { margin-top: 8px; border: 1px solid var(--warn-edge-2);
+      background: var(--warn-wash); border-radius: 8px;
       padding: 10px 12px; font-size: 12.5px; line-height: 1.55; }
 
     .spinner {
@@ -382,12 +459,18 @@
     }
     .search-wrap input {
       width: 230px; padding: 7px 12px 7px 32px;
-      background: var(--surface-2); border: 1px solid var(--border);
+      background: var(--surface-3); border: 1px solid var(--muted);
       border-radius: var(--radius); color: var(--text); font-size: 13px;
-      outline: none; transition: border-color 0.15s, width 0.15s;
+      outline: none; transition: border-color 0.15s;
     }
     .search-wrap input::placeholder { color: var(--muted); }
-    .search-wrap input:focus { border-color: var(--accent); width: 270px; }
+    /* The width no longer animates: a growing input reflows the row it
+       sits in on every keystroke of focus, and width cannot be composited.
+       The ring is an outline so it never moves the layout. */
+    .search-wrap input:hover { border-color: var(--border-2); }
+    .search-wrap input:focus-visible {
+      outline: 2px solid var(--color-focus); outline-offset: 2px;
+    }
     @media (max-width: 640px) {
       .search-wrap input, .search-wrap input:focus { width: 100%; }
       .list-tools { width: 100%; }
@@ -440,7 +523,7 @@
       display: flex; align-items: center; justify-content: center;
       border-radius: var(--radius);
       background: var(--accent-soft);
-      border: 1px solid rgba(124,140,255,0.22);
+      border: 1px solid var(--accent-wash);
       color: var(--accent);
     }
     .sched-icon svg { width: 19px; height: 19px; }
@@ -468,8 +551,8 @@
       border-radius: var(--radius); padding: 4px 9px; color: var(--text-2);
     }
     .sched-cron .label {
-      font-family: var(--font-ui); font-size: 9.5px; font-weight: 600;
-      letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+      font-family: var(--font-ui); font-size: 11px; font-weight: 600;
+      color: var(--muted);
     }
     /* Timezone chip, which agent a schedule runs as, and how much that agent
        may do -- same shape, one more small fact on the same summary line. */
@@ -486,7 +569,7 @@
        look. Read only stays the neutral chip -- it's the safe default. */
     .sched-mode.full {
       background: var(--warning-soft); color: var(--warning);
-      border-color: rgba(245,158,11,0.35);
+      border-color: var(--warning-edge-2);
     }
 
     /* Delivery destination chip: where each schedule's result is posted. */
@@ -498,12 +581,12 @@
     }
     .sched-dest svg { width: 13px; height: 13px; flex-shrink: 0; }
     .sched-dest.discord {
-      background: rgba(88,101,242,0.13); color: #aab4ff;
-      border-color: rgba(88,101,242,0.38);
+      background: var(--discord-wash); color: var(--accent-soft-2);
+      border-color: var(--discord);
     }
     .sched-dest.slack {
-      background: rgba(46,182,125,0.13); color: #54cd94;
-      border-color: rgba(46,182,125,0.34);
+      background: var(--slack-wash); color: var(--slack-ink);
+      border-color: var(--slack);
     }
     .sched-dest.none { color: var(--muted); border-style: dashed; }
 
@@ -565,7 +648,7 @@
     .btn.quiet-danger:hover:not(:disabled) {
       color: var(--danger);
       background: var(--danger-soft);
-      border-color: rgba(248,113,113,0.35);
+      border-color: var(--danger-edge-2);
     }
 
     .loading { display: flex; align-items: center; gap: 10px; color: var(--text-2); padding: 28px 0; }
@@ -583,7 +666,7 @@
       display: flex; align-items: center; justify-content: center;
       border-radius: 14px;
       background: var(--accent-soft);
-      border: 1px solid rgba(124,140,255,0.22);
+      border: 1px solid var(--accent-wash);
       color: var(--accent);
       margin-bottom: 16px;
     }
@@ -594,7 +677,7 @@
     .error { color: var(--danger); font-size: 13px; margin-top: 8px; }
     .error.box {
       background: var(--danger-soft);
-      border: 1px solid rgba(248,113,113,0.35);
+      border: 1px solid var(--danger-edge-2);
       border-radius: var(--radius);
       padding: 10px 12px;
     }
@@ -604,16 +687,16 @@
       position: fixed; bottom: 24px; left: 50%;
       transform: translateX(-50%);
       background: var(--success-soft); color: var(--success);
-      border: 1px solid rgba(34, 197, 94, 0.35);
+      border: 1px solid var(--ok-edge-2);
       padding: 10px 18px; border-radius: var(--radius-lg);
       font-size: 13px; z-index: 200; box-shadow: var(--shadow-md);
     }
-    .toast.error { background: var(--danger-soft); color: var(--danger); border-color: rgba(248, 113, 113, 0.35); }
+    .toast.error { background: var(--danger-soft); color: var(--danger); border-color: var(--danger-edge-2); }
 
     /* Confirm modal (mirrors projects.html confirm overlay) */
     .confirm-overlay {
       position: fixed; inset: 0; z-index: 300;
-      background: rgba(0,0,0,0.6);
+      background: var(--shade);
       display: flex; align-items: center; justify-content: center; padding: 24px;
     }
     .confirm-card {
@@ -641,7 +724,7 @@
 
   <header class="topbar">
     <div class="brand">
-      <span class="brand-logo"><img src="/static/favicon.svg" alt="" crossorigin="use-credentials"></span>
+      <span class="brand-logo"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7.5V12l3 1.8"></path></svg></span>
       <span class="brand-text">
         <span class="brand-title">Cron Jobs</span>
         <span class="brand-subtitle">Scheduled AI tasks</span>
@@ -672,7 +755,7 @@
          note stays: it is the one thing in that block that told you something
          the title does not. -->
     <div class="delivery-note standalone">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M4 5h16v12H7l-3 3z"></path>
       </svg>
       Results are delivered to your linked Discord / Slack.
@@ -683,7 +766,7 @@
       <div class="col-form">
         <section class="card" id="form-card">
           <div class="card-title">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 5v14M5 12h14"></path>
             </svg>
             New schedule
@@ -741,7 +824,7 @@
 
             <div class="field">
               <div class="cron-preview" id="cron-preview">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <circle cx="12" cy="12" r="9"></circle><path d="M12 7.5V12l3 2"></path>
                 </svg>
                 <span class="cron-preview-text" id="cron-preview-text"></span>
@@ -825,7 +908,7 @@
                      placeholder="Search schedules" aria-label="Search schedules">
             </label>
             <button class="btn sm" type="button" id="refresh-btn">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M21 12a9 9 0 1 1-2.64-6.36M21 4v4h-4"></path>
               </svg>
               Refresh
@@ -1064,22 +1147,22 @@
     // Inline SVG glyphs (no external assets). Static markup only -- never mixed
     // with user-controlled text, which is always set via textContent / escaped.
     const ICON_CLOCK =
-      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7.5V12l3 2"></path></svg>';
+      '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7.5V12l3 2"></path></svg>';
     const ICON_CAL =
-      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16.5" rx="2"></rect><path d="M3 9.5h18M8 2.5v4M16 2.5v4"></path></svg>';
+      '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16.5" rx="2"></rect><path d="M3 9.5h18M8 2.5v4M16 2.5v4"></path></svg>';
     const ICON_REPEAT =
-      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"></path><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><path d="M7 22l-4-4 4-4"></path><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>';
+      '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"></path><path d="M3 11V9a4 4 0 0 1 4-4h14"></path><path d="M7 22l-4-4 4-4"></path><path d="M21 13v2a4 4 0 0 1-4 4H3"></path></svg>';
     const ICON_GLOBE =
-      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3c2.6 2.9 2.6 15.1 0 18M12 3c-2.6 2.9-2.6 15.1 0 18"></path></svg>';
+      '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3c2.6 2.9 2.6 15.1 0 18M12 3c-2.6 2.9-2.6 15.1 0 18"></path></svg>';
     // Which agent a schedule runs as (Run as chip on the card).
     const ICON_AGENT =
-      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2"></rect><path d="M8 7V4a4 4 0 0 1 8 0v3"></path><circle cx="9" cy="13.5" r="1"></circle><circle cx="15" cy="13.5" r="1"></circle></svg>';
+      '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2"></rect><path d="M8 7V4a4 4 0 0 1 8 0v3"></path><circle cx="9" cy="13.5" r="1"></circle><circle cx="15" cy="13.5" r="1"></circle></svg>';
     // Platform glyphs for the delivery-destination chip (CV3). Brand marks are
     // filled (not stroked); static markup, never mixed with server text.
     const ICON_DISCORD =
-      '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.3698a19.7913 19.7913 0 0 0-4.8851-1.5152.0741.0741 0 0 0-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 0 0-.0785-.037 19.7363 19.7363 0 0 0-4.8852 1.515.0699.0699 0 0 0-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 0 0 .0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 0 0 .0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 0 0-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 0 1-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 0 1 .0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 0 1 .0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 0 1-.0066.1276 12.2986 12.2986 0 0 1-1.873.8914.0766.0766 0 0 0-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 0 0 .0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 0 0 .0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 0 0-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189z"></path></svg>';
+      '<svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.3698a19.7913 19.7913 0 0 0-4.8851-1.5152.0741.0741 0 0 0-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 0 0-.0785-.037 19.7363 19.7363 0 0 0-4.8852 1.515.0699.0699 0 0 0-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 0 0 .0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 0 0 .0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 0 0-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 0 1-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 0 1 .0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 0 1 .0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 0 1-.0066.1276 12.2986 12.2986 0 0 1-1.873.8914.0766.0766 0 0 0-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 0 0 .0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 0 0 .0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 0 0-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189z"></path></svg>';
     const ICON_SLACK =
-      '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zM6.313 15.165a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zM18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.685 8.834a2.528 2.528 0 0 1-2.521 2.521 2.528 2.528 0 0 1-2.521-2.521V2.522A2.528 2.528 0 0 1 15.164 0a2.528 2.528 0 0 1 2.521 2.522v6.312zM15.164 18.956a2.528 2.528 0 0 1 2.521 2.522A2.528 2.528 0 0 1 15.164 24a2.528 2.528 0 0 1-2.521-2.522v-2.522h2.521zM15.164 17.685a2.528 2.528 0 0 1-2.521-2.52 2.528 2.528 0 0 1 2.521-2.521h6.313A2.528 2.528 0 0 1 24 15.165a2.528 2.528 0 0 1-2.523 2.52h-6.313z"></path></svg>';
+      '<svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><path d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zM6.313 15.165a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zM18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.685 8.834a2.528 2.528 0 0 1-2.521 2.521 2.528 2.528 0 0 1-2.521-2.521V2.522A2.528 2.528 0 0 1 15.164 0a2.528 2.528 0 0 1 2.521 2.522v6.312zM15.164 18.956a2.528 2.528 0 0 1 2.521 2.522A2.528 2.528 0 0 1 15.164 24a2.528 2.528 0 0 1-2.521-2.522v-2.522h2.521zM15.164 17.685a2.528 2.528 0 0 1-2.521-2.52 2.528 2.528 0 0 1 2.521-2.521h6.313A2.528 2.528 0 0 1 24 15.165a2.528 2.528 0 0 1-2.523 2.52h-6.313z"></path></svg>';
 
     // Browser timezone, sent as the optional `tz` so schedules fire in the
     // user's local time rather than server UTC. Harmless if the API ignores it.
