@@ -261,8 +261,28 @@
        schedules are not broken, they did not do their job, and the
        difference is what the person has to act on. */
     /* The line under the heading. */
-    .section-sub { margin: 4px 0 0; font-size: 13px; line-height: 1.5;
-      opacity: 0.62; flex-basis: 100%; }
+    /* Its own line UNDER both the title and the tools. flex-basis alone was
+       not enough: the subtitle is a sibling of the title and the search box,
+       so without order it sat between them and pushed the heading into two
+       lines. */
+    /* A card carried five chips of equal weight: timezone, agent, access,
+       delivery and the run's outcome. The outcome is the only one that
+       changes, and it was the hardest of the five to pick out. The other
+       four are standing facts, so they recede. */
+    .sched-tz, .sched-agent, .sched-dest, .sched-mode {
+      opacity: 0.58; font-weight: 400;
+    }
+    .sched-card:hover .sched-tz, .sched-card:hover .sched-agent,
+    .sched-card:hover .sched-dest, .sched-card:hover .sched-mode {
+      opacity: 0.82;
+    }
+    /* The outcome keeps its colour and gains the weight the others gave up. */
+    .badge.done, .badge.refused, .badge.failed, .badge.running {
+      font-weight: 600;
+    }
+
+    .section-sub { margin: 0; font-size: 13px; line-height: 1.5;
+      opacity: 0.62; flex: 1 0 100%; order: 3; }
 
     /* Filters. A chip is a button, so it keeps its focus ring and reads as
        pressed to a screen reader through aria-pressed, set in script. */
@@ -312,10 +332,13 @@
     /* Schedule list */
     .section-head {
       display: flex; align-items: center; justify-content: space-between;
-      gap: 12px; margin-bottom: 16px;
+      gap: 12px 16px; margin-bottom: 16px; flex-wrap: wrap;
     }
     .section-head .section-title { display: flex; align-items: center; gap: 9px; }
-    .section-head h2 { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+    /* nowrap, because "Your schedules" broke across two lines the moment the
+       row had to share its width with the search box and a subtitle. */
+    .section-head h2 { font-size: 17px; font-weight: 600; letter-spacing: -0.01em;
+      white-space: nowrap; }
     .section-head .count {
       font-size: 12px; font-weight: 600; color: var(--text-2);
       background: var(--surface-2); border: 1px solid var(--border-2);
@@ -485,6 +508,19 @@
     .sched-dest.none { color: var(--muted); border-style: dashed; }
 
     .sched-meta { color: var(--text-2); font-size: 12px; margin-top: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    /* Clamped, because one schedule's instructions are 1,800 characters of
+       house style and it made that card three times the height of every
+       other one, leaving a column of empty space beside it. Click to open.
+       A fade rather than an ellipsis so it is obvious there is more. */
+    .sched-prompt.clip {
+      max-height: 5.4em; overflow: hidden; position: relative; cursor: pointer;
+    }
+    .sched-prompt.clip::after {
+      content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2.2em;
+      background: linear-gradient(to bottom, transparent, var(--surface-2));
+      pointer-events: none;
+    }
+    .sched-prompt.clip:hover { border-left-color: var(--text-2); }
     .sched-prompt {
       color: var(--text-2); font-size: 12px; margin-top: 12px;
       white-space: pre-wrap; word-break: break-word;
@@ -961,6 +997,22 @@
 
     // One listener on the row rather than one per chip, so the trouble chip
     // works on the render where it first appears.
+    // Click or keyboard on a clipped prompt opens it. Delegated from the
+    // list rather than bound per card, because the list is rebuilt from
+    // scratch after every enable, run and delete.
+    function openClippedPrompt(e) {
+      const box = e.target.closest(".sched-prompt.clip");
+      if (!box) return;
+      if (e.type === "keydown" && e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
+      box.classList.remove("clip");
+      box.removeAttribute("role");
+      box.removeAttribute("tabindex");
+      box.removeAttribute("title");
+    }
+    listRegion.addEventListener("click", openClippedPrompt);
+    listRegion.addEventListener("keydown", openClippedPrompt);
+
     const filterRow = document.getElementById("filter-row");
     if (filterRow) {
       filterRow.addEventListener("click", (e) => {
@@ -1362,8 +1414,15 @@
       const _name = String(s.name || "").toLowerCase().replace(/\s+/g, " ").trim();
       const _prompt = String(s.prompt || "").toLowerCase().replace(/\s+/g, " ").trim();
       const echoes = !!_prompt && (_name === _prompt || _name.endsWith(_prompt));
+      // Only clipped when there is actually something to clip. A short
+      // prompt with a fade and a pointer cursor would promise more text
+      // and then do nothing when clicked.
+      const _long = String(s.prompt || "").length > 190;
       const prompt = (s.prompt && !echoes)
-        ? `<div class="sched-prompt">${escapeHtml(String(s.prompt))}</div>`
+        ? `<div class="sched-prompt${_long ? " clip" : ""}"${
+             _long ? ' role="button" tabindex="0"'
+                   + ' title="Show the whole instruction"' : ""
+           }>${escapeHtml(String(s.prompt))}</div>`
         : "";
 
       // What the last run actually produced. This used to be delivered to
