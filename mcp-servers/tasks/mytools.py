@@ -797,7 +797,18 @@ async def _call(provider_id: str, tool: Tool, email: str,
     params = dict(auth.params)
     params.update(_query_for(tool, args))
 
-    payload = _payload_for(tool, args)
+    # A SHAPER MAY REFUSE, and its refusal has to reach the model as an
+    # answer. This sat outside the try, so a ValueError from `shape`
+    # escaped the whole call: a chat turn got a 500 and never saw the
+    # sentence telling it what to fix. Found by running it live on
+    # 2026-11-18, after the unit tests were green, because those call
+    # the shaper directly and assert the raise.
+    #
+    # A refusal that cannot be read is a crash with good intentions.
+    try:
+        payload = _payload_for(tool, args)
+    except ValueError as e:
+        return _err(str(e))
 
     url = (tool.base or auth.base_url) + path
     # A CREDENTIAL ONLY GOES TO ITS OWN VENDOR. `base` lets one tool point
