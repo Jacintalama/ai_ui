@@ -360,16 +360,27 @@ def _jira_token(payload: dict) -> Tuple[Dict[str, str], str]:
 
 #: What the person approves on Dropbox's consent screen.
 #:
-#: Read only, and exactly what the four tools call: account_info.read for
+#: Read only, and exactly what the five tools call: account_info.read for
 #: the probe and the card's name, files.metadata.read for listing,
-#: searching and reading one file's details. Upload, delete, download and
-#: share links each need another scope and each is a separate card.
+#: searching and reading one entry's details, files.content.read for
+#: reading what is written inside a file. Upload, delete and share links
+#: each need another scope and each is a separate card.
+#:
+#: files.content.read was added on 2026-11-19, BEFORE anybody had
+#: connected Dropbox (0 rows in tasks.user_connections), which is the only
+#: moment it is free. A scope is approved on the consent screen, so one
+#: added afterwards does not reach a token that already exists: every
+#: connection made before it keeps the old grant and answers 401 on the
+#: new tool until its owner reconnects, with nothing on the card saying
+#: why. Widen this list before people connect, or accept that everyone
+#: reconnects.
 #:
 #: A scope here also has to be ticked in the app's own Permissions tab in
 #: the App Console, which is the half nobody remembers: asking for a scope
 #: the app was never granted is an authorize URL that refuses.
 DROPBOX_SCOPE = (os.environ.get("DROPBOX_SCOPE")
-                 or "account_info.read files.metadata.read").strip()
+                 or "account_info.read files.metadata.read "
+                    "files.content.read").strip()
 
 
 #: What the person approves on LinkedIn's consent screen.

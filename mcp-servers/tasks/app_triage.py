@@ -184,13 +184,19 @@ _APPS = (
     App("dropbox", "Dropbox",
         "cloud storage for files and folders: finding a file, seeing what "
         "is in a folder, when something was last changed",
-        "list a folder, search your files by name and read one file's "
-        "details",
-        ("list_folder", "search_files", "get_metadata"),
+        "list a folder, search your files by name, read one file's details "
+        "and read what is written inside a text file",
+        ("list_folder", "search_files", "get_metadata", "read_file"),
         # Read only on purpose, and the scopes on the consent screen say
         # so too. Upload and share links are each their own card.
-        cannot="read the contents of a file, download it, upload, change "
-               "or delete anything, or make a share link",
+        #
+        # "the contents of a file" moved out of this line on 2026-11-19
+        # when read_file shipped. A `cannot` that denies what a tool now
+        # does costs the same as one that promises what no tool does: it
+        # is the whole contract either way.
+        cannot="read a file that is not text, such as a pdf, an image or a "
+               "spreadsheet, or upload, change or delete anything, or make "
+               "a share link",
         says=("dropbox",)),
     App("notion", "Notion",
         "pages and databases for notes, documents, a wiki or to-do lists",

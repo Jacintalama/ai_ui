@@ -132,6 +132,29 @@ class Tool:
     #: model's context spent on a question about a summary. A default in a
     #: comment is not sent, so it has to be here.
     query_defaults: Dict[str, Any] = _dc_field(default_factory=dict)
+    #: Extra request headers for THIS tool, built from the arguments.
+    #:
+    #: For a vendor that takes an argument in a header rather than a body.
+    #: Dropbox's file download is the first: `Dropbox-API-Arg` carries the
+    #: path and the body must be empty, so there is nowhere else to put it.
+    #:
+    #: Only ever sent to the vendor's own hosts, alongside the credential
+    #: and under the same test, because a header built from a person's
+    #: arguments is their data and a stranger has no claim on it either.
+    #:
+    #: Signature is `head(args) -> dict`. A ValueError reaches the model as
+    #: a sentence, like `shape`.
+    head: Optional[Callable[[Dict[str, Any]], Dict[str, str]]] = None
+    #: Read the answer from a response that is NOT JSON.
+    #:
+    #: A download answers with the file's bytes, and its metadata comes
+    #: back in a response header. Without this the body is thrown away by
+    #: `_no_body_result` and the tool answers "done" having read nothing.
+    #:
+    #: Signature is `raw(body: bytes, headers) -> Any`. Taking the two
+    #: pieces rather than the response object is what lets it be tested
+    #: without a vendor, a network or httpx.
+    raw: Optional[Callable[..., Any]] = None
     #: Whether this tool changes anything at the vendor. `None` means "ask
     #: the method", which is right almost everywhere.
     #:
@@ -213,6 +236,49 @@ def _same_host(vendor_base: str, tool_base: str) -> bool:
         return (a.hostname.lower() == b.hostname.lower()
                 and (a.scheme or "").lower() == (b.scheme or "").lower()
                 and a.port == b.port)
+    except Exception:                                       # noqa: BLE001
+        return False
+
+
+#: A vendor's OTHER hostnames, the ones its own credential belongs to.
+#:
+#: `_same_host` compares hostnames, which is the right test for "is this
+#: still the vendor" almost everywhere and the wrong one for a vendor that
+#: splits its API across two names. Dropbox is the first: RPC calls go to
+#: api.dropboxapi.com and file CONTENT to content.dropboxapi.com, both
+#: take the same bearer token, and neither can be inferred from the other.
+#:
+#: Named explicitly, per provider, so the guard keeps its shape: a host
+#: nobody listed is still a stranger and still gets no credential. That is
+#: what stops an n8n tool reading the public template library at
+#: api.n8n.io from carrying a self-hosted X-N8N-API-KEY to n8n's cloud.
+VENDOR_HOSTS: Dict[str, tuple] = {
+    "dropbox": ("content.dropboxapi.com",),
+}
+
+
+def _is_vendor_host(provider_id: str, tool_base: str) -> bool:
+    """Whether a tool's base is a SECOND host of the same vendor.
+
+    https only, for the same reason `_same_host` insists on it: a
+    credential must not be sent in the clear, and a name on a list is not
+    a reason to relax that.
+
+    No base at all is False here rather than True: this answers "is this
+    other host the vendor", and `_same_host` already answers the ordinary
+    case. A default of True would hand every credential to every tool
+    that named no base, which is the opposite of the question.
+    """
+    base = str(tool_base or "").strip()
+    if not base:
+        return False
+    try:
+        from urllib.parse import urlsplit
+        u = urlsplit(base)
+        if (u.scheme or "").lower() != "https" or not u.hostname:
+            return False
+        allowed = tuple(h.lower() for h in (VENDOR_HOSTS.get(provider_id) or ()))
+        return u.hostname.lower() in allowed
     except Exception:                                       # noqa: BLE001
         return False
 
@@ -928,13 +994,27 @@ async def _call(provider_id: str, tool: Tool, email: str,
     # it is the same vendor. Different host does not, because by
     # definition that is not the vendor the credential belongs to. The
     # query params go the same way, since Trello's credential rides there.
-    own = _same_host(auth.base_url, tool.base)
+    own = (_same_host(auth.base_url, tool.base)
+           or _is_vendor_host(provider_id, tool.base))
     if not own:
         params = _query_for(tool, args)
+
+    # A header-carried argument, for a vendor with nowhere else to put it.
+    # Built here and not inside the request so a refusal from it reads as
+    # an answer, which is the lesson `shape` already carries above.
+    sending = dict(auth.headers) if own else None
+    if tool.head:
+        try:
+            extra = tool.head(args or {})
+        except ValueError as e:
+            return _err(str(e))
+        if own and extra:
+            sending.update(extra)
+
     try:
         async with httpx.AsyncClient(timeout=VENDOR_TIMEOUT_SEC) as client:
             r = await client.request(tool.method, url,
-                                     headers=auth.headers if own else None,
+                                     headers=sending,
                                      params=params or None, json=payload)
     except Exception as e:
         # The exception text can carry the URL, and Trello's credential rides
@@ -950,6 +1030,20 @@ async def _call(provider_id: str, tool: Tool, email: str,
                        writes=_writes(tool))
     if problem:
         return _err(problem)
+
+    # A response that was never meant to be JSON. Before the parse, not
+    # after it: the bytes of a text file parse as JSON often enough
+    # (a number, a quoted string, `true`) that falling through would read
+    # some files and not others.
+    if tool.raw:
+        try:
+            return {"ok": True, "item": _trim(tool.raw(r.content, r.headers),
+                                              tool.keep)}
+        except Exception:                                   # noqa: BLE001
+            logger.warning("mytools: %s could not read %s body",
+                           provider_id, tool.name)
+            return _err(label + " answered with something this tool could "
+                                "not read.")
 
     try:
         data = r.json()
@@ -998,6 +1092,17 @@ async def _call(provider_id: str, tool: Tool, email: str,
 #: complete.
 MAX_FILE_CHARS = 40_000
 MAX_PATCH_CHARS = 8_000
+
+#: How many BYTES of a download are asked for, as a `Range` header.
+#:
+#: A char cap is no use on a download: by the time the characters can be
+#: counted the bytes are already in this process, and somebody's cloud
+#: storage holds video. This box has 3.8GB of RAM, so the cap goes on the
+#: request and the rest is never sent.
+#:
+#: Four bytes per character is UTF-8's widest, so this cannot cut a file
+#: that would have fit under MAX_FILE_CHARS.
+MAX_FILE_BYTES = 4 * MAX_FILE_CHARS
 
 
 def _github_file(payload: Any) -> Any:
@@ -2093,6 +2198,103 @@ def _dropbox_limit(given: Any) -> int:
     return max(1, min(limit, MAX_ITEMS))
 
 
+#: Where Dropbox serves file CONTENT. Not the same hostname as the rest of
+#: the API, and listed in VENDOR_HOSTS so the credential still goes with it.
+DROPBOX_CONTENT = "https://content.dropboxapi.com/2"
+
+
+def _dropbox_arg(args: Dict[str, Any]) -> Dict[str, str]:
+    """The headers for a download: the argument, and a cap on the answer.
+
+    A content download takes no body at all. Its argument goes in
+    `Dropbox-API-Arg`, and because that is an HTTP header it has to be
+    ASCII: a path with an accent in it sent raw is a header a client or a
+    proxy may refuse before Dropbox ever sees it. `json.dumps` escapes
+    non-ASCII by default, which is exactly what Dropbox asks for.
+
+    `Range` is what keeps a download bounded. See MAX_FILE_BYTES.
+    """
+    arg = json.dumps({"path": _dropbox_path(args.get("path"))})
+    return {"Dropbox-API-Arg": arg,
+            "Range": "bytes=0-%d" % (MAX_FILE_BYTES - 1)}
+
+
+def _as_text(body: bytes) -> Optional[str]:
+    """A file's text, or None when it is not text at all.
+
+    Two tells, and both are needed. A NUL byte does not occur in UTF-8
+    text and does occur in almost every binary format, including UTF-16,
+    which would otherwise decode to something that looks like words. And
+    a strict decode is what separates the rest.
+
+    Strict, never "replace": a PDF decoded with "replace" is forty
+    thousand replacement characters, which spends the turn and leaves an
+    assistant describing junk as though it had read the document.
+
+    THE TAIL RETRY is where the two safeguards meet. `Range` cuts at a
+    byte, so the last character of a long file can arrive in halves, and
+    that failure says nothing about whether the file is text. Up to three
+    bytes come off the end before giving up, three being the longest
+    incomplete UTF-8 sequence there is.
+    """
+    body = body or b""
+    if b"\x00" in body:
+        return None
+    for drop in range(4):
+        end = len(body) - drop
+        if end < 0:
+            break
+        try:
+            return body[:end].decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+    return None
+
+
+def _dropbox_file(body: bytes, headers: Any = None) -> Dict[str, Any]:
+    """One Dropbox file, read.
+
+    The bytes are the file; the metadata arrives in a header, which is
+    why this takes both. `size` from Dropbox is the WHOLE file's size,
+    so comparing it with what arrived is how a capped download knows it
+    is holding a slice and says so.
+    """
+    meta: Any = {}
+    try:
+        raw = (headers or {}).get("Dropbox-API-Result") or ""
+        if raw:
+            meta = json.loads(raw)
+    except Exception:                                       # noqa: BLE001
+        meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
+
+    body = body or b""
+    path = meta.get("path_display") or meta.get("name") or ""
+    size = meta.get("size")
+    if not isinstance(size, int):
+        size = len(body)
+
+    text = _as_text(body)
+    if text is None:
+        return {"path": path, "size": size, "truncated": False, "content": "",
+                # Said as a fact about the file, not as an error, because
+                # nothing went wrong: a model told only "failed" retries,
+                # and a model told nothing describes the junk.
+                "why": "this is not a text file, so there is nothing to read "
+                       "out of it. Its name, size and when it last changed "
+                       "are still readable with get_metadata."}
+
+    cut = len(text) > MAX_FILE_CHARS
+    if cut:
+        text = text[:MAX_FILE_CHARS]
+    # The Range cap means a big file never fully arrives. Presenting the
+    # first slice as the document is the quiet version of inventing it.
+    if size > len(body):
+        cut = True
+    return {"path": path, "size": size, "truncated": cut, "content": text}
+
+
 def _dropbox_folder_body(args: Dict[str, Any]) -> Dict[str, Any]:
     return {"path": _dropbox_path(args.get("path")),
             "limit": _dropbox_limit(args.get("limit")),
@@ -2144,6 +2346,23 @@ DROPBOX_TOOLS = [
          shape=lambda a: {"path": _dropbox_path(a.get("path"))},
          writes=False,
          keep=_DROPBOX_KEEP),
+    # The one tool that makes the other three worth having: without it the
+    # chat can say a document exists and nothing about what it says.
+    Tool(name="read_file",
+         summary="Read what is written inside one Dropbox file, given its "
+                 "path. Use this for text: notes, code, csv, markdown.",
+         method="POST", path="/files/download",
+         # A different hostname from the rest of Dropbox. See
+         # DROPBOX_CONTENT and VENDOR_HOSTS.
+         base=DROPBOX_CONTENT,
+         args={"path": ("string", "The file, like /Documents/notes.txt",
+                        True)},
+         # The argument goes in a header and the body stays empty, so
+         # there is deliberately no `shape` and no `body` here.
+         head=_dropbox_arg,
+         raw=_dropbox_file,
+         writes=False,
+         keep=("path", "size", "truncated", "content", "why")),
     Tool(name="whoami",
          summary="Show which Dropbox account is currently connected to "
                  "your assistant.",
