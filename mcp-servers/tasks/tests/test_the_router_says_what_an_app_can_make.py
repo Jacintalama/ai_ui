@@ -161,3 +161,74 @@ def test_the_clause_does_not_claim_what_no_tool_does():
     making = _making()
     for absent in ("repository", "repo", "base", "space"):
         assert absent not in making, absent
+
+
+# ---------------------------------------------------------------------------
+# The same rule, for a tool that has its OWN note rather than the gateway's.
+#
+# MEASURED on the live router 2026-11-19, three runs each, cut 0.75, probing
+# gdrive/gmail/calendar/documents/server:mcp-proxy side by side so the score
+# is read off the tool that actually serves Drive:
+#
+#   find the recruiting spreadsheet in my drive     gdrive 0.97 0.97 0.97  3/3
+#   open the Q3 report from my google drive         gdrive 0.97 0.97 0.97  3/3
+#   what files are in my google drive?              gdrive 0.97 0.96 0.97  3/3
+#   make a folder called Invoices in my drive       gdrive 0.10 0.10 0.10  0/3
+#   upload this to my google drive                  gdrive 0.15 0.13 0.14  0/3
+#
+# FIXING IT TOOK THREE WORDINGS, and the two that failed are the reason
+# this test checks listing as well as saving. Bolting ", and saving or
+# uploading a new file into it" onto the end of the old sentence lifted
+# every write to 3/3 and dropped "what files are in my google drive?" from
+# 0.97 to 0.60 and "open the Q3 report" to 0.73, both out of the pick.
+# Adding "listing" but shortening the write clause was worse still, 0/3 on
+# all three reads. Naming the app first and hanging every verb off it
+# carries both: writes 0.94 to 0.96, reads 0.93 to 0.96, nothing dragged in
+# ("what is on my calendar tomorrow?" 0.03, a poem 0.02).
+#
+# Reading is near perfect. Writing scores 0.10, which is not a near miss,
+# it is the note being read correctly: "finding or reading files, documents
+# and spreadsheets" names no write at all. So the one write Drive really
+# has, gdrive_create_file, could not be reached from the main chat, and
+# nothing else caught it either: `documents` peaked at 0.70 and the gateway
+# at 0.33, so no tool was handed over and the free model answered.
+#
+# WHAT DRIVE REALLY DOES, read off mcp-servers/gdrive/main.py rather than
+# assumed: gdrive_list_files, gdrive_search_files, gdrive_read_file,
+# gdrive_get_file_info and gdrive_create_file. That last one takes a name,
+# text or base64 content and a mime type. There is no parent folder field
+# and no folder endpoint, so Drive can save a file and cannot make a
+# folder, cannot move, rename, delete or share one. The note has to say the
+# first and must not claim the rest.
+# ---------------------------------------------------------------------------
+
+#: The stems a person's own words would use for putting a file into Drive.
+DRIVE_SAVE = ("sav", "upload", "put a new file")
+
+#: What no Drive endpoint does. Claiming any of these would send a request
+#: to a tool that cannot carry it, which is worse than not being picked.
+DRIVE_CANNOT = ("folder", "delete", "rename", "share")
+
+
+def test_drive_says_it_can_save_a_file():
+    """gdrive_create_file exists, so the note has to name it."""
+    note = agent_jev.TOOL_NOTES["gdrive"].lower()
+    assert any(s in note for s in DRIVE_SAVE), (
+        "the gdrive note names no write verb, so 'upload this to my google "
+        "drive' scores 0.15 and the tool is never handed over: %r" % note)
+
+
+def test_drive_does_not_claim_what_it_cannot_do():
+    """No folder endpoint exists, so the note must not promise one."""
+    note = agent_jev.TOOL_NOTES["gdrive"].lower()
+    for word in DRIVE_CANNOT:
+        assert word not in note, (
+            "the gdrive note claims %r, which no Drive endpoint does" % word)
+
+
+def test_drive_keeps_the_reading_words_that_already_work():
+    """The read phrasings score 0.97. Nothing here may cost that."""
+    note = agent_jev.TOOL_NOTES["gdrive"].lower()
+    for word in ("find", "list", "read", "file", "spreadsheet",
+                 "google drive"):
+        assert word in note, "the gdrive note lost %r" % word

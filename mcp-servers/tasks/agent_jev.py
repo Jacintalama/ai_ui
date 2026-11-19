@@ -524,8 +524,31 @@ TOOL_NOTES = {
     "gmail": "reading, searching, drafting or sending the person's email",
     "calendar": "the person's calendar: events, meetings, appointments, free "
                 "time, scheduling",
-    "gdrive": "finding or reading files, documents and spreadsheets in the "
-              "person's Google Drive",
+    # Same lesson n8n taught on 2026-11-18, on a tool with its own note
+    # instead of the gateway's: reading Drive scored 0.97 and saving to it
+    # scored 0.15, because "finding or reading" names no write. So
+    # gdrive_create_file was unreachable from the main chat and the free
+    # model answered instead. Saving is the ONLY write Drive has: there is
+    # no folder, move, rename, delete or share endpoint, and
+    # test_drive_does_not_claim_what_it_cannot_do keeps those words out.
+    #
+    # The SHAPE of this sentence is measured, not styled. Three wordings,
+    # 2026-11-19, three runs each, cut 0.75, gdrive scored beside documents:
+    #
+    #                                        old      +write   +listing  this
+    #   upload this to my google drive       0/3 .14  3/3 .93  3/3 .87  3/3 .96
+    #   save the meeting notes to my drive   0/3 .22  3/3 .94  3/3 .90  3/3 .96
+    #   find the recruiting spreadsheet      3/3 .97  3/3 .80  0/3 .52  3/3 .93
+    #   what files are in my google drive?   3/3 .97  0/3 .60  0/3 .48  3/3 .96
+    #   open the Q3 report from my drive     3/3 .97  0/3 .73  0/3 .41  3/3 .95
+    #
+    # Bolting the write clause onto the old sentence bought saving and cost
+    # listing and opening, which is the whole reason the controls are in the
+    # probe. Naming the app FIRST and hanging every verb off it is the only
+    # one of the three that carries reads and writes at once.
+    "gdrive": "the person's Google Drive: finding, listing and reading the "
+              "files, documents and spreadsheets in it, and saving or "
+              "uploading a new one into it",
     "documents": "documents the person uploaded here or wants made: "
                  "reading, writing, or listing the ones they have",
     "excel_creator": "making a spreadsheet or Excel file",
