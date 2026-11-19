@@ -135,6 +135,44 @@ def _carries_aiui(node: Any, credential_id: Optional[str]) -> bool:
     return False
 
 
+_SHAPE = ('{"app": "gdrive", "tool": "gdrive_search_files", '
+          '"args": {"query": "report"}}')
+
+
+def _check_target(node: Any) -> None:
+    """Refuse an AIUI step that does not name a real app and tool.
+
+    The first live build (2026-11-19) wrote the body as the proxy's own
+    call, `{tool: "google-drive_search_drive", arguments: {...}}`. n8n took
+    it, the route answered 422 on every run, and the chat had already said
+    "Done". Refused here, the model reads the shape and builds it again.
+    """
+    import mytools
+    from routes_tool_run import GOOGLE_READS, NEVER_APPS, NEVER_TOOLS
+
+    name = str(node.get("name") or "An AIUI step")
+    target = step_target(node)
+    if target is None:
+        raise ValueError(
+            '"%s" calls AIUI, but its jsonBody does not name an app and a '
+            'tool. It must be {"app": ..., "tool": ..., "args": {...}} with '
+            "app and tool written out, for example %s. To use an earlier "
+            "step's data, make it an expression and keep app and tool "
+            "written out." % (name, _SHAPE))
+    app, tool = target
+    apps = {a: sorted(t.name for t in ts)
+            for a, ts in mytools.PROVIDER_TOOLS.items() if a not in NEVER_APPS}
+    apps.update({a: sorted(reads) for a, (_, _, reads) in GOOGLE_READS.items()})
+    if app not in apps:
+        raise ValueError(
+            '"%s" names the app %r, which AIUI does not have. Apps: %s. '
+            "Example: %s" % (name, app, ", ".join(sorted(apps)), _SHAPE))
+    if tool in NEVER_TOOLS or tool not in apps[app]:
+        raise ValueError(
+            '"%s" names %s.%s, which an AIUI step cannot run. %s tools: %s.'
+            % (name, app, tool, app, ", ".join(apps[app])))
+
+
 def carries_credentials(nodes: List[Any]) -> bool:
     """Whether any node names a credential at all."""
     return any(_credentials(n) for n in nodes or [])
@@ -162,6 +200,7 @@ def check_steps(nodes: List[Any], credential_id: Optional[str] = None) -> None:
                 "else." % (str(node.get("name") or "A node"), RUN_URL))
         if not _is_aiui_url(node):
             continue
+        _check_target(node)
         cred = ((node.get("credentials") or {}).get(CREDENTIAL_TYPE) or {})
         if not (isinstance(cred, dict) and cred.get("id")):
             raise ValueError(
