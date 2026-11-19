@@ -57,7 +57,7 @@ async def test_a_database_outage_reads_as_not_a_key(monkeypatch):
 async def test_creating_returns_the_key_once_and_stores_the_hash(monkeypatch):
     stored = {}
 
-    async def create(email, label, key_hash, prefix):
+    async def create(email, label, key_hash, prefix, scopes=None):
         stored.update(email=email, label=label, key_hash=key_hash, prefix=prefix)
         return {"id": "k1", "label": label, "prefix": prefix}
     monkeypatch.setattr(ak, "_create", create)
@@ -316,7 +316,7 @@ async def test_the_callback_is_retried_on_a_server_error_and_never_raises(monkey
 def test_keys_are_listed_made_shown_once_and_revoked(client, monkeypatch):
     rows = []
 
-    async def create(email, label, key_hash, prefix):
+    async def create(email, label, key_hash, prefix, scopes=None):
         rows.append({"id": f"k{len(rows) + 1}", "label": label, "prefix": prefix,
                      "email": email, "hash": key_hash})
         return {k: v for k, v in rows[-1].items() if k not in ("email", "hash")}
