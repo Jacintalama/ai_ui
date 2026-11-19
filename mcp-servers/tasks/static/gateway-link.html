@@ -5,7 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Channels</title>
 <style>
-  :root { color-scheme: light dark; }
+  /* Dark, always, like every other page the pane embeds. The pane draws its
+     frame on #0b0b0b (task-panel.js, openAiuiEmbed); with "light dark" here,
+     a device in light mode got the light scheme's black text over that black
+     (seen live 2026-11-19, contrast 1.07:1). */
+  :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   body {
     font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -15,7 +19,7 @@
        is a table; it is a settings list, and a settings list is read in a
        column. */
     margin: 0 auto; max-width: 60rem; padding: 1.75rem 2rem 4rem;
-    background: transparent; color: inherit;
+    background: #0b0b0b; color: #e8e8e8;
   }
   header { margin-bottom: 1.5rem; }
   h1 { font-size: 1.5rem; margin: 0 0 .3rem; }
