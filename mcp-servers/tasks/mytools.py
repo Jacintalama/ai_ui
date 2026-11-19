@@ -714,6 +714,12 @@ def _refusal(r, label: str, creds: Dict[str, str], provider_id: str,
         return (label + " would not allow that. That is usually a "
                 "permission or a plan limit rather than a bad credential. "
                 "If it keeps happening, reconnect it from Connections.")
+    if (provider_id == "github" and r.status_code == 422
+            and "own pull request" in (getattr(r, "text", "") or "").lower()):
+        # GitHub puts this reason in `errors`, a LIST, and `message` says
+        # only "Unprocessable Entity" (2026-11-19).
+        return ("GitHub does not let you approve your own pull request. "
+                "Someone else has to review it.")
     if r.status_code == 404:
         return label + " could not find that." + _vendor_said(r, creds)
     if r.status_code >= 400:
@@ -1067,8 +1073,8 @@ GITHUB_TOOLS = [
          unwrap=_github_patches,
          keep=("filename", "status", "additions", "deletions", "patch")),
     Tool(name="comment_on_pull_request",
-         summary="Leave a comment on a pull request, written as you. This is "
-                 "how a review is delivered.",
+         summary="Leave a plain comment on a pull request, written as you. "
+                 "To approve it or ask for changes, use review_pull_request.",
          method="POST", path="/repos/{owner}/{repo}/issues/{number}/comments",
          args={"owner": ("string", "Repository owner", True),
                "repo": ("string", "Repository name", True),
@@ -1076,6 +1082,22 @@ GITHUB_TOOLS = [
                "body": ("string", "The comment, markdown is fine", True)},
          body=("body",),
          keep=("id", "html_url", "created_at")),
+    Tool(name="review_pull_request",
+         summary="Review a pull request as you: APPROVE it, "
+                 "REQUEST_CHANGES on it, or leave a COMMENT review. GitHub "
+                 "does not let anyone approve their own pull request.",
+         method="POST", path="/repos/{owner}/{repo}/pulls/{number}/reviews",
+         args={"owner": ("string", "Repository owner", True),
+               "repo": ("string", "Repository name", True),
+               "number": ("integer", "Pull request number", True),
+               "event": ("string", "APPROVE, REQUEST_CHANGES or COMMENT",
+                         True),
+               "body": ("string", "What the review says. Needed for "
+                                  "REQUEST_CHANGES and COMMENT, optional "
+                                  "for APPROVE", False)},
+         body=("event", "body"),
+         writes=True,
+         keep=("id", "state", "html_url", "submitted_at")),
     Tool(name="comment_on_issue",
          summary="Leave a comment on a GitHub issue, written as you.",
          method="POST", path="/repos/{owner}/{repo}/issues/{number}/comments",
