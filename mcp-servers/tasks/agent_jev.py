@@ -497,6 +497,27 @@ async def wants_release(email: str, text: str) -> bool | None:
 
 # --- the main chat's tools (main_assistant, routes_agent_turn.chat) --------
 
+#: What the connected apps can MAKE, and the sole reason it is a constant
+#: rather than the tail of the sentence below: it is the half of the note
+#: that has to be asserted on by itself.
+#:
+#: Measured 2026-11-19, three runs each, cut 0.75. "what workflows do I
+#: have in n8n?" scored 0.94 and was picked 3/3. Asked to BUILD one, the
+#: same gateway scored 0.72, 0.68 and 0.58 on three phrasings and was
+#: picked 0/3, because "n8n workflows" was named only in the half that
+#: says what it can SEE and this clause read "a new table, board, list,
+#: page, record, event or issue". So the write tools from #244 could not
+#: be reached from the main chat the day after they shipped, and the free
+#: model answered instead: on 2026-11-18 it described three nodes and a
+#: cron expression for a workflow that was never created.
+#:
+#: Pinned by tests/test_the_router_says_what_an_app_can_make.py, which
+#: also refuses a new write provider with no word in here.
+MAKES_CLAUSE = ("making things in it: a new table, record, card, task, "
+                "list, page, issue, pull request, branch, contact, post "
+                "or event. It can also build an n8n workflow and change, "
+                "switch on and off, or delete one, and start a Zapier zap")
+
 #: What each tool is for, in the words a person would use. A tool not listed
 #: here is described by its id, which is better than leaving it out.
 TOOL_NOTES = {
@@ -604,8 +625,7 @@ TOOL_NOTES = {
                         # and a missing scope, not this sentence. Kept
                         # because it is accurate, not because it fixed
                         # anything.
-                        "sending mail from it, or making a new table, "
-                        "board, list, page, record, event or issue in it",
+                        "sending mail from it, or " + MAKES_CLAUSE,
 }
 
 
