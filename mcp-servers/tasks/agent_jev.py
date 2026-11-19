@@ -574,8 +574,25 @@ TOOL_NOTES = {
             "an online store, a form or a dashboard they want built, "
             "redesigned or changed. Also 'build it', 'make it', 'create "
             "it' about any of those",
-    "account": "the person's own account: their apps, connected services, "
-               "usage and settings",
+    # Narrowed 2026-11-19 after measuring. It read "the person's own
+    # account: their apps, connected services, usage and settings" and was
+    # picked 3/3 at 0.89 to 0.93 on "update the price of my Shopify
+    # product", "add a task in Todoist", "schedule an Instagram post",
+    # "upload this video to my YouTube channel", "rename my n8n workflow"
+    # and "make a folder in my google drive". "their apps" matches any
+    # request naming an app somebody owns, which is most of them.
+    #
+    # "usage and settings" also went, because no tool does either:
+    # account_summary.summarise returns connected, not_connected and
+    # agents, full stop. Being picked for "change my settings" is a
+    # promise the assistant cannot keep.
+    #
+    # Measured after: the three real account questions still 3/3 (0.83 to
+    # 0.88) and all six app requests 0/3 (0.07 to 0.34). Pinned by
+    # tests/test_the_account_note_is_about_the_account.py.
+    "account": "which apps this person has connected and which they have "
+               "not, how to connect one, and the agents they own. Not for "
+               "doing anything inside an app",
     "schedules": "the person's own cron jobs and recurring tasks that "
                  "the platform runs for them: making, listing, changing "
                  "or deleting something that runs on a timer. Not "
