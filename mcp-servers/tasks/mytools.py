@@ -544,6 +544,43 @@ _NODE_HELP = (
 )
 
 
+def _n8n_forms(item, base: str) -> list:
+    """Where each form in this workflow actually answers, or why nowhere.
+
+    A fact with no tool behind it gets invented. Asked on 2026-11-18 for a
+    form's URL, the chat produced `n8n.srv1041674.hstgr.io/form/<workflow
+    id>`: the wrong host, which appears nowhere in this repo, and the wrong
+    path, because n8n serves a form at the trigger node's own `path` or
+    `webhookId` and never at the workflow id. The person then spent two
+    replies being told to flush their DNS and check their router over an
+    NXDOMAIN that a made-up hostname had caused.
+
+    The host is already in the credential the call just used, so it is
+    never guessed here. And a form trigger created over the API carries
+    neither `path` nor `webhookId` (n8n assigns one in the editor), so the
+    honest answer in that case is that the form has no address at all,
+    which is the answer the model had no way to give.
+    """
+    forms = []
+    for node in (item.get("nodes") or []):
+        if not str(node.get("type") or "").endswith("formTrigger"):
+            continue
+        where = (node.get("parameters") or {}).get("path") or \
+            node.get("webhookId")
+        name = node.get("name")
+        if where:
+            forms.append({"node": name,
+                          "url": "%s/form/%s" % (str(base).rstrip("/"),
+                                                 where)})
+        else:
+            forms.append({
+                "node": name, "url": None,
+                "why": "this form has no address yet: the node carries no "
+                       "path and n8n has not given it a webhook id, which "
+                       "it does when the trigger is opened in the editor"})
+    return forms
+
+
 def _n8n_workflow_body(args):
     given = args or {}
     nodes = _n8n_json(given.get("nodes"), "nodes")
@@ -872,7 +909,13 @@ async def _call(provider_id: str, tool: Tool, email: str,
         return {"ok": True, "count": len(data),
                 "items": _trim(data[:MAX_ITEMS], tool.keep),
                 "truncated": len(data) > MAX_ITEMS}
-    return {"ok": True, "item": _trim(data, tool.keep)}
+    item = _trim(data, tool.keep)
+    out = {"ok": True, "item": item}
+    if provider_id == "n8n" and isinstance(item, dict):
+        forms = _n8n_forms(item, auth.base_url)
+        if forms:
+            out["forms"] = forms
+    return out
 
 
 # --- the curated surface --------------------------------------------------
