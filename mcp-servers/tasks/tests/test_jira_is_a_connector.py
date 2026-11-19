@@ -264,6 +264,8 @@ def test_a_search_is_not_treated_as_a_write():
 POSTS_THAT_READ = [
     ("dropbox", "get_metadata"),
     ("dropbox", "list_folder"),
+    # A download, which reads a file and changes nothing (2026-11-19).
+    ("dropbox", "read_file"),
     ("dropbox", "search_files"),
     ("dropbox", "whoami"),
     ("jira", "search_issues"),

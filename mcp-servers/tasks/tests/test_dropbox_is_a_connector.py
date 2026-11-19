@@ -116,12 +116,18 @@ def test_the_authorize_url_asks_for_offline_access():
     assert "token_access_type=offline" in url
 
 
-def test_the_scope_is_what_the_four_tools_read_and_nothing_else():
+def test_the_scope_is_what_the_five_tools_read_and_nothing_else():
     """Read-only on purpose. Upload, delete and share links each need
     another scope and each is a separate card, and a consent screen is
-    something a person reads."""
+    something a person reads.
+
+    files.content.read joined on 2026-11-19 with read_file, while nobody
+    was connected yet. See test_dropbox_can_read_a_file for why that
+    timing is the whole point.
+    """
     scope = set(O.DROPBOX_SCOPE.split())
-    assert scope == {"account_info.read", "files.metadata.read"}
+    assert scope == {"account_info.read", "files.metadata.read",
+                     "files.content.read"}
 
 
 def test_the_token_response_keeps_the_refresh_token_and_the_expiry():
@@ -199,7 +205,8 @@ def _tool(name):
 
 def test_the_tools_are_reads_only_for_now():
     names = {t.name for t in mytools.PROVIDER_TOOLS["dropbox"]}
-    assert names == {"list_folder", "search_files", "get_metadata", "whoami"}
+    assert names == {"list_folder", "search_files", "get_metadata",
+                     "read_file", "whoami"}
 
 
 def test_every_call_is_a_post_because_dropbox_has_no_gets():
@@ -277,9 +284,13 @@ def test_the_triage_agent_knows_what_dropbox_is_for():
 
 
 def test_it_says_out_loud_that_it_cannot_touch_the_files_themselves():
+    """It can READ a text file since 2026-11-19, and still changes
+    nothing. The limit that replaced "the contents of a file" is the one
+    that is still true: a pdf or a spreadsheet is bytes, not text."""
     cannot = app_triage.APPS["dropbox"].cannot.lower()
     assert "upload" in cannot or "change" in cannot
-    assert "read the contents" in cannot or "download" in cannot
+    assert "not text" in cannot
+    assert "delete" in cannot
 
 
 def test_the_router_can_pick_it_because_the_note_says_its_name():
