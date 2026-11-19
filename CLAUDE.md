@@ -436,6 +436,24 @@ POSTs the result later; private and local hosts are refused (resolved, not
 pattern matched). Two runs at a time per process (`AUTOMATION_CONCURRENCY`).
 The n8n side is in `docs/n8n-run-agent.md` and `docs/n8n/run-agent.workflow.json`.
 
+**n8n uses AIUI connections (2026-11-19).** `POST /api/tasks/tools/run`
+(`routes_tool_run.py`) runs ONE catalogue tool through `mytools._call` with
+the key owner's connection, so the vendor credential never leaves AIUI.
+Keys have scopes (migration 070): Agents-page keys are `{agents}` and
+`email_for` requires it; `link_aiui` (an n8n tool, `aiui_link.link`, a
+`Tool.act`) makes a `{tools}` key and saves it in the person's n8n as the
+credential "AIUI". A read always runs; a write only when its `app.tool` is
+in the key's `allowed_writes`, which `aiui_link.approve_steps` fills after
+a create/update_workflow the person approved (in the chat, or an agent on
+"all" building it); n8n's own tools and `link_aiui` never run from a key.
+Steps are `n8n_nodes.NODES["aiuiTool"]`; an expression body counts only
+with `app` and `tool` written out. The AIUI credential is a plain header
+credential n8n sends wherever its node points, so `_call` refuses a
+build that puts it (by name or by the remembered id) on any node but an
+httpRequest to exactly `RUN_URL`. Path values are percent-encoded and a
+`..` segment refused in `_call` (GitHub's `path` keeps its `/`).
+Google: Drive, Gmail, Calendar reads only. See `docs/n8n-aiui-steps.md`.
+
 **Automations (2026-10-27)** are rules a person sets up in the platform:
 when this happens, this agent does this, the answer goes there
 (`automations.py` the row, `automation_runner.py` the firing,

@@ -5,6 +5,10 @@ and get its answer, with the same brief, skills, memory and tools the agent
 has in the office and on Discord. n8n is the first caller; a script or a
 cron job works the same way.
 
+For one fixed step with one of your connected apps (add a card, read a
+sheet, approve a pull request) rather than a whole agent turn, see
+`n8n-aiui-steps.md`.
+
 ## 1. Make a key
 
 Agents page → **Automation** → give the key a label → **New key**. Copy

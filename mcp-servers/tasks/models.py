@@ -228,6 +228,13 @@ class AutomationKey(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_used_at = Column(DateTime(timezone=True), nullable=True)
     revoked_at = Column(DateTime(timezone=True), nullable=True)
+    #: 'agents' and/or 'tools' (migration 070). Every older key is {agents}.
+    scopes = Column(ARRAY(Text), nullable=False, default=lambda: ["agents"])
+    #: 'app.tool' writes a tools key may run, added when the person approved
+    #: a workflow AIUI built with that step (aiui_link.approve_steps).
+    allowed_writes = Column(ARRAY(Text), nullable=False, default=list)
+    #: The credential in the person's n8n that holds this key.
+    n8n_credential_id = Column(Text, nullable=True)
 
 
 class Automation(Base):

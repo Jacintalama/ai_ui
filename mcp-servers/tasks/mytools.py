@@ -33,7 +33,9 @@ import json
 import logging
 from dataclasses import dataclass, field as _dc_field
 from typing import Any, Callable, Dict, List, Optional
+from urllib.parse import quote as _quote
 import n8n_nodes
+import aiui_link
 
 import httpx
 from fastapi import Depends, FastAPI
@@ -51,6 +53,10 @@ logger = logging.getLogger("tasks.mytools")
 MAX_ITEMS = 25
 
 VENDOR_TIMEOUT_SEC = 20
+
+#: Path arguments whose value really is a path, so `/` keeps its meaning
+#: (GitHub's file path). Every other value is one segment. See _call.
+_SLASHES_ALLOWED = frozenset({"path"})
 
 
 @dataclass(frozen=True)
@@ -136,6 +142,14 @@ class Tool:
     #: sentence is a wrong instruction, because a 403 there means this
     #: person cannot see that project and reconnecting changes nothing.
     writes: Optional[bool] = None
+    #: A tool that does its own work as this person, writes included,
+    #: instead of one vendor call. `run` cannot: it only gets a GET.
+    #: `link_aiui` (2026-11-19) makes an AIUI key and saves it in the
+    #: person's n8n, which is a POST and needs to know whose key to make.
+    #:
+    #: Signature is `act(email, auth, args) -> dict`. `method` and `path`
+    #: are unused.
+    act: Optional[Callable[..., Any]] = None
 
 
 def _payload_for(tool: "Tool", args: Optional[Dict[str, Any]]) -> Optional[Dict]:
@@ -509,6 +523,7 @@ def _n8n_check(nodes, conns) -> None:
     validator with opinions about n8n's hundreds of nodes.
     """
     named = [n for n in nodes if isinstance(n, dict)]
+    aiui_link.check_steps(named)
     if len(named) > 1 and not conns:
         first = str(named[0].get("name") or "the first node")
         second = str(named[1].get("name") or "the next one")
@@ -714,6 +729,12 @@ def _refusal(r, label: str, creds: Dict[str, str], provider_id: str,
         return (label + " would not allow that. That is usually a "
                 "permission or a plan limit rather than a bad credential. "
                 "If it keeps happening, reconnect it from Connections.")
+    if (provider_id == "github" and r.status_code == 422
+            and "own pull request" in (getattr(r, "text", "") or "").lower()):
+        # GitHub puts this reason in `errors`, a LIST, and `message` says
+        # only "Unprocessable Entity" (2026-11-19).
+        return ("GitHub does not let you approve your own pull request. "
+                "Someone else has to review it.")
     if r.status_code == 404:
         return label + " could not find that." + _vendor_said(r, creds)
     if r.status_code >= 400:
@@ -814,6 +835,15 @@ async def _call(provider_id: str, tool: Tool, email: str,
                            "network; refused", provider_id)
             return _err(inside)
 
+    if tool.act:
+        try:
+            return await tool.act(email, auth, args or {})
+        except Exception as e:                              # noqa: BLE001
+            logger.warning("mytools: %s %s failed (%s)", provider_id,
+                           tool.name, type(e).__name__)
+            return _err(label + ": that could not be done just now. Try "
+                        "again in a minute.")
+
     # Before prepare, because prepare exists to fix up the arguments of a
     # call to one endpoint, and a composite tool has no such call behind
     # it to fix up.
@@ -827,11 +857,23 @@ async def _call(provider_id: str, tool: Tool, email: str,
         if problem:
             return _err(problem)
 
+    # A VALUE STAYS IN ITS OWN SEGMENT. It went in raw, and httpx folds
+    # `..`, so `tag="../../space/1"` on a remove-tag DELETE reached a
+    # different endpoint, and `#` cut the path short. Since 2026-11-19 a
+    # write approved once runs unattended from n8n with values an earlier
+    # step filled in from outside (a webhook, an email subject), so the
+    # approved endpoint has to be the one that runs. Encoded, `?`, `#` and
+    # `/` cannot leave the segment; a `..` segment is refused outright,
+    # because httpx folds it even inside a file path.
     path = tool.path
     for key, value in (args or {}).items():
         placeholder = "{" + key + "}"
         if placeholder in path:
-            path = path.replace(placeholder, str(value))
+            text = str(value)
+            if ".." in text.split("/"):
+                return _err("%s cannot contain a \"..\" segment." % key)
+            path = path.replace(placeholder, _quote(
+                text, safe="/" if key in _SLASHES_ALLOWED else ""))
     # An OPTIONAL segment nobody filled is an empty segment, not a missing
     # value. list_folder's `path` is how somebody asks for the root of a
     # repository, and leaving it out is the ordinary way to do that.
@@ -862,6 +904,16 @@ async def _call(provider_id: str, tool: Tool, email: str,
         payload = _payload_for(tool, args)
     except ValueError as e:
         return _err(str(e))
+
+    # The AIUI key may only ride to our own route (aiui_link). Here and not
+    # in the shaper because the credential id it is stored under is in the
+    # database, and the shaper cannot wait on one.
+    if provider_id == "n8n" and tool.name in ("create_workflow",
+                                              "update_workflow"):
+        problem = await aiui_link.credential_problem(
+            email, (payload or {}).get("nodes") or [])
+        if problem:
+            return _err(problem)
 
     url = (tool.base or auth.base_url) + path
     # A CREDENTIAL ONLY GOES TO ITS OWN VENDOR. `base` lets one tool point
@@ -915,6 +967,23 @@ async def _call(provider_id: str, tool: Tool, email: str,
         forms = _n8n_forms(item, auth.base_url)
         if forms:
             out["forms"] = forms
+        # The person approved this workflow (in the chat, or by giving the
+        # agent that built it "all" access, which is how every other write
+        # of that agent is approved), so its AIUI write steps become
+        # runnable from their key (aiui_link). A key never reaches here:
+        # the tools route refuses every n8n tool. Fails open: the
+        # workflow exists either way, and a step left unapproved says so
+        # when it runs.
+        if tool.name in ("create_workflow", "update_workflow"):
+            try:
+                approved = await aiui_link.approve_steps(
+                    email, (payload or {}).get("nodes") or [])
+            except Exception as e:                          # noqa: BLE001
+                logger.warning("mytools: approving AIUI steps failed (%s)",
+                               type(e).__name__)
+                approved = []
+            if approved:
+                out["approved_steps"] = approved
     return out
 
 
@@ -1067,8 +1136,8 @@ GITHUB_TOOLS = [
          unwrap=_github_patches,
          keep=("filename", "status", "additions", "deletions", "patch")),
     Tool(name="comment_on_pull_request",
-         summary="Leave a comment on a pull request, written as you. This is "
-                 "how a review is delivered.",
+         summary="Leave a plain comment on a pull request, written as you. "
+                 "To approve it or ask for changes, use review_pull_request.",
          method="POST", path="/repos/{owner}/{repo}/issues/{number}/comments",
          args={"owner": ("string", "Repository owner", True),
                "repo": ("string", "Repository name", True),
@@ -1076,6 +1145,22 @@ GITHUB_TOOLS = [
                "body": ("string", "The comment, markdown is fine", True)},
          body=("body",),
          keep=("id", "html_url", "created_at")),
+    Tool(name="review_pull_request",
+         summary="Review a pull request as you: APPROVE it, "
+                 "REQUEST_CHANGES on it, or leave a COMMENT review. GitHub "
+                 "does not let anyone approve their own pull request.",
+         method="POST", path="/repos/{owner}/{repo}/pulls/{number}/reviews",
+         args={"owner": ("string", "Repository owner", True),
+               "repo": ("string", "Repository name", True),
+               "number": ("integer", "Pull request number", True),
+               "event": ("string", "APPROVE, REQUEST_CHANGES or COMMENT",
+                         True),
+               "body": ("string", "What the review says. Needed for "
+                                  "REQUEST_CHANGES and COMMENT, optional "
+                                  "for APPROVE", False)},
+         body=("event", "body"),
+         writes=True,
+         keep=("id", "state", "html_url", "submitted_at")),
     Tool(name="comment_on_issue",
          summary="Leave a comment on a GitHub issue, written as you.",
          method="POST", path="/repos/{owner}/{repo}/issues/{number}/comments",
@@ -1574,6 +1659,18 @@ N8N_TOOLS = [
          args={"workflow_id": ("string", "The workflow id", True)},
          writes=True,
          keep=("id", "name")),
+    Tool(name="link_aiui",
+         summary="Link AIUI to your n8n, so a workflow can use the apps "
+                 "you connected in AIUI without connecting them again. "
+                 "Makes an AIUI key and saves it in your n8n as a "
+                 "credential called AIUI, once; later calls return the "
+                 "same credential id. Use the id on aiuiTool nodes.",
+         method="POST", path="",
+         args={"again": ("boolean", "Make a new credential and retire the "
+                                    "old key, when the old one was deleted "
+                                    "in n8n", False)},
+         writes=True,
+         act=aiui_link.link),
 ]
 
 #: Airtable field types that need no `options` block to be created.

@@ -73,6 +73,32 @@ def sha_of(payload: Any) -> Optional[str]:
 Get = Callable[[str, Optional[Dict[str, Any]]], Awaitable[Any]]
 
 
+#: The three things a review can be, as GitHub spells them.
+REVIEW_EVENTS = ("APPROVE", "REQUEST_CHANGES", "COMMENT")
+
+
+def _review(args: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[str]]:
+    """A review GitHub will accept, or why not, without asking GitHub.
+
+    GitHub answers 422 to a REQUEST_CHANGES or COMMENT review with no body,
+    after the person has already said yes to it. Both are cheaper to refuse
+    here, where the sentence can say what to add.
+    """
+    event = str(args.get("event") or "").strip().upper().replace(" ", "_")
+    if event not in REVIEW_EVENTS:
+        return args, ("event must be APPROVE, REQUEST_CHANGES or COMMENT.")
+    args["event"] = event
+    body = str(args.get("body") or "").strip()
+    if event != "APPROVE" and not body:
+        return args, ("Say what should change: a review that requests "
+                      "changes or comments needs a body.")
+    if body:
+        args["body"] = body
+    else:
+        args.pop("body", None)
+    return args, None
+
+
 async def prepare(
     tool_name: str, args: Dict[str, Any], get: Get,
 ) -> Tuple[Dict[str, Any], Optional[str]]:
@@ -82,6 +108,8 @@ async def prepare(
     tool name is checked before anything else happens.
     """
     args = dict(args or {})
+    if tool_name == "review_pull_request":
+        return _review(args)
     if tool_name not in NEEDS_A_READ:
         return args, None
 

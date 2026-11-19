@@ -136,10 +136,13 @@ _APPS = (
         "keeping the code and files of a website or app stored with every "
         "version kept, going back to an older version, sharing code with "
         "other people, issues and pull requests",
-        "read repositories, make a branch, save a file as a commit, open a "
-        "pull request, and open or comment on issues",
-        ("list_my_repos", "create_branch", "write_file",
-         "create_pull_request", "create_issue", "comment_on_issue"),
+        "read repositories and pull requests, make a branch, save a file "
+        "as a commit, open a pull request, approve, review or comment on "
+        "one, and open or comment on issues",
+        ("list_my_repos", "list_repo_pull_requests", "read_pull_request",
+         "create_branch", "write_file", "create_pull_request",
+         "review_pull_request", "comment_on_pull_request", "create_issue",
+         "comment_on_issue"),
         cannot="create a new repository"),
     App("clickup", "ClickUp",
         "a project board for tasks and to-dos: creating tasks, assigning "

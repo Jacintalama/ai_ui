@@ -3557,7 +3557,11 @@
           name.className = "conn-name";
           name.textContent = k.label || "Untitled key";
           var small = document.createElement("small");
-          small.textContent = k.prefix + "...  made " + whenText(k.created_at)
+          // What the key can do (migration 070): one made here runs agents,
+          // one AIUI made for n8n runs single tools.
+          var can = (k.scopes || ["agents"]).indexOf("tools") >= 0
+            ? "Runs tools (n8n)" : "Runs agents";
+          small.textContent = can + " · " + k.prefix + "...  made " + whenText(k.created_at)
             + (k.last_used_at ? ", last used " + whenText(k.last_used_at) : ", never used");
           name.appendChild(small);
           var revoke = document.createElement("button");

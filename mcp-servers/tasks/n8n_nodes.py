@@ -27,6 +27,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
+import aiui_link
+
 
 @dataclass(frozen=True)
 class NodeShape:
@@ -86,6 +88,37 @@ NODES: Dict[str, NodeShape] = {
                 "\"={{ $json.url }}\" takes the url from the item "
                 "coming in.",
         parameters={"url": "https://example.com", "options": {}}),
+    # 2026-11-19: a step that uses an app the person connected in AIUI.
+    # Not read off the live instance like the rest: it is an httpRequest
+    # (shape above) aimed at our own route, with the credential link_aiui
+    # saves. See aiui_link.
+    "aiuiTool": NodeShape(
+        type="n8n-nodes-base.httpRequest",
+        type_version=4.4,
+        summary="Runs ONE tool of an app the person connected in AIUI "
+                "(Trello, Airtable, GitHub, Google Drive and the rest), "
+                "with their own account. Use this instead of n8n's own "
+                "node for that app, so nothing is connected twice. Call "
+                "link_aiui first for the credential id, and set "
+                "\"credentials\": {\"httpHeaderAuth\": {\"id\": \"<id>\", "
+                "\"name\": \"AIUI\"}} on the node. jsonBody names the app, "
+                "the tool and its args. To use an earlier step's data, "
+                "make jsonBody an expression and keep app and tool "
+                "written out: \"={\\\"app\\\": \\\"github\\\", \\\"tool\\\": "
+                "\\\"review_pull_request\\\", \\\"args\\\": {\\\"owner\\\": "
+                "\\\"o\\\", \\\"repo\\\": \\\"r\\\", \\\"number\\\": "
+                "{{ $json.number }}, \\\"event\\\": \\\"APPROVE\\\"}}\". "
+                "A step whose app or tool comes from an expression is "
+                "never approved. The AIUI credential goes on nothing "
+                "else. Writing tools in it run only because the person "
+                "approves this workflow.",
+        parameters={"method": "POST", "url": aiui_link.RUN_URL,
+                    "authentication": "genericCredentialType",
+                    "genericAuthType": "httpHeaderAuth",
+                    "sendBody": True, "specifyBody": "json",
+                    "jsonBody": "{\"app\": \"github\", \"tool\": "
+                                "\"list_my_repos\", \"args\": {}}",
+                    "options": {}}),
     "code": NodeShape(
         type="n8n-nodes-base.code",
         type_version=2,
