@@ -15,6 +15,7 @@ from routes_agent_debug import router as agent_debug_router
 from routes_agent_turn import router as agent_turn_router
 from routes_agents import router as agents_router
 from routes_automation import router as automation_router
+from routes_tool_run import router as tool_run_router
 from routes_automations import router as automations_router
 from routes_approvals import router as approvals_router
 from routes_events import router as events_router
@@ -199,6 +200,7 @@ app.include_router(schedules_router, prefix="/api/tasks")
 app.include_router(agents_router)  # /agents, operator path
 app.include_router(agents_router, prefix="/api/tasks")  # /api/tasks/agents, web path
 app.include_router(automation_router, prefix="/api/tasks")  # /api/tasks/agents/run (automation key), /api/tasks/agents/keys (signed in)
+app.include_router(tool_run_router, prefix="/api/tasks")  # /api/tasks/tools/run (automation key with the tools scope): one tool, the person's own connection, from n8n
 app.include_router(automations_router, prefix="/api/tasks")  # /api/tasks/automations (signed in), /api/tasks/hooks/<token> (public trigger)
 app.include_router(approvals_router, prefix="/api/tasks")  # /api/tasks/approvals: held questions and standing rules (signed in)
 app.include_router(events_router, prefix="/api/tasks")  # /api/tasks/events/hooks: events out (signed in)
