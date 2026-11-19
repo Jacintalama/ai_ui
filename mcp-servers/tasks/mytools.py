@@ -34,6 +34,7 @@ import logging
 from dataclasses import dataclass, field as _dc_field
 from typing import Any, Callable, Dict, List, Optional
 import n8n_nodes
+import aiui_link
 
 import httpx
 from fastapi import Depends, FastAPI
@@ -136,6 +137,14 @@ class Tool:
     #: sentence is a wrong instruction, because a 403 there means this
     #: person cannot see that project and reconnecting changes nothing.
     writes: Optional[bool] = None
+    #: A tool that does its own work as this person, writes included,
+    #: instead of one vendor call. `run` cannot: it only gets a GET.
+    #: `link_aiui` (2026-11-19) makes an AIUI key and saves it in the
+    #: person's n8n, which is a POST and needs to know whose key to make.
+    #:
+    #: Signature is `act(email, auth, args) -> dict`. `method` and `path`
+    #: are unused.
+    act: Optional[Callable[..., Any]] = None
 
 
 def _payload_for(tool: "Tool", args: Optional[Dict[str, Any]]) -> Optional[Dict]:
@@ -509,6 +518,7 @@ def _n8n_check(nodes, conns) -> None:
     validator with opinions about n8n's hundreds of nodes.
     """
     named = [n for n in nodes if isinstance(n, dict)]
+    aiui_link.check_steps(named)
     if len(named) > 1 and not conns:
         first = str(named[0].get("name") or "the first node")
         second = str(named[1].get("name") or "the next one")
@@ -820,6 +830,15 @@ async def _call(provider_id: str, tool: Tool, email: str,
                            "network; refused", provider_id)
             return _err(inside)
 
+    if tool.act:
+        try:
+            return await tool.act(email, auth, args or {})
+        except Exception as e:                              # noqa: BLE001
+            logger.warning("mytools: %s %s failed (%s)", provider_id,
+                           tool.name, type(e).__name__)
+            return _err(label + ": that could not be done just now. Try "
+                        "again in a minute.")
+
     # Before prepare, because prepare exists to fix up the arguments of a
     # call to one endpoint, and a composite tool has no such call behind
     # it to fix up.
@@ -921,6 +940,20 @@ async def _call(provider_id: str, tool: Tool, email: str,
         forms = _n8n_forms(item, auth.base_url)
         if forms:
             out["forms"] = forms
+        # The person approved this workflow in the chat, so its AIUI write
+        # steps become runnable from their key (aiui_link). Fails open: the
+        # workflow exists either way, and a step left unapproved says so
+        # when it runs.
+        if tool.name in ("create_workflow", "update_workflow"):
+            try:
+                approved = await aiui_link.approve_steps(
+                    email, (payload or {}).get("nodes") or [])
+            except Exception as e:                          # noqa: BLE001
+                logger.warning("mytools: approving AIUI steps failed (%s)",
+                               type(e).__name__)
+                approved = []
+            if approved:
+                out["approved_steps"] = approved
     return out
 
 
@@ -1596,6 +1629,18 @@ N8N_TOOLS = [
          args={"workflow_id": ("string", "The workflow id", True)},
          writes=True,
          keep=("id", "name")),
+    Tool(name="link_aiui",
+         summary="Link AIUI to your n8n, so a workflow can use the apps "
+                 "you connected in AIUI without connecting them again. "
+                 "Makes an AIUI key and saves it in your n8n as a "
+                 "credential called AIUI, once; later calls return the "
+                 "same credential id. Use the id on aiuiTool nodes.",
+         method="POST", path="",
+         args={"again": ("boolean", "Make a new credential and retire the "
+                                    "old key, when the old one was deleted "
+                                    "in n8n", False)},
+         writes=True,
+         act=aiui_link.link),
 ]
 
 #: Airtable field types that need no `options` block to be created.
