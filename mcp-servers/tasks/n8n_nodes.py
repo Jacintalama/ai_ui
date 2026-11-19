@@ -102,8 +102,16 @@ NODES: Dict[str, NodeShape] = {
                 "link_aiui first for the credential id, and set "
                 "\"credentials\": {\"httpHeaderAuth\": {\"id\": \"<id>\", "
                 "\"name\": \"AIUI\"}} on the node. jsonBody names the app, "
-                "the tool and its args. Writing tools in it run only "
-                "because the person approves this workflow.",
+                "the tool and its args. To use an earlier step's data, "
+                "make jsonBody an expression and keep app and tool "
+                "written out: \"={\\\"app\\\": \\\"github\\\", \\\"tool\\\": "
+                "\\\"review_pull_request\\\", \\\"args\\\": {\\\"owner\\\": "
+                "\\\"o\\\", \\\"repo\\\": \\\"r\\\", \\\"number\\\": "
+                "{{ $json.number }}, \\\"event\\\": \\\"APPROVE\\\"}}\". "
+                "A step whose app or tool comes from an expression is "
+                "never approved. The AIUI credential goes on nothing "
+                "else. Writing tools in it run only because the person "
+                "approves this workflow.",
         parameters={"method": "POST", "url": aiui_link.RUN_URL,
                     "authentication": "genericCredentialType",
                     "genericAuthType": "httpHeaderAuth",

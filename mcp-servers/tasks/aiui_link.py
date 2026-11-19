@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -53,12 +54,43 @@ def _err(message: str) -> dict:
     return {"ok": False, "error": message}
 
 
+#: Every `"app":` / `"tool":` key, whatever its value, and the ones whose
+#: value is written out. Both must be exactly one, so a literal name in a
+#: nested argument cannot stand in for a name built by an expression.
+_KEY = {k: re.compile(r'"%s"\s*:' % k) for k in ("app", "tool")}
+_LITERAL = {k: re.compile(r'"%s"\s*:\s*"([a-z0-9_]+)"' % k)
+            for k in ("app", "tool")}
+
+
+def _expression_target(body: str) -> Optional[Tuple[str, str]]:
+    """(app, tool) from an n8n expression body, when both are written out.
+
+    A step that takes data from an earlier one (`"number": {{ $json.number
+    }}`) is stored by n8n as an expression, `={...}`, which is not JSON
+    until it runs. Without reading it, the one workflow everybody asks for
+    ("approve each pull request that says ready") was refused on every run
+    after the person had said yes to it.
+
+    Only a literal name counts, and only one of each: a name built from an
+    expression, or a second `"tool": "..."` hiding in an argument, names
+    nothing. That is safe to be loose about because it only chooses what
+    to approve; the route still checks the tool actually sent, every run.
+    """
+    found = {}
+    for key, pattern in _LITERAL.items():
+        hits = pattern.findall(body)
+        if len(hits) != 1 or len(_KEY[key].findall(body)) != 1:
+            return None
+        found[key] = hits[0]
+    return found["app"], found["tool"]
+
+
 def step_target(node: Any) -> Optional[Tuple[str, str]]:
     """(app, tool) for an AIUI step, or None for any other node.
 
-    The body may be a JSON string, as n8n writes it, or an object, as a
-    model often does. An expression body (`={{ ... }}`) cannot be read
-    before it runs, so it names nothing and is never approved.
+    The body may be a JSON string, as n8n writes it, an object, as a model
+    often does, or an expression (`={...}`) when it uses an earlier step's
+    data; see `_expression_target`.
     """
     if not isinstance(node, dict) or node.get("type") != _HTTP_REQUEST:
         return None
@@ -66,6 +98,8 @@ def step_target(node: Any) -> Optional[Tuple[str, str]]:
     if not isinstance(params, dict) or params.get("url") != RUN_URL:
         return None
     body = params.get("jsonBody")
+    if isinstance(body, str) and body.startswith("="):
+        return _expression_target(body[1:])
     if isinstance(body, str):
         try:
             body = json.loads(body)
@@ -85,10 +119,47 @@ def _is_aiui_url(node: Any) -> bool:
             and node["parameters"].get("url") == RUN_URL)
 
 
-def check_steps(nodes: List[Any]) -> None:
-    """Refuse an AIUI step that names no credential. n8n accepts it and
-    then answers 401 from us on every single run."""
+def _credentials(node: Any) -> List[dict]:
+    creds = node.get("credentials") if isinstance(node, dict) else None
+    if not isinstance(creds, dict):
+        return []
+    return [c for c in creds.values() if isinstance(c, dict)]
+
+
+def _carries_aiui(node: Any, credential_id: Optional[str]) -> bool:
+    for cred in _credentials(node):
+        if cred.get("name") == CREDENTIAL_NAME:
+            return True
+        if credential_id and str(cred.get("id") or "") == str(credential_id):
+            return True
+    return False
+
+
+def carries_credentials(nodes: List[Any]) -> bool:
+    """Whether any node names a credential at all."""
+    return any(_credentials(n) for n in nodes or [])
+
+
+def check_steps(nodes: List[Any], credential_id: Optional[str] = None) -> None:
+    """Refuse two shapes.
+
+    The AIUI credential on a node that does not call our route. It is a
+    plain header credential, and n8n sends it to whatever URL the node
+    holding it names, so a node pointed anywhere else (or at an
+    expression) would hand the key to that host. Matched by the name and,
+    when the caller knows it, by the id AIUI remembered, since n8n finds a
+    credential by id and a node can call it anything.
+
+    And an AIUI step that names no credential: n8n accepts it and then
+    answers 401 from us on every single run.
+    """
     for node in nodes or []:
+        if _carries_aiui(node, credential_id) and not _is_aiui_url(node):
+            raise ValueError(
+                '"%s" carries the AIUI credential but does not call AIUI. '
+                "That credential only goes on an HTTP Request node whose "
+                "URL is exactly %s; use another credential for anything "
+                "else." % (str(node.get("name") or "A node"), RUN_URL))
         if not _is_aiui_url(node):
             continue
         cred = ((node.get("credentials") or {}).get(CREDENTIAL_TYPE) or {})
@@ -130,6 +201,30 @@ async def approve_steps(email: str, nodes: List[Any]) -> List[str]:
         return []
     await automation_keys.allow_writes(email, key["id"], writes)
     return writes
+
+
+async def credential_problem(email: str, nodes: List[Any]) -> Optional[str]:
+    """Why this workflow may not be sent to n8n, or None.
+
+    `check_steps` with the credential id this person's key is stored
+    under, which only the database knows. A workflow naming no credential
+    at all cannot carry the key, so it needs no lookup; one that names
+    some, when the lookup fails, is refused, because the check it needed
+    could not be made.
+    """
+    if not carries_credentials(nodes):
+        return None
+    try:
+        key = await automation_keys.n8n_key(email)
+    except Exception as e:                                  # noqa: BLE001
+        logger.warning("aiui_link: key lookup failed (%s)", type(e).__name__)
+        return ("I could not check which credentials this workflow uses, "
+                "so I did not send it. Try again in a minute.")
+    try:
+        check_steps(nodes, (key or {}).get("n8n_credential_id"))
+    except ValueError as e:
+        return str(e)
+    return None
 
 
 async def _save_in_n8n(auth, key: str) -> Tuple[Optional[str], Optional[str]]:

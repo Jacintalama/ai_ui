@@ -306,6 +306,12 @@ def _n8n_world(monkeypatch, status=200):
         return ""
     monkeypatch.setattr(mytools.host_guard, "problem", no_guard)
 
+    # A build naming a credential looks up the one the AIUI key is stored
+    # under (aiui_link.credential_problem).
+    async def n8n_key(email):
+        return {"id": "k", "n8n_credential_id": "c1", "allowed_writes": []}
+    monkeypatch.setattr(automation_keys, "n8n_key", n8n_key)
+
 
 def _workflow():
     trigger = {"id": "t", "name": "Start", "type": "n8n-nodes-base.manualTrigger",

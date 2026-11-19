@@ -33,6 +33,7 @@ import json
 import logging
 from dataclasses import dataclass, field as _dc_field
 from typing import Any, Callable, Dict, List, Optional
+from urllib.parse import quote as _quote
 import n8n_nodes
 import aiui_link
 
@@ -52,6 +53,10 @@ logger = logging.getLogger("tasks.mytools")
 MAX_ITEMS = 25
 
 VENDOR_TIMEOUT_SEC = 20
+
+#: Path arguments whose value really is a path, so `/` keeps its meaning
+#: (GitHub's file path). Every other value is one segment. See _call.
+_SLASHES_ALLOWED = frozenset({"path"})
 
 
 @dataclass(frozen=True)
@@ -852,11 +857,23 @@ async def _call(provider_id: str, tool: Tool, email: str,
         if problem:
             return _err(problem)
 
+    # A VALUE STAYS IN ITS OWN SEGMENT. It went in raw, and httpx folds
+    # `..`, so `tag="../../space/1"` on a remove-tag DELETE reached a
+    # different endpoint, and `#` cut the path short. Since 2026-11-19 a
+    # write approved once runs unattended from n8n with values an earlier
+    # step filled in from outside (a webhook, an email subject), so the
+    # approved endpoint has to be the one that runs. Encoded, `?`, `#` and
+    # `/` cannot leave the segment; a `..` segment is refused outright,
+    # because httpx folds it even inside a file path.
     path = tool.path
     for key, value in (args or {}).items():
         placeholder = "{" + key + "}"
         if placeholder in path:
-            path = path.replace(placeholder, str(value))
+            text = str(value)
+            if ".." in text.split("/"):
+                return _err("%s cannot contain a \"..\" segment." % key)
+            path = path.replace(placeholder, _quote(
+                text, safe="/" if key in _SLASHES_ALLOWED else ""))
     # An OPTIONAL segment nobody filled is an empty segment, not a missing
     # value. list_folder's `path` is how somebody asks for the root of a
     # repository, and leaving it out is the ordinary way to do that.
@@ -887,6 +904,16 @@ async def _call(provider_id: str, tool: Tool, email: str,
         payload = _payload_for(tool, args)
     except ValueError as e:
         return _err(str(e))
+
+    # The AIUI key may only ride to our own route (aiui_link). Here and not
+    # in the shaper because the credential id it is stored under is in the
+    # database, and the shaper cannot wait on one.
+    if provider_id == "n8n" and tool.name in ("create_workflow",
+                                              "update_workflow"):
+        problem = await aiui_link.credential_problem(
+            email, (payload or {}).get("nodes") or [])
+        if problem:
+            return _err(problem)
 
     url = (tool.base or auth.base_url) + path
     # A CREDENTIAL ONLY GOES TO ITS OWN VENDOR. `base` lets one tool point
@@ -940,8 +967,11 @@ async def _call(provider_id: str, tool: Tool, email: str,
         forms = _n8n_forms(item, auth.base_url)
         if forms:
             out["forms"] = forms
-        # The person approved this workflow in the chat, so its AIUI write
-        # steps become runnable from their key (aiui_link). Fails open: the
+        # The person approved this workflow (in the chat, or by giving the
+        # agent that built it "all" access, which is how every other write
+        # of that agent is approved), so its AIUI write steps become
+        # runnable from their key (aiui_link). A key never reaches here:
+        # the tools route refuses every n8n tool. Fails open: the
         # workflow exists either way, and a step left unapproved says so
         # when it runs.
         if tool.name in ("create_workflow", "update_workflow"):

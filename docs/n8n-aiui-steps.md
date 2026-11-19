@@ -26,8 +26,18 @@ AIUI will:
    from the chat or in n8n.
 
 Saying yes to the workflow is what lets its writing steps (here, the
-approve) run. A writing step you add by hand in n8n later is refused
-until you ask AIUI to add it, and AIUI asks you first.
+approve) run. An agent you gave full access ("all") builds without
+asking, and what it builds is approved the same way, as everything else
+it does without asking is. A writing step you add by hand in n8n later
+is refused until you ask AIUI to add it, and AIUI asks you first.
+
+A step can use an earlier step's data: the JSON body becomes an n8n
+expression, with `app` and `tool` still written out, as below. A step
+whose app or tool is itself an expression is never approved.
+
+The **AIUI** credential only goes on an AIUI step. AIUI refuses to build
+a workflow that puts it on any other node, because n8n would send the
+key wherever that node points.
 
 ## What a step is
 
@@ -40,6 +50,14 @@ An ordinary n8n **HTTP Request** node:
 ```json
 {"app": "github", "tool": "list_repo_pull_requests",
  "args": {"owner": "my-org", "repo": "my-repo"}}
+```
+
+With an earlier step's data (an n8n expression, note the leading `=`):
+
+```
+={"app": "github", "tool": "review_pull_request",
+  "args": {"owner": "my-org", "repo": "my-repo",
+           "number": {{ $json.number }}, "event": "APPROVE"}}
 ```
 
 ## The route
@@ -69,5 +87,16 @@ comes back as CSV), `gmail_search_emails`, `gmail_read_email`,
 
 Agents page, Automation: the key labelled **n8n (made by AIUI)** says
 "Runs tools (n8n)". Revoke it and every AIUI step in your n8n stops at
-once (401). Asking AIUI to link again makes a new one; approvals carry
-over.
+once (401).
+
+Revoking is a full reset. Asking AIUI to link again afterwards makes a
+new key and a new **AIUI** credential, with no writing step approved,
+and your existing workflows still point at the old credential. Ask AIUI
+to update each workflow you want back: that moves it to the new
+credential and approves its writing steps again, after you say yes.
+
+To change the key without stopping anything, ask AIUI to link again
+*before* revoking ("link AIUI to my n8n again"). That makes the new key,
+carries the approvals over and revokes the old key itself. Workflows
+still need updating to the new credential, which AIUI names in its
+answer.

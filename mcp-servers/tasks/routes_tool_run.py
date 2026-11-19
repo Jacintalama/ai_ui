@@ -91,6 +91,10 @@ def _who(email: str) -> str:
     return hashlib.sha256(email.encode("utf-8")).hexdigest()[:12]
 
 
+def _unavailable(label: str) -> str:
+    return f"{label} could not be reached from AIUI just now. Try again in a minute."
+
+
 def _not_connected(label: str) -> str:
     return (f"You have not connected your {label} account yet. Open "
             f"Connections in AIUI and connect {label}, then run this again.")
@@ -133,6 +137,11 @@ async def _run_google(app: str, tool: str, email: str, args: dict) -> Any:
         payload = r.json()
     except ValueError:
         payload = None
+    if r.status_code < 400 and payload is None:
+        # A 200 that is not JSON is a proxy's page, not an answer, and n8n
+        # would record it as a success with nothing in it.
+        raise HTTPException(status_code=502,
+                            detail=f"{label} did not answer. Try again in a minute.")
     if r.status_code >= 400:
         said = payload.get("detail") if isinstance(payload, dict) else None
         raise HTTPException(status_code=422, detail=(
@@ -197,11 +206,24 @@ async def run_tool(body: RunToolIn, authorization: str = Header(default="")) -> 
 
     prov = C.provider(app)
     label = prov.label if prov else app
-    if not await mytools._secrets_for(email, app):
+    # Neither of these may answer with a trace: n8n shows the person the
+    # body, and a 500 says nothing about what to do.
+    try:
+        connected = await mytools._secrets_for(email, app)
+    except Exception as e:                                  # noqa: BLE001
+        logger.warning("tools/run %s %s.%s: credentials failed (%s)",
+                       _who(email), app, name, type(e).__name__)
+        raise HTTPException(status_code=502, detail=_unavailable(label))
+    if not connected:
         raise HTTPException(status_code=409, detail=_not_connected(label))
 
-    async with routes_automation._slots:
-        out = await mytools._call(app, tool, email, args)
+    try:
+        async with routes_automation._slots:
+            out = await mytools._call(app, tool, email, args)
+    except Exception as e:                                  # noqa: BLE001
+        logger.warning("tools/run %s %s.%s failed (%s)",
+                       _who(email), app, name, type(e).__name__)
+        raise HTTPException(status_code=502, detail=_unavailable(label))
     if isinstance(out, dict) and out.get("ok") is False:
         logger.info("tools/run %s %s.%s refused by the tool",
                     _who(email), app, name)
