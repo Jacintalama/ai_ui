@@ -91,11 +91,23 @@ def writes(tool) -> bool:
     """Whether this tool changes anything at the vendor.
 
     Mirrors mytools._writes without importing it, so this module stays
-    pure: `writes` on the tool wins, otherwise the method decides.
+    pure: the `writes` flag wins, then a composite can only read, then
+    the method decides.
+
+    THE DUPLICATION IS DELIBERATE AND GUARDED. Keeping this module
+    importable without the application is worth one copied rule, and
+    `test_the_flag_wins_over_the_method` compares the two over the whole
+    catalogue, so they cannot drift in silence. It earned that on
+    2026-11-20, when the composite rule was added to mytools alone and
+    this copy went on calling ClickUp's find_list a write.
     """
     flag = getattr(tool, "writes", None)
     if flag is not None:
         return bool(flag)
+    # `run` is handed one GET helper and nothing else, so `method` on a
+    # composite is documented as unused and must not decide this.
+    if getattr(tool, "run", None):
+        return False
     return str(getattr(tool, "method", "") or "").upper() != "GET"
 
 
