@@ -285,7 +285,19 @@ async def list_schedules(
         if platform:
             stmt = stmt.where(Schedule.delivery_platform == platform)
         rows = (await s.execute(stmt)).scalars().all()
-    return [_serialize(r) for r in rows]
+    out = [_serialize(r) for r in rows]
+    if is_operator:
+        # The operator poll gets exactly what it got before. Nothing on that
+        # side draws run marks, and in operator mode this list is EVERY
+        # user's schedules, so attaching a week to each would be the
+        # platform's whole run history on a route that fires on a timer.
+        return out
+    # The week travels with the list: see `runs_for_schedules`. Deferred
+    # import for the same reason `run_now` defers its one below, that
+    # scheduler pulls in the agent runner and this module is imported while
+    # the app is still being built.
+    from scheduler import runs_for_schedules, with_runs
+    return with_runs(out, await runs_for_schedules([r["id"] for r in out]))
 
 
 @router.post("", status_code=201)

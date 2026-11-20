@@ -446,3 +446,103 @@ def test_list_no_platform_returns_all(monkeypatch):
     r = c.get("/schedules", headers={"X-Cron-Secret": CRON_SECRET})
     assert r.status_code == 200, r.text
     assert len(r.json()) == 2
+
+# --- the week travels with the list (PR after #269) ----------------------
+
+def _one_schedule_session(rows):
+    """The fake session every list test here uses, narrowed to one user."""
+    class _FakeSession:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        def add(self, obj): pass
+        async def commit(self): return None
+        async def execute(self, stmt):
+            class _R:
+                def scalars(self_inner):
+                    class _S:
+                        def all(self_in2): return rows
+                    return _S()
+            return _R()
+    return lambda: _FakeSession()
+
+
+def test_a_listed_schedule_carries_its_recent_runs(monkeypatch):
+    """The data layer shipped in #269 and nothing read it, so every card
+    still drew one run. The route is the only wiring, so it is the only
+    thing left that can be wrong."""
+    from main import app
+    from models import Schedule
+    import uuid
+    import scheduler
+
+    sid = uuid.uuid4()
+    rows = [Schedule(id=sid, user_email="alice@example.com", name="a",
+                     cron_expr="0 8 * * *", prompt="x")]
+    monkeypatch.setattr("routes_schedules.session", _one_schedule_session(rows))
+
+    asked = []
+
+    async def _runs(ids, limit=7):
+        asked.append(list(ids))
+        return {str(sid): [{"at": "2026-11-20T00:00:00+00:00",
+                            "status": "refused", "ok": False, "seconds": 9,
+                            "reason": "read-only"}]}
+
+    monkeypatch.setattr(scheduler, "runs_for_schedules", _runs)
+
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.get("/schedules", headers={"X-User-Email": "alice@example.com"})
+    assert r.status_code == 200, r.text
+    got = r.json()
+    assert asked == [[str(sid)]], "the route did not ask for the history"
+    assert got[0]["runs"][0]["status"] == "refused"
+    assert got[0]["runs"][0]["reason"] == "read-only"
+
+
+def test_a_schedule_with_no_history_is_listed_with_an_empty_week(monkeypatch):
+    """`runs` is always present. The page branches on `runs.length`."""
+    from main import app
+    from models import Schedule
+    import uuid
+    import scheduler
+
+    rows = [Schedule(id=uuid.uuid4(), user_email="alice@example.com",
+                     name="a", cron_expr="0 8 * * *", prompt="x")]
+    monkeypatch.setattr("routes_schedules.session", _one_schedule_session(rows))
+
+    async def _runs(ids, limit=7):
+        return {}
+
+    monkeypatch.setattr(scheduler, "runs_for_schedules", _runs)
+
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.get("/schedules", headers={"X-User-Email": "alice@example.com"})
+    assert r.json()[0]["runs"] == []
+
+
+def test_the_operator_poll_does_not_pay_for_a_history_it_never_draws(
+        monkeypatch):
+    """In operator mode this route returns EVERY user's schedules, and it is
+    called on a timer. Nothing on that side draws marks."""
+    from main import app
+    from models import Schedule
+    import uuid
+    import scheduler
+
+    rows = [Schedule(id=uuid.uuid4(), user_email="alice@example.com",
+                     name="a", cron_expr="0 8 * * *", prompt="x")]
+    monkeypatch.setattr("routes_schedules.session", _one_schedule_session(rows))
+
+    called = []
+
+    async def _runs(ids, limit=7):
+        called.append(ids)
+        return {}
+
+    monkeypatch.setattr(scheduler, "runs_for_schedules", _runs)
+
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.get("/schedules", headers={"X-Cron-Secret": CRON_SECRET})
+    assert r.status_code == 200, r.text
+    assert called == [], "the operator poll read the run history"
+    assert "runs" not in r.json()[0]
