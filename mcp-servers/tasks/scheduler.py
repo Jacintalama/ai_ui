@@ -501,8 +501,10 @@ async def _finalize_run(sched: Schedule) -> None:
     Releases the schedule's _IN_FLIGHT slot in a `finally`, not on success: a
     run that blows up must not leave run-now permanently refused, since that is
     the button a user presses precisely when a run has gone wrong."""
+    started_at = datetime.now(timezone.utc)
     try:
         status, result, extras = await _run_scheduled_task(sched)
+        await _keep_run(sched, status, result, started_at)
         async with session() as s:
             await s.execute(
                 update(Schedule).where(Schedule.id == sched.id).values(
@@ -525,6 +527,10 @@ async def _finalize_run(sched: Schedule) -> None:
                                   result, str(sched.id), extras=extras)
     except Exception as exc:  # noqa: BLE001
         logger.error("schedule run %s failed: %s", sched.id, scrub(str(exc)), exc_info=True)
+        # The row somebody will actually go looking for. Before this, a
+        # crashed run set last_run_status='failed' and left nothing else,
+        # so the third crash in a row read exactly like the first.
+        await _keep_run(sched, "failed", None, started_at)
         try:
             async with session() as s:
                 await s.execute(
@@ -537,6 +543,109 @@ async def _finalize_run(sched: Schedule) -> None:
             logger.error("could not mark schedule %s failed", sched.id, exc_info=True)
     finally:
         _IN_FLIGHT.discard(str(sched.id))
+
+
+#: How many runs a card shows. Seven is a week of a daily schedule, which
+#: is the question people actually ask of one.
+RUN_HISTORY_SHOWN = 7
+
+
+def run_row(sched, status: str, result, started_at, finished_at) -> dict:
+    """One finished run, as values. Pure, like `fire_values` below it.
+
+    `running` is not a state a history row can be in: the row is written
+    when the run is over, so storing it would make a crashed run
+    indistinguishable from a live one. That is the defect
+    `last_run_status` already had, where a run that died mid flight left
+    the row saying `running` and wedged run-now permanently.
+
+    A finish before a start is a clock, not information, so it is
+    flattened rather than stored as a negative duration.
+    """
+    if finished_at < started_at:
+        finished_at = started_at
+    return {"schedule_id": str(getattr(sched, "id", "") or ""),
+            "user_email": getattr(sched, "user_email", "") or "",
+            "status": "failed" if str(status) == "running" else str(status),
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "result": result_for_storage(result)}
+
+
+async def _keep_run(sched, status: str, result, started_at) -> None:
+    """Record one finished run, and never let that fail the run.
+
+    Same rule as `agent_activity.start_run`, which returns None rather
+    than raising: the run is the thing that matters, this is not. A
+    history table that is missing, locked or full must not turn a
+    schedule that worked into a schedule that failed.
+    """
+    try:
+        await _record_run(run_row(sched, status, result, started_at,
+                                  datetime.now(timezone.utc)))
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not record the run of schedule %s",
+                       getattr(sched, "id", "?"), exc_info=True)
+
+
+async def _record_run(values: dict) -> None:
+    """Write one history row. A seam, so the tests above it need no DB."""
+    async with session() as s:
+        await s.execute(
+            text("INSERT INTO tasks.schedule_run "
+                 "(id, schedule_id, user_email, started_at, finished_at, "
+                 " status, result) "
+                 "VALUES (gen_random_uuid(), CAST(:schedule_id AS UUID), "
+                 " :user_email, :started_at, :finished_at, :status, "
+                 " :result)"),
+            values)
+        await s.commit()
+
+
+def shape_run(row) -> dict:
+    """One history row as a card reads it.
+
+    A row with no finish is NOT an instant run: a process that dies mid
+    run never writes one. agent_run's migration says the same thing, that
+    readers must treat an unfinished row as failed rather than as
+    something that has been awake for three days.
+    """
+    def _get(key):
+        if isinstance(row, dict):
+            return row.get(key)
+        return getattr(row, key, None)
+
+    started, finished = _get("started_at"), _get("finished_at")
+    status = _get("status")
+    seconds = None
+    if started and finished:
+        seconds = int((finished - started).total_seconds())
+    return {"at": started,
+            "status": status,
+            "ok": status == "completed" and finished is not None,
+            "seconds": seconds,
+            "result": _get("result")}
+
+
+async def recent_runs(schedule_id, limit: int = RUN_HISTORY_SHOWN) -> list:
+    """The last runs of one schedule, newest first.
+
+    The query itself is the DB tier's to prove; the shaping above is not,
+    which is why `shape_run` is separate and pure.
+    """
+    try:
+        async with session() as s:
+            rows = await s.execute(
+                text("SELECT started_at, finished_at, status, result "
+                     "FROM tasks.schedule_run "
+                     "WHERE schedule_id = CAST(:sid AS UUID) "
+                     "ORDER BY started_at DESC LIMIT :n"),
+                {"sid": str(schedule_id), "n": int(limit)})
+            return [shape_run(r) for r in rows.mappings().all()]
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not read the run history of schedule %s",
+                       schedule_id, exc_info=True)
+        return []
 
 
 def fire_values(sched, now) -> dict:
