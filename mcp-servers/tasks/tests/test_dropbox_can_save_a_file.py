@@ -247,21 +247,36 @@ def test_every_tool_that_sends_a_body_points_at_its_own_vendor():
                 assert M._is_vendor_host(pid, t.base) is True, (pid, t.name)
 
 
-def test_the_six_tools_are_what_dropbox_has_now():
-    assert {t.name for t in M.PROVIDER_TOOLS["dropbox"]} == {
-        "list_folder", "search_files", "get_metadata", "read_file",
-        "upload_file", "whoami"}
+def test_saving_is_one_of_dropboxs_tools_and_is_a_write():
+    """The full census lives in test_dropbox_is_a_connector and in
+    test_dropbox_can_share_a_link. This file asserts its own subject, so
+    that adding a seventh tool does not fail three files for one fact."""
+    names = {t.name for t in M.PROVIDER_TOOLS["dropbox"]}
+    assert "upload_file" in names
+    assert "upload_file" in {t.name for t in M.PROVIDER_TOOLS["dropbox"]
+                             if M._writes(t)}
 
 
 def test_the_scope_asks_to_write_content():
     assert "files.content.write" in O.DROPBOX_SCOPE.split()
 
 
-def test_the_scope_does_not_ask_for_sharing():
-    """Permission we do not use is permission we should not hold. The same
-    rule is written against Outlook's Files.* scopes in oauth_providers."""
-    scope = O.DROPBOX_SCOPE.split()
-    assert not [s for s in scope if s.startswith("sharing.")], scope
+def test_the_sharing_scope_arrived_with_its_tool_and_not_before_it():
+    """This test asserted the OPPOSITE until later the same day, and both
+    versions say the same rule: permission we do not use is permission we
+    should not hold.
+
+    When this file was written there was no share tool, so `sharing.*`
+    was deliberately absent even though adding it would have been free
+    (nobody was connected). Hours later somebody asked for a link, the
+    tool was built, and the scope came with it, at the price of one
+    reconnect. The rule that survives is "a scope is earned by a tool",
+    not "take every scope while the window is open".
+    """
+    scope = set(O.DROPBOX_SCOPE.split())
+    sharing = {s for s in scope if s.startswith("sharing.")}
+    names = {t.name for t in M.PROVIDER_TOOLS["dropbox"]}
+    assert bool(sharing) == ("share_link" in names), (sharing, names)
 
 
 def test_the_catalogue_says_it_can_save_and_still_cannot_change_or_delete():
@@ -270,7 +285,6 @@ def test_the_catalogue_says_it_can_save_and_still_cannot_change_or_delete():
     assert "upload_file" in app.tools
     cannot = app.cannot.lower()
     assert "delete" in cannot
-    assert "share link" in cannot
     assert "upload" not in cannot, (
         "it can upload now, and a cannot that denies a tool we have costs "
         "exactly what a cannot that promises one we lack costs")

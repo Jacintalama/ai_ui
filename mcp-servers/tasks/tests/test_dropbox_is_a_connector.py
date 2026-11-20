@@ -116,7 +116,7 @@ def test_the_authorize_url_asks_for_offline_access():
     assert "token_access_type=offline" in url
 
 
-def test_the_scope_is_what_the_six_tools_do_and_nothing_else():
+def test_the_scope_is_what_the_seven_tools_do_and_nothing_else():
     """Every scope here is earned by a tool that exists.
 
     files.content.read joined on 2026-11-19 with read_file and
@@ -124,12 +124,14 @@ def test_the_scope_is_what_the_six_tools_do_and_nothing_else():
     was connected yet. See test_dropbox_can_read_a_file for why that
     timing is the whole point.
 
-    No sharing scope: a share link has no tool, and a consent screen is
-    something a person reads.
+    sharing.write and sharing.read came later on 2026-11-20 with
+    share_link, with somebody already connected, so that pair cost a
+    reconnect. See test_dropbox_can_share_a_link.
     """
     scope = set(O.DROPBOX_SCOPE.split())
     assert scope == {"account_info.read", "files.metadata.read",
-                     "files.content.read", "files.content.write"}
+                     "files.content.read", "files.content.write",
+                     "sharing.write", "sharing.read"}
 
 
 def test_the_token_response_keeps_the_refresh_token_and_the_expiry():
@@ -205,17 +207,17 @@ def _tool(name):
     raise AssertionError("no such dropbox tool: " + name)
 
 
-def test_the_six_tools_are_five_reads_and_one_save():
-    """Reads only until 2026-11-20, when upload_file arrived. Counted
-    rather than listed, so adding a second write has to come here and be
-    deliberate: a write is the thing that needs a scope, an approval and
-    a line in the catalogue."""
+def test_the_seven_tools_are_five_reads_and_two_writes():
+    """Reads only until 2026-11-20, when upload_file and then share_link
+    arrived. The writes are counted rather than listed loosely, so a
+    third one has to come here and be deliberate: a write is the thing
+    that needs a scope, an approval and a line in the catalogue."""
     names = {t.name for t in mytools.PROVIDER_TOOLS["dropbox"]}
     assert names == {"list_folder", "search_files", "get_metadata",
-                     "read_file", "upload_file", "whoami"}
+                     "read_file", "upload_file", "share_link", "whoami"}
     writes = {t.name for t in mytools.PROVIDER_TOOLS["dropbox"]
               if mytools._writes(t)}
-    assert writes == {"upload_file"}
+    assert writes == {"upload_file", "share_link"}
 
 
 def test_every_call_is_a_post_because_dropbox_has_no_gets():
