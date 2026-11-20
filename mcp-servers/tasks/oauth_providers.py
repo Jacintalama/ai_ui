@@ -378,9 +378,14 @@ def _jira_token(payload: dict) -> Tuple[Dict[str, str], str]:
 #: A scope here also has to be ticked in the app's own Permissions tab in
 #: the App Console, which is the half nobody remembers: asking for a scope
 #: the app was never granted is an authorize URL that refuses.
+#: `files.content.write` joined on 2026-11-20 with upload_file, with the
+#: count still at 0, so the window above was used twice rather than paid
+#: for once. There is deliberately NO `sharing.*` here: a share link has
+#: no tool yet, and permission we do not use is permission we should not
+#: hold, the same ruling as the Files.* scopes left out of OUTLOOK_SCOPE.
 DROPBOX_SCOPE = (os.environ.get("DROPBOX_SCOPE")
                  or "account_info.read files.metadata.read "
-                    "files.content.read").strip()
+                    "files.content.read files.content.write").strip()
 
 
 #: What the person approves on LinkedIn's consent screen.

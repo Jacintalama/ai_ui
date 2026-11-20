@@ -155,6 +155,24 @@ class Tool:
     #: pieces rather than the response object is what lets it be tested
     #: without a vendor, a network or httpx.
     raw: Optional[Callable[..., Any]] = None
+    #: The RAW request body, for a vendor that wants the thing itself
+    #: rather than JSON describing it.
+    #:
+    #: Dropbox uploads a file by PUTting its bytes with the destination in
+    #: a header, which `_payload_for` cannot express: there is no JSON
+    #: body at all. So this returns the bytes and `_call` sends them in
+    #: place of a payload.
+    #:
+    #: ONLY EVER TO THE VENDOR'S OWN HOST, and this one matters more than
+    #: the header rule above it. A JSON payload is built from our own
+    #: shapers; a raw body IS the person's file, so sending it to a
+    #: stranger would hand somebody's document to a third party rather
+    #: than leak a credential. `_call` refuses outright rather than
+    #: stripping anything.
+    #:
+    #: Signature is `send(args) -> bytes`. A ValueError reaches the model
+    #: as a sentence, like `head` and `shape`.
+    send: Optional[Callable[[Dict[str, Any]], bytes]] = None
     #: Whether this tool changes anything at the vendor. `None` means "ask
     #: the method", which is right almost everywhere.
     #:
@@ -1011,11 +1029,37 @@ async def _call(provider_id: str, tool: Tool, email: str,
         if own and extra:
             sending.update(extra)
 
+    # THE BODY ITSELF, for a vendor that takes the file rather than JSON
+    # about it. Refused outright for a foreign host rather than stripped,
+    # because this is not a credential that can be left behind: it is the
+    # person's own document, and the only safe thing to do with it is not
+    # to send it.
+    content = None
+    if tool.send:
+        if not own:
+            logger.warning("mytools: %s %s points at a host that is not the "
+                           "vendor, so a file body was refused", provider_id,
+                           tool.name)
+            return _err(label + ": that could not be done just now. Try "
+                        "again in a minute.")
+        try:
+            content = tool.send(args or {})
+        except ValueError as e:
+            return _err(str(e))
+
     try:
         async with httpx.AsyncClient(timeout=VENDOR_TIMEOUT_SEC) as client:
-            r = await client.request(tool.method, url,
-                                     headers=sending,
-                                     params=params or None, json=payload)
+            if content is None:
+                r = await client.request(tool.method, url,
+                                         headers=sending,
+                                         params=params or None, json=payload)
+            else:
+                # Never both. httpx would set Content-Type for the JSON and
+                # send the bytes, which is a request no vendor can read.
+                r = await client.request(tool.method, url,
+                                         headers=sending,
+                                         params=params or None,
+                                         content=content)
     except Exception as e:
         # The exception text can carry the URL, and Trello's credential rides
         # in the query string. Log the type, never the message.
@@ -2295,6 +2339,54 @@ def _dropbox_file(body: bytes, headers: Any = None) -> Dict[str, Any]:
     return {"path": path, "size": size, "truncated": cut, "content": text}
 
 
+def _dropbox_upload_arg(args: Dict[str, Any]) -> Dict[str, str]:
+    """The headers for a save: where it goes, and that it ADDS.
+
+    `mode: add` with `autorename` is the whole safety of this tool, and
+    it is the vendor's guarantee rather than a check of ours. A save onto
+    an occupied path becomes "notes (1).txt" and the file that was there
+    is untouched, which is what lets the catalogue go on saying Dropbox
+    cannot change or delete anything while a write exists.
+
+    A FOLDER IS NOT SOMEWHERE A FILE CAN BE SAVED, and this is the one
+    argument a model gets wrong: `_dropbox_path` turns "/" into the root,
+    which is the right answer for listing a folder and a file named
+    nothing for this. Refused here, with the sentence saying what to send
+    instead.
+    """
+    given = str(args.get("path") or "").strip()
+    if not given or given.endswith("/") or not _dropbox_path(given):
+        raise ValueError("Give the file name as well as the folder, like "
+                         "/Documents/notes.txt. A folder on its own is not "
+                         "somewhere a file can be saved.")
+    arg = json.dumps({"path": _dropbox_path(given), "mode": "add",
+                      "autorename": True, "mute": False})
+    return {"Dropbox-API-Arg": arg,
+            "Content-Type": "application/octet-stream"}
+
+
+def _dropbox_bytes(args: Dict[str, Any]) -> bytes:
+    """The file itself, bounded before it is sent.
+
+    Same reasoning as the download's `Range` cap, from the other
+    direction: this box has 3.8GB of RAM and a model asked to "save
+    everything we discussed" will write as much as it is allowed to.
+
+    `None` and "" are DIFFERENT. An empty file is a perfectly good thing
+    to save, so only a content argument that was never given is refused.
+    """
+    content = args.get("content")
+    if content is None:
+        raise ValueError("Say what to put in the file, as `content`.")
+    text = str(content)
+    body = text.encode("utf-8")
+    if len(body) > MAX_FILE_BYTES:
+        raise ValueError("That is too long to save in one go. The most is "
+                         "about %d characters and this is %d, so save it in "
+                         "parts or shorten it." % (MAX_FILE_CHARS, len(text)))
+    return body
+
+
 def _dropbox_folder_body(args: Dict[str, Any]) -> Dict[str, Any]:
     return {"path": _dropbox_path(args.get("path")),
             "limit": _dropbox_limit(args.get("limit")),
@@ -2363,6 +2455,25 @@ DROPBOX_TOOLS = [
          raw=_dropbox_file,
          writes=False,
          keep=("path", "size", "truncated", "content", "why")),
+    # The only write Dropbox has here, and it cannot destroy anything:
+    # `mode: add` with `autorename` means a clash is saved alongside under
+    # a numbered name. See _dropbox_upload_arg.
+    Tool(name="upload_file",
+         summary="Save a new text file into your Dropbox at the path you "
+                 "give, including the file name. It adds a file and never "
+                 "replaces one: if something is already there, Dropbox "
+                 "keeps both and numbers the new one.",
+         method="POST", path="/files/upload",
+         base=DROPBOX_CONTENT,
+         args={"path": ("string",
+                        "Where to save it, with the file name, like "
+                        "/Documents/notes.txt", True),
+               "content": ("string", "The text to write in the file", True)},
+         # Destination in a header, the file as the body. No `shape`.
+         head=_dropbox_upload_arg,
+         send=_dropbox_bytes,
+         writes=True,
+         keep=("name", "path_display", "size", "server_modified")),
     Tool(name="whoami",
          summary="Show which Dropbox account is currently connected to "
                  "your assistant.",
