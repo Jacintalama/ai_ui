@@ -384,6 +384,29 @@
 
     /* The agent's own account of what it could not do, on the card rather
        than collapsed in the drawer with everything else. */
+    /* THE WEEK, AS MARKS. One mark per run, oldest left, newest right, so
+       the card answers "has this been failing all week" without being
+       opened. Until now it drew `last_run_status`, which is ONE run and
+       reads identically whether the six before it worked or not. The
+       colours are the badge colours deliberately: a refused run is its
+       own state here for the same reason it is there. */
+    .sched-runs { display: flex; align-items: center; gap: 10px;
+                  flex-wrap: wrap; margin: 10px 0 0; }
+    .sched-runs-label { font-size: 12px; color: var(--muted); }
+    .sched-runs-marks { display: flex; gap: 3px; align-items: center; }
+    .run-mark { width: 9px; height: 18px; border-radius: 3px;
+                background: var(--surface-3);
+                border: 1px solid var(--border-2); }
+    .run-mark.ok      { background: var(--success-soft);
+                        border-color: var(--ok-edge); }
+    .run-mark.failed  { background: var(--danger-soft);
+                        border-color: var(--danger-edge); }
+    .run-mark.refused { background: var(--warn-wash-2);
+                        border-color: var(--warn-edge); }
+    .run-mark.running { background: var(--accent-soft);
+                        border-color: var(--accent-edge); }
+    .sched-runs-note { font-size: 12px; color: var(--warn); font-weight: 600; }
+
     .sched-problem { border-left: 3px solid var(--warn);
       background: var(--warn-wash); border-radius: 0 8px 8px 0;
       padding: 10px 12px; margin: 10px 0; }
@@ -1543,6 +1566,45 @@
            </div>`
         : "";
 
+      // THE WEEK. `problem` above says what the LAST run said; it cannot say
+      // whether this is the first time or the thirtieth, and that is the
+      // difference between a glitch and a schedule that stopped working.
+      // The live case: a daily summary answered `refused` every morning for
+      // weeks and the card looked the same on day 30 as on day 1.
+      //
+      // Oldest left, newest right, the way a status page reads. Server sends
+      // newest first, so this reverses a COPY of it.
+      const runs = Array.isArray(s.runs) ? s.runs : [];
+      let runsRow = "";
+      if (runs.length) {
+        const marks = runs.slice().reverse().map((r) => {
+          const cls = r.ok ? "ok" : (runStatusClass(r.status) || "failed");
+          // One fact per line: a tooltip is prose a person reads, and
+          // glued-together meta strings are what we are avoiding elsewhere.
+          const lines = [String(r.status || (r.ok ? "completed" : "never finished"))];
+          const when = relativeTime(r.at);
+          if (when) lines.push(when);
+          if (r.seconds != null) lines.push(`took ${r.seconds}s`);
+          if (r.reason) lines.push(r.reason);
+          return `<span class="run-mark ${cls}" title="${
+            escapeHtml(lines.join("\n"))}"></span>`;
+        }).join("");
+        const bad = runs.filter((r) => !r.ok).length;
+        const note = !bad ? ""
+          : (bad === runs.length
+             ? `none of the last ${runs.length} did its job`
+             : `${bad} of the last ${runs.length} did not`);
+        runsRow =
+          `<div class="sched-runs">
+             <span class="sched-runs-label">${
+               runs.length === 1 ? "1 run so far" : `last ${runs.length} runs`}</span>
+             <span class="sched-runs-marks" role="img" aria-label="${
+               escapeHtml(`${runs.length - bad} of the last ${runs.length} runs did their job`)
+             }">${marks}</span>
+             ${note ? `<span class="sched-runs-note">${escapeHtml(note)}</span>` : ""}
+           </div>`;
+      }
+
       // Friendly schedule line (the card's primary info). Use the plain-English
       // description when the expression parses confidently; otherwise fall back
       // to the raw cron text so the card is never left without schedule info.
@@ -1604,6 +1666,7 @@
            ${destChip}
            ${lastRun}
          </div>
+         ${runsRow}
          ${prompt}
          ${problem}
          ${result}

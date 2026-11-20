@@ -648,6 +648,117 @@ async def recent_runs(schedule_id, limit: int = RUN_HISTORY_SHOWN) -> list:
         return []
 
 
+#: How much of a bad run's own words a mark carries. Long enough to name a
+#: cause ("OpenRouter answered 402: no credit"), short enough that seven
+#: marks on every card is a payload rather than a download.
+RUN_REASON_CHARS = 240
+
+
+def run_mark(run: dict) -> dict:
+    """One shaped run as a card DRAWS it. Pure.
+
+    A run that worked carries no text. `result_for_storage` keeps up to
+    8000 characters, and seven runs of seven schedules would put nearly
+    400KB of result text in a list payload, almost all of it for runs
+    nobody is going to read. A run that did NOT work carries its reason,
+    because that is the only question a mark is ever asked, and the live
+    case is a daily schedule that answered `refused` every morning for
+    weeks while the card showed one word and no cause.
+
+    Trimmed here rather than in storage: the row keeps the full result
+    for the card's result pane and for any later alert. The trim says
+    when it cut, for the same reason `result_for_storage` says it.
+
+    `at` leaves as a string. This goes out through a route that does its
+    own serializing, where a stray datetime is a 500 at render time.
+    """
+    at = run.get("at")
+    mark = {"at": at.isoformat() if hasattr(at, "isoformat") else at,
+            "status": run.get("status"),
+            "ok": bool(run.get("ok")),
+            "seconds": run.get("seconds"),
+            "reason": None}
+    if not mark["ok"]:
+        reason = (run.get("result") or "").strip()
+        if len(reason) > RUN_REASON_CHARS:
+            reason = (reason[:RUN_REASON_CHARS]
+                      + " [truncated: the full result is on the card]")
+        mark["reason"] = reason or None
+    return mark
+
+
+def group_runs(rows) -> dict:
+    """History rows as `{schedule id: marks, newest first}`. Pure.
+
+    The query orders and limits already. The cap is applied again here
+    because a daily schedule a year old must not be able to put 365 marks
+    in a list payload if that query is ever edited.
+
+    Keys are strings on both sides: a row carries a UUID and a serialized
+    schedule carries `str(id)`, and a dict keyed by one is not readable
+    by the other.
+    """
+    out: dict = {}
+    for row in rows:
+        key = str(row["schedule_id"] if isinstance(row, dict)
+                  else row.schedule_id)
+        marks = out.setdefault(key, [])
+        if len(marks) < RUN_HISTORY_SHOWN:
+            marks.append(run_mark(shape_run(row)))
+    return out
+
+
+def with_runs(rows, by_id: dict) -> list:
+    """Each serialized schedule with its own week attached. Pure.
+
+    A schedule with no history gets an empty list, never a missing key:
+    the page branches on `runs.length`, and `undefined.length` is a blank
+    card rather than a card that says no runs yet.
+
+    Copies, because `_serialize` output is handed around and attaching
+    must not reach back into a caller's dict.
+    """
+    return [dict(r, runs=by_id.get(str(r.get("id")), [])) for r in rows]
+
+
+async def runs_for_schedules(ids, limit: int = RUN_HISTORY_SHOWN) -> dict:
+    """The recent runs of many schedules in ONE query.
+
+    The page draws every card from one `GET /schedules`, and the marks
+    have to be on screen with the card: the question is "has this been
+    failing all week", and an answer that arrives after the card is read
+    as "no". A route per card would be one round trip per schedule for a
+    page that already made one.
+
+    Fail open like `recent_runs`: a card with no marks is worth more than
+    a schedules page that 500s.
+    """
+    wanted = [str(i) for i in (ids or []) if i]
+    if not wanted:
+        return {}
+    try:
+        async with session() as s:
+            rows = await s.execute(
+                text("SELECT schedule_id, started_at, finished_at, status, "
+                     "       result "
+                     "FROM (SELECT schedule_id, started_at, finished_at, "
+                     "             status, result, "
+                     "             ROW_NUMBER() OVER ("
+                     "               PARTITION BY schedule_id "
+                     "               ORDER BY started_at DESC) AS n "
+                     "      FROM tasks.schedule_run "
+                     "      WHERE schedule_id = ANY("
+                     "        string_to_array(:ids, ',')::uuid[])) t "
+                     "WHERE n <= :n "
+                     "ORDER BY schedule_id, started_at DESC"),
+                {"ids": ",".join(wanted), "n": int(limit)})
+            return group_runs(rows.mappings().all())
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not read the run history of %d schedules",
+                       len(wanted), exc_info=True)
+        return {}
+
+
 def fire_values(sched, now) -> dict:
     """Pre-dispatch update values for a firing schedule. A one-time (`run_once`)
     schedule also gets enabled=False so it fires exactly once, then stops."""
