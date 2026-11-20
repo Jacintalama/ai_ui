@@ -321,9 +321,19 @@ def _query_for(tool: "Tool", args: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def _writes(tool: "Tool") -> bool:
-    """Whether this tool changes anything at the vendor."""
+    """Whether this tool changes anything at the vendor.
+
+    A COMPOSITE CANNOT WRITE, whatever `method` says. `run` is handed
+    `get(path)`, which does one authenticated GET, and nothing else, and
+    `method` on such a tool is documented as unused. Asking the method
+    made ClickUp's `find_list` a write, so a 403 while climbing somebody's
+    workspace told them to reconnect to allow writing, which would not
+    have helped: a 403 there is a space they cannot see.
+    """
     if tool.writes is not None:
         return bool(tool.writes)
+    if tool.run:
+        return False
     return str(tool.method or "").upper() != "GET"
 
 
@@ -1695,6 +1705,11 @@ NOTION_TOOLS = [
          method="POST", path="/search",
          args={"query": ("string", "What to search for", False)},
          body=("query",),
+         # Notion searches over POST because the query is a body. On a
+         # read, a 403 means the page was never shared with the
+         # integration, and "reconnect to allow that" is a wrong
+         # instruction for it.
+         writes=False,
          unwrap=lambda d: d.get("results", []),
          keep=("id", "object", "url", "properties", "last_edited_time")),
     Tool(name="get_page",
@@ -1706,6 +1721,8 @@ NOTION_TOOLS = [
          summary="List the rows in one Notion database, given its database id.",
          method="POST", path="/databases/{database_id}/query",
          args={"database_id": ("string", "Notion database id", True)},
+         # Reads rows. POST because the filter and sort are a body.
+         writes=False,
          unwrap=lambda d: d.get("results", []),
          keep=("id", "url", "properties", "last_edited_time")),
     Tool(name="whoami",

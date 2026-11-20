@@ -262,6 +262,10 @@ def test_a_search_is_not_treated_as_a_write():
 #: default field list. Dropbox has NO GET endpoints at all, so every one
 #: of its reads is a POST.
 POSTS_THAT_READ = [
+    # A composite: `run` is handed one GET helper and nothing else, so it
+    # cannot write whatever `method` says. Found by the catalogue sweep
+    # on 2026-11-20, along with the two Notion entries below.
+    ("clickup", "find_list"),
     ("dropbox", "get_metadata"),
     ("dropbox", "list_folder"),
     # A download, which reads a file and changes nothing (2026-11-19).
@@ -269,6 +273,11 @@ POSTS_THAT_READ = [
     ("dropbox", "search_files"),
     ("dropbox", "whoami"),
     ("jira", "search_issues"),
+    # Notion reads over POST because the query, filter and sort are a
+    # body. A 403 on either means the page was never shared with the
+    # integration, and reconnecting does not change that.
+    ("notion", "query_database"),
+    ("notion", "search"),
 ]
 
 
