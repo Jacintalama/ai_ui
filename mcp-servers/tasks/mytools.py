@@ -2387,6 +2387,136 @@ def _dropbox_bytes(args: Dict[str, Any]) -> bytes:
     return body
 
 
+def _dropbox_direct_link(url: Any) -> str:
+    """A share link that downloads, rather than opening Dropbox's viewer.
+
+    Dropbox hands back a PREVIEW link, ending `dl=0`. Somebody who says
+    "so they can download it" means `dl=1`, and both are worth returning
+    because the preview is the better link to send a person and the
+    direct one is the better link to give a program.
+
+    Rebuilt through the query parser rather than by string replacement,
+    because the `rlkey` in a modern share link is what makes it work and
+    a careless replace is how it gets lost.
+    """
+    text = str(url or "")
+    if not text:
+        return ""
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+    parts = urlsplit(text)
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+             if k != "dl"]
+    query.append(("dl", "1"))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path,
+                       urlencode(query), parts.fragment))
+
+
+def _dropbox_link_from_error(payload: Any) -> Optional[str]:
+    """The existing link, read out of Dropbox's own refusal to make one.
+
+    A second request for a link is always a 409, and the link is usually
+    inside it, so the ordinary case costs no extra round trip. `metadata`
+    can be absent (the inner object comes back tagged `other`), and then
+    this returns None and the caller asks properly.
+    """
+    try:
+        inner = ((payload or {}).get("error") or {}).get(
+            "shared_link_already_exists") or {}
+        url = str((inner.get("metadata") or {}).get("url") or "").strip()
+        return url or None
+    except Exception:                                       # noqa: BLE001
+        return None
+
+
+def _dropbox_said(payload: Any) -> str:
+    """Dropbox's own words for a failure, when it gave any."""
+    try:
+        said = str((payload or {}).get("error_summary") or "").strip()
+        return (" Dropbox said: " + said.rstrip("/. ") + ".") if said else ""
+    except Exception:                                       # noqa: BLE001
+        return ""
+
+
+async def _dropbox_share(email: str, auth, args: Dict[str, Any]) -> dict:
+    """The `share_link` tool: a link for one file, made or recovered.
+
+    An `act` tool because this is a request whose FAILURE is the answer,
+    and sometimes a second request after it. `_call` cannot express that:
+    `_refusal` turns every 409 into a sentence and returns. Putting a
+    conflict seam there would push one vendor's quirk into the path of
+    every provider, so the two-step lives here.
+    """
+    path = _dropbox_path((args or {}).get("path"))
+    if not path:
+        return _err("Give the file to share, with its name, like "
+                    "/Documents/notes.txt. A share link is for one file.")
+
+    base = str(auth.base_url or "").rstrip("/")
+
+    def _body(r):
+        try:
+            return r.json() or {}
+        except Exception:                                   # noqa: BLE001
+            return {}
+
+    def _answer(url: str, existing: bool) -> dict:
+        return {"ok": True, "path": path, "url": url,
+                "download_url": _dropbox_direct_link(url),
+                "existing": existing}
+
+    try:
+        async with httpx.AsyncClient(timeout=VENDOR_TIMEOUT_SEC) as client:
+            made = await client.post(
+                base + "/sharing/create_shared_link_with_settings",
+                headers=auth.headers, json={"path": path})
+            payload = _body(made)
+
+            if made.status_code < 300:
+                url = str(payload.get("url") or "").strip()
+                if url:
+                    return _answer(url, False)
+                return _err("Dropbox made a share link but did not say what "
+                            "it was.")
+
+            # The token was approved before sharing was asked for, which
+            # is true of every connection made before 2026-11-20.
+            if str((payload.get("error") or {}).get(".tag")) == "missing_scope":
+                return _err("Your Dropbox connection does not include "
+                            "permission to share files. Reconnect Dropbox "
+                            "from Connections and approve the new "
+                            "permission, then ask again.")
+
+            if made.status_code != 409:
+                logger.warning("mytools: dropbox share_link returned %s",
+                               made.status_code)
+                return _err("Dropbox would not make a share link for that."
+                            + _dropbox_said(payload))
+
+            # 409 is the ORDINARY case: the file already has a link.
+            url = _dropbox_link_from_error(payload)
+            if url:
+                return _answer(url, True)
+
+            listed = await client.post(base + "/sharing/list_shared_links",
+                                       headers=auth.headers,
+                                       json={"path": path,
+                                             "direct_only": True})
+            found = _body(listed)
+            links = found.get("links") if isinstance(found, dict) else None
+            first = (links or [{}])[0] if links else {}
+            url = str((first or {}).get("url") or "").strip()
+            if url:
+                return _answer(url, True)
+            return _err("That file already has a share link, but Dropbox "
+                        "would not give it back. Open the file in Dropbox "
+                        "and use Share there to copy the link.")
+    except Exception as e:                                  # noqa: BLE001
+        # Never the message: a vendor's exception text can carry the URL.
+        logger.warning("mytools: dropbox share_link failed (%s)",
+                       type(e).__name__)
+        return _err(_unreachable("Dropbox"))
+
+
 def _dropbox_folder_body(args: Dict[str, Any]) -> Dict[str, Any]:
     return {"path": _dropbox_path(args.get("path")),
             "limit": _dropbox_limit(args.get("limit")),
@@ -2474,6 +2604,19 @@ DROPBOX_TOOLS = [
          send=_dropbox_bytes,
          writes=True,
          keep=("name", "path_display", "size", "server_modified")),
+    # An `act` tool, because a second request for a link is a 409 whose
+    # body IS the answer. See _dropbox_share.
+    Tool(name="share_link",
+         summary="Make a link to one of your Dropbox files that you can "
+                 "send to somebody, or give back the link that file "
+                 "already has. Returns a link to view and a link that "
+                 "downloads straight away.",
+         method="POST", path="/sharing/create_shared_link_with_settings",
+         args={"path": ("string",
+                        "The file to share, like /Documents/notes.txt",
+                        True)},
+         act=_dropbox_share,
+         writes=True),
     Tool(name="whoami",
          summary="Show which Dropbox account is currently connected to "
                  "your assistant.",

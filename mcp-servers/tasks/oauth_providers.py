@@ -380,12 +380,19 @@ def _jira_token(payload: dict) -> Tuple[Dict[str, str], str]:
 #: the app was never granted is an authorize URL that refuses.
 #: `files.content.write` joined on 2026-11-20 with upload_file, with the
 #: count still at 0, so the window above was used twice rather than paid
-#: for once. There is deliberately NO `sharing.*` here: a share link has
-#: no tool yet, and permission we do not use is permission we should not
-#: hold, the same ruling as the Files.* scopes left out of OUTLOOK_SCOPE.
+#: for once.
+#:
+#: `sharing.write` and `sharing.read` joined LATER THE SAME DAY, with
+#: somebody connected, so this pair is the first that is NOT free: the
+#: existing connection keeps the old grant and `share_link` answers
+#: `missing_scope` until its owner reconnects. The tool says exactly that
+#: rather than failing blankly. Both are earned: `sharing.write` creates
+#: the link and `sharing.read` is what `list_shared_links` needs for the
+#: fallback when Dropbox's 409 carries no metadata.
 DROPBOX_SCOPE = (os.environ.get("DROPBOX_SCOPE")
                  or "account_info.read files.metadata.read "
-                    "files.content.read files.content.write").strip()
+                    "files.content.read files.content.write "
+                    "sharing.write sharing.read").strip()
 
 
 #: What the person approves on LinkedIn's consent screen.

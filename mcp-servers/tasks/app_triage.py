@@ -185,16 +185,17 @@ _APPS = (
         "cloud storage for files and folders: finding a file, seeing what "
         "is in a folder, when something was last changed",
         "list a folder, search your files by name, read one file's details, "
-        "read what is written inside a text file, and save a new text file",
+        "read what is written inside a text file, save a new text file, and "
+        "make a link to a file that you can send to somebody",
         ("list_folder", "search_files", "get_metadata", "read_file",
-         "upload_file"),
-        # A share link is still its own card, and still has no scope.
+         "upload_file", "share_link"),
         #
         # "the contents of a file" moved out of this line on 2026-11-19
-        # when read_file shipped, and "upload" on 2026-11-20 when
-        # upload_file did. A `cannot` that denies what a tool now does
-        # costs the same as one that promises what no tool does: it is
-        # the whole contract either way.
+        # when read_file shipped, "upload" on 2026-11-20 when upload_file
+        # did, and "make a share link" the same day when share_link did.
+        # A `cannot` that denies what a tool now does costs the same as
+        # one that promises what no tool does: it is the whole contract
+        # either way.
         #
         # "change or delete a file that is already there" is not hedging:
         # the upload goes out with `mode: add` and `autorename`, so a
@@ -202,7 +203,7 @@ _APPS = (
         # name. Dropbox guarantees it, not us.
         cannot="read a file that is not text, such as a pdf, an image or a "
                "spreadsheet, or change or delete a file that is already "
-               "there, or make a share link",
+               "there",
         says=("dropbox",)),
     App("notion", "Notion",
         "pages and databases for notes, documents, a wiki or to-do lists",
