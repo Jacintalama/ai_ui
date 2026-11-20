@@ -113,6 +113,35 @@ def test_the_other_things_an_n8n_workflow_tool_does_are_there_too():
         assert verb in making, verb
 
 
+def test_linking_aiui_into_n8n_is_in_the_making_clause():
+    """`link_aiui` (#262) saves an AIUI key in the person's n8n so their
+    workflows can use the apps connected here. The clause never said so.
+
+    MEASURED on the live router 2026-11-20, server:mcp-proxy against the
+    full tool list, cut 0.75, three runs each:
+
+                                                    before        after
+      Link AIUI to my n8n                           0.74 0.74     0.91 0.91 0.90
+      connect AIUI to my n8n                        0.75 0.72     0.89 0.89 0.90
+      set up AIUI in my n8n so my workflows can
+        use my Google Drive                         0.54 0.58     0.80 0.79 0.80
+      let my n8n workflows use the apps I
+        connected here                              0.51 0.54     0.87 0.88 0.88
+      put the AIUI credential in my n8n             0.85 0.84     0.92 0.92 0.91
+
+    Before, "Link AIUI to my n8n" tied with the account tool at 0.74, and
+    on 2026-11-19 the live chat answered from the account ("Used your
+    account") that the bridge "does not exist yet". The account note was
+    left alone: adding "not for linking AIUI" to it dropped "is my Trello
+    still connected?" from 0.82 to 0.76, too near the cut. Its own nine
+    cases (test_the_account_note_is_about_the_account) were unchanged by
+    this wording, 3/3 and 0/3 exactly as before."""
+    making = _making()
+    assert "aiui" in making
+    for verb in ("link", "connect", "set up"):
+        assert verb in making, verb
+
+
 def test_sending_mail_keeps_its_own_verb():
     """Sending mail is not making a thing, so it is not in the clause. It
     has to stay in the note, or Outlook's send is unreachable the way

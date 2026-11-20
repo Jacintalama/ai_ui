@@ -513,10 +513,17 @@ async def wants_release(email: str, text: str) -> bool | None:
 #:
 #: Pinned by tests/test_the_router_says_what_an_app_can_make.py, which
 #: also refuses a new write provider with no word in here.
+#:
+#: The same again on 2026-11-20 for `link_aiui` (#262): "Link AIUI to my
+#: n8n" tied the account tool at 0.74 and the chat answered from the
+#: account that no such bridge exists. With the clause naming it, 0.90 to
+#: 0.91; the measurements are in that test.
 MAKES_CLAUSE = ("making things in it: a new table, record, card, task, "
                 "list, page, issue, pull request, branch, contact, post "
                 "or event. It can also build an n8n workflow and change, "
-                "switch on and off, or delete one, and start a Zapier zap")
+                "switch on and off, or delete one, link, connect or set up "
+                "AIUI in the person's n8n so their n8n workflows can use "
+                "the apps they connected in AIUI, and start a Zapier zap")
 
 #: What each tool is for, in the words a person would use. A tool not listed
 #: here is described by its id, which is better than leaving it out.
