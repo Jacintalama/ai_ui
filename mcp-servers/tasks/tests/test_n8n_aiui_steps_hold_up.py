@@ -355,3 +355,50 @@ def test_a_google_answer_that_is_not_json_is_a_502(client, monkeypatch):
                     json={"app": "gdrive", "tool": "gdrive_search_files",
                           "args": {"query": "x"}})
     assert r.status_code == 502
+
+
+# --- 5. a step must name a real app and tool (live run, 2026-11-19) ----------
+#
+# The first live build wrote the body as the proxy's own call,
+# `{tool: "google-drive_search_drive", arguments: {...}}`, inside
+# JSON.stringify. n8n accepted it, AIUI answered 422 "Field required" on
+# every run, and the chat had already said "Done".
+
+def test_an_aiui_step_whose_body_names_no_app_is_refused_with_the_shape():
+    body = ('={{ JSON.stringify({ tool: "google-drive_search_drive", '
+            'arguments: { query: "report" } }) }}')
+    with pytest.raises(ValueError) as e:
+        aiui_link.check_steps([_node("Drive", aiui_link.RUN_URL, body,
+                                     AIUI_CRED)])
+    said = str(e.value)
+    assert '"app"' in said and '"tool"' in said and '"args"' in said
+    assert "gdrive_search_files" in said
+
+
+def test_an_aiui_step_naming_an_unknown_app_lists_the_apps():
+    body = json.dumps({"app": "google-drive", "tool": "search", "args": {}})
+    with pytest.raises(ValueError) as e:
+        aiui_link.check_steps([_node("Drive", aiui_link.RUN_URL, body,
+                                     AIUI_CRED)])
+    assert "gdrive" in str(e.value) and "github" in str(e.value)
+
+
+def test_an_aiui_step_naming_an_unknown_tool_lists_that_apps_tools():
+    body = json.dumps({"app": "gdrive", "tool": "search_drive", "args": {}})
+    with pytest.raises(ValueError) as e:
+        aiui_link.check_steps([_node("Drive", aiui_link.RUN_URL, body,
+                                     AIUI_CRED)])
+    assert "gdrive_search_files" in str(e.value)
+
+
+def test_a_well_formed_google_step_passes():
+    body = json.dumps({"app": "gdrive", "tool": "gdrive_search_files",
+                       "args": {"query": "report"}})
+    aiui_link.check_steps([_node("Drive", aiui_link.RUN_URL, body,
+                                 AIUI_CRED)])
+
+
+def test_a_well_formed_catalogue_step_passes():
+    body = json.dumps({"app": "github", "tool": "list_my_repos", "args": {}})
+    aiui_link.check_steps([_node("Repos", aiui_link.RUN_URL, body,
+                                 AIUI_CRED)])
