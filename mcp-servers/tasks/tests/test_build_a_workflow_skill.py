@@ -1,0 +1,50 @@
+"""The build-a-workflow skill: an n8n workflow from plain words.
+
+Lukas, standup 2026-11-19: people who never automated anything should get a
+workflow by describing a job, without being asked "what's the trigger?".
+The body is the whole feature, so what it must tell the model is pinned
+here. Design: docs/superpowers/specs/2026-11-23-build-a-workflow-skill-design.md
+"""
+import agent_skills
+
+
+def _skill():
+    return agent_skills.load_all(refresh=True)["build-a-workflow"]
+
+
+def test_it_loads_and_fits():
+    s = _skill()
+    assert 0 < len(s["body"]) <= agent_skills.MAX_SKILL_CHARS
+    assert "server:mcp-proxy" in s["tools"]
+
+
+def test_it_never_asks_for_a_trigger_in_n8n_words():
+    body = _skill()["body"]
+    assert "Never say trigger" in body
+    assert "When should this happen?" in body
+
+
+def test_it_uses_the_apps_connected_in_aiui():
+    body = _skill()["body"]
+    assert "link_aiui" in body and "create_workflow" in body
+
+
+def test_it_says_the_plan_back_and_builds_switched_off():
+    body = _skill()["body"]
+    assert "only after they say yes" in body
+    assert "switched off" in body
+
+
+def test_an_email_arriving_goes_to_automations_not_n8n():
+    body = _skill()["body"]
+    assert "when an email arrives" in body.lower()
+    assert "Automations" in body
+
+
+def test_a_plain_timed_job_goes_to_schedules():
+    assert "Schedules" in _skill()["body"]
+
+
+def test_no_n8n_connected_is_said_not_guessed():
+    body = _skill()["body"]
+    assert "Connections" in body and "not connected" in body
