@@ -592,12 +592,15 @@ async def _record_run(values: dict) -> None:
     """Write one history row. A seam, so the tests above it need no DB."""
     async with session() as s:
         await s.execute(
+            # `unread` is written true on purpose: the column defaults to
+            # false so that runs from before migration 072 read as read, and
+            # every run from now on arrives in the Cron Outputs inbox unread.
             text("INSERT INTO tasks.schedule_run "
                  "(id, schedule_id, user_email, started_at, finished_at, "
-                 " status, result) "
+                 " status, result, unread) "
                  "VALUES (gen_random_uuid(), CAST(:schedule_id AS UUID), "
                  " :user_email, :started_at, :finished_at, :status, "
-                 " :result)"),
+                 " :result, true)"),
             values)
         await s.commit()
 

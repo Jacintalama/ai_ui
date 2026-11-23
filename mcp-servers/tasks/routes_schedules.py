@@ -306,15 +306,59 @@ OUTPUTS_MAX = 50
 
 #: Newest runs first across all of ONE person's schedules, joined for the
 #: name. Scoped on `tasks.schedules.user_email`, the owner column every other
-#: route here trusts, not on the copy the run row carries.
+#: route here trusts, not on the copy the run row carries. `{unread}` is
+#: either empty or the unread-only filter, both fixed strings.
 _OUTPUTS_SQL = (
-    "SELECT r.schedule_id, s.name, r.started_at, r.finished_at, "
-    "       r.status, r.result "
+    "SELECT r.id, r.schedule_id, s.name, r.started_at, r.finished_at, "
+    "       r.status, r.result, r.unread "
     "FROM tasks.schedule_run r "
     "JOIN tasks.schedules s ON s.id = r.schedule_id "
-    "WHERE s.user_email = :email "
+    "WHERE s.user_email = :email{unread} "
     "ORDER BY r.started_at DESC "
     "LIMIT :n")
+_UNREAD_ONLY = " AND r.unread"
+
+#: How many of this person's outputs are unread: the red count on Cron Jobs.
+_UNREAD_COUNT_SQL = (
+    "SELECT count(*) FROM tasks.schedule_run r "
+    "JOIN tasks.schedules s ON s.id = r.schedule_id "
+    "WHERE s.user_email = :email AND r.unread")
+
+#: Mark ONE run read or unread, only if it belongs to this person.
+_MARK_ONE_SQL = (
+    "UPDATE tasks.schedule_run SET unread = :unread "
+    "WHERE id = CAST(:id AS UUID) "
+    "AND schedule_id IN (SELECT id FROM tasks.schedules "
+    "                    WHERE user_email = :email) "
+    "RETURNING id")
+
+#: Mark everything this person has read, or everything from one cron.
+_MARK_ALL_SQL = (
+    "UPDATE tasks.schedule_run SET unread = false "
+    "WHERE unread "
+    "AND schedule_id IN (SELECT id FROM tasks.schedules "
+    "                    WHERE user_email = :email{one})")
+_ONE_SCHEDULE = " AND id = CAST(:schedule_id AS UUID)"
+
+
+def outputs_sql(unread_only: bool) -> str:
+    """The listing statement, with or without the unread filter. Pure."""
+    return _OUTPUTS_SQL.format(unread=_UNREAD_ONLY if unread_only else "")
+
+
+def mark_all_sql(one_schedule: bool) -> str:
+    """The mark-all statement, for everything or for one cron. Pure."""
+    return _MARK_ALL_SQL.format(one=_ONE_SCHEDULE if one_schedule else "")
+
+
+def valid_uuid(value: str | None) -> str | None:
+    """The id as a canonical UUID string, or None. Pure. Checked before the
+    database sees it, so a bad id is a 404 and never a 500 from a failed
+    cast."""
+    try:
+        return str(uuid.UUID(str(value or "").strip()))
+    except (ValueError, AttributeError, TypeError):
+        return None
 
 
 def outputs_limit(limit: int | None) -> int:
@@ -352,29 +396,124 @@ def shape_output(row) -> dict[str, Any]:
         "status": status,
         "ok": status == "completed",
         "result": str(_get("result") or ""),
+        "id": str(_get("id") or ""),
+        "unread": bool(_get("unread")),
     }
+
+
+def _owner(x_cron_secret: str, x_user_email: str) -> str:
+    """The one person an outputs call is about, or "" for nobody.
+
+    The operator secret alone names nobody, so it gets nothing rather than
+    every user's answers.
+    """
+    _is_operator, scoped_email = _resolve_caller(x_cron_secret, x_user_email)
+    return scoped_email or x_user_email or ""
 
 
 @router.get("/outputs")
 async def list_outputs(
     limit: int = Query(default=OUTPUTS_DEFAULT),
+    unread_only: bool = Query(default=False),
     x_cron_secret: str = Header(default=""),
     x_user_email: str = Header(default=""),
 ) -> list[dict[str, Any]]:
-    """What this person's cron jobs answered, newest first, with the text.
-
-    Always ONE person's: the operator secret alone names nobody, so it gets
-    an empty list rather than every user's answers.
-    """
-    _is_operator, scoped_email = _resolve_caller(x_cron_secret, x_user_email)
-    email = scoped_email or x_user_email
+    """What this person's cron jobs answered, newest first, with the text,
+    and whether each one has been read."""
+    email = _owner(x_cron_secret, x_user_email)
     if not email:
         return []
     from sqlalchemy import text
     async with session() as s:
-        rows = await s.execute(text(_OUTPUTS_SQL),
+        rows = await s.execute(text(outputs_sql(unread_only)),
                                {"email": email, "n": outputs_limit(limit)})
         return [shape_output(r) for r in rows.mappings().all()]
+
+
+@router.get("/outputs/unread")
+async def unread_outputs(
+    limit: int = Query(default=3),
+    x_cron_secret: str = Header(default=""),
+    x_user_email: str = Header(default=""),
+) -> dict[str, Any]:
+    """The red count on Cron Jobs, and the newest unread answers for the
+    sidebar notice. One request, asked every 30 seconds per open tab."""
+    email = _owner(x_cron_secret, x_user_email)
+    if not email:
+        return {"count": 0, "items": []}
+    from sqlalchemy import text
+    n = max(0, min(10, int(limit or 0)))
+    async with session() as s:
+        count = (await s.execute(text(_UNREAD_COUNT_SQL),
+                                 {"email": email})).scalar() or 0
+        items = []
+        if n and count:
+            rows = await s.execute(text(outputs_sql(True)),
+                                   {"email": email, "n": n})
+            items = [shape_output(r) for r in rows.mappings().all()]
+    return {"count": int(count), "items": items}
+
+
+class MarkReadIn(BaseModel):
+    read: bool = True
+
+
+@router.post("/outputs/{run_id}/read")
+async def mark_output_read(
+    run_id: str,
+    body: MarkReadIn | None = None,
+    x_cron_secret: str = Header(default=""),
+    x_user_email: str = Header(default=""),
+) -> dict[str, Any]:
+    """Mark one output read (opening it) or unread again. Only the owner's:
+    an id that is not theirs is a 404, exactly like one that does not exist."""
+    email = _owner(x_cron_secret, x_user_email)
+    rid = valid_uuid(run_id)
+    if not email or not rid:
+        raise HTTPException(status_code=404, detail="No such output")
+    read = True if body is None else bool(body.read)
+    from sqlalchemy import text
+    async with session() as s:
+        hit = (await s.execute(text(_MARK_ONE_SQL),
+                               {"id": rid, "email": email,
+                                "unread": not read})).first()
+        if not hit:
+            raise HTTPException(status_code=404, detail="No such output")
+        await s.commit()
+        count = (await s.execute(text(_UNREAD_COUNT_SQL),
+                                 {"email": email})).scalar() or 0
+    return {"ok": True, "id": rid, "unread": not read, "count": int(count)}
+
+
+class MarkAllIn(BaseModel):
+    schedule_id: str | None = None
+
+
+@router.post("/outputs/read-all")
+async def mark_all_outputs_read(
+    body: MarkAllIn | None = None,
+    x_cron_secret: str = Header(default=""),
+    x_user_email: str = Header(default=""),
+) -> dict[str, Any]:
+    """Mark every unread output read, or only one cron's."""
+    email = _owner(x_cron_secret, x_user_email)
+    if not email:
+        raise HTTPException(status_code=403, detail="Nobody to mark for")
+    sid = None
+    if body is not None and body.schedule_id:
+        sid = valid_uuid(body.schedule_id)
+        if not sid:
+            raise HTTPException(status_code=404, detail="No such cron job")
+    params: dict[str, Any] = {"email": email}
+    if sid:
+        params["schedule_id"] = sid
+    from sqlalchemy import text
+    async with session() as s:
+        await s.execute(text(mark_all_sql(bool(sid))), params)
+        await s.commit()
+        count = (await s.execute(text(_UNREAD_COUNT_SQL),
+                                 {"email": email})).scalar() or 0
+    return {"ok": True, "count": int(count)}
 
 
 @router.post("", status_code=201)

@@ -62,6 +62,8 @@
          rule that held it, so no theme could move them together and no
          two of them could be kept in step by anything but memory. */
       --on-accent:    #0a0a0b;
+      --unread-red:   #ef4444;
+      --unread-ink:   #ffffff;
       --veil:         rgba(17,17,19,0.82);
       --shade:        rgba(0,0,0,0.6);
       --accent-edge:  rgba(124,140,255,0.25);
@@ -312,6 +314,11 @@
     .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
     .btn.primary:hover:not(:disabled) { background: var(--accent-2); border-color: var(--accent-2); }
     .btn.sm { padding: 6px 11px; font-size: 12px; }
+    /* The unread count on View outputs: the same red as the sidebar's. */
+    .outputs-count { display: inline-flex; align-items: center; justify-content: center;
+                     min-width: 18px; height: 18px; padding: 0 4px; margin-left: 6px;
+                     border-radius: 9px; background: var(--unread-red); color: var(--unread-ink);
+                     font-size: 11px; font-weight: 700; line-height: 1; }
     .btn.danger { color: var(--danger); border-color: var(--danger-edge-2); }
     .btn.danger:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger); }
 
@@ -900,7 +907,7 @@
             <div class="error box" id="form-error" hidden></div>
 
             <div class="field">
-              <p class="form-note">Each run’s result appears on its card here, under &ldquo;View last result&rdquo;. To have results pushed to you as well, create the schedule from Discord or Slack and it will post there too.</p>
+              <p class="form-note">Every answer lands in Cron Outputs, read and unread like an email: press &ldquo;View outputs&rdquo; above the list, or &ldquo;View output&rdquo; on a schedule. The newest one is also on its card, under &ldquo;View last result&rdquo;. To have results pushed to you as well, create the schedule from Discord or Slack and it will post there too.</p>
             </div>
 
             <div class="field" style="margin-top: 4px;">
@@ -938,7 +945,7 @@
             </button>
             <!-- Every answer the schedules gave, with the text, on its own
                  page (/cronjobs/output, 2026-11-23). -->
-            <button class="btn sm" type="button" id="outputs-btn">View outputs</button>
+            <button class="btn sm primary" type="button" id="outputs-btn">View outputs<span class="outputs-count" id="outputs-count" hidden></span></button>
           </div>
         </div>
         <!-- Filters. "Needs attention" is first among the states because it
@@ -1104,14 +1111,40 @@
 
     // View outputs: inside the shell, ask it to open the Cron Outputs pane
     // exactly as the sidebar would; standalone, go to the page itself.
-    document.getElementById("outputs-btn").addEventListener("click", () => {
+    // With a schedule id, the outputs page opens on that cron's newest
+    // answer: handed over through localStorage, which both pages share.
+    function openOutputs(scheduleId) {
+      if (scheduleId) {
+        try {
+          localStorage.setItem("aiuiCronOutputWant",
+            JSON.stringify({ schedule_id: String(scheduleId), at: Date.now() }));
+        } catch (e) { /* the page still opens, on the full list */ }
+      }
       if (window.parent !== window) {
         window.parent.postMessage({ type: "aiui:open-pane", path: "/cronjobs/output" },
                                   location.origin);
       } else {
         location.href = "/tasks/static/cron-output.html";
       }
-    });
+    }
+    document.getElementById("outputs-btn").addEventListener("click", () => openOutputs(""));
+
+    // How many outputs are unread, on the View outputs button. The server's
+    // count, the same one the sidebar shows. Quiet on failure: the button
+    // works without it.
+    async function refreshOutputsCount() {
+      const badge = document.getElementById("outputs-count");
+      try {
+        const r = await fetch("/api/tasks/schedules/outputs/unread?limit=0",
+          { headers: authHeaders(), credentials: "include", cache: "no-store" });
+        if (!r.ok) return;
+        const d = await r.json();
+        const n = Number(d && d.count) || 0;
+        badge.textContent = n > 99 ? "99+" : String(n);
+        badge.hidden = n === 0;
+        badge.setAttribute("aria-label", n + (n === 1 ? " unread" : " unread"));
+      } catch (e) { /* leave it as it was */ }
+    }
 
     const listRegion = document.getElementById("list-region");
 
@@ -1687,6 +1720,7 @@
          <div class="sched-actions">
            <button class="btn sm primary" type="button" data-act="run">Run now</button>
            <button class="btn sm" type="button" data-act="toggle">${enabled ? "Disable" : "Enable"}</button>
+           ${s.last_result_at ? '<button class="btn sm" type="button" data-act="outputs">View output</button>' : ""}
            <button class="btn sm quiet-danger" type="button" data-act="delete" title="Delete this schedule">Delete</button>
          </div>`;
 
@@ -1704,6 +1738,8 @@
       toggleBtn.addEventListener("click", () => toggleSchedule(s, card));
       runBtn.addEventListener("click", () => runSchedule(s, card));
       delBtn.addEventListener("click", () => deleteSchedule(s, card));
+      const outBtn = card.querySelector('[data-act="outputs"]');
+      if (outBtn) outBtn.addEventListener("click", () => openOutputs(s.id));
       return card;
     }
 
@@ -1924,6 +1960,7 @@ ${s.prompt || ""}`.toLowerCase().includes(needle);
 
     async function loadSchedules() {
       clearListError();
+      refreshOutputsCount();
       let rows;
       try {
         const r = await fetch(SCHED_API, { headers: authHeaders(), credentials: "include", cache: "no-store" });
