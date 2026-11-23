@@ -945,6 +945,9 @@
     const PANE_PATH = "/cronjobs";
     const POLL_MS = Number(window.__aiuiCronPollMs) || 30000;
     const MAX_NOTICES = 5;
+    // How much of a result is kept, and how much shows before Show more.
+    const RESULT_CAP = 4000;
+    const RESULT_SHORT = 180;
     let email = "";
     let state = null;
 
@@ -985,16 +988,29 @@
         const id = String(s.id);
         present[id] = true;
         const at = s.last_result_at || null;
-        if (!state.ids[id]) {
+        const isNew = !state.ids[id];
+        if (isNew) {
           state.ids[id] = 1;
-          state.results[id] = at;
+          state.results[id] = null;
           if (!fresh) state.notices.push({ id: id, kind: "new",
             name: String(s.name || "Untitled"), where: whereItShows(s) });
-        } else if (at && at !== state.results[id]) {
+        }
+        if (fresh) {
           state.results[id] = at;
-          if (!fresh) state.notices.push({ id: id, kind: "result",
+        } else if (at && at !== state.results[id]) {
+          // Also reached by a cron made AND run between two checks: it is
+          // new, and it already has output waiting.
+          state.results[id] = at;
+          // One result per cron: a newer run replaces the older notice,
+          // so the count stays "crons with output waiting".
+          state.notices = state.notices.filter(
+            (n) => !(n.kind === "result" && n.id === id));
+          state.notices.push({ id: id, kind: "result", at: at,
             name: String(s.name || "Untitled"),
-            failed: s.last_run_status === "failed" });
+            failed: s.last_run_status === "failed",
+            // The answer itself, so it can be read right here. Capped so
+            // localStorage never holds a transcript.
+            text: String(s.last_result || "").trim().slice(0, RESULT_CAP) });
         }
       }
       // A deleted schedule takes its notices with it.
@@ -1015,7 +1031,8 @@
       st.textContent = [
         ":root{--aiui-cn-bg:#f4f4f5;--aiui-cn-fg:#18181b;--aiui-cn-muted:#52525b;",
         "--aiui-cn-line:#e4e4e7;--aiui-cn-accent:#2563eb;--aiui-cn-badge-bg:#2563eb;",
-        "--aiui-cn-badge-fg:#ffffff;}",
+        "--aiui-cn-badge-fg:#ffffff;--aiui-cn-alert:#ef4444;--aiui-cn-btn:#2563eb;",
+        "--aiui-cn-glow:rgba(239,68,68,0.65);}",
         ".dark{--aiui-cn-bg:#1f1f23;--aiui-cn-fg:#f4f4f5;--aiui-cn-muted:#a1a1aa;",
         "--aiui-cn-line:#2e2e33;--aiui-cn-accent:#60a5fa;--aiui-cn-badge-bg:#3b82f6;}",
         "[data-aiui-cron-notice]{margin:4px 8px 6px;padding:8px 10px;border-radius:10px;",
@@ -1029,14 +1046,26 @@
         "[data-aiui-cron-notice] button{font:inherit;cursor:pointer;border-radius:6px;",
         "padding:3px 8px;border:1px solid var(--aiui-cn-line);background:transparent;",
         "color:var(--aiui-cn-fg);}",
-        "[data-aiui-cron-notice] button[data-aiui-cron-open]{background:var(--aiui-cn-accent);",
-        "border-color:var(--aiui-cn-accent);color:var(--aiui-cn-badge-fg);}",
+        "[data-aiui-cron-notice] button[data-aiui-cron-open]{background:var(--aiui-cn-btn);",
+        "border-color:var(--aiui-cn-btn);color:var(--aiui-cn-badge-fg);}",
         "[data-aiui-cron-notice] button:focus-visible{outline:2px solid var(--aiui-cn-accent);",
         "outline-offset:2px;}",
+        "[data-aiui-cron-notice] .aiui-cn-text{margin-top:4px;white-space:pre-wrap;",
+        "overflow-wrap:anywhere;}",
+        "[data-aiui-cron-notice] .aiui-cn-text.aiui-cn-open{max-height:240px;overflow:auto;}",
+        "[data-aiui-cron-notice] button.aiui-cn-more{margin-top:4px;padding:0;border:0;",
+        "color:var(--aiui-cn-accent);text-decoration:underline;}",
+        // A red circle that glows. Same width and height so it is round,
+        // not a pill; two digits still fit at 11px.
         "[data-aiui-cron-badge]{display:inline-flex;align-items:center;justify-content:center;",
-        "min-width:18px;height:18px;padding:0 5px;margin-left:auto;border-radius:9px;",
-        "background:var(--aiui-cn-badge-bg);color:var(--aiui-cn-badge-fg);",
-        "font-size:11px;font-weight:600;line-height:1;}",
+        "width:18px;height:18px;margin-left:auto;border-radius:50%;flex:none;",
+        "background:var(--aiui-cn-alert);color:var(--aiui-cn-badge-fg);",
+        "font-size:11px;font-weight:700;line-height:1;",
+        "box-shadow:0 0 6px 1px var(--aiui-cn-glow);",
+        "animation:aiui-cn-pulse 1.8s ease-in-out infinite;}",
+        "@keyframes aiui-cn-pulse{0%,100%{box-shadow:0 0 4px 1px var(--aiui-cn-glow);}",
+        "50%{box-shadow:0 0 10px 3px var(--aiui-cn-glow);}}",
+        "@media (prefers-reduced-motion:reduce){[data-aiui-cron-badge]{animation:none;}}",
       ].join("");
       document.head.appendChild(st);
     }
@@ -1051,20 +1080,53 @@
       if (n.kind === "new") {
         title.textContent = "New cron job: " + n.name;
         sub.textContent = n.where || "Results show on the Cron Jobs page.";
-      } else {
-        title.textContent = n.name + (n.failed ? " failed its last run"
-                                                : " has a new result");
-        sub.textContent = "Open Cron Jobs to read it.";
+        item.appendChild(title);
+        item.appendChild(sub);
+        return item;
       }
+      title.textContent = n.name + (n.failed ? " failed its last run"
+                                              : " has a new result");
       item.appendChild(title);
-      item.appendChild(sub);
+      const full = String(n.text || "");
+      if (!full) {
+        sub.textContent = "Open Cron Jobs to read it.";
+        item.appendChild(sub);
+        return item;
+      }
+      // The answer itself, as text. Cut short with Show more when long.
+      const body = document.createElement("div");
+      body.className = "aiui-cn-text";
+      const isLong = full.length > RESULT_SHORT;
+      const short = isLong ? full.slice(0, RESULT_SHORT).trimEnd() + "…" : full;
+      body.textContent = short;
+      item.appendChild(body);
+      if (isLong) {
+        const more = document.createElement("button");
+        more.type = "button";
+        more.className = "aiui-cn-more";
+        more.setAttribute("data-aiui-cron-more", "");
+        more.setAttribute("aria-expanded", "false");
+        more.textContent = "Show more";
+        more.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          const open = more.getAttribute("aria-expanded") === "true";
+          body.textContent = open ? short : full;
+          body.classList.toggle("aiui-cn-open", !open);
+          more.setAttribute("aria-expanded", open ? "false" : "true");
+          more.textContent = open ? "Show more" : "Show less";
+        });
+        item.appendChild(more);
+      }
       return item;
     }
 
     function render() {
       const entry = document.querySelector("[data-aiui-cron-jobs]");
       const notices = (state && state.notices) || [];
-      const sig = notices.map((n) => n.kind + ":" + n.id).join("|");
+      // `at` is in it so a newer result for the same cron redraws the card.
+      const sig = notices.map((n) => n.kind + ":" + n.id + ":" + (n.at || ""))
+        .join("|");
       const oldCard = document.querySelector("[data-aiui-cron-notice]");
       const oldBadge = document.querySelector("[data-aiui-cron-badge]");
       if (!entry || !notices.length) {
@@ -1075,17 +1137,26 @@
       ensureStyle();
 
       // The count, on the entry itself, so the collapsed rail shows it too.
+      // It counts crons with OUTPUT waiting (asked for 2026-11-23: one
+      // output is Cron Jobs 1, two is Cron Jobs 2), so a brand-new cron
+      // with nothing to read yet gets its card but adds no number.
+      const outputs = notices.filter((n) => n.kind === "result").length;
       const holder = entry.querySelector("a") || entry;
       let badge = oldBadge;
-      if (!badge || !holder.contains(badge)) {
+      if (!outputs) {
         if (badge) badge.remove();
-        badge = document.createElement("span");
-        badge.setAttribute("data-aiui-cron-badge", "");
-        holder.appendChild(badge);
+      } else {
+        if (!badge || !holder.contains(badge)) {
+          if (badge) badge.remove();
+          badge = document.createElement("span");
+          badge.setAttribute("data-aiui-cron-badge", "");
+          holder.appendChild(badge);
+        }
+        const count = String(outputs);
+        if (badge.textContent !== count) badge.textContent = count;
+        badge.setAttribute("aria-label", count
+          + (outputs === 1 ? " cron output to read" : " cron outputs to read"));
       }
-      const count = String(notices.length);
-      if (badge.textContent !== count) badge.textContent = count;
-      badge.setAttribute("aria-label", count + " new on Cron Jobs");
 
       // The card goes right under the entry, and only where it fits: the
       // 42px rail has room for the count and nothing else.
