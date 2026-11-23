@@ -48,6 +48,13 @@ def _sched(sid, name, result_at=None, channel=None, platform="discord"):
             "runs": []}
 
 
+def _with_result(name, text, at="2026-11-27T09:00:00", status="completed"):
+    s = _sched("s1", name, result_at=at)
+    s["last_result"] = text
+    s["last_run_status"] = status
+    return s
+
+
 @pytest.fixture()
 def shell(tmp_path_factory):
     """Yields (page, schedules, reload). `schedules` is the live list the
@@ -104,7 +111,38 @@ def test_a_new_cron_says_where_its_output_will_show(shell):
     text = page.locator(NOTICE).inner_text()
     assert "Inbox check (Gmail)" in text
     assert "Cron Jobs page" in text
+    # The count is OUTPUTS waiting, and a brand-new cron has none yet.
+    assert page.locator(BADGE).count() == 0
+
+
+def test_the_count_is_how_many_crons_have_output_waiting(shell):
+    """Asked for 2026-11-23: one cron with output is Cron Jobs 1, two are
+    Cron Jobs 2."""
+    page, schedules, _ = shell
+    schedules[0] = _with_result("Weekly review", "done")
+    page.wait_for_selector(BADGE, timeout=4000)
     assert page.locator(BADGE).inner_text().strip() == "1"
+    schedules.append(_with_result("Inbox check", "nothing new"))
+    schedules[1]["id"] = "s2"
+    page.wait_for_function(
+        "(document.querySelector('[data-aiui-cron-badge]')||{}).textContent"
+        " === '2'", timeout=4000)
+
+
+def test_the_count_is_a_glowing_red_circle(shell):
+    page, schedules, _ = shell
+    schedules[0] = _with_result("Weekly review", "done")
+    page.wait_for_selector(BADGE, timeout=4000)
+    look = page.evaluate("""() => {
+        const b = document.querySelector('[data-aiui-cron-badge]');
+        const s = getComputedStyle(b);
+        return {bg: s.backgroundColor, radius: s.borderRadius,
+                w: b.getBoundingClientRect().width,
+                h: b.getBoundingClientRect().height, shadow: s.boxShadow};
+    }""")
+    assert look["bg"] == "rgb(239, 68, 68)"
+    assert abs(look["w"] - look["h"]) < 1, "a circle, not a pill"
+    assert look["shadow"] != "none", "it glows"
 
 
 def test_the_notice_sits_right_under_cron_jobs(shell):
@@ -140,6 +178,64 @@ def test_a_new_result_on_an_existing_cron_is_counted(shell):
     page.wait_for_selector(NOTICE, timeout=4000)
     text = page.locator(NOTICE).inner_text()
     assert "Weekly review" in text and "new result" in text
+
+
+def test_the_result_itself_is_in_the_notice(shell):
+    """Asked for 2026-11-23: the answer, in the sidebar, not a pointer to
+    another page."""
+    page, schedules, _ = shell
+    schedules[0] = _with_result("Inbox check (Gmail)",
+                                "Nothing new in the last 24 hours.")
+    page.wait_for_selector(NOTICE, timeout=4000)
+    text = page.locator(NOTICE).inner_text()
+    assert "Inbox check (Gmail)" in text
+    assert "Nothing new in the last 24 hours." in text
+
+
+def test_a_long_result_is_cut_short_until_show_more(shell):
+    page, schedules, _ = shell
+    long = "Important: " + "word " * 200 + "THE END"
+    schedules[0] = _with_result("Inbox check", long)
+    page.wait_for_selector(NOTICE, timeout=4000)
+    assert "THE END" not in page.locator(NOTICE).inner_text()
+    more = page.locator(NOTICE + " [data-aiui-cron-more]")
+    assert more.inner_text().strip() == "Show more"
+    more.click()
+    assert "THE END" in page.locator(NOTICE).inner_text()
+    assert more.inner_text().strip() == "Show less"
+
+
+def test_markup_in_a_result_stays_text(shell):
+    page, schedules, _ = shell
+    schedules[0] = _with_result("Inbox", "<b id=boom>hi</b>")
+    page.wait_for_selector(NOTICE, timeout=4000)
+    assert page.locator("#boom").count() == 0
+    assert "<b id=boom>" in page.locator(NOTICE).inner_text()
+
+
+def test_a_second_result_replaces_the_first_rather_than_stacking(shell):
+    page, schedules, _ = shell
+    schedules[0] = _with_result("Inbox", "first answer",
+                                at="2026-11-27T09:00:00")
+    page.wait_for_selector(NOTICE, timeout=4000)
+    schedules[0] = _with_result("Inbox", "second answer",
+                                at="2026-11-27T15:00:00")
+    page.wait_for_function(
+        "document.querySelector('[data-aiui-cron-notice]')"
+        ".innerText.includes('second answer')", timeout=4000)
+    text = page.locator(NOTICE).inner_text()
+    assert "first answer" not in text
+    assert page.locator(BADGE).inner_text().strip() == "1"
+
+
+def test_a_failed_run_says_it_failed_and_shows_why(shell):
+    page, schedules, _ = shell
+    schedules[0] = _with_result("Inbox", "Gmail refused: reconnect it.",
+                                status="failed")
+    page.wait_for_selector(NOTICE, timeout=4000)
+    text = page.locator(NOTICE).inner_text()
+    assert "failed" in text.lower()
+    assert "Gmail refused: reconnect it." in text
 
 
 def test_opening_cron_jobs_from_the_notice_clears_it(shell):
