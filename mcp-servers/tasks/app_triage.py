@@ -257,11 +257,16 @@ _APPS = (
         "automation workflows that connect apps and run steps on their own, "
         "when something happens or on a timer",
         "list your workflows, read one, see its recent runs, build a "
-        "new workflow, change an existing one, and switch one on or "
-        "off",
+        "new workflow, change an existing one, switch one on or off, "
+        "and link AIUI to your n8n so a workflow can use the apps you "
+        "connected in AIUI without connecting them again",
         ("list_my_workflows", "get_workflow", "list_executions",
          "create_workflow", "update_workflow", "activate_workflow",
-         "deactivate_workflow", "delete_workflow"),
+         "deactivate_workflow", "delete_workflow", "link_aiui"),
+        # "link AIUI" added 2026-11-23: it is why each user brings their
+        # own n8n (Lukas, standup 2026-11-19), and the recommendation
+        # left it out. `can` is not in the Jev question (`note` is), so
+        # the app_pick scores are unchanged.
         # A new workflow is created switched OFF, and a workflow that
         # is switched ON cannot be deleted until it is switched off:
         # n8n has no trash, so a delete cannot be undone (measured

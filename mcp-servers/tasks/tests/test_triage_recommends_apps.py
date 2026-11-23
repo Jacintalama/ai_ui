@@ -294,6 +294,17 @@ def test_n8n_is_not_called_open_source():
     assert "open source" not in app_triage.APPS["n8n"].pros.lower()
 
 
+def test_n8n_says_its_workflows_can_use_the_apps_connected_in_aiui():
+    """The reason Lukas chose each user's own n8n (standup 2026-11-19): a
+    workflow uses the apps already connected in AIUI. `link_aiui` does it
+    (2026-11-19), and the recommendation left it out, so "which automation
+    tool should I use?" sold n8n without the one thing it has that Zapier
+    has not."""
+    n8n = app_triage.APPS["n8n"]
+    assert "link_aiui" in n8n.tools
+    assert "AIUI" in n8n.can and "connected" in n8n.can, n8n.can
+
+
 def test_notion_only_claims_what_its_tools_return():
     """get_page returns properties, not the page's text."""
     n = app_triage.APPS["notion"]
