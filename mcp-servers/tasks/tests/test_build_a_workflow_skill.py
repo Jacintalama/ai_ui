@@ -48,3 +48,18 @@ def test_a_plain_timed_job_goes_to_schedules():
 def test_no_n8n_connected_is_said_not_guessed():
     body = _skill()["body"]
     assert "Connections" in body and "not connected" in body
+
+
+def test_whether_n8n_is_connected_is_the_first_thing_checked():
+    """Live 2026-11-23, three runs with no n8n connected: none said so, and
+    one promised to build. The check was step 3 and a section at the end."""
+    body = _skill()["body"]
+    first = body.index("## Steps")
+    assert body.index("not connected") < body.index("1. ", first)
+
+
+def test_the_jargon_list_covers_what_slipped_through_live():
+    """The same runs said "(a webhook in n8n)" and "a plain POST"."""
+    body = _skill()["body"]
+    for word in ("webhook", "endpoint", "POST", "not even in brackets"):
+        assert word in body, word
