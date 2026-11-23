@@ -145,6 +145,25 @@ def test_the_brief_tells_it_to_read_the_skill_and_follow_it():
     assert POOL["weekly-review"]["description"] in b
 
 
+def test_the_best_skill_comes_with_its_steps_not_only_its_name():
+    """Live 2026-11-23: Jev picked build-a-workflow at 0.97 on two runs of
+    the same message; the model read it with the skills tool on one and not
+    the other, and the second answer said "webhook" and "POST" to a person
+    the skill is for. Agents get a chosen skill's body injected
+    (agent_skills); the main chat now does the same for the top pick."""
+    pool = {**POOL,
+            "weekly-review": {**POOL["weekly-review"],
+                              "body": "# Weekly review\n\n1. Ask what shipped."},
+            "apology-note": {**POOL["apology-note"],
+                             "body": "# Apology\n\n1. Say sorry first."}}
+    b = app_triage.brief(app_triage.plan(
+        [], set(), [], pool=pool,
+        skills=[("weekly-review", 0.97), ("apology-note", 0.93)]))
+    assert "1. Ask what shipped." in b
+    assert "Say sorry first." not in b      # the second is named, not pasted
+    assert "apology-note" in b and "skills tool" in b
+
+
 def test_a_skill_that_needs_an_app_not_connected_gets_its_button():
     p = app_triage.plan([], set(), [], pool=POOL, skills=[("inbox-triage", 0.95)])
     out = app_triage.with_buttons("The inbox-triage skill fits.", p)
