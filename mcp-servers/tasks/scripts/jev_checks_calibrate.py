@@ -431,6 +431,20 @@ SKILL_CASES = [
      {"write-a-document"}),
     ("who is Ana Reyes? I am meeting her tomorrow", [{"person-brief"}],
      {"meeting-prep", "research-and-cite"}),
+    # build-a-workflow (2026-11-23): Lukas's plain-words workflows. The
+    # third has no AIUI path yet; the skill is still the one that says so.
+    ("save the people who fill in my website form into Airtable",
+     [{"build-a-workflow"}], set()),
+    ("every Monday send my team a summary of last week's GitHub issues",
+     [{"build-a-workflow", "recurring-digest"}],
+     {"schedule-a-job", "brief-the-team", "sprint-health"}),
+    ("when someone books a meeting with me, add them to my CRM",
+     [{"build-a-workflow"}], set()),
+    # A timed report for the assistant is not a workflow; the skill may
+    # come second but must not be needed.
+    ("every morning summarise my inbox for me",
+     [{"morning-briefing", "recurring-digest", "inbox-triage"}],
+     {"schedule-a-job", "day-ahead", "build-a-workflow"}),
     ("tell me a joke about coffee", [], set()),
     ("what is the capital of Australia", [], set()),
     ("thanks, that looks great", [], set()),
