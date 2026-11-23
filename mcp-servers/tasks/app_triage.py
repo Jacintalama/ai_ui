@@ -600,10 +600,18 @@ def _skills(skills, pool, have) -> list:
         skill = (pool or {}).get(name)
         if not isinstance(skill, dict) or len(out) >= MAX_SKILLS:
             continue
-        out.append({"name": name,
-                    "description": " ".join(
-                        str(skill.get("description") or "").split())[:240],
-                    "missing": skill_fit.missing(skill, have)})
+        entry = {"name": name,
+                 "description": " ".join(
+                     str(skill.get("description") or "").split())[:240],
+                 "missing": skill_fit.missing(skill, have)}
+        # The best one's steps go in whole, as agent_skills does for an
+        # agent's chosen skill. Left to the skills tool, the model read
+        # build-a-workflow on one run of two (live 2026-11-23).
+        if not out and str(skill.get("body") or "").strip():
+            import agent_skills
+            entry["body"] = str(skill["body"]).strip()[
+                :agent_skills.MAX_SKILL_CHARS]
+        out.append(entry)
     return out
 
 
@@ -646,10 +654,19 @@ def brief(p) -> str:
         # Not a word about where the button is: each description of it was
         # read back to the person (live 2026-11-18).
         lines.append("Do not write a link to it, and do not mention a button.")
-    if skills:
+    best = next((s for s in skills if s.get("body")), None)
+    if best:
+        lines.append("Follow the ready-made skill %s for this message. Its "
+                     "steps, between the lines:\n---\n%s\n---"
+                     % (best["name"], best["body"]))
+        if best["missing"]:
+            lines.append("It needs %s connected, which they have not." % (
+                " and ".join(_skill_app_label(a) for a in best["missing"])))
+    rest = [s for s in skills if s is not best]
+    if rest:
         lines.append("Ready-made skills that fit (read one with the skills "
                      "tool and follow its steps):")
-        for s in skills:
+        for s in rest:
             line = "- %s: %s" % (s["name"], s["description"])
             if s["missing"]:
                 line += " It needs %s connected, which they have not." % (
