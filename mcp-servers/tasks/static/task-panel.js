@@ -924,6 +924,265 @@
   }
   injectSidebarBuildWebsiteEntry();
 
+  // ===== Cron notices (2026-11-23) =====
+  // A cron can be made from the Cron Jobs page, from the main chat (the
+  // schedules tool) or from Discord, and only the page itself showed where
+  // the answer goes. Made from the chat, nothing said "your results land on
+  // the Cron Jobs page", so people asked where to look.
+  //
+  // So this checks the person's own schedules (the same owner-scoped list
+  // the page reads) and, when a new one appears or a run leaves a new
+  // result, puts a notice right under Cron Jobs with a count on the entry.
+  //
+  // What was already there on the very first check is the baseline and is
+  // never announced, or everybody would get one notice per old schedule.
+  // Seen state lives in localStorage per account, so a reload neither
+  // repeats a dismissed notice nor loses an unseen one. Every name is set
+  // with textContent: a schedule name is text the person (or a model)
+  // wrote, and it must never become markup.
+  function startCronNotices() {
+    const API = "/api/tasks/schedules";
+    const PANE_PATH = "/cronjobs";
+    const POLL_MS = Number(window.__aiuiCronPollMs) || 30000;
+    const MAX_NOTICES = 5;
+    let email = "";
+    let state = null;
+
+    function storeKey() { return "aiuiCronSeen:" + email; }
+    function load() {
+      try { return JSON.parse(localStorage.getItem(storeKey()) || "null"); }
+      catch (e) { return null; }
+    }
+    function save() {
+      try { localStorage.setItem(storeKey(), JSON.stringify(state)); }
+      catch (e) { /* private window: notices still work for this visit */ }
+    }
+
+    function whereItShows(s) {
+      const page = "Results show on the Cron Jobs page";
+      if (!s.delivery_channel_id) return page + ".";
+      const p = String(s.delivery_platform || "").toLowerCase();
+      const label = p === "slack" ? "Slack" : p === "discord" ? "Discord"
+        : (p ? p.charAt(0).toUpperCase() + p.slice(1) : "chat");
+      return page + " and in your " + label + " thread.";
+    }
+
+    function onCronPage() { return location.pathname === PANE_PATH; }
+
+    function markAllSeen() {
+      if (!state || !state.notices.length) return;
+      state.notices = [];
+      save();
+      render();
+    }
+
+    function absorb(list) {
+      const fresh = !state;
+      if (fresh) state = { ids: {}, results: {}, notices: [] };
+      const present = {};
+      for (const s of list) {
+        if (!s || !s.id) continue;
+        const id = String(s.id);
+        present[id] = true;
+        const at = s.last_result_at || null;
+        if (!state.ids[id]) {
+          state.ids[id] = 1;
+          state.results[id] = at;
+          if (!fresh) state.notices.push({ id: id, kind: "new",
+            name: String(s.name || "Untitled"), where: whereItShows(s) });
+        } else if (at && at !== state.results[id]) {
+          state.results[id] = at;
+          if (!fresh) state.notices.push({ id: id, kind: "result",
+            name: String(s.name || "Untitled"),
+            failed: s.last_run_status === "failed" });
+        }
+      }
+      // A deleted schedule takes its notices with it.
+      for (const id of Object.keys(state.ids)) {
+        if (!present[id]) { delete state.ids[id]; delete state.results[id]; }
+      }
+      state.notices = state.notices.filter((n) => present[n.id])
+        .slice(-MAX_NOTICES);
+      // Looking at the page is seeing it.
+      if (onCronPage()) state.notices = [];
+      save();
+    }
+
+    function ensureStyle() {
+      if (document.getElementById("aiui-cron-notice-style")) return;
+      const st = document.createElement("style");
+      st.id = "aiui-cron-notice-style";
+      st.textContent = [
+        ":root{--aiui-cn-bg:#f4f4f5;--aiui-cn-fg:#18181b;--aiui-cn-muted:#52525b;",
+        "--aiui-cn-line:#e4e4e7;--aiui-cn-accent:#2563eb;--aiui-cn-badge-bg:#2563eb;",
+        "--aiui-cn-badge-fg:#ffffff;}",
+        ".dark{--aiui-cn-bg:#1f1f23;--aiui-cn-fg:#f4f4f5;--aiui-cn-muted:#a1a1aa;",
+        "--aiui-cn-line:#2e2e33;--aiui-cn-accent:#60a5fa;--aiui-cn-badge-bg:#3b82f6;}",
+        "[data-aiui-cron-notice]{margin:4px 8px 6px;padding:8px 10px;border-radius:10px;",
+        "background:var(--aiui-cn-bg);color:var(--aiui-cn-fg);border:1px solid var(--aiui-cn-line);",
+        "font-size:12px;line-height:1.4;}",
+        "[data-aiui-cron-notice] .aiui-cn-item+.aiui-cn-item{margin-top:6px;padding-top:6px;",
+        "border-top:1px solid var(--aiui-cn-line);}",
+        "[data-aiui-cron-notice] .aiui-cn-title{font-weight:600;overflow-wrap:anywhere;}",
+        "[data-aiui-cron-notice] .aiui-cn-sub{color:var(--aiui-cn-muted);}",
+        "[data-aiui-cron-notice] .aiui-cn-actions{display:flex;gap:8px;margin-top:8px;}",
+        "[data-aiui-cron-notice] button{font:inherit;cursor:pointer;border-radius:6px;",
+        "padding:3px 8px;border:1px solid var(--aiui-cn-line);background:transparent;",
+        "color:var(--aiui-cn-fg);}",
+        "[data-aiui-cron-notice] button[data-aiui-cron-open]{background:var(--aiui-cn-accent);",
+        "border-color:var(--aiui-cn-accent);color:var(--aiui-cn-badge-fg);}",
+        "[data-aiui-cron-notice] button:focus-visible{outline:2px solid var(--aiui-cn-accent);",
+        "outline-offset:2px;}",
+        "[data-aiui-cron-badge]{display:inline-flex;align-items:center;justify-content:center;",
+        "min-width:18px;height:18px;padding:0 5px;margin-left:auto;border-radius:9px;",
+        "background:var(--aiui-cn-badge-bg);color:var(--aiui-cn-badge-fg);",
+        "font-size:11px;font-weight:600;line-height:1;}",
+      ].join("");
+      document.head.appendChild(st);
+    }
+
+    function itemFor(n) {
+      const item = document.createElement("div");
+      item.className = "aiui-cn-item";
+      const title = document.createElement("div");
+      title.className = "aiui-cn-title";
+      const sub = document.createElement("div");
+      sub.className = "aiui-cn-sub";
+      if (n.kind === "new") {
+        title.textContent = "New cron job: " + n.name;
+        sub.textContent = n.where || "Results show on the Cron Jobs page.";
+      } else {
+        title.textContent = n.name + (n.failed ? " failed its last run"
+                                                : " has a new result");
+        sub.textContent = "Open Cron Jobs to read it.";
+      }
+      item.appendChild(title);
+      item.appendChild(sub);
+      return item;
+    }
+
+    function render() {
+      const entry = document.querySelector("[data-aiui-cron-jobs]");
+      const notices = (state && state.notices) || [];
+      const sig = notices.map((n) => n.kind + ":" + n.id).join("|");
+      const oldCard = document.querySelector("[data-aiui-cron-notice]");
+      const oldBadge = document.querySelector("[data-aiui-cron-badge]");
+      if (!entry || !notices.length) {
+        if (oldCard) oldCard.remove();
+        if (oldBadge) oldBadge.remove();
+        return;
+      }
+      ensureStyle();
+
+      // The count, on the entry itself, so the collapsed rail shows it too.
+      const holder = entry.querySelector("a") || entry;
+      let badge = oldBadge;
+      if (!badge || !holder.contains(badge)) {
+        if (badge) badge.remove();
+        badge = document.createElement("span");
+        badge.setAttribute("data-aiui-cron-badge", "");
+        holder.appendChild(badge);
+      }
+      const count = String(notices.length);
+      if (badge.textContent !== count) badge.textContent = count;
+      badge.setAttribute("aria-label", count + " new on Cron Jobs");
+
+      // The card goes right under the entry, and only where it fits: the
+      // 42px rail has room for the count and nothing else.
+      const narrow = entry.getBoundingClientRect().width < 120;
+      if (narrow) { if (oldCard) oldCard.remove(); return; }
+      if (oldCard && oldCard.previousElementSibling === entry
+          && oldCard.getAttribute("data-sig") === sig) return;
+      if (oldCard) oldCard.remove();
+
+      const card = document.createElement("div");
+      card.setAttribute("data-aiui-cron-notice", "");
+      card.setAttribute("data-sig", sig);
+      card.setAttribute("role", "status");
+      card.setAttribute("aria-live", "polite");
+      for (const n of notices.slice().reverse()) card.appendChild(itemFor(n));
+      const actions = document.createElement("div");
+      actions.className = "aiui-cn-actions";
+      const open = document.createElement("button");
+      open.type = "button";
+      open.setAttribute("data-aiui-cron-open", "");
+      open.textContent = "Open Cron Jobs";
+      open.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        markAllSeen();
+        const e = document.querySelector("[data-aiui-cron-jobs]");
+        if (e) e.click();
+      });
+      const dismiss = document.createElement("button");
+      dismiss.type = "button";
+      dismiss.setAttribute("data-aiui-cron-dismiss", "");
+      dismiss.textContent = "Dismiss";
+      dismiss.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        markAllSeen();
+      });
+      actions.appendChild(open);
+      actions.appendChild(dismiss);
+      card.appendChild(actions);
+      entry.parentElement.insertBefore(card, entry.nextSibling);
+    }
+
+    async function poll() {
+      if (document.hidden || onAuthRoute()) return;
+      const token = localStorage.getItem("token");
+      if (!token) return;
+      try {
+        const r = await _origFetchOrWindow(API, {
+          credentials: "include",
+          headers: { Authorization: "Bearer " + token },
+        });
+        const ct = (r.headers && r.headers.get && r.headers.get("content-type")) || "";
+        if (!r.ok || ct.indexOf("json") === -1) return;
+        const list = await r.json();
+        if (!Array.isArray(list)) return;
+        absorb(list);
+        render();
+      } catch (e) {
+        // Quiet on purpose: a missed check is caught by the next one.
+      }
+    }
+
+    // Opening Cron Jobs from the sidebar itself counts as seeing it.
+    document.addEventListener("click", (ev) => {
+      const t = ev.target;
+      if (t && t.closest && t.closest("[data-aiui-cron-jobs]")) markAllSeen();
+    }, true);
+
+    // Open WebUI re-renders the sidebar freely; put the notice back after.
+    let queued = false;
+    new MutationObserver(() => {
+      if (queued || !state || !state.notices.length) return;
+      queued = true;
+      requestAnimationFrame(() => { queued = false; render(); });
+    }).observe(document.body, { childList: true, subtree: true });
+
+    (async function begin() {
+      const who = await getAuthInfo();
+      if (!who || !who.email) {
+        // Not signed in yet (the sign-in page). Try again shortly.
+        setTimeout(begin, 5000);
+        return;
+      }
+      email = String(who.email).toLowerCase();
+      state = load();
+      render();
+      poll();
+      setInterval(poll, POLL_MS);
+      window.addEventListener("focus", poll);
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) poll();
+      });
+    })();
+  }
+  startCronNotices();
+
   // ===== SPA navigation watcher =====
   // OpenWebUI is a SvelteKit SPA — sign-in changes URL via pushState without
   // reloading. Watch for route changes and re-attempt init when leaving /auth.
