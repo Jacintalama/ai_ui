@@ -951,136 +951,33 @@
   }
   injectSidebarBuildWebsiteEntry();
 
-  // ===== Cron notices (2026-11-23) =====
-  // A cron can be made from the Cron Jobs page, from the main chat (the
-  // schedules tool) or from Discord, and only the page itself showed where
-  // the answer goes. So the sidebar says it, right under Cron Jobs.
+  // ===== Cron output count (2026-11-23) =====
+  // A red glowing number on Cron Jobs: how many cron outputs are unread.
+  // One unread output is 1, two are 2. Nothing else: the card that used to
+  // sit under the entry with the answers in it was removed the same day at
+  // the owner's request ("only just the notif 1"). The answers are read on
+  // /cronjobs/output, which the Cron Jobs page links to.
   //
-  // Two things are shown there, from two places:
-  //
-  //  - A NEW CRON, noticed by comparing this person's schedules with what
-  //    this browser saw last (localStorage per account). What exists on the
-  //    very first check is the baseline and is never announced.
-  //  - UNREAD OUTPUTS, which are the server's: a run arrives unread, opening
-  //    it on /cronjobs/output reads it, like an email (migration 072). The
-  //    red count IS the unread count, so it is the same in every tab and on
-  //    every device, and reading on one clears it on all of them.
-  //
-  // Every name and answer is set with textContent: it is text a person or a
-  // model wrote, and it must never become markup.
+  // The count is the SERVER's (migration 072: a run arrives unread, opening
+  // it on the outputs page reads it), so it is the same in every tab and on
+  // every device, and reading on one clears it on all of them.
   function startCronNotices() {
-    const API = "/api/tasks/schedules";
-    const UNREAD_API = "/api/tasks/schedules/outputs/unread?limit=3";
-    const READ_ALL_API = "/api/tasks/schedules/outputs/read-all";
-    const PANE_PATH = "/cronjobs";
-    const OUTPUT_PATH = "/cronjobs/output";
+    const UNREAD_API = "/api/tasks/schedules/outputs/unread?limit=0";
     const POLL_MS = Number(window.__aiuiCronPollMs) || 30000;
-    const MAX_NOTICES = 5;
-    const RESULT_SHORT = 180;
-    let email = "";
-    let state = null;
-    let unread = { count: 0, items: [] };
-
-    // "2": the result-tracking state "aiuiCronSeen:" kept before unread
-    // moved to the server is simply left behind.
-    function storeKey() { return "aiuiCronSeen2:" + email; }
-    function load() {
-      try { return JSON.parse(localStorage.getItem(storeKey()) || "null"); }
-      catch (e) { return null; }
-    }
-    function save() {
-      try { localStorage.setItem(storeKey(), JSON.stringify(state)); }
-      catch (e) { /* private window: notices still work for this visit */ }
-    }
-    function authHeaders(json) {
-      const h = {};
-      const token = localStorage.getItem("token");
-      if (token) h.Authorization = "Bearer " + token;
-      if (json) h["Content-Type"] = "application/json";
-      return h;
-    }
-
-    function whereItShows(s) {
-      const page = "Its answers will land in Cron Outputs";
-      if (!s.delivery_channel_id) return page + ".";
-      const p = String(s.delivery_platform || "").toLowerCase();
-      const label = p === "slack" ? "Slack" : p === "discord" ? "Discord"
-        : (p ? p.charAt(0).toUpperCase() + p.slice(1) : "chat");
-      return page + " and in your " + label + " thread.";
-    }
-
-    function newNotices() { return (state && state.notices) || []; }
-
-    function clearNew() {
-      if (!state || !state.notices.length) return;
-      state.notices = [];
-      save();
-      render();
-    }
-
-    function absorb(list) {
-      const fresh = !state;
-      if (fresh) state = { ids: {}, notices: [], hiddenTop: "" };
-      const present = {};
-      for (const s of list) {
-        if (!s || !s.id) continue;
-        const id = String(s.id);
-        present[id] = true;
-        if (!state.ids[id]) {
-          state.ids[id] = 1;
-          if (!fresh) state.notices.push({ id: id, kind: "new",
-            name: String(s.name || "Untitled"), where: whereItShows(s) });
-        }
-      }
-      for (const id of Object.keys(state.ids)) {
-        if (!present[id]) delete state.ids[id];
-      }
-      state.notices = state.notices.filter((n) => present[n.id])
-        .slice(-MAX_NOTICES);
-      // Looking at Cron Jobs is seeing that a cron was made.
-      if (location.pathname === PANE_PATH) state.notices = [];
-      save();
-    }
+    let count = 0;
 
     function ensureStyle() {
       if (document.getElementById("aiui-cron-notice-style")) return;
       const st = document.createElement("style");
       st.id = "aiui-cron-notice-style";
       st.textContent = [
-        ":root{--aiui-cn-bg:#f4f4f5;--aiui-cn-fg:#18181b;--aiui-cn-muted:#52525b;",
-        "--aiui-cn-line:#e4e4e7;--aiui-cn-accent:#2563eb;",
-        "--aiui-cn-badge-fg:#ffffff;--aiui-cn-alert:#ef4444;--aiui-cn-btn:#2563eb;",
+        ":root{--aiui-cn-badge-fg:#ffffff;--aiui-cn-alert:#ef4444;",
         "--aiui-cn-glow:rgba(239,68,68,0.65);}",
-        ".dark{--aiui-cn-bg:#1f1f23;--aiui-cn-fg:#f4f4f5;--aiui-cn-muted:#a1a1aa;",
-        "--aiui-cn-line:#2e2e33;--aiui-cn-accent:#60a5fa;}",
-        "[data-aiui-cron-notice]{margin:4px 8px 6px;padding:8px 10px;border-radius:10px;",
-        "background:var(--aiui-cn-bg);color:var(--aiui-cn-fg);border:1px solid var(--aiui-cn-line);",
-        "font-size:12px;line-height:1.4;}",
-        "[data-aiui-cron-notice] .aiui-cn-item+.aiui-cn-item{margin-top:6px;padding-top:6px;",
-        "border-top:1px solid var(--aiui-cn-line);}",
-        "[data-aiui-cron-notice] .aiui-cn-title{font-weight:600;overflow-wrap:anywhere;",
-        "display:flex;align-items:center;gap:6px;}",
-        "[data-aiui-cron-notice] .aiui-cn-dot{width:7px;height:7px;border-radius:50%;flex:none;",
-        "background:var(--aiui-cn-alert);}",
-        "[data-aiui-cron-notice] .aiui-cn-sub{color:var(--aiui-cn-muted);}",
-        "[data-aiui-cron-notice] .aiui-cn-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}",
-        "[data-aiui-cron-notice] button{font:inherit;cursor:pointer;border-radius:6px;",
-        "padding:3px 8px;border:1px solid var(--aiui-cn-line);background:transparent;",
-        "color:var(--aiui-cn-fg);}",
-        "[data-aiui-cron-notice] button[data-aiui-cron-open]{background:var(--aiui-cn-btn);",
-        "border-color:var(--aiui-cn-btn);color:var(--aiui-cn-badge-fg);}",
-        "[data-aiui-cron-notice] button:focus-visible{outline:2px solid var(--aiui-cn-accent);",
-        "outline-offset:2px;}",
-        "[data-aiui-cron-notice] .aiui-cn-text{margin-top:4px;white-space:pre-wrap;",
-        "overflow-wrap:anywhere;}",
-        "[data-aiui-cron-notice] .aiui-cn-text.aiui-cn-open{max-height:240px;overflow:auto;}",
-        "[data-aiui-cron-notice] button.aiui-cn-more{margin-top:4px;padding:0;border:0;",
-        "color:var(--aiui-cn-accent);text-decoration:underline;}",
-        "[data-aiui-cron-notice] .aiui-cn-extra{margin-top:6px;color:var(--aiui-cn-muted);}",
         // A red circle that glows. min-width = height, so one digit is a
         // circle and "12" stretches into a lozenge rather than overflowing.
         "[data-aiui-cron-badge]{display:inline-flex;align-items:center;justify-content:center;",
-        "box-sizing:border-box;min-width:18px;height:18px;padding:0 4px;margin-left:auto;border-radius:9px;flex:none;",
+        "box-sizing:border-box;min-width:18px;height:18px;padding:0 4px;margin-left:auto;",
+        "border-radius:9px;flex:none;",
         "background:var(--aiui-cn-alert);color:var(--aiui-cn-badge-fg);",
         "font-size:11px;font-weight:700;line-height:1;",
         "box-shadow:0 0 6px 1px var(--aiui-cn-glow);",
@@ -1092,242 +989,63 @@
       document.head.appendChild(st);
     }
 
-    function newItem(n) {
-      const item = document.createElement("div");
-      item.className = "aiui-cn-item";
-      const title = document.createElement("div");
-      title.className = "aiui-cn-title";
-      title.textContent = "New cron job: " + n.name;
-      const sub = document.createElement("div");
-      sub.className = "aiui-cn-sub";
-      sub.textContent = n.where || "Its answers will land in Cron Outputs.";
-      item.appendChild(title);
-      item.appendChild(sub);
-      return item;
-    }
-
-    function unreadItem(o) {
-      const item = document.createElement("div");
-      item.className = "aiui-cn-item";
-      const title = document.createElement("div");
-      title.className = "aiui-cn-title";
-      const dot = document.createElement("span");
-      dot.className = "aiui-cn-dot";
-      dot.setAttribute("aria-hidden", "true");
-      const name = document.createElement("span");
-      name.textContent = String(o.name || "Untitled")
-        + (o.ok === false ? " failed its last run" : " has a new result");
-      title.appendChild(dot);
-      title.appendChild(name);
-      item.appendChild(title);
-      const full = String(o.result || "").trim();
-      if (!full) return item;
-      // The answer itself, as text. Cut short with Show more when long.
-      const body = document.createElement("div");
-      body.className = "aiui-cn-text";
-      const isLong = full.length > RESULT_SHORT;
-      const short = isLong ? full.slice(0, RESULT_SHORT).trimEnd() + "…" : full;
-      body.textContent = short;
-      item.appendChild(body);
-      if (isLong) {
-        const more = document.createElement("button");
-        more.type = "button";
-        more.className = "aiui-cn-more";
-        more.setAttribute("data-aiui-cron-more", "");
-        more.setAttribute("aria-expanded", "false");
-        more.textContent = "Show more";
-        more.addEventListener("click", (ev) => {
-          ev.preventDefault();
-          ev.stopPropagation();
-          const isOpen = more.getAttribute("aria-expanded") === "true";
-          body.textContent = isOpen ? short : full;
-          body.classList.toggle("aiui-cn-open", !isOpen);
-          more.setAttribute("aria-expanded", isOpen ? "false" : "true");
-          more.textContent = isOpen ? "Show more" : "Show less";
-        });
-        item.appendChild(more);
-      }
-      return item;
-    }
-
-    function button(attr, label, onClick) {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.setAttribute(attr, "");
-      b.textContent = label;
-      b.addEventListener("click", (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        onClick();
-      });
-      return b;
-    }
-
-    async function markAllRead() {
-      unread = { count: 0, items: [] };
-      if (state) { state.notices = []; save(); }
-      render();
-      try {
-        await _origFetchOrWindow(READ_ALL_API, {
-          method: "POST", credentials: "include",
-          headers: authHeaders(true), body: "{}",
-        });
-      } catch (e) { /* the next check shows the truth */ }
-      poll();
-    }
-
     function render() {
       const entry = document.querySelector("[data-aiui-cron-jobs]");
-      const fresh = newNotices();
-      const count = Math.max(0, Number(unread.count) || 0);
-      const items = Array.isArray(unread.items) ? unread.items : [];
-      const oldCard = document.querySelector("[data-aiui-cron-notice]");
-      const oldBadge = document.querySelector("[data-aiui-cron-badge]");
-      if (!entry) {
-        if (oldCard) oldCard.remove();
-        if (oldBadge) oldBadge.remove();
+      const old = document.querySelector("[data-aiui-cron-badge]");
+      if (!entry || !count) {
+        if (old) old.remove();
         return;
       }
-      if (count || fresh.length) ensureStyle();
-
-      // The count, on the entry itself, so the collapsed rail shows it too:
-      // how many outputs are unread (asked for 2026-11-23: one output is
-      // Cron Jobs 1, two is Cron Jobs 2).
+      ensureStyle();
+      // On the entry itself, so the collapsed rail shows it too.
       const holder = entry.querySelector("a") || entry;
-      let badge = oldBadge;
-      if (!count) {
+      let badge = old;
+      if (!badge || !holder.contains(badge)) {
         if (badge) badge.remove();
-      } else {
-        if (!badge || !holder.contains(badge)) {
-          if (badge) badge.remove();
-          badge = document.createElement("span");
-          badge.setAttribute("data-aiui-cron-badge", "");
-          holder.appendChild(badge);
-        }
-        const text = count > 99 ? "99+" : String(count);
-        if (badge.textContent !== text) badge.textContent = text;
-        badge.setAttribute("aria-label", count
-          + (count === 1 ? " unread cron output" : " unread cron outputs"));
+        badge = document.createElement("span");
+        badge.setAttribute("data-aiui-cron-badge", "");
+        holder.appendChild(badge);
       }
-
-      // The card goes right under the entry, only where it fits (the 42px
-      // rail has room for the count and nothing else), never on the outputs
-      // page itself, and not after Hide until something newer arrives.
-      const top = items.length ? String(items[0].id || "") : "";
-      const hidden = !!top && !!state && state.hiddenTop === top && !fresh.length;
-      const show = (fresh.length || (count && !hidden))
-        && location.pathname !== OUTPUT_PATH
-        && entry.getBoundingClientRect().width >= 120;
-      if (!show) { if (oldCard) oldCard.remove(); return; }
-      const sig = fresh.map((n) => n.id).join(",") + "|" + count + "|"
-        + items.map((o) => o.id).join(",");
-      if (oldCard && oldCard.previousElementSibling === entry
-          && oldCard.getAttribute("data-sig") === sig) return;
-      if (oldCard) oldCard.remove();
-
-      const card = document.createElement("div");
-      card.setAttribute("data-aiui-cron-notice", "");
-      card.setAttribute("data-sig", sig);
-      card.setAttribute("role", "status");
-      card.setAttribute("aria-live", "polite");
-      for (const n of fresh.slice().reverse()) card.appendChild(newItem(n));
-      if (count) {
-        for (const o of items) card.appendChild(unreadItem(o));
-        if (count > items.length) {
-          const extra = document.createElement("div");
-          extra.className = "aiui-cn-extra";
-          extra.textContent = "+" + (count - items.length) + " more unread";
-          card.appendChild(extra);
-        }
-      }
-      const actions = document.createElement("div");
-      actions.className = "aiui-cn-actions";
-      if (count) {
-        actions.appendChild(button("data-aiui-cron-open", "View output", () => {
-          if (state) { state.notices = []; save(); }
-          if (!(typeof window.aiuiOpenPane === "function"
-                && window.aiuiOpenPane(OUTPUT_PATH))) {
-            const e = document.querySelector("[data-aiui-cron-jobs]");
-            if (e) e.click();
-          }
-          render();
-        }));
-        actions.appendChild(button("data-aiui-cron-read-all", "Mark all read", markAllRead));
-        actions.appendChild(button("data-aiui-cron-hide", "Hide", () => {
-          if (state) { state.notices = []; state.hiddenTop = top; save(); }
-          render();
-        }));
-      } else {
-        actions.appendChild(button("data-aiui-cron-open", "Open Cron Jobs", () => {
-          clearNew();
-          const e = document.querySelector("[data-aiui-cron-jobs]");
-          if (e) e.click();
-        }));
-        actions.appendChild(button("data-aiui-cron-dismiss", "Dismiss", clearNew));
-      }
-      card.appendChild(actions);
-      entry.parentElement.insertBefore(card, entry.nextSibling);
-    }
-
-    async function getJson(url) {
-      const r = await _origFetchOrWindow(url, {
-        credentials: "include", headers: authHeaders(false),
-      });
-      const ct = (r.headers && r.headers.get && r.headers.get("content-type")) || "";
-      if (!r.ok || ct.indexOf("json") === -1) return null;
-      return r.json();
+      const text = count > 99 ? "99+" : String(count);
+      if (badge.textContent !== text) badge.textContent = text;
+      badge.setAttribute("aria-label", count
+        + (count === 1 ? " unread cron output" : " unread cron outputs"));
     }
 
     async function poll() {
       if (document.hidden || onAuthRoute()) return;
-      if (!localStorage.getItem("token")) return;
+      const token = localStorage.getItem("token");
+      if (!token) return;
       try {
-        const both = await Promise.all([
-          getJson(API).catch(() => null),
-          getJson(UNREAD_API).catch(() => null),
-        ]);
-        const list = both[0];
-        const un = both[1];
-        if (Array.isArray(list)) absorb(list);
-        if (un && typeof un === "object") {
-          unread = { count: Number(un.count) || 0,
-                     items: Array.isArray(un.items) ? un.items : [] };
-        }
+        const r = await _origFetchOrWindow(UNREAD_API, {
+          credentials: "include",
+          headers: { Authorization: "Bearer " + token },
+        });
+        const ct = (r.headers && r.headers.get && r.headers.get("content-type")) || "";
+        if (!r.ok || ct.indexOf("json") === -1) return;
+        const d = await r.json();
+        count = Math.max(0, Number(d && d.count) || 0);
         render();
       } catch (e) {
         // Quiet on purpose: a missed check is caught by the next one.
       }
     }
 
-    // Opening Cron Jobs from the sidebar is seeing that a cron was made.
-    // It is NOT reading its outputs: those stay unread until opened.
-    document.addEventListener("click", (ev) => {
-      const t = ev.target;
-      if (t && t.closest && t.closest("[data-aiui-cron-jobs]")) clearNew();
-    }, true);
-
-    // The outputs page says when something was read, so the count drops at
-    // once rather than on the next check. Same origin only.
+    // The outputs page says when something was read, so the number drops
+    // at once rather than on the next check. Same origin only.
     window.addEventListener("message", (ev) => {
       if (ev.origin !== location.origin) return;
       const d = ev.data;
       if (d && d.type === "aiui:cron-outputs-changed") poll();
     });
 
-    // Open WebUI re-renders the sidebar freely; put the notice back after.
+    // Open WebUI re-renders the sidebar freely; put the number back after.
     let queued = false;
     new MutationObserver(() => {
-      if (queued || (!newNotices().length && !unread.count)) return;
+      if (queued || !count) return;
       queued = true;
       requestAnimationFrame(() => { queued = false; render(); });
     }).observe(document.body, { childList: true, subtree: true });
-
-    // The pane changes the address without a page load; redraw so the card
-    // leaves the sidebar while the outputs page is open, and comes back.
-    let lastPath = location.pathname;
-    setInterval(() => {
-      if (location.pathname !== lastPath) { lastPath = location.pathname; render(); }
-    }, 500);
 
     (async function begin() {
       const who = await getAuthInfo();
@@ -1336,9 +1054,6 @@
         setTimeout(begin, 5000);
         return;
       }
-      email = String(who.email).toLowerCase();
-      state = load();
-      render();
       poll();
       setInterval(poll, POLL_MS);
       window.addEventListener("focus", poll);
