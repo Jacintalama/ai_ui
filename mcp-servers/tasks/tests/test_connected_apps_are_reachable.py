@@ -58,6 +58,7 @@ SPOKEN = {
     "vercel": "vercel",
     "todoist": "todoist",
     "asana": "asana",
+    "linear": "linear",
 }
 
 

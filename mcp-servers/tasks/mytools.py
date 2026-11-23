@@ -413,6 +413,14 @@ def _vendor_said(r, creds: Dict[str, str]) -> str:
         if isinstance(found, dict):
             found = found.get("message") or found.get("type") or ""
         if not found:
+            # GraphQL's dialect (Linear, 2026-11-23): a LIST of objects,
+            # each with its own message.
+            listed = payload.get("errors")
+            if isinstance(listed, list) and listed:
+                found = "; ".join(
+                    str(e.get("message") if isinstance(e, dict) else e)
+                    for e in listed[:3])
+        if not found:
             # Jira's dialect, and it names no "message" at all:
             #   {"errorMessages": ["..."], "errors": {"duedate": "..."}}
             # `errors` is per FIELD, which is the likeliest real failure on
@@ -835,6 +843,11 @@ def _refusal(r, label: str, creds: Dict[str, str], provider_id: str,
                 "Someone else has to review it.")
     if r.status_code == 404:
         return label + " could not find that." + _vendor_said(r, creds)
+    if r.status_code < 400 and _graphql_refused(r):
+        # A GraphQL vendor refuses with 200 (Linear, 2026-11-23): the body
+        # is {"errors": [...]} and the data is null. Read as a success, a
+        # failed create reached the model as done.
+        return label + " refused that." + _vendor_said(r, creds)
     if r.status_code >= 400:
         # Never r.text: vendors echo the request, credential included.
         # _vendor_said repeats the vendor's own reason only when no part of
@@ -845,6 +858,29 @@ def _refusal(r, label: str, creds: Dict[str, str], provider_id: str,
         return (label + " returned an error (" + str(r.status_code) + ")."
                 + _vendor_said(r, creds))
     return ""
+
+
+def _graphql_refused(r) -> bool:
+    """Whether a 2xx answer is really a GraphQL refusal.
+
+    A property of the body, not a list of vendors: `errors` is a non-empty
+    list AND nothing usable came back, meaning `data` is absent, null, or
+    every root field in it is null. A partial answer, where some data did
+    come back beside an error, is still an answer.
+    """
+    try:
+        payload = r.json()
+    except Exception:                                       # noqa: BLE001
+        return False
+    if not isinstance(payload, dict):
+        return False
+    errors = payload.get("errors")
+    if not (isinstance(errors, list) and errors):
+        return False
+    data = payload.get("data")
+    if data is None:
+        return True
+    return isinstance(data, dict) and all(v is None for v in data.values())
 
 
 class _VendorRefused(Exception):
@@ -3087,6 +3123,230 @@ ASANA_TOOLS = [
 ]
 
 
+# --- Linear ----------------------------------------------------------------
+#
+# GraphQL at https://api.linear.app/graphql, with the person's own key sent
+# bare. Every tool is a POST of a query, so every read says writes=False,
+# and the shaping builds {"query", "variables"} so nothing a model writes is
+# ever pasted into a query string. A refusal can come back as 200; see
+# _graphql_refused.
+
+_LINEAR_ISSUE = ("id identifier title priority dueDate url "
+                 "state { name type } assignee { name } team { key name }")
+#: Finished work, by Linear's own state types.
+_LINEAR_OPEN = '{ state: { type: { nin: ["completed", "canceled"] } } }'
+_LINEAR_PRIORITY = {"none": 0, "no priority": 0, "urgent": 1, "high": 2,
+                    "medium": 3, "normal": 3, "low": 4}
+
+
+def _linear_dig(*path):
+    """Unwrap {"data": {...}} down `path`, then into `nodes` if it is a
+    connection. An answer missing a step is handed back as it came."""
+    def dig(payload):
+        cur = payload.get("data") if isinstance(payload, dict) else None
+        for step in path:
+            if not isinstance(cur, dict) or cur.get(step) is None:
+                return payload
+            cur = cur[step]
+        if isinstance(cur, dict) and isinstance(cur.get("nodes"), list):
+            return cur["nodes"]
+        return cur
+    return dig
+
+
+def _linear_priority(given: Any) -> int:
+    """Linear's number: 1 is urgent, 4 is low, 0 is none. Unlike Todoist
+    it runs the way a person counts, so a number is taken as it is."""
+    text = str(given).strip().lower()
+    if text in ("0", "1", "2", "3", "4"):
+        return int(text)
+    if text in _LINEAR_PRIORITY:
+        return _LINEAR_PRIORITY[text]
+    raise ValueError("Linear priority is urgent, high, medium, low or none. "
+                     "Got: %s" % given)
+
+
+def _linear_input(args: Dict[str, Any]) -> Dict[str, Any]:
+    """The fields an issue create or update takes, left out when empty, so
+    an update that changes the state never blanks the description."""
+    given = args or {}
+    out: Dict[str, Any] = {}
+    for arg, key in (("title", "title"), ("description", "description"),
+                     ("state_id", "stateId"), ("assignee_id", "assigneeId")):
+        value = str(given.get(arg) or "").strip()
+        if value:
+            out[key] = value
+    if given.get("priority") not in (None, ""):
+        out["priority"] = _linear_priority(given["priority"])
+    due = str(given.get("due_date") or "").strip()
+    if due:
+        try:
+            if len(due) != 10:
+                raise ValueError
+            datetime.date.fromisoformat(due)
+        except ValueError:
+            raise ValueError("Linear takes a due date as YYYY-MM-DD, for "
+                             "example 2026-12-01. Got: %s" % due) from None
+        out["dueDate"] = due
+    return out
+
+
+def _linear_query(query: str, **variables) -> Dict[str, Any]:
+    return {"query": query, "variables": variables}
+
+
+def _linear_needs(args: Dict[str, Any], name: str, what: str) -> str:
+    value = str((args or {}).get(name) or "").strip()
+    if not value:
+        raise ValueError("Say which " + what + " in `" + name + "`.")
+    return value
+
+
+def _linear_create(args: Dict[str, Any]) -> Dict[str, Any]:
+    team = _linear_needs(args, "team_id", "team (an id from list_teams)")
+    fields = _linear_input(args)
+    if "title" not in fields:
+        raise ValueError("A Linear issue needs a title.")
+    return _linear_query(
+        "mutation($input: IssueCreateInput!) { issueCreate(input: $input) "
+        "{ success issue { " + _LINEAR_ISSUE + " } } }",
+        input={"teamId": team, **fields})
+
+
+def _linear_update(args: Dict[str, Any]) -> Dict[str, Any]:
+    issue = _linear_needs(args, "issue", "issue, like ENG-123")
+    fields = _linear_input(args)
+    if not fields:
+        raise ValueError("Nothing to change on that Linear issue. Give a new "
+                         "title, description, state_id, priority, due_date "
+                         "or assignee_id.")
+    return _linear_query(
+        "mutation($id: String!, $input: IssueUpdateInput!) { issueUpdate("
+        "id: $id, input: $input) { success issue { " + _LINEAR_ISSUE
+        + " } } }", id=issue, input=fields)
+
+
+def _linear_comment(args: Dict[str, Any]) -> Dict[str, Any]:
+    issue = _linear_needs(args, "issue", "issue, like ENG-123")
+    body = _linear_needs(args, "body", "comment text")
+    return _linear_query(
+        "mutation($input: CommentCreateInput!) { commentCreate(input: "
+        "$input) { success comment { id body url } } }",
+        input={"issueId": issue, "body": body})
+
+
+def _linear_search(args: Dict[str, Any]) -> Dict[str, Any]:
+    text = _linear_needs(args, "text", "words to search for")
+    return _linear_query(
+        "query($term: String!) { searchIssues(term: $term, first: %d) "
+        "{ nodes { %s } } }" % (MAX_ITEMS, _LINEAR_ISSUE), term=text)
+
+
+_LINEAR_ISSUE_ARG = ("string", "The issue, by its identifier like ENG-123 "
+                               "(or its id)", True)
+_LINEAR_TEAM_ARG = ("string", "Team id from list_teams", True)
+_LINEAR_PRIORITY_SAYS = ("Priority: urgent, high, medium, low or none",
+                         )
+
+LINEAR_TOOLS = [
+    Tool(name="whoami",
+         summary="Show which Linear account is connected.",
+         method="POST", path="/graphql", writes=False,
+         shape=lambda a: _linear_query("query { viewer { id name email } }"),
+         unwrap=_linear_dig("viewer")),
+    Tool(name="list_teams",
+         summary="List the Linear teams you belong to, with the id every "
+                 "issue tool needs and each team's key (the ENG in ENG-123).",
+         method="POST", path="/graphql", writes=False,
+         shape=lambda a: _linear_query(
+             "query { teams(first: 50) { nodes { id key name } } }"),
+         unwrap=_linear_dig("teams")),
+    Tool(name="list_states",
+         summary="List one Linear team's workflow states (Todo, In "
+                 "Progress, Done...), with the id update_issue needs to "
+                 "move an issue.",
+         method="POST", path="/graphql", writes=False,
+         args={"team_id": _LINEAR_TEAM_ARG},
+         shape=lambda a: _linear_query(
+             "query($id: String!) { team(id: $id) { states { nodes "
+             "{ id name type } } } }",
+             id=_linear_needs(a, "team_id", "team (an id from list_teams)")),
+         unwrap=_linear_dig("team", "states")),
+    Tool(name="my_issues",
+         summary="List the open Linear issues assigned to you, most "
+                 "recently changed first.",
+         method="POST", path="/graphql", writes=False,
+         shape=lambda a: _linear_query(
+             "query { viewer { assignedIssues(first: %d, orderBy: updatedAt, "
+             "filter: %s) { nodes { %s } } } }"
+             % (MAX_ITEMS, _LINEAR_OPEN, _LINEAR_ISSUE)),
+         unwrap=_linear_dig("viewer", "assignedIssues")),
+    Tool(name="team_issues",
+         summary="List one Linear team's open issues, most recently changed "
+                 "first.",
+         method="POST", path="/graphql", writes=False,
+         args={"team_id": _LINEAR_TEAM_ARG},
+         shape=lambda a: _linear_query(
+             "query($id: String!) { team(id: $id) { issues(first: %d, "
+             "orderBy: updatedAt, filter: %s) { nodes { %s } } } }"
+             % (MAX_ITEMS, _LINEAR_OPEN, _LINEAR_ISSUE),
+             id=_linear_needs(a, "team_id", "team (an id from list_teams)")),
+         unwrap=_linear_dig("team", "issues")),
+    Tool(name="search_issues",
+         summary="Search Linear issues by words in the title or "
+                 "description.",
+         method="POST", path="/graphql", writes=False,
+         args={"text": ("string", "What to search for", True)},
+         shape=_linear_search,
+         unwrap=_linear_dig("searchIssues")),
+    Tool(name="get_issue",
+         summary="Read one Linear issue in full, with its description and "
+                 "latest comments.",
+         method="POST", path="/graphql", writes=False,
+         args={"issue": _LINEAR_ISSUE_ARG},
+         shape=lambda a: _linear_query(
+             "query($id: String!) { issue(id: $id) { " + _LINEAR_ISSUE
+             + " description comments(first: 10) { nodes { body createdAt "
+             "user { name } } } } }",
+             id=_linear_needs(a, "issue", "issue, like ENG-123")),
+         unwrap=_linear_dig("issue")),
+    Tool(name="create_issue",
+         summary="Create a Linear issue in one of your teams.",
+         method="POST", path="/graphql",
+         args={"team_id": _LINEAR_TEAM_ARG,
+               "title": ("string", "The issue's title", True),
+               "description": ("string", "Detail, in Markdown", False),
+               "priority": ("string", _LINEAR_PRIORITY_SAYS[0], False),
+               "state_id": ("string", "State id from list_states; leave "
+                                      "out for the team's default", False),
+               "assignee_id": ("string", "User id to assign it to", False),
+               "due_date": ("string", "Due date as YYYY-MM-DD", False)},
+         shape=_linear_create,
+         unwrap=_linear_dig("issueCreate", "issue")),
+    Tool(name="update_issue",
+         summary="Change a Linear issue: move it to another state, retitle "
+                 "it, change its priority, due date or who has it.",
+         method="POST", path="/graphql",
+         args={"issue": _LINEAR_ISSUE_ARG,
+               "title": ("string", "New title", False),
+               "description": ("string", "New description, in Markdown",
+                               False),
+               "priority": ("string", _LINEAR_PRIORITY_SAYS[0], False),
+               "state_id": ("string", "State id from list_states", False),
+               "assignee_id": ("string", "User id to assign it to", False),
+               "due_date": ("string", "Due date as YYYY-MM-DD", False)},
+         shape=_linear_update,
+         unwrap=_linear_dig("issueUpdate", "issue")),
+    Tool(name="comment_on_issue",
+         summary="Add a comment to a Linear issue, written as you.",
+         method="POST", path="/graphql",
+         args={"issue": _LINEAR_ISSUE_ARG,
+               "body": ("string", "The comment, in Markdown", True)},
+         shape=_linear_comment,
+         unwrap=_linear_dig("commentCreate", "comment")),
+]
+
+
 # --- Vercel ----------------------------------------------------------------
 
 #: Vercel pages its collections under a key named after the thing.
@@ -3423,6 +3683,7 @@ PROVIDER_TOOLS: Dict[str, List[Tool]] = {
     "linkedin": LINKEDIN_TOOLS,
     "todoist": TODOIST_TOOLS,
     "asana": ASANA_TOOLS,
+    "linear": LINEAR_TOOLS,
 }
 
 #: Every tool of every provider, for checks that should hold everywhere.

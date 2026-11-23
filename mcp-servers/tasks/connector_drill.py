@@ -70,6 +70,9 @@ FROM_RESULT: Dict[str, Tuple[Tuple[str, str], ...]] = {
     "project_id": (("list_projects", "id"), ("list_projects", "gid")),
     "workspace_id": (("list_workspaces", "gid"),),
     "section_id": (("list_sections", "gid"),),
+    # Linear. An issue is named by its identifier, which issue(id:) takes.
+    "team_id": (("list_teams", "id"),),
+    "issue": (("my_issues", "identifier"), ("team_issues", "identifier")),
     "space_id": (("get_spaces", "id"),),
 }
 
