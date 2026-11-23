@@ -227,7 +227,10 @@ def _no_body_result(tool: "Tool") -> Dict[str, Any]:
     So a WRITE that came back empty says it was done, and a read that came
     back empty still says nothing was found.
     """
-    if getattr(tool, "writes", False):
+    # `_writes`, not `tool.writes`. The field is None on almost every write
+    # ("ask the method"), so asking it directly sent Todoist's 204 on
+    # completing a task back as `items: []` (2026-11-23).
+    if _writes(tool):
         return {"ok": True, "done": True}
     return {"ok": True, "items": []}
 
@@ -2642,6 +2645,233 @@ DROPBOX_TOOLS = [
          keep=("account_id", "email", "name")),
 ]
 
+# --- Todoist ---------------------------------------------------------------
+#
+# API v1 (https://api.todoist.com/api/v1), with the person's own token.
+# Two vendor facts live here rather than in a prompt:
+#
+# LISTS COME WRAPPED, as {"results": [...], "next_cursor": ...}. Read as a
+# bare list, every listing is one object with no task in it.
+#
+# PRIORITY RUNS BACKWARDS. In the app p1 is the red, urgent one; in the API
+# urgent is 4 and normal is 1. A model told "make it p1" writes 1, which is
+# the lowest there is, so a person's words are turned around here.
+
+_TODOIST_TASK_KEEP = ("id", "content", "description", "due", "priority",
+                      "project_id", "section_id", "parent_id", "labels",
+                      "checked", "added_at")
+
+#: What a person says -> the API's number. p1 is urgent, and urgent is 4.
+_TODOIST_PRIORITY = {"p1": 4, "urgent": 4, "highest": 4,
+                     "p2": 3, "high": 3,
+                     "p3": 2, "medium": 2,
+                     "p4": 1, "normal": 1, "low": 1, "none": 1}
+
+
+def _todoist_results(payload: Any) -> Any:
+    if isinstance(payload, dict) and isinstance(payload.get("results"), list):
+        return payload["results"]
+    return payload
+
+
+def _todoist_priority(given: Any) -> int:
+    """A priority said the way the app says it, as the API's number.
+
+    A bare number is read as the app's p-number too, because "priority 1"
+    from a person means p1, the urgent one, and read as the API's 1 it is
+    the lowest.
+    """
+    text = str(given).strip().lower()
+    if text.isdigit():
+        text = "p" + text
+    if text not in _TODOIST_PRIORITY:
+        raise ValueError("Todoist priority is p1 (urgent), p2, p3 or p4 "
+                         "(normal). Got: %s" % given)
+    return _TODOIST_PRIORITY[text]
+
+
+def _todoist_labels(given: Any) -> List[str]:
+    if isinstance(given, str):
+        given = given.split(",")
+    return [str(x).strip() for x in (given or []) if str(x).strip()]
+
+
+def _todoist_task_body(args: Dict[str, Any], new: bool = True) -> Dict[str, Any]:
+    """The body for a new task, or for changing one.
+
+    An empty field is LEFT OUT, never sent blank: description "" on an
+    update wipes the one already there, for somebody who only asked to
+    change the due date. And an update never carries project_id, because
+    v1 ignores it there and moves a task with /move instead.
+    """
+    given = args or {}
+    out: Dict[str, Any] = {}
+    for arg, key in (("content", "content"), ("description", "description"),
+                     ("due", "due_string")):
+        value = str(given.get(arg) or "").strip()
+        if value:
+            out[key] = value
+    if new:
+        if "content" not in out:
+            raise ValueError("A Todoist task needs words: say what the task "
+                             "is in `content`.")
+        for arg in ("project_id", "section_id", "parent_id"):
+            value = str(given.get(arg) or "").strip()
+            if value:
+                out[arg] = value
+    if given.get("priority") not in (None, ""):
+        out["priority"] = _todoist_priority(given["priority"])
+    labels = _todoist_labels(given.get("labels"))
+    if labels:
+        out["labels"] = labels
+    if not new and not out:
+        raise ValueError("Nothing to change on that Todoist task. Give a new "
+                         "content, description, due, priority or labels, or "
+                         "use move_task to move it.")
+    return out
+
+
+def _todoist_move_body(args: Dict[str, Any]) -> Dict[str, Any]:
+    given = args or {}
+    out = {k: str(given[k]).strip() for k in ("project_id", "section_id",
+                                              "parent_id")
+           if str(given.get(k) or "").strip()}
+    if not out:
+        raise ValueError("Say where to move the task: a project_id, a "
+                         "section_id or a parent_id.")
+    return out
+
+
+def _todoist_comment_body(args: Dict[str, Any]) -> Dict[str, Any]:
+    given = args or {}
+    text = str(given.get("text") or "").strip()
+    if not text:
+        raise ValueError("Say what the comment is in `text`.")
+    return {"task_id": str(given.get("task_id") or ""), "content": text}
+
+
+_TODOIST_TASK_ID = ("string", "The task's id, from list_tasks or find_tasks",
+                    True)
+_TODOIST_PRIORITY_SAYS = ("Priority as the app shows it: p1 (urgent, red), "
+                          "p2, p3 or p4 (normal). Write p1 for urgent.")
+
+TODOIST_TOOLS = [
+    Tool(name="whoami",
+         summary="Show which Todoist account is connected to your assistant.",
+         method="GET", path="/user",
+         keep=("id", "email", "full_name", "tz_info")),
+    Tool(name="list_projects",
+         summary="List your Todoist projects, with the id each task tool "
+                 "needs. Inbox is one of them.",
+         method="GET", path="/projects",
+         unwrap=_todoist_results,
+         query_defaults={"limit": MAX_ITEMS},
+         keep=("id", "name", "parent_id", "is_favorite", "inbox_project")),
+    Tool(name="list_sections",
+         summary="List the sections inside one Todoist project.",
+         method="GET", path="/sections",
+         query={"project_id": "project_id"},
+         args={"project_id": ("string", "Project id from list_projects",
+                              True)},
+         unwrap=_todoist_results,
+         keep=("id", "name", "project_id")),
+    Tool(name="list_tasks",
+         summary="List the open tasks in one Todoist project, or every open "
+                 "task when no project is given.",
+         method="GET", path="/tasks",
+         query={"project_id": "project_id", "section_id": "section_id",
+                "label": "label"},
+         query_defaults={"limit": MAX_ITEMS},
+         args={"project_id": ("string", "Project id from list_projects",
+                              False),
+               "section_id": ("string", "Section id from list_sections",
+                              False),
+               "label": ("string", "Only tasks with this label name", False)},
+         unwrap=_todoist_results,
+         keep=_TODOIST_TASK_KEEP),
+    Tool(name="find_tasks",
+         summary="Find Todoist tasks with Todoist's own filter language: "
+                 "what is due today, overdue, this week, by label or by "
+                 "project.",
+         method="GET", path="/tasks/filter",
+         query={"query": "filter"},
+         query_defaults={"limit": MAX_ITEMS},
+         args={"filter": ("string",
+                          "A Todoist filter, for example \"today | overdue\", "
+                          "\"7 days\", \"p1\", \"#Work\" (a project) or "
+                          "\"@waiting\" (a label). One filter only: a comma "
+                          "between two is refused.", True)},
+         unwrap=_todoist_results,
+         keep=_TODOIST_TASK_KEEP),
+    Tool(name="get_task",
+         summary="Read one open Todoist task in full.",
+         method="GET", path="/tasks/{task_id}",
+         args={"task_id": _TODOIST_TASK_ID},
+         keep=_TODOIST_TASK_KEEP),
+    Tool(name="create_task",
+         summary="Add a task to Todoist. With no project it goes to the "
+                 "Inbox. The due date can be plain words like \"tomorrow "
+                 "9am\" or \"every monday\".",
+         method="POST", path="/tasks",
+         args={"content": ("string", "What the task is", True),
+               "description": ("string", "More detail under the task",
+                               False),
+               "project_id": ("string", "Project id from list_projects; "
+                                        "leave out for the Inbox", False),
+               "section_id": ("string", "Section id from list_sections",
+                              False),
+               "parent_id": ("string", "Make it a sub-task of this task id",
+                             False),
+               "due": ("string", "When it is due, in plain words: "
+                                 "\"tomorrow 9am\", \"next friday\", "
+                                 "\"every monday\"", False),
+               "priority": ("string", _TODOIST_PRIORITY_SAYS, False),
+               "labels": ("array", "Label names, for example "
+                                   "[\"work\", \"waiting\"]", False)},
+         shape=_todoist_task_body,
+         keep=_TODOIST_TASK_KEEP),
+    Tool(name="update_task",
+         summary="Change a Todoist task's words, due date, priority or "
+                 "labels. To move it to another project use move_task.",
+         method="POST", path="/tasks/{task_id}",
+         args={"task_id": _TODOIST_TASK_ID,
+               "content": ("string", "New task text", False),
+               "description": ("string", "New description", False),
+               "due": ("string", "New due date in plain words", False),
+               "priority": ("string", _TODOIST_PRIORITY_SAYS, False),
+               "labels": ("array", "The task's labels, replacing the ones "
+                                   "it has", False)},
+         shape=lambda a: _todoist_task_body(a, new=False),
+         keep=_TODOIST_TASK_KEEP),
+    Tool(name="move_task",
+         summary="Move a Todoist task to another project or section, or "
+                 "under another task.",
+         method="POST", path="/tasks/{task_id}/move",
+         args={"task_id": _TODOIST_TASK_ID,
+               "project_id": ("string", "Project id to move it to", False),
+               "section_id": ("string", "Section id to move it to", False),
+               "parent_id": ("string", "Task id to put it under", False)},
+         shape=_todoist_move_body,
+         keep=_TODOIST_TASK_KEEP),
+    Tool(name="complete_task",
+         summary="Tick a Todoist task off as done. A recurring task moves "
+                 "on to its next date instead.",
+         method="POST", path="/tasks/{task_id}/close",
+         args={"task_id": _TODOIST_TASK_ID}),
+    Tool(name="reopen_task",
+         summary="Reopen a Todoist task that was ticked off.",
+         method="POST", path="/tasks/{task_id}/reopen",
+         args={"task_id": _TODOIST_TASK_ID}),
+    Tool(name="comment_on_task",
+         summary="Add a comment to a Todoist task, written as you.",
+         method="POST", path="/comments",
+         args={"task_id": _TODOIST_TASK_ID,
+               "text": ("string", "The comment to add", True)},
+         shape=_todoist_comment_body,
+         keep=("id", "content", "posted_at")),
+]
+
+
 # --- Vercel ----------------------------------------------------------------
 
 #: Vercel pages its collections under a key named after the thing.
@@ -2976,6 +3206,7 @@ PROVIDER_TOOLS: Dict[str, List[Tool]] = {
     "jira": JIRA_TOOLS,
     "dropbox": DROPBOX_TOOLS,
     "linkedin": LINKEDIN_TOOLS,
+    "todoist": TODOIST_TOOLS,
 }
 
 #: Every tool of every provider, for checks that should hold everywhere.

@@ -62,7 +62,7 @@ def test_needs_says_which_of_an_agents_skills_wait_on_an_app(client, state):
         {"app": "gmail", "label": "Gmail", "skills": ["inbox-triage"],
          "connect": "#aiui-connect:gmail", "button": "Connect Gmail"},
         {"app": "tracker",
-         "label": "a task tracker (Trello, GitHub, ClickUp or Jira)",
+         "label": "a task tracker (Trello, GitHub, ClickUp, Jira or Todoist)",
          "skills": ["daily-standup"], "connect": "#aiui-connect:tracker",
          "button": "Connect a task tracker"}]
 

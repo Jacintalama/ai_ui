@@ -904,6 +904,19 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
                     "Connections.",
         enabled=True,
     ),
+    "my-todoist": MCPServerConfig(
+        server_id="my-todoist",
+        access_class=AccessClass.PUBLIC,
+        display_name="Todoist (your account)",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_MYTOOLS_URL + "/todoist",
+        auth_type="none",
+        api_key_env=None,
+        description="Todoist acting as the signed-in user's own account: "
+                    "projects, tasks, due dates and comments. Requires them "
+                    "to have connected Todoist under Connections.",
+        enabled=True,
+    ),
     "my-vercel": MCPServerConfig(
         server_id="my-vercel",
         access_class=AccessClass.PUBLIC,

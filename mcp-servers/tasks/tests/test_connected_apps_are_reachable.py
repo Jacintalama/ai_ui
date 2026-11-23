@@ -56,6 +56,7 @@ SPOKEN = {
     "linkedin": "linkedin",
     "outlook": "outlook",
     "vercel": "vercel",
+    "todoist": "todoist",
 }
 
 

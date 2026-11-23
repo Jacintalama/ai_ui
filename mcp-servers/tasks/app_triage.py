@@ -150,6 +150,20 @@ _APPS = (
         "create and update tasks, assign people and move tasks between "
         "columns",
         ("create_task", "update_task")),
+    App("todoist", "Todoist",
+        "a personal to-do list: tasks with due dates, reminders of what "
+        "is due today or overdue, projects and labels for one person's "
+        "own work",
+        "list projects and tasks, find what is due today or overdue, add "
+        "a task with a due date and priority, change, move, complete or "
+        "reopen one, and comment on it",
+        ("list_projects", "find_tasks", "create_task", "update_task",
+         "move_task", "complete_task", "comment_on_task"),
+        # Completing is how Todoist retires a task, and it can be reopened.
+        # A delete cannot be undone, so it is left out on purpose.
+        cannot="delete a task or a project, make a project, or share one "
+               "with somebody",
+        says=("todoist",)),
     App("trello", "Trello",
         "a simple board of cards in columns for tasks and to-dos",
         "create, move, assign, comment on and complete cards",
