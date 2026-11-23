@@ -273,6 +273,15 @@ POSTS_THAT_READ = [
     ("dropbox", "search_files"),
     ("dropbox", "whoami"),
     ("jira", "search_issues"),
+    # Linear is GraphQL: every call is a POST of a query to one endpoint,
+    # so every read is one (2026-11-23).
+    ("linear", "get_issue"),
+    ("linear", "list_states"),
+    ("linear", "list_teams"),
+    ("linear", "my_issues"),
+    ("linear", "search_issues"),
+    ("linear", "team_issues"),
+    ("linear", "whoami"),
     # Notion reads over POST because the query, filter and sort are a
     # body. A 403 on either means the page was never shared with the
     # integration, and reconnecting does not change that.

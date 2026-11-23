@@ -169,7 +169,7 @@ def test_a_normal_user_reaches_the_expected_live_servers():
         "my-clickup", "my-github", "my-trello", "my-notion", "my-n8n",
         "my-airtable", "my-hubspot", "my-zapier", "my-jira",
         "my-dropbox", "my-linkedin", "my-outlook", "my-vercel",
-        "my-todoist", "my-asana"}
+        "my-todoist", "my-asana", "my-linear"}
 
 
 def test_the_per_user_servers_are_public_and_the_shared_ones_are_not():
@@ -179,7 +179,7 @@ def test_the_per_user_servers_are_public_and_the_shared_ones_are_not():
     person, so every task it creates is created by him."""
     for pid in ("clickup", "github", "trello", "notion", "n8n",
                 "airtable", "hubspot", "zapier", "jira", "dropbox",
-                "linkedin", "todoist", "asana"):
+                "linkedin", "todoist", "asana", "linear"):
         if pid in ALL_SERVERS:
             assert ALL_SERVERS[pid].access_class is not AccessClass.PUBLIC, pid
         assert ALL_SERVERS["my-" + pid].access_class is AccessClass.PUBLIC, pid
@@ -190,7 +190,7 @@ def test_a_per_user_server_points_at_our_own_service_not_a_vendor():
     service on the internal network, never something reachable from outside."""
     for pid in ("clickup", "github", "trello", "notion", "n8n",
                 "airtable", "hubspot", "zapier", "jira", "dropbox",
-                "linkedin", "todoist", "asana"):
+                "linkedin", "todoist", "asana", "linear"):
         url = ALL_SERVERS["my-" + pid].endpoint_url
         assert url.startswith("http://tasks:") or url.startswith("http://localhost"), url
 
@@ -246,7 +246,7 @@ LIVE_PUBLIC = {"google-drive", "calendar", "filesystem", "web-search",
                "my-clickup", "my-github", "my-trello", "my-notion", "my-n8n",
         "my-airtable", "my-hubspot", "my-zapier", "my-jira",
         "my-dropbox", "my-linkedin", "my-outlook", "my-vercel",
-        "my-todoist", "my-asana"}
+        "my-todoist", "my-asana", "my-linear"}
 
 
 async def test_a_user_with_nothing_configured_now_gets_the_public_set(fake_db):
@@ -340,7 +340,7 @@ async def test_a_per_user_server_is_executable_without_any_grant(fake_db):
     fake_db()
     for pid in ("my-github", "my-clickup", "my-trello", "my-notion", "my-n8n",
                 "my-airtable", "my-hubspot", "my-zapier", "my-jira",
-                "my-dropbox", "my-linkedin", "my-todoist", "my-asana"):
+                "my-dropbox", "my-linkedin", "my-todoist", "my-asana", "my-linear"):
         assert await tenants_mod.user_has_tenant_access_async(
             "nobody@example.com", pid), pid
 

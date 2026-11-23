@@ -842,6 +842,7 @@
       { id: 'outlook', real: true, token: true, name: 'Outlook', domain: 'outlook.com', cat: 'Productivity' },
       { id: 'todoist', real: true, token: true, name: 'Todoist', domain: 'todoist.com', cat: 'Productivity' },
       { id: 'asana', real: true, token: true, name: 'Asana', domain: 'asana.com', cat: 'Productivity' },
+      { id: 'linear', real: true, token: true, name: 'Linear', domain: 'linear.app', cat: 'Tools & Automation' },
       { id: 'vercel', real: true, token: true, name: 'Vercel', domain: 'vercel.com', cat: 'Platform' },
       { id: 'stripe', name: 'Stripe', domain: 'stripe.com', cat: 'Platform' }
     ];
@@ -3086,7 +3087,7 @@
                              calendar: 'aiui-calendar-connected' };
   // skill_fit.TRACKERS: "Connect a task tracker" is any one of them, and
   // opens the panel where they sit side by side.
-  var AIUI_TRACKERS = ['trello', 'github', 'clickup', 'jira', 'todoist', 'asana'];
+  var AIUI_TRACKERS = ['trello', 'github', 'clickup', 'jira', 'todoist', 'asana', 'linear'];
   var aiuiConnList = null;
   var aiuiConnLoading = false;
   var aiuiWatches = {};

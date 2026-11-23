@@ -74,6 +74,7 @@ MAKES = {
     "github": ("issue", "pull request", "branch"),
     "hubspot": ("contact",),
     "jira": ("issue",),
+    "linear": ("issue",),
     "linkedin": ("post",),
     "n8n": ("workflow",),
     "outlook": ("event",),

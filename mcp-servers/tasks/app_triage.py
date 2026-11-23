@@ -164,6 +164,19 @@ _APPS = (
         cannot="delete a task or a project, make a project, or share one "
                "with somebody",
         says=("todoist",)),
+    App("linear", "Linear",
+        "issue tracking for a product or engineering team: bugs, feature "
+        "requests, an issue moving through Todo, In Progress and Done, "
+        "issues named like ENG-123",
+        "list your teams and their states, see your open issues or a "
+        "team's, search issues, read one with its comments, create an "
+        "issue, move it to another state or change its priority, due date "
+        "or owner, and comment on it",
+        ("list_teams", "my_issues", "search_issues", "get_issue",
+         "create_issue", "update_issue", "comment_on_issue"),
+        cannot="delete or archive an issue, or make a team, project or "
+               "cycle",
+        says=("linear",)),
     App("asana", "Asana",
         "a team's work tracker: projects, tasks with owners and due dates, "
         "sections a task moves through, and seeing what is assigned to you",

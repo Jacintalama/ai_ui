@@ -394,6 +394,23 @@ def _asana_label(d):
     return d.get("email") or d.get("name") or ""
 
 
+def _linear_auth(v):
+    """Linear, signed as the person, with their personal API key.
+
+    THE KEY GOES IN BARE, with no "Bearer". Linear's docs say
+    `Authorization: <API_KEY>` for a personal key and keep Bearer for OAuth
+    access tokens. Base is the host, not /graphql, because a tool path of
+    "" is turned into "/" and Linear's endpoint has no trailing slash.
+    """
+    return VendorAuth(base_url="https://api.linear.app",
+                      headers={"Authorization": _require(v, "token")})
+
+
+def _linear_label(d):
+    viewer = (((d or {}).get("data") or {}).get("viewer")) or {}
+    return viewer.get("email") or viewer.get("name") or ""
+
+
 def _zapier_auth(v):
     """Zapier has no account API a user can hand us a key for. What they DO
     have is a Catch Hook: a per-Zap URL that is itself the credential, because
@@ -585,6 +602,19 @@ PROVIDERS: Dict[str, Provider] = {
         # one, so `?opt_fields=email` here would never be sent.
         probe_path="/users/me",
         read_label=_asana_label,
+    ),
+    "linear": Provider(
+        id="linear",
+        label="Linear",
+        fields=[Field("token", "Personal API key", placeholder="lin_api_...")],
+        where="Linear: Settings, Account, Security & access, then create a "
+              "personal API key (linear.app/settings/account/security).",
+        build_auth=_linear_auth,
+        # GraphQL: one endpoint, and the question goes in the body.
+        probe_path="/graphql",
+        probe_method="POST",
+        probe_body={"query": "query { viewer { id name email } }"},
+        read_label=_linear_label,
     ),
     "outlook": Provider(
         id="outlook",
