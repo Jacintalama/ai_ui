@@ -936,6 +936,9 @@
               </svg>
               Refresh
             </button>
+            <!-- Every answer the schedules gave, with the text, on its own
+                 page (/cronjobs/output, 2026-11-23). -->
+            <button class="btn sm" type="button" id="outputs-btn">View outputs</button>
           </div>
         </div>
         <!-- Filters. "Needs attention" is first among the states because it
@@ -1098,6 +1101,17 @@
     loadAgentsForRunAs();
 
     const SCHED_API = "/api/tasks/schedules";
+
+    // View outputs: inside the shell, ask it to open the Cron Outputs pane
+    // exactly as the sidebar would; standalone, go to the page itself.
+    document.getElementById("outputs-btn").addEventListener("click", () => {
+      if (window.parent !== window) {
+        window.parent.postMessage({ type: "aiui:open-pane", path: "/cronjobs/output" },
+                                  location.origin);
+      } else {
+        location.href = "/tasks/static/cron-output.html";
+      }
+    });
 
     const listRegion = document.getElementById("list-region");
 

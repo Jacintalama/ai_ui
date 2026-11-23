@@ -300,6 +300,83 @@ async def list_schedules(
     return with_runs(out, await runs_for_schedules([r["id"] for r in out]))
 
 
+#: How many outputs the Cron Outputs page shows, and the most it may ask for.
+OUTPUTS_DEFAULT = 20
+OUTPUTS_MAX = 50
+
+#: Newest runs first across all of ONE person's schedules, joined for the
+#: name. Scoped on `tasks.schedules.user_email`, the owner column every other
+#: route here trusts, not on the copy the run row carries.
+_OUTPUTS_SQL = (
+    "SELECT r.schedule_id, s.name, r.started_at, r.finished_at, "
+    "       r.status, r.result "
+    "FROM tasks.schedule_run r "
+    "JOIN tasks.schedules s ON s.id = r.schedule_id "
+    "WHERE s.user_email = :email "
+    "ORDER BY r.started_at DESC "
+    "LIMIT :n")
+
+
+def outputs_limit(limit: int | None) -> int:
+    """The number of outputs to read, never fewer than 1 nor more than the
+    cap. Pure. A page asking for 10,000 runs of 8,000 characters each is
+    80MB of text on one request, on a 3.8GB box."""
+    try:
+        n = int(limit) if limit is not None else OUTPUTS_DEFAULT
+    except (TypeError, ValueError):
+        n = OUTPUTS_DEFAULT
+    return max(1, min(OUTPUTS_MAX, n))
+
+
+def shape_output(row) -> dict[str, Any]:
+    """One run as the Cron Outputs page reads it. Pure.
+
+    Unlike a run MARK, which carries text only for a run that went wrong,
+    this carries the whole stored answer: reading the answer is the page's
+    entire job. A run with no finish is reported as failed, for the reason
+    `scheduler.run_row` gives: a process that died mid run never writes one.
+    """
+    def _get(key):
+        return row.get(key) if isinstance(row, dict) else getattr(row, key, None)
+
+    started, finished = _get("started_at"), _get("finished_at")
+    status = str(_get("status") or "")
+    if not finished or status == "running":
+        status = "failed"
+    return {
+        "schedule_id": str(_get("schedule_id") or ""),
+        "name": str(_get("name") or "Untitled"),
+        "at": started.isoformat() if hasattr(started, "isoformat") else started,
+        "finished_at": (finished.isoformat()
+                        if hasattr(finished, "isoformat") else finished),
+        "status": status,
+        "ok": status == "completed",
+        "result": str(_get("result") or ""),
+    }
+
+
+@router.get("/outputs")
+async def list_outputs(
+    limit: int = Query(default=OUTPUTS_DEFAULT),
+    x_cron_secret: str = Header(default=""),
+    x_user_email: str = Header(default=""),
+) -> list[dict[str, Any]]:
+    """What this person's cron jobs answered, newest first, with the text.
+
+    Always ONE person's: the operator secret alone names nobody, so it gets
+    an empty list rather than every user's answers.
+    """
+    _is_operator, scoped_email = _resolve_caller(x_cron_secret, x_user_email)
+    email = scoped_email or x_user_email
+    if not email:
+        return []
+    from sqlalchemy import text
+    async with session() as s:
+        rows = await s.execute(text(_OUTPUTS_SQL),
+                               {"email": email, "n": outputs_limit(limit)})
+        return [shape_output(r) for r in rows.mappings().all()]
+
+
 @router.post("", status_code=201)
 async def create_schedule(
     body: CreateScheduleIn,

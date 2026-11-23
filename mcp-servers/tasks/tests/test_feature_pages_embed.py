@@ -33,6 +33,9 @@ EMBEDDED = {
     "App Builder": ("/tasks/app-builder", "/app-builder"),
     "Video Generation": ("/tasks/static/video.html", "/video-generation"),
     "Cron Jobs": ("/tasks/static/cron.html", "/cronjobs"),
+    # A pane with a URL and no sidebar row: reached from the notice under
+    # Cron Jobs and from the Cron Jobs page (2026-11-23).
+    "Cron Outputs": ("/tasks/static/cron-output.html", "/cronjobs/output"),
     "Channels": ("/tasks/gateway/channels", "/channel"),
     "AI Agents": ("/tasks/agents", "/ai-agents"),
     # Nested on purpose, because the owner asked for it there: the office

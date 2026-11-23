@@ -53,7 +53,7 @@
 			// record format as AIUI_URL_PATHS and aiuiPendingPath() in task-panel.js.
 			(function () {
 				try {
-					const AIUI_URL_PATHS = ["/app-builder", "/cronjobs", "/video-generation",
+					const AIUI_URL_PATHS = ["/app-builder", "/cronjobs", "/cronjobs/output", "/video-generation",
 						"/channel", "/ai-agents", "/ai-agents/office", "/graph"];
 					if (AIUI_URL_PATHS.indexOf(location.pathname) < 0) return;
 					// Stored before the URL changes. If storage is blocked this throws

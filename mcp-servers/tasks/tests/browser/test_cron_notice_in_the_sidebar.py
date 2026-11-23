@@ -268,3 +268,25 @@ def test_an_unseen_notice_survives_a_reload(shell):
     reload()
     page.wait_for_selector(NOTICE, timeout=4000)
     assert "Inbox check" in page.locator(NOTICE).inner_text()
+
+
+def test_with_output_waiting_the_button_opens_the_outputs_page(shell):
+    """Asked for 2026-11-23: the output has its own page,
+    /cronjobs/output, and the notice goes straight to it."""
+    page, schedules, _ = shell
+    schedules[0] = _with_result("Inbox check", "nothing new")
+    page.wait_for_selector(NOTICE, timeout=4000)
+    btn = page.locator(NOTICE + " [data-aiui-cron-open]")
+    assert btn.inner_text().strip() == "View output"
+    btn.click()
+    page.wait_for_selector("[data-aiui-embed][data-open]", timeout=5000)
+    assert page.evaluate("location.pathname") == "/cronjobs/output"
+    page.wait_for_timeout(600)
+    assert page.locator(NOTICE).count() == 0
+    assert page.locator(BADGE).count() == 0
+
+
+def test_the_outputs_page_is_not_a_second_sidebar_row(shell):
+    page, _, _ = shell
+    assert page.locator("[data-aiui-cron-jobs]").count() == 1
+    assert page.locator("[data-aiui-cron-output]").count() == 0
