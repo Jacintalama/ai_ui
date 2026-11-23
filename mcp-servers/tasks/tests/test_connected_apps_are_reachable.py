@@ -57,6 +57,7 @@ SPOKEN = {
     "outlook": "outlook",
     "vercel": "vercel",
     "todoist": "todoist",
+    "asana": "asana",
 }
 
 

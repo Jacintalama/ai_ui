@@ -375,6 +375,25 @@ def _todoist_label(d):
     return d.get("email") or d.get("full_name") or ""
 
 
+def _asana_auth(v):
+    """Asana, signed as the person, with their personal access token.
+
+    A token rather than OAuth, like Todoist: anybody can make one in the
+    developer console, so this needs no app registration.
+    """
+    return VendorAuth(
+        base_url="https://app.asana.com/api/1.0",
+        headers={"Authorization": "Bearer " + _require(v, "token")})
+
+
+def _asana_label(d):
+    """Asana wraps every answer in `data`. The compact user is gid and name;
+    the email is there only when somebody asked for it, so name is the
+    fallback rather than nothing."""
+    d = (d or {}).get("data") or {}
+    return d.get("email") or d.get("name") or ""
+
+
 def _zapier_auth(v):
     """Zapier has no account API a user can hand us a key for. What they DO
     have is a Catch Hook: a per-Zap URL that is itself the credential, because
@@ -552,6 +571,20 @@ PROVIDERS: Dict[str, Provider] = {
         build_auth=_todoist_auth,
         probe_path="/user",
         read_label=_todoist_label,
+    ),
+    "asana": Provider(
+        id="asana",
+        label="Asana",
+        fields=[Field("token", "Personal access token",
+                      placeholder="2/1234.../5678...:abc...")],
+        where="Asana: open app.asana.com/0/my-apps, then Create new token "
+              "under Personal access tokens, and copy it.",
+        build_auth=_asana_auth,
+        # A plain path on purpose. httpx drops a query string written into
+        # the URL whenever `params` is passed, and the probe always passes
+        # one, so `?opt_fields=email` here would never be sent.
+        probe_path="/users/me",
+        read_label=_asana_label,
     ),
     "outlook": Provider(
         id="outlook",

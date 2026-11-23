@@ -31,6 +31,7 @@ GitHub yet" is a thing a model can relay; a vendor 401 is not.
 import datetime
 import json
 import logging
+import re
 from dataclasses import dataclass, field as _dc_field
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import quote as _quote
@@ -2872,6 +2873,220 @@ TODOIST_TOOLS = [
 ]
 
 
+# --- Asana -----------------------------------------------------------------
+#
+# REST at https://app.asana.com/api/1.0, with the person's own token. What
+# is written here rather than left to a prompt:
+#
+# EVERYTHING IS WRAPPED IN `data`, both ways. Answers are {"data": ...} and
+# a write is refused unless its body is {"data": {...}} too.
+#
+# "MY TASKS" NEEDS assignee=me AND workspace, together; either alone is 400.
+#
+# A PROJECT'S TASKS INCLUDE FINISHED ONES unless completed_since=now.
+#
+# SEARCH IS PREMIUM ONLY (402 on a free account), so there is no search
+# tool: it would fail for most of the people who tried it.
+
+_ASANA_TASK_FIELDS = ("name,notes,due_on,due_at,completed,assignee.name,"
+                      "projects.name,memberships.section.name,permalink_url")
+_ASANA_TASK_KEEP = ("gid", "name", "notes", "due_on", "due_at", "completed",
+                    "assignee", "projects", "memberships", "permalink_url")
+_ASANA_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _asana_data(payload: Any) -> Any:
+    if isinstance(payload, dict) and "data" in payload:
+        return payload["data"]
+    return payload
+
+
+def _asana_due(given: Any) -> str:
+    """A due date as Asana takes it: a calendar date, YYYY-MM-DD.
+
+    Asana does not read "tomorrow", so anything else is refused with a
+    sentence before the person approves a write that cannot succeed.
+    """
+    text = str(given or "").strip()
+    if _ASANA_DATE.match(text):
+        try:
+            datetime.date.fromisoformat(text)
+            return text
+        except ValueError:
+            pass
+    raise ValueError("Asana takes a due date as YYYY-MM-DD, for example "
+                     "2026-11-24. Got: %s" % given)
+
+
+def _asana_task_body(args: Dict[str, Any], new: bool = True) -> Dict[str, Any]:
+    """The body for a new task, or for changing one, wrapped in `data`.
+
+    An empty field is LEFT OUT: notes "" would wipe the description of
+    somebody who only asked to change the due date. `projects` and
+    `workspace` are create-only to Asana, so an update never carries them.
+    """
+    given = args or {}
+    out: Dict[str, Any] = {}
+    for key in ("name", "notes", "assignee"):
+        value = str(given.get(key) or "").strip()
+        if value:
+            out[key] = value
+    if str(given.get("due_on") or "").strip():
+        out["due_on"] = _asana_due(given["due_on"])
+    if new:
+        if "name" not in out:
+            raise ValueError("An Asana task needs a name: say what the task "
+                             "is in `name`.")
+        project = str(given.get("project_id") or "").strip()
+        workspace = str(given.get("workspace_id") or "").strip()
+        if project:
+            out["projects"] = [project]
+        elif workspace:
+            out["workspace"] = workspace
+        else:
+            raise ValueError("Say where the task lives: a project_id from "
+                             "list_projects, or a workspace_id from "
+                             "list_workspaces.")
+    elif not out:
+        raise ValueError("Nothing to change on that Asana task. Give a new "
+                         "name, notes, due_on or assignee.")
+    return {"data": out}
+
+
+def _asana_comment_body(args: Dict[str, Any]) -> Dict[str, Any]:
+    text = str((args or {}).get("text") or "").strip()
+    if not text:
+        raise ValueError("Say what the comment is in `text`.")
+    return {"data": {"text": text}}
+
+
+_ASANA_TASK_ID = ("string", "The task's gid, from my_tasks or "
+                            "list_project_tasks", True)
+_ASANA_WORKSPACE = ("string", "Workspace gid from list_workspaces", True)
+_ASANA_ASSIGNEE = ("string", "Who has it: \"me\", an email, or a user gid",
+                   False)
+_ASANA_LIST = {"limit": MAX_ITEMS}
+
+ASANA_TOOLS = [
+    Tool(name="whoami",
+         summary="Show which Asana account is connected, and its "
+                 "workspaces.",
+         method="GET", path="/users/me",
+         query_defaults={"opt_fields": "name,email,workspaces.name"},
+         unwrap=_asana_data,
+         keep=("gid", "name", "email", "workspaces")),
+    Tool(name="list_workspaces",
+         summary="List the Asana workspaces you belong to. Every other "
+                 "Asana tool starts from one of these.",
+         method="GET", path="/workspaces",
+         query_defaults=dict(_ASANA_LIST),
+         unwrap=_asana_data,
+         keep=("gid", "name")),
+    Tool(name="list_projects",
+         summary="List the open projects in one Asana workspace.",
+         method="GET", path="/projects",
+         query={"workspace": "workspace_id"},
+         query_defaults={"archived": "false", **_ASANA_LIST},
+         args={"workspace_id": _ASANA_WORKSPACE},
+         unwrap=_asana_data,
+         keep=("gid", "name")),
+    Tool(name="list_sections",
+         summary="List the sections (columns) of one Asana project.",
+         method="GET", path="/projects/{project_id}/sections",
+         query_defaults=dict(_ASANA_LIST),
+         args={"project_id": ("string", "Project gid from list_projects",
+                              True)},
+         unwrap=_asana_data,
+         keep=("gid", "name")),
+    Tool(name="list_project_tasks",
+         summary="List the open tasks in one Asana project, with due dates, "
+                 "who has them and a link to each.",
+         method="GET", path="/projects/{project_id}/tasks",
+         query_defaults={"completed_since": "now",
+                         "opt_fields": _ASANA_TASK_FIELDS, **_ASANA_LIST},
+         args={"project_id": ("string", "Project gid from list_projects",
+                              True)},
+         unwrap=_asana_data,
+         keep=_ASANA_TASK_KEEP),
+    Tool(name="my_tasks",
+         summary="List the open Asana tasks assigned to you in one "
+                 "workspace.",
+         method="GET", path="/tasks",
+         query={"workspace": "workspace_id"},
+         query_defaults={"assignee": "me", "completed_since": "now",
+                         "opt_fields": _ASANA_TASK_FIELDS, **_ASANA_LIST},
+         args={"workspace_id": _ASANA_WORKSPACE},
+         unwrap=_asana_data,
+         keep=_ASANA_TASK_KEEP),
+    Tool(name="get_task",
+         summary="Read one Asana task in full.",
+         method="GET", path="/tasks/{task_id}",
+         query_defaults={"opt_fields": _ASANA_TASK_FIELDS},
+         args={"task_id": _ASANA_TASK_ID},
+         unwrap=_asana_data,
+         keep=_ASANA_TASK_KEEP),
+    Tool(name="create_task",
+         summary="Add a task to Asana, in a project or straight into a "
+                 "workspace.",
+         method="POST", path="/tasks",
+         args={"name": ("string", "What the task is", True),
+               "notes": ("string", "More detail under the task", False),
+               "project_id": ("string", "Project gid from list_projects",
+                              False),
+               "workspace_id": ("string", "Workspace gid, when there is no "
+                                          "project", False),
+               "due_on": ("string", "Due date as YYYY-MM-DD", False),
+               "assignee": _ASANA_ASSIGNEE},
+         shape=_asana_task_body,
+         unwrap=_asana_data,
+         keep=_ASANA_TASK_KEEP),
+    Tool(name="update_task",
+         summary="Change an Asana task's name, notes, due date or who has "
+                 "it.",
+         method="PUT", path="/tasks/{task_id}",
+         args={"task_id": _ASANA_TASK_ID,
+               "name": ("string", "New name", False),
+               "notes": ("string", "New notes", False),
+               "due_on": ("string", "New due date as YYYY-MM-DD", False),
+               "assignee": _ASANA_ASSIGNEE},
+         shape=lambda a: _asana_task_body(a, new=False),
+         unwrap=_asana_data,
+         keep=_ASANA_TASK_KEEP),
+    Tool(name="complete_task",
+         summary="Mark an Asana task complete.",
+         method="PUT", path="/tasks/{task_id}",
+         args={"task_id": _ASANA_TASK_ID},
+         shape=lambda a: {"data": {"completed": True}},
+         unwrap=_asana_data,
+         keep=("gid", "name", "completed")),
+    Tool(name="reopen_task",
+         summary="Mark a completed Asana task as not done again.",
+         method="PUT", path="/tasks/{task_id}",
+         args={"task_id": _ASANA_TASK_ID},
+         shape=lambda a: {"data": {"completed": False}},
+         unwrap=_asana_data,
+         keep=("gid", "name", "completed")),
+    Tool(name="move_to_section",
+         summary="Move an Asana task into a section (column) of its "
+                 "project.",
+         method="POST", path="/sections/{section_id}/addTask",
+         args={"section_id": ("string", "Section gid from list_sections",
+                              True),
+               "task_id": _ASANA_TASK_ID},
+         shape=lambda a: {"data": {"task": str((a or {}).get("task_id")
+                                               or "")}},
+         unwrap=_asana_data),
+    Tool(name="comment_on_task",
+         summary="Add a comment to an Asana task, written as you.",
+         method="POST", path="/tasks/{task_id}/stories",
+         args={"task_id": _ASANA_TASK_ID,
+               "text": ("string", "The comment to add", True)},
+         shape=_asana_comment_body,
+         unwrap=_asana_data,
+         keep=("gid", "text", "created_at")),
+]
+
+
 # --- Vercel ----------------------------------------------------------------
 
 #: Vercel pages its collections under a key named after the thing.
@@ -3207,6 +3422,7 @@ PROVIDER_TOOLS: Dict[str, List[Tool]] = {
     "dropbox": DROPBOX_TOOLS,
     "linkedin": LINKEDIN_TOOLS,
     "todoist": TODOIST_TOOLS,
+    "asana": ASANA_TOOLS,
 }
 
 #: Every tool of every provider, for checks that should hold everywhere.

@@ -346,11 +346,13 @@ def test_hubspot_is_checked_against_hubspot(client):
     assert "api.hubapi.com" in sent[0]["url"]
 
 
-def test_asana_is_gone(client):
+def test_asana_is_back_with_a_form_to_fill(client):
+    """Gone from 2026-08-20 to 2026-11-23 because it had no way to connect.
+    It is listed again only because it now has one: a token field."""
     c, _, _, _ = client
-    ids = {x["provider"] for x in c.get("/connections").json()["connections"]}
-    assert "asana" not in ids
-    assert {"airtable", "hubspot", "zapier"} <= ids
+    rows = {x["provider"]: x for x in c.get("/connections").json()["connections"]}
+    assert {"airtable", "hubspot", "zapier", "asana"} <= set(rows)
+    assert rows["asana"]["fields"], "a card with nothing to fill is the old bug"
 
 
 # --- checking a connection that already exists -----------------------------

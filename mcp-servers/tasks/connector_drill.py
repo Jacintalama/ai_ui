@@ -64,9 +64,12 @@ FROM_RESULT: Dict[str, Tuple[Tuple[str, str], ...]] = {
     # ClickUp has 172 tools and most of its ids come from a walk this
     # drill deliberately does not do. They are reported as skipped, which
     # is the honest answer, and -a name=value fills any of them by hand.
-    "task_id": (("get_tasks", "id"), ("list_tasks", "id")),
-    # Todoist
-    "project_id": (("list_projects", "id"),),
+    "task_id": (("get_tasks", "id"), ("list_tasks", "id"),
+                ("list_project_tasks", "gid")),
+    # Todoist, then Asana, whose ids are all called gid
+    "project_id": (("list_projects", "id"), ("list_projects", "gid")),
+    "workspace_id": (("list_workspaces", "gid"),),
+    "section_id": (("list_sections", "gid"),),
     "space_id": (("get_spaces", "id"),),
 }
 

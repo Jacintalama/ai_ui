@@ -76,7 +76,8 @@ def test_connect_lines_name_the_skills_and_give_a_button_link():
     assert lines == [
         "Connect Google Calendar to add: day-ahead",
         "[Connect Google Calendar](#aiui-connect:calendar)",
-        "Connect a task tracker (Trello, GitHub, ClickUp, Jira or Todoist) to add: "
+        "Connect a task tracker (Trello, GitHub, ClickUp, Jira, Todoist or Asana) "
+        "to add: "
         "daily-standup",
         "[Connect a task tracker](#aiui-connect:tracker)"]
     assert F.connect_lines({}) == []

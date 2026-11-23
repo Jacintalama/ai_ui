@@ -917,6 +917,19 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
                     "to have connected Todoist under Connections.",
         enabled=True,
     ),
+    "my-asana": MCPServerConfig(
+        server_id="my-asana",
+        access_class=AccessClass.PUBLIC,
+        display_name="Asana (your account)",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_MYTOOLS_URL + "/asana",
+        auth_type="none",
+        api_key_env=None,
+        description="Asana acting as the signed-in user's own account: "
+                    "workspaces, projects, tasks and comments. Requires them "
+                    "to have connected Asana under Connections.",
+        enabled=True,
+    ),
     "my-vercel": MCPServerConfig(
         server_id="my-vercel",
         access_class=AccessClass.PUBLIC,

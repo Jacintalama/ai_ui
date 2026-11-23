@@ -164,6 +164,21 @@ _APPS = (
         cannot="delete a task or a project, make a project, or share one "
                "with somebody",
         says=("todoist",)),
+    App("asana", "Asana",
+        "a team's work tracker: projects, tasks with owners and due dates, "
+        "sections a task moves through, and seeing what is assigned to you",
+        "list workspaces, projects and sections, see the open tasks in a "
+        "project or the ones assigned to you, add a task with a due date "
+        "and an owner, change, move, complete or reopen one, and comment "
+        "on it",
+        ("list_projects", "my_tasks", "list_project_tasks", "create_task",
+         "update_task", "move_to_section", "complete_task",
+         "comment_on_task"),
+        # Search is premium only (402 on a free account), and a delete
+        # cannot be undone, so both are left out on purpose.
+        cannot="search across tasks, delete a task or a project, or make a "
+               "project",
+        says=("asana",)),
     App("trello", "Trello",
         "a simple board of cards in columns for tasks and to-dos",
         "create, move, assign, comment on and complete cards",

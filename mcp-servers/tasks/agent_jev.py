@@ -645,7 +645,8 @@ TOOL_NOTES = {
     # however well the rest of it works.
     "server:mcp-proxy": "the apps the person connected and the web: their "
                         "Trello boards, lists and cards, ClickUp tasks, "
-                        "Todoist tasks and projects, "
+                        "Todoist tasks and projects, Asana tasks and "
+                        "projects, "
                         "GitHub repositories, their code, issues and "
                         "pull requests, Jira projects and issues, "
                         "Notion pages, "
