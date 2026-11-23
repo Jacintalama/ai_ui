@@ -44,9 +44,9 @@
   // in 12 of 20 browser runs against production's files; a reload at "/" in
   // 0 of 10. Both path lists are kept equal to NAV_ENTRIES by
   // tests/test_feature_pages_embed.py.
-  const AIUI_URL_PATHS = ["/app-builder", "/cronjobs", "/video-generation",
-                          "/channel", "/ai-agents", "/ai-agents/office",
-                          "/graph"];
+  const AIUI_URL_PATHS = ["/app-builder", "/cronjobs", "/cronjobs/output",
+                          "/video-generation", "/channel", "/ai-agents",
+                          "/ai-agents/office", "/graph"];
   const AIUI_PENDING_KEY = "__aiuiOpenPath";
 
   // Set the moment we decide to bounce. location.replace() does NOT stop this
@@ -251,6 +251,30 @@
           svg.setAttribute("stroke-linecap", "round");
           svg.setAttribute("stroke-linejoin", "round");
           svg.innerHTML = '<circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline>';
+        },
+      },
+      {
+        attr: "data-aiui-cron-output",
+        // Every signed-in user: the outputs route is owner-scoped.
+        allUsers: true,
+        label: "Cron Outputs",
+        title: "Cron Outputs: what each of your cron jobs answered",
+        href: "/tasks/static/cron-output.html",
+        // Nested under Cron Jobs because that is what it is about, and the
+        // address the owner asked for (2026-11-23). The rescue compares the
+        // whole pathname, so a second segment costs it nothing.
+        urlPath: "/cronjobs/output",
+        embed: true,
+        // NOT a sidebar row. It is reached from the notice under Cron Jobs,
+        // from the Cron Jobs page, and by its URL; a second clock in the
+        // sidebar would only be noise.
+        inSidebar: false,
+        setIcon: (svg) => {
+          svg.setAttribute("viewBox", "0 0 24 24");
+          svg.setAttribute("fill", "none");
+          svg.setAttribute("stroke", "currentColor");
+          svg.setAttribute("stroke-width", "2");
+          svg.innerHTML = '<path d="M4 5h16M4 12h16M4 19h10"></path>';
         },
       },
       {
@@ -839,7 +863,8 @@
           openAiuiEmbed(wanted);
         }
         // Skip the expensive DOM work once every visible entry is present.
-        if (visibleEntries.every((cfg) => document.querySelector("[" + cfg.attr + "]"))) return;
+        if (visibleEntries.every((cfg) => cfg.inSidebar === false ||
+            document.querySelector("[" + cfg.attr + "]"))) return;
 
         // Anchor chain, first match wins.
         //
@@ -898,6 +923,8 @@
         // order without duplicating anything.
         let anchor = rowWrapper;
         for (const cfg of NAV_ENTRIES) {
+          // A pane with a URL but no row (Cron Outputs) is opened, never drawn.
+          if (cfg.inSidebar === false) continue;
           const existing = document.querySelector("[" + cfg.attr + "]");
           if (existing) { anchor = existing; continue; }
           // Inject only entries this user may see (allUsers, or admin).
@@ -943,6 +970,7 @@
   function startCronNotices() {
     const API = "/api/tasks/schedules";
     const PANE_PATH = "/cronjobs";
+    const OUTPUT_PATH = "/cronjobs/output";
     const POLL_MS = Number(window.__aiuiCronPollMs) || 30000;
     const MAX_NOTICES = 5;
     // How much of a result is kept, and how much shows before Show more.
@@ -970,7 +998,9 @@
       return page + " and in your " + label + " thread.";
     }
 
-    function onCronPage() { return location.pathname === PANE_PATH; }
+    function onCronPage() {
+      return location.pathname === PANE_PATH || location.pathname === OUTPUT_PATH;
+    }
 
     function markAllSeen() {
       if (!state || !state.notices.length) return;
@@ -1174,14 +1204,20 @@
       for (const n of notices.slice().reverse()) card.appendChild(itemFor(n));
       const actions = document.createElement("div");
       actions.className = "aiui-cn-actions";
+      // With output waiting the button goes to the outputs themselves;
+      // a notice about a brand-new cron goes to Cron Jobs.
+      const hasOutput = notices.some((n) => n.kind === "result");
       const open = document.createElement("button");
       open.type = "button";
       open.setAttribute("data-aiui-cron-open", "");
-      open.textContent = "Open Cron Jobs";
+      open.textContent = hasOutput ? "View output" : "Open Cron Jobs";
       open.addEventListener("click", (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
         markAllSeen();
+        const opened = hasOutput && typeof window.aiuiOpenPane === "function"
+          && window.aiuiOpenPane(OUTPUT_PATH);
+        if (opened) return;
         const e = document.querySelector("[data-aiui-cron-jobs]");
         if (e) e.click();
       });

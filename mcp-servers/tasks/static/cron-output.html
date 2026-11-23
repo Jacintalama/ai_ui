@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="description" content="What each of your cron jobs answered, newest first.">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cron Outputs</title>
+  <link rel="alternate icon" href="/static/favicon.png" crossorigin="use-credentials">
+  <style>
+/* Hallmark · v2.0.0 · build · scope: app · genre: modern-minimal
+   theme: cron.html's own dark system, so the two pages read as one feature. */
+    :root[data-theme="dark"] {
+      --bg:          #0a0a0b;
+      --surface:     #111113;
+      --surface-2:   #17171a;
+      --border:      #24242a;
+      --border-2:    #3d3d47;
+      --text:        #ededee;
+      --text-2:      #c9c9d2;
+      --muted:       #90909b;
+      --accent:      #7c8cff;
+      --accent-2:    #5d6cff;
+      --on-accent:   #0a0a0b;
+      --success:     #22c55e;
+      --success-soft:#0d2a1a;
+      --danger:      #f87171;
+      --danger-soft: #2a1414;
+      --color-focus: #b9c4ff;
+      --fade-solid:  #000;
+      --radius-sm: 4px;
+      --radius:    8px;
+      --radius-lg: 12px;
+      --font-ui: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, system-ui, sans-serif;
+      --font-mono: "SFMono-Regular", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    [hidden] { display: none !important; }
+    html, body { overflow-x: clip; }
+    :focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px;
+                     border-radius: var(--radius-sm); }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important; }
+    }
+    body { background: var(--bg); color: var(--text); font-family: var(--font-ui);
+           font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased;
+           min-height: 100vh; }
+    button, select { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+
+    main { max-width: 820px; margin: 0 auto; padding: 28px 16px 64px; }
+    .head { display: flex; flex-wrap: wrap; align-items: flex-end;
+            justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+    h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; }
+    .sub { color: var(--muted); margin-top: 2px; }
+    .tools { display: flex; gap: 8px; flex-wrap: wrap; }
+    .btn { border: 1px solid var(--border-2); background: var(--surface-2);
+           border-radius: var(--radius); padding: 8px 12px;
+           transition: background-color 120ms ease, border-color 120ms ease; }
+    .btn:hover { background: var(--surface); border-color: var(--muted); }
+    .btn:active { transform: translateY(1px); }
+    .btn:disabled { cursor: not-allowed; opacity: 0.6; }
+    .btn-primary { background: var(--accent); border-color: var(--accent);
+                   color: var(--on-accent); font-weight: 600; }
+    .btn-primary:hover { background: var(--accent-2); border-color: var(--accent-2); }
+    select { background: var(--surface-2); border: 1px solid var(--border-2);
+             border-radius: var(--radius); padding: 8px 12px; max-width: 100%; }
+
+    .list { display: flex; flex-direction: column; gap: 12px; }
+    .out { background: var(--surface); border: 1px solid var(--border);
+           border-radius: var(--radius-lg); padding: 16px; }
+    .out-top { display: flex; align-items: baseline; justify-content: space-between;
+               gap: 12px; flex-wrap: wrap; }
+    .out-name { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+    .out-meta { display: flex; align-items: center; gap: 8px; color: var(--muted);
+                font-size: 12px; }
+    .pill { border-radius: 999px; padding: 1px 8px; font-size: 12px; font-weight: 600; }
+    .pill-ok { background: var(--success-soft); color: var(--success); }
+    .pill-bad { background: var(--danger-soft); color: var(--danger); }
+    .out-text { margin-top: 12px; white-space: pre-wrap; overflow-wrap: anywhere;
+                color: var(--text-2); }
+    .out-text.clip { max-height: 13.5em; overflow: hidden;
+                     mask-image: linear-gradient(to bottom, var(--fade-solid) 70%, transparent);
+                     -webkit-mask-image: linear-gradient(to bottom, var(--fade-solid) 70%, transparent); }
+    .out-empty-text { margin-top: 12px; color: var(--muted); font-style: italic; }
+    .more { margin-top: 8px; background: none; border: 0; padding: 0;
+            color: var(--accent); text-decoration: underline; }
+    .state { background: var(--surface); border: 1px dashed var(--border-2);
+             border-radius: var(--radius-lg); padding: 28px 20px; text-align: center;
+             color: var(--muted); }
+    .state strong { display: block; color: var(--text); font-size: 15px;
+                    margin-bottom: 4px; }
+    .state .btn { margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="head">
+      <div>
+        <h1>Cron outputs</h1>
+        <p class="sub">What each of your cron jobs answered, newest first.</p>
+      </div>
+      <div class="tools">
+        <select id="filter" aria-label="Show outputs from">
+          <option value="">All cron jobs</option>
+        </select>
+        <button type="button" class="btn" id="refresh">Refresh</button>
+        <button type="button" class="btn btn-primary" id="to-cron">Cron Jobs</button>
+      </div>
+    </div>
+
+    <div id="region" role="status" aria-live="polite">
+      <div class="state">Loading your outputs…</div>
+    </div>
+  </main>
+
+  <script>
+    (function () {
+      "use strict";
+      // Same auth as cron.html: the session cookie travels, and a stored
+      // token is attached when there is one. The gateway turns either into
+      // this person's email, and the route only ever answers for that email.
+      var API = "/api/tasks/schedules/outputs?limit=50";
+      var LONG = 700;
+      var region = document.getElementById("region");
+      var filter = document.getElementById("filter");
+      var all = [];
+
+      function authHeaders() {
+        var h = { Accept: "application/json" };
+        try {
+          var token = localStorage.getItem("token");
+          if (token) h.Authorization = "Bearer " + token;
+        } catch (e) { /* storage blocked: the cookie still carries the session */ }
+        return h;
+      }
+
+      function el(tag, cls, text) {
+        var n = document.createElement(tag);
+        if (cls) n.className = cls;
+        if (text != null) n.textContent = text;
+        return n;
+      }
+
+      function when(iso) {
+        var d = iso ? new Date(iso) : null;
+        if (!d || isNaN(d.getTime())) return "";
+        return d.toLocaleString(undefined, { weekday: "short", day: "numeric",
+          month: "short", hour: "numeric", minute: "2-digit" });
+      }
+
+      function stateBox(title, body, retry) {
+        region.textContent = "";
+        var box = el("div", "state");
+        box.appendChild(el("strong", null, title));
+        if (body) box.appendChild(el("span", null, body));
+        if (retry) {
+          var b = el("button", "btn", "Try again");
+          b.type = "button";
+          b.addEventListener("click", load);
+          box.appendChild(b);
+        }
+        region.appendChild(box);
+      }
+
+      // Every name and answer is text a person or a model wrote, so it goes
+      // in with textContent and never becomes markup.
+      function card(o) {
+        var art = el("article", "out");
+        art.setAttribute("data-output", "");
+        var top = el("div", "out-top");
+        top.appendChild(el("h2", "out-name", o.name || "Untitled"));
+        var meta = el("div", "out-meta");
+        meta.appendChild(el("span", "pill " + (o.ok ? "pill-ok" : "pill-bad"),
+                            o.ok ? "Completed" : "Failed"));
+        var t = el("time", null, when(o.at));
+        if (o.at) t.setAttribute("datetime", o.at);
+        meta.appendChild(t);
+        top.appendChild(meta);
+        art.appendChild(top);
+
+        var text = String(o.result || "").trim();
+        if (!text) {
+          art.appendChild(el("p", "out-empty-text", "This run left no answer."));
+          return art;
+        }
+        var body = el("div", "out-text", text);
+        art.appendChild(body);
+        if (text.length > LONG) {
+          body.classList.add("clip");
+          var more = el("button", "more", "Show all");
+          more.type = "button";
+          more.setAttribute("aria-expanded", "false");
+          more.addEventListener("click", function () {
+            var open = more.getAttribute("aria-expanded") === "true";
+            body.classList.toggle("clip", open);
+            more.setAttribute("aria-expanded", open ? "false" : "true");
+            more.textContent = open ? "Show all" : "Show less";
+          });
+          art.appendChild(more);
+        }
+        return art;
+      }
+
+      function fillFilter() {
+        var keep = filter.value;
+        var names = {};
+        all.forEach(function (o) { names[o.schedule_id] = o.name || "Untitled"; });
+        while (filter.options.length > 1) filter.remove(1);
+        Object.keys(names).sort(function (a, b) {
+          return names[a].localeCompare(names[b]);
+        }).forEach(function (id) {
+          var opt = el("option", null, names[id]);
+          opt.value = id;
+          filter.appendChild(opt);
+        });
+        filter.value = names[keep] ? keep : "";
+      }
+
+      function draw() {
+        var shown = filter.value
+          ? all.filter(function (o) { return o.schedule_id === filter.value; })
+          : all;
+        if (!all.length) {
+          stateBox("No outputs yet",
+                   "When one of your cron jobs runs, its answer shows here.");
+          return;
+        }
+        region.textContent = "";
+        var list = el("div", "list");
+        shown.forEach(function (o) { list.appendChild(card(o)); });
+        region.appendChild(list);
+      }
+
+      function load() {
+        fetch(API, { credentials: "include", headers: authHeaders() })
+          .then(function (r) {
+            var ct = (r.headers.get("content-type") || "");
+            if (!r.ok || ct.indexOf("json") === -1) throw new Error(String(r.status));
+            return r.json();
+          })
+          .then(function (rows) {
+            all = Array.isArray(rows) ? rows : [];
+            fillFilter();
+            draw();
+          })
+          .catch(function () {
+            stateBox("Could not load your outputs",
+                     "The check did not go through.", true);
+          });
+      }
+
+      filter.addEventListener("change", draw);
+      document.getElementById("refresh").addEventListener("click", load);
+
+      // Inside the shell, ask it to open the Cron Jobs pane, exactly as the
+      // sidebar would. Standalone, go to the Cron Jobs page itself.
+      document.getElementById("to-cron").addEventListener("click", function () {
+        if (window.parent !== window) {
+          window.parent.postMessage({ type: "aiui:open-pane", path: "/cronjobs" },
+                                    location.origin);
+        } else {
+          location.href = "/tasks/static/cron.html";
+        }
+      });
+
+      // The pane keeps this page alive while hidden; read again on return.
+      document.addEventListener("visibilitychange", function () {
+        if (!document.hidden) load();
+      });
+
+      load();
+    })();
+  </script>
+</body>
+</html>
