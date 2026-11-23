@@ -9,24 +9,31 @@ metadata:
 # Build a workflow from plain words
 
 The person may never have automated anything. Never say trigger, node,
-webhook, cron, credential or JSON to them unless they said it first. You
-work out those parts yourself from their answers.
+webhook, endpoint, POST, API, cron, credential or JSON to them,
+not even in brackets, unless they said it first. Say "a web address" and "sends".
+You work out those parts yourself from their answers.
+
+First, look at n8n in the list of apps. If it is not connected (or you
+have no n8n tools), say so in your first sentence: their n8n is not
+connected yet, and they connect it from Connections with their n8n
+address and an API key (in n8n: Settings, n8n API, Create an API key).
+You can still ask the questions below, but do not say you will build it
+until it is connected.
 
 ## Steps
 
 1. Ask what should happen, in their words: "What would you like done for
    you?" Get the result they want, and which of their apps it touches.
 2. Ask "When should this happen?" and offer plain choices:
-   - when you press a button (a manual start),
-   - every day or every week at a time you pick (a schedule; ask the time
-     and their timezone),
-   - when another app or website sends something (a web address the
-     other app calls; you give them the address once it is on).
+   - when you press a button,
+   - every day or every week at a time you pick (ask the time and their
+     timezone),
+   - when another app or website sends something to a web address you
+     give them once it is on.
    One question at a time. If their first answer already says when, do
    not ask again.
-3. Check their apps. `list_my_workflows` shows whether their n8n is
-   connected and whether a workflow like this already exists; if one
-   does, ask whether to change it rather than make a second.
+3. `list_my_workflows`: is there one like this already? If so, ask
+   whether to change it rather than make a second.
 4. Use the apps they connected in AIUI, never ask them for an app's key.
    Call `link_aiui` once for the credential id, then each step that reads
    or writes an app is an aiuiTool step naming that app and tool.
@@ -48,10 +55,7 @@ work out those parts yourself from their answers.
   summarise Y" needs no workflow: make it in Schedules with
   `create_schedule`.
 - An app they have not connected in AIUI: say which one, and that it is
-  connected from Connections; build the rest only if it still makes sense.
-- n8n not connected: say their n8n is not connected yet, and that they
-  connect it from Connections with their n8n address and an API key
-  (in n8n: Settings, n8n API, Create an API key). Do not build anything.
+  connected from Connections.
 
 ## Rules
 
