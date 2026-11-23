@@ -303,6 +303,21 @@ HUBSPOT_SCOPE = (os.environ.get("HUBSPOT_SCOPE")
                     "crm.objects.deals.read").strip()
 
 
+#: What the person approves on Todoist's consent screen. COMMA separated,
+#: in Todoist's own words, where every other vendor here uses spaces.
+#: `data:read_write` includes `task:add` and `data:read`; no Todoist tool
+#: deletes anything, so neither delete scope is asked for.
+TODOIST_SCOPE = "data:read_write"
+
+
+def _todoist_token(payload: dict) -> Tuple[Dict[str, str], str]:
+    """Todoist's exchange. A new app's token dies in 3600 seconds and its
+    refresh token rotates on every renewal; `with_expiry` keeps both, and
+    `oauth_refresh.after_refresh` replaces the rotated one. The label is
+    left empty so the route asks `/user`, which proves the token works."""
+    return _bare_token(payload, "Todoist")
+
+
 def _hubspot_token(payload: dict) -> Tuple[Dict[str, str], str]:
     """HubSpot's exchange, which dies in 1800 seconds.
 
@@ -640,6 +655,20 @@ PROVIDERS: Dict[str, OAuthProvider] = {
         token_body="form",
         # The one thing here that is not GitHub's configuration.
         refresh_needs_redirect=True,
+    ),
+    "todoist": OAuthProvider(
+        id="todoist",
+        label="Todoist",
+        # Read off Todoist's API v1 docs on 2026-11-23. Two hosts: consent
+        # on app.todoist.com, the exchange on api.todoist.com.
+        authorize_endpoint="https://app.todoist.com/oauth/authorize",
+        token_endpoint="https://api.todoist.com/oauth/access_token",
+        authorize_extra={"response_type": "code", "scope": TODOIST_SCOPE},
+        read_token=_todoist_token,
+        # client_id, client_secret and code as form fields, which is what
+        # Todoist's own curl example sends.
+        token_auth="body",
+        token_body="form",
     ),
 }
 
