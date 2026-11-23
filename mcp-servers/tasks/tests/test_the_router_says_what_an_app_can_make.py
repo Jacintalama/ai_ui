@@ -69,6 +69,7 @@ WRITE_VERB = re.compile(r"^(create|make|new|add|post|send|update|move|"
 #: was the only thing actually unreachable.
 MAKES = {
     "airtable": ("table", "record"),
+    "asana": ("task",),
     "clickup": ("task",),
     "github": ("issue", "pull request", "branch"),
     "hubspot": ("contact",),

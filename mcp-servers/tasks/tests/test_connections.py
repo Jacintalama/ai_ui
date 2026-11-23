@@ -217,10 +217,18 @@ def test_the_new_providers_are_registered(pid):
     assert C.provider(pid) is not None
 
 
-def test_asana_is_not_offered():
-    """Pulled at Ralph's request. A card that cannot be connected is worse
-    than no card."""
-    assert C.provider("asana") is None
+def test_asana_is_offered_only_as_a_card_that_connects():
+    """Pulled on 2026-08-20 because it had no backend and no way to
+    connect, and a card that cannot be connected is worse than no card.
+    Back on 2026-11-23 WITH both: a personal-token form and tools behind
+    it. The ruling still stands, so this checks the thing it protects:
+    there is a field to fill and an endpoint that answers who it is."""
+    p = C.provider("asana")
+    assert p is not None
+    assert [f.name for f in p.fields] == ["token"]
+    req = C.verify_request("asana", {"token": "2/1/2:abc"})
+    assert req.url == "https://app.asana.com/api/1.0/users/me"
+    assert req.headers["Authorization"] == "Bearer 2/1/2:abc"
 
 
 def test_airtable_uses_a_personal_access_token():
