@@ -447,6 +447,10 @@ services:
       # empty scope is not merely meaningless to HubSpot, it is a required
       # parameter, so an empty value has to fall back to the default.
       - HUBSPOT_SCOPE=${HUBSPOT_SCOPE:-}
+      # Todoist one-click connect. Unset means the card keeps its
+      # paste-a-token form, exactly as before.
+      - TODOIST_CLIENT_ID=${TODOIST_CLIENT_ID:-}
+      - TODOIST_CLIENT_SECRET=${TODOIST_CLIENT_SECRET:-}
       - JIRA_CLIENT_ID=${JIRA_CLIENT_ID:-}
       - JIRA_CLIENT_SECRET=${JIRA_CLIENT_SECRET:-}
       # What the person approves on Atlassian's consent screen. The default
