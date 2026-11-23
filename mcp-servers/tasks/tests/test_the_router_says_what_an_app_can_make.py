@@ -76,6 +76,7 @@ MAKES = {
     "linkedin": ("post",),
     "n8n": ("workflow",),
     "outlook": ("event",),
+    "todoist": ("task",),
     "trello": ("card",),
     "zapier": ("zap",),
 }

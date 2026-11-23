@@ -354,6 +354,27 @@ def _dropbox_label(d):
     return d.get("email") or display or ""
 
 
+def _todoist_auth(v):
+    """Todoist, signed as the person, with their personal API token.
+
+    API v1, not REST v2. v1 folded REST v2 and Sync v9 into one API and
+    refuses the old numeric ids, so a connector written against the v2
+    examples still all over the web would talk to the wrong API.
+
+    A personal token rather than OAuth, on purpose: every account has one
+    under Settings, Integrations, Developer, so this works with no app
+    registration, which is the slow half of every other connector.
+    """
+    return VendorAuth(
+        base_url="https://api.todoist.com/api/v1",
+        headers={"Authorization": "Bearer " + _require(v, "token")})
+
+
+def _todoist_label(d):
+    d = d or {}
+    return d.get("email") or d.get("full_name") or ""
+
+
 def _zapier_auth(v):
     """Zapier has no account API a user can hand us a key for. What they DO
     have is a Catch Hook: a per-Zap URL that is itself the credential, because
@@ -521,6 +542,16 @@ PROVIDERS: Dict[str, Provider] = {
         # connect, which would read as a bad credential.
         probe_method="POST",
         read_label=_dropbox_label,
+    ),
+    "todoist": Provider(
+        id="todoist",
+        label="Todoist",
+        fields=[Field("token", "API token", placeholder="40 hex characters")],
+        where="Todoist: Settings, Integrations, Developer, then copy the "
+              "API token (app.todoist.com/app/settings/integrations).",
+        build_auth=_todoist_auth,
+        probe_path="/user",
+        read_label=_todoist_label,
     ),
     "outlook": Provider(
         id="outlook",
