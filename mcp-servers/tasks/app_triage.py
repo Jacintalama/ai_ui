@@ -650,8 +650,11 @@ def brief(p) -> str:
         return ""
     lines = ["Separate from the account above: what fits what the person "
              "wants now (decided for this message):"]
+    choice = list((p or {}).get("choice") or [])
     if platform:
-        advise = [x for x in platform if not x.get("acting")]
+        # A part of the choice is said in the choice line below.
+        advise = [x for x in platform
+                  if not x.get("acting") and x["id"] not in choice]
         doing = [x for x in platform if x.get("acting")]
         if advise:
             lines.append("The platform does this itself, so recommend it as "
@@ -664,8 +667,26 @@ def brief(p) -> str:
         lines += list(dict.fromkeys(PLATFORM[x["id"]].rule for x in platform
                                     if PLATFORM[x["id"]].rule))
         # Not a word about where the button is: each description of it was
-        # read back to the person (live 2026-11-18).
-        lines.append("Do not write a link to it, and do not mention a button.")
+        # read back to the person (live 2026-11-18). Not when the only part
+        # was moved into the choice line: there is no "it" left.
+        if advise or doing:
+            lines.append("Do not write a link to it, and do not mention a "
+                         "button.")
+    if choice:
+        # Before the skill: live 2026-11-24 the build-a-workflow steps made
+        # n8n the only way ("I cannot build this right now") while three
+        # ways were offered under the answer (standup 2026-11-23).
+        need = [a["label"] for a in apps if not a.get("group")]
+        labels = [APPS[i].label for i in choice if i in APPS]
+        line = ("Needed for this: %s. " % " and ".join(need)) if need else ""
+        lines.append(
+            line + "To do it automatically there is a choice of three, and "
+            "the person picks: %s, or Automations (the platform's own: it "
+            "runs one of their agents when something arrives at a web "
+            "address or by email). Give the case for each in a sentence and "
+            "let them choose. Do not pick one for them, and do not say it "
+            "cannot be done because one of them is not connected."
+            % ", ".join(labels))
     best = next((s for s in skills if s.get("body")), None)
     if best:
         lines.append("Follow the ready-made skill %s for this message. Its "

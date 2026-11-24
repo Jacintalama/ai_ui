@@ -18,7 +18,9 @@ have no n8n tools), say so in your first sentence: their n8n is not
 connected yet, and they connect it from Connections with their n8n
 address and an API key (in n8n: Settings, n8n API, Create an API key).
 You can still ask the questions below, but do not say you will build it
-until it is connected.
+until it is connected. If you were told they have a choice between n8n and
+other ways, such as Zapier or Automations, let them choose first, and
+follow these steps once they choose n8n.
 
 ## Steps
 

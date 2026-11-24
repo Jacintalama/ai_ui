@@ -115,3 +115,33 @@ def test_publish_beside_the_choice_is_not_in_the_pick_row():
 def test_without_a_choice_the_output_is_unchanged():
     p = app_triage.plan([("airtable", .97)], set(), [])
     assert app_triage.with_buttons("Here is how.", p) == BEFORE
+
+
+# --- what the assistant is told ----------------------------------------------
+
+def _with_skill():
+    import agent_skills
+    pool = agent_skills.load_all(refresh=True)
+    return app_triage.plan([("airtable", .97), ("n8n", .95)], set(), [],
+                           text=MSG, skills=[("build-a-workflow", .95)],
+                           pool=pool)
+
+
+def test_the_brief_offers_the_choice_before_the_skill():
+    b = app_triage.brief(_with_skill())
+    assert "Needed for this: Airtable." in b
+    assert "choice of three" in b and "Do not pick one for them" in b
+    assert b.index("choice of three") < b.index("Follow the ready-made skill")
+    assert "webhook" not in b.split("Follow the ready-made skill")[0].lower()
+
+
+def test_the_brief_without_a_choice_says_nothing_of_one():
+    b = app_triage.brief(app_triage.plan([("airtable", .97)], set(), []))
+    assert "choice of three" not in b
+
+
+def test_no_platform_line_is_left_with_nothing_above_it():
+    """Automations moved into the choice line; "Do not write a link to it"
+    was left behind with no "it"."""
+    b = app_triage.brief(_p())
+    assert "Do not write a link to it" not in b
