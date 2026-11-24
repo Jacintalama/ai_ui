@@ -783,6 +783,13 @@ def with_buttons(answer: str, p) -> str:
     # tool connected does not need to be sold its competitor.
     settled = {a.get("group") for a in apps
                if a.get("connected") and a.get("group")}
+    # NEEDED, THEN PICK ONE (standup 2026-11-23). Live 2026-11-24 "save my
+    # website's form into Airtable automatically" showed four identical
+    # buttons and "Recommended: Zapier" under an answer that said only n8n
+    # would do. With a choice in the plan, the app they named gets its own
+    # line and button, and the choice gets one line and its own row.
+    choice = list((p or {}).get("choice") or [])
+    needed, picks = [], []
     for a in apps:
         if a["connected"]:
             continue
@@ -791,7 +798,25 @@ def with_buttons(answer: str, p) -> str:
         app = APPS[a["id"]]
         if connect_href(app.id) in low:
             continue
-        if not any(w in low for w in (app.label.lower(),) + app.says):
+        said = any(w in low for w in (app.label.lower(),) + app.says)
+        if app.id in choice:
+            if said and a["cannot"]:
+                lines.append("%s cannot yet %s." % (app.label, a["cannot"]))
+            picks.append(_button(app))
+            continue
+        if choice and not a.get("group"):
+            if a.get("named"):
+                needed.append("You need %s, because you asked for it. %s"
+                              % (app.label, _button(app)))
+                if a["cannot"]:
+                    needed.append("%s cannot yet %s." % (app.label, a["cannot"]))
+            else:
+                line = "Recommended: %s, so IO can %s" % (app.label, app.can)
+                if a["cannot"]:
+                    line += " (it cannot yet %s)" % a["cannot"]
+                needed.append(line + ". " + _button(app))
+            continue
+        if not said:
             line = "Recommended: %s, so IO can %s" % (app.label, app.can)
             if a["cannot"]:
                 line += " (it cannot yet %s)" % a["cannot"]
@@ -847,16 +872,36 @@ def with_buttons(answer: str, p) -> str:
     # whatever host it read about).
     # And a button to the place where it is done, whatever the answer said:
     # one per place, since Publish and Vercel open the same window.
-    for x in (p or {}).get("platform") or []:
+    # A part of the choice first, so a place it shares a page with (AI
+    # Agents opens where Automations is set up) does not take its button.
+    plat = sorted((p or {}).get("platform") or [],
+                  key=lambda x: 0 if x["id"] in choice else 1)
+    for x in plat:
         feat = PLATFORM[x["id"]]
+        href = OPEN + feat.opens
+        if x["id"] in choice:
+            # No how-line: the pick line says it, and that line said
+            # "webhook" to somebody who never automated anything.
+            if feat.button and href not in low:
+                picks.append("[%s](%s)" % (feat.button, href))
+            continue
         if not x.get("acting") and not any(w in low for w in feat.says):
             lines.append(x["how"])
-        href = OPEN + feat.opens
-        if feat.button and href not in low and not any(href in b for b in buttons):
+        if feat.button and href not in low \
+                and not any(href in b for b in buttons + picks):
             buttons.append("[%s](%s)" % (feat.button, href))
-    if not buttons:
+    if not (buttons or needed or picks):
         return (answer.rstrip() + "\n\n" + "\n".join(lines)) if lines else answer
     answer = _drop_button_talk(answer)
+    if choice:
+        labels = [APPS[i].label if i in APPS else PLATFORM[i].label
+                  for i in choice]
+        rows = lines + needed + ([" ".join(buttons)] if buttons else [])
+        rows.append("To do it automatically, pick one: %s or %s."
+                    % (", ".join(labels[:-1]), labels[-1]))
+        if picks:
+            rows.append(" ".join(picks))
+        return answer.rstrip() + "\n\n" + "\n".join(rows)
     # The buttons go last, together on one line: one paragraph, so they sit
     # side by side. One per line stacked them, touching (live, 2026-11-12).
     return answer.rstrip() + "\n\n" + "\n".join(lines + [" ".join(buttons)])
