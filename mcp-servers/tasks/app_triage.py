@@ -544,10 +544,28 @@ def plan(picks, connected, tools, text: str = "", skills=None,
         apps.append({"id": a.id, "label": a.label,
                      "connected": a.id in have, "can": a.can,
                      "cannot": a.cannot, "group": a.group, "pros": a.pros,
-                     "score": jev.get(app_id)})
+                     "score": jev.get(app_id), "named": _named(a, text)})
     features = [FEATURES[t] for t in tools or [] if t in FEATURES]
     plat_ids = [i for i, _s in sorted(((str(i), float(s)) for i, s in picks or []
                                        if str(i) in PLATFORM), key=lambda p: -p[1])]
+    # NEEDED, THEN PICK ONE (standup 2026-11-23): the app they named is
+    # needed, and the part that does it automatically is one of n8n, Zapier
+    # or the platform's own Automations, their choice, so Automations joins
+    # even when Jev did not pick it. Not when one of the group is connected:
+    # a choice already made is not offered again.
+    choice = [i for i in chosen if APPS[i].group == AUTOMATION_GROUP]
+    # No choice when it is already made: one of them connected, or named
+    # ("use n8n to ..." is their pick, as Airtable named is needed). None
+    # on a timer either, which Automations does not do, nor while the
+    # assistant is making the automation itself (review 2026-11-24).
+    if any(i in have or _named(APPS[i], text) for i in choice) \
+            or TIMER_TOOL in (tools or []) \
+            or PLATFORM["automations"].tool in (tools or []):
+        choice = []
+    if choice:
+        choice.append("automations")
+        if "automations" not in plat_ids:
+            plat_ids.append("automations")
     # Publish's line already mentions Vercel, so both picked is Publish
     # alone unless they said Vercel ("put it online" scored Publish 0.95 and
     # Vercel 0.87, 2026-11-13).
@@ -559,7 +577,7 @@ def plan(picks, connected, tools, text: str = "", skills=None,
                  "acting": bool(PLATFORM[i].tool)
                  and PLATFORM[i].tool in (tools or [])} for i in plat_ids]
     out = {"apps": apps, "features": features, "platform": platform,
-           "skills": _skills(skills, pool, have)}
+           "skills": _skills(skills, pool, have), "choice": choice}
     share_deploy(out, out)
     return out
 
@@ -638,8 +656,11 @@ def brief(p) -> str:
         return ""
     lines = ["Separate from the account above: what fits what the person "
              "wants now (decided for this message):"]
+    choice = list((p or {}).get("choice") or [])
     if platform:
-        advise = [x for x in platform if not x.get("acting")]
+        # A part of the choice is said in the choice line below.
+        advise = [x for x in platform
+                  if not x.get("acting") and x["id"] not in choice]
         doing = [x for x in platform if x.get("acting")]
         if advise:
             lines.append("The platform does this itself, so recommend it as "
@@ -652,8 +673,26 @@ def brief(p) -> str:
         lines += list(dict.fromkeys(PLATFORM[x["id"]].rule for x in platform
                                     if PLATFORM[x["id"]].rule))
         # Not a word about where the button is: each description of it was
-        # read back to the person (live 2026-11-18).
-        lines.append("Do not write a link to it, and do not mention a button.")
+        # read back to the person (live 2026-11-18). Not when the only part
+        # was moved into the choice line: there is no "it" left.
+        if advise or doing:
+            lines.append("Do not write a link to it, and do not mention a "
+                         "button.")
+    if choice:
+        # Before the skill: live 2026-11-24 the build-a-workflow steps made
+        # n8n the only way ("I cannot build this right now") while three
+        # ways were offered under the answer (standup 2026-11-23).
+        need = [a["label"] for a in apps if not a.get("group")]
+        labels = [APPS[i].label for i in choice if i in APPS]
+        line = ("Needed for this: %s. " % " and ".join(need)) if need else ""
+        lines.append(
+            line + "To do it automatically there is a choice of three, and "
+            "the person picks: %s, or Automations (the platform's own: it "
+            "runs one of their agents when something arrives at a web "
+            "address or by email). Give the case for each in a sentence and "
+            "let them choose. Do not pick one for them, and do not say it "
+            "cannot be done because one of them is not connected."
+            % ", ".join(labels))
     best = next((s for s in skills if s.get("body")), None)
     if best:
         lines.append("Follow the ready-made skill %s for this message. Its "
@@ -771,6 +810,13 @@ def with_buttons(answer: str, p) -> str:
     # tool connected does not need to be sold its competitor.
     settled = {a.get("group") for a in apps
                if a.get("connected") and a.get("group")}
+    # NEEDED, THEN PICK ONE (standup 2026-11-23). Live 2026-11-24 "save my
+    # website's form into Airtable automatically" showed four identical
+    # buttons and "Recommended: Zapier" under an answer that said only n8n
+    # would do. With a choice in the plan, the app they named gets its own
+    # line and button, and the choice gets one line and its own row.
+    choice = list((p or {}).get("choice") or [])
+    needed, picks = [], []
     for a in apps:
         if a["connected"]:
             continue
@@ -779,7 +825,25 @@ def with_buttons(answer: str, p) -> str:
         app = APPS[a["id"]]
         if connect_href(app.id) in low:
             continue
-        if not any(w in low for w in (app.label.lower(),) + app.says):
+        said = any(w in low for w in (app.label.lower(),) + app.says)
+        if app.id in choice:
+            if said and a["cannot"]:
+                lines.append("%s cannot yet %s." % (app.label, a["cannot"]))
+            picks.append(_button(app))
+            continue
+        if choice and not a.get("group"):
+            if a.get("named"):
+                needed.append("You need %s, because you asked for it. %s"
+                              % (app.label, _button(app)))
+                if a["cannot"]:
+                    needed.append("%s cannot yet %s." % (app.label, a["cannot"]))
+            else:
+                line = "Recommended: %s, so IO can %s" % (app.label, app.can)
+                if a["cannot"]:
+                    line += " (it cannot yet %s)" % a["cannot"]
+                needed.append(line + ". " + _button(app))
+            continue
+        if not said:
             line = "Recommended: %s, so IO can %s" % (app.label, app.can)
             if a["cannot"]:
                 line += " (it cannot yet %s)" % a["cannot"]
@@ -828,23 +892,45 @@ def with_buttons(answer: str, p) -> str:
         for need in s.get("missing") or []:
             href = CONNECT + skill_fit.CONNECT_ID.get(need, need)
             button = "[%s](%s)" % (skill_fit.BUTTON.get(need, "Connect"), href)
-            if href not in low and button not in buttons:
+            # Also not one a needed line or the pick row already carries.
+            if href not in low and not any(
+                    href in b for b in buttons + needed + picks):
                 buttons.append(button)
     # What the platform does itself: how, in the service's words, unless the
     # answer already said it (2026-11-13: left alone, the model suggests
     # whatever host it read about).
     # And a button to the place where it is done, whatever the answer said:
     # one per place, since Publish and Vercel open the same window.
-    for x in (p or {}).get("platform") or []:
+    # A part of the choice first, so a place it shares a page with (AI
+    # Agents opens where Automations is set up) does not take its button.
+    plat = sorted((p or {}).get("platform") or [],
+                  key=lambda x: 0 if x["id"] in choice else 1)
+    for x in plat:
         feat = PLATFORM[x["id"]]
+        href = OPEN + feat.opens
+        if x["id"] in choice:
+            # No how-line: the pick line says it, and that line said
+            # "webhook" to somebody who never automated anything.
+            if feat.button and href not in low:
+                picks.append("[%s](%s)" % (feat.button, href))
+            continue
         if not x.get("acting") and not any(w in low for w in feat.says):
             lines.append(x["how"])
-        href = OPEN + feat.opens
-        if feat.button and href not in low and not any(href in b for b in buttons):
+        if feat.button and href not in low \
+                and not any(href in b for b in buttons + picks):
             buttons.append("[%s](%s)" % (feat.button, href))
-    if not buttons:
+    if not (buttons or needed or picks):
         return (answer.rstrip() + "\n\n" + "\n".join(lines)) if lines else answer
     answer = _drop_button_talk(answer)
+    if choice:
+        labels = [APPS[i].label if i in APPS else PLATFORM[i].label
+                  for i in choice]
+        rows = lines + needed + ([" ".join(buttons)] if buttons else [])
+        rows.append("To do it automatically, pick one: %s or %s."
+                    % (", ".join(labels[:-1]), labels[-1]))
+        if picks:
+            rows.append(" ".join(picks))
+        return answer.rstrip() + "\n\n" + "\n".join(rows)
     # The buttons go last, together on one line: one paragraph, so they sit
     # side by side. One per line stacked them, touching (live, 2026-11-12).
     return answer.rstrip() + "\n\n" + "\n".join(lines + [" ".join(buttons)])

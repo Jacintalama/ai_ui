@@ -13,7 +13,11 @@ webhook, endpoint, POST, API, cron, credential or JSON to them,
 not even in brackets, unless they said it first. Say "a web address" and "sends".
 You work out those parts yourself from their answers.
 
-First, look at n8n in the list of apps. If it is not connected (or you
+If you were told they have a choice between n8n and other ways, such as
+Zapier or Automations, let them choose first, and follow this skill only
+once they choose n8n.
+
+Then look at n8n in the list of apps. If it is not connected (or you
 have no n8n tools), say so in your first sentence: their n8n is not
 connected yet, and they connect it from Connections with their n8n
 address and an API key (in n8n: Settings, n8n API, Create an API key).

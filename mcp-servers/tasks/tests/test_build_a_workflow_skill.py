@@ -63,3 +63,18 @@ def test_the_jargon_list_covers_what_slipped_through_live():
     body = _skill()["body"]
     for word in ("webhook", "endpoint", "POST", "not even in brackets"):
         assert word in body, word
+
+
+def test_it_lets_them_choose_before_the_n8n_steps():
+    """Live 2026-11-24: offered n8n, Zapier and Automations under the
+    answer, the skill still opened with "I cannot build this right now"."""
+    body = _skill()["body"]
+    assert "let them choose first" in body
+    assert body.index("let them choose first") < body.index("## Steps")
+
+
+def test_the_choice_comes_before_saying_n8n_is_not_connected():
+    """Review 2026-11-24: "say so in your first sentence" came before the
+    choice, so the first sentence could still be "n8n is not connected"."""
+    body = _skill()["body"]
+    assert body.index("let them choose first") < body.index("first sentence")
