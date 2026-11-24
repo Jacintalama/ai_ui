@@ -943,6 +943,19 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
                     "have connected Linear under Connections.",
         enabled=True,
     ),
+    "my-monday": MCPServerConfig(
+        server_id="my-monday",
+        access_class=AccessClass.PUBLIC,
+        display_name="monday.com (your account)",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_MYTOOLS_URL + "/monday",
+        auth_type="none",
+        api_key_env=None,
+        description="monday.com acting as the signed-in user's own account: "
+                    "boards, items, column values and updates. Requires "
+                    "them to have connected monday.com under Connections.",
+        enabled=True,
+    ),
     "my-vercel": MCPServerConfig(
         server_id="my-vercel",
         access_class=AccessClass.PUBLIC,

@@ -59,6 +59,7 @@ SPOKEN = {
     "todoist": "todoist",
     "asana": "asana",
     "linear": "linear",
+    "monday": "monday.com",
 }
 
 

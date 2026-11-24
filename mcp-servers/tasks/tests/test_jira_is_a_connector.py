@@ -282,6 +282,13 @@ POSTS_THAT_READ = [
     ("linear", "search_issues"),
     ("linear", "team_issues"),
     ("linear", "whoami"),
+    # monday.com is GraphQL too (2026-11-24).
+    ("monday", "get_board"),
+    ("monday", "get_item"),
+    ("monday", "list_boards"),
+    ("monday", "list_items"),
+    ("monday", "search_items"),
+    ("monday", "whoami"),
     # Notion reads over POST because the query, filter and sort are a
     # body. A 403 on either means the page was never shared with the
     # integration, and reconnecting does not change that.

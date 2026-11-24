@@ -411,6 +411,32 @@ def _linear_label(d):
     return viewer.get("email") or viewer.get("name") or ""
 
 
+#: monday.com's API version, PINNED. Left out, monday answers with whatever
+#: its "Current" version is that month, and the next one (2027-01) moves a
+#: board's item listing from a nested `items_page` to a root query, which
+#: would break list_items and search_items the day it became Current. Read
+#: 2026-11-24 off monday's versioning page, where 2026-10 is Current; move
+#: it on deliberately, with the drill, when monday announces its retirement.
+MONDAY_API_VERSION = "2026-10"
+
+
+def _monday_auth(v):
+    """monday.com, signed as the person, with their personal API token.
+
+    The token goes in bare, the way monday's docs show it, with no
+    "Bearer". Base is the host and every tool posts to /v2.
+    """
+    return VendorAuth(base_url="https://api.monday.com",
+                      headers={"Authorization": _require(v, "token"),
+                               "API-Version": MONDAY_API_VERSION})
+
+
+def _monday_label(d):
+    data = (d or {}).get("data")
+    me = (data.get("me") if isinstance(data, dict) else None) or {}
+    return me.get("email") or me.get("name") or ""
+
+
 def _zapier_auth(v):
     """Zapier has no account API a user can hand us a key for. What they DO
     have is a Catch Hook: a per-Zap URL that is itself the credential, because
@@ -616,6 +642,19 @@ PROVIDERS: Dict[str, Provider] = {
         probe_body={"query": "query { viewer { id name email } }"},
         read_label=_linear_label,
     ),
+    "monday": Provider(
+        id="monday",
+        label="monday.com",
+        fields=[Field("token", "Personal API token")],
+        where="monday.com: your profile picture (top right), Developers, "
+              "API token, Show, then copy it.",
+        build_auth=_monday_auth,
+        # GraphQL, like Linear: one endpoint, the question in the body.
+        probe_path="/v2",
+        probe_method="POST",
+        probe_body={"query": "query { me { id name email } }"},
+        read_label=_monday_label,
+    ),
     "outlook": Provider(
         id="outlook",
         label="Outlook",
@@ -709,6 +748,30 @@ def verify_request(provider_id: str, values: Dict[str, str]) -> VerifyRequest:
     return VerifyRequest(url=auth.base_url + p.probe_path,
                          headers=auth.headers, params=auth.params,
                          method=p.probe_method, body=p.probe_body)
+
+
+def graphql_refused(payload) -> bool:
+    """Whether a 2xx GraphQL answer is really a refusal. Pure.
+
+    A property of the body, not a list of vendors: `errors` is a non-empty
+    list AND nothing usable came back. Nothing usable means `data` is
+    absent, null, EMPTY, or every root field in it is null. A partial
+    answer, some data beside an error, is still an answer.
+
+    EMPTY was added for monday.com (2026-11-24), whose documented refusal
+    is `{"data": [], "errors": [...]}` with HTTP 200. Linear's is
+    `"data": null`, so a check written for Linear alone read monday's
+    empty list as a success.
+    """
+    if not isinstance(payload, dict):
+        return False
+    errors = payload.get("errors")
+    if not (isinstance(errors, list) and errors):
+        return False
+    data = payload.get("data")
+    if not data:
+        return True
+    return isinstance(data, dict) and all(v is None for v in data.values())
 
 
 def account_label(provider_id: str, payload: dict) -> str:

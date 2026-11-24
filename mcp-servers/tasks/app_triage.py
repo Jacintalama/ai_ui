@@ -177,6 +177,21 @@ _APPS = (
         cannot="delete or archive an issue, or make a team, project or "
                "cycle",
         says=("linear",)),
+    # Labelled monday.com, with NO says=("monday",): Monday is a weekday,
+    # and "every Monday at 9" must not read as naming this app.
+    App("monday", "monday.com",
+        "a team's work board on monday.com: boards of items with a status, "
+        "an owner and a due date in columns, grouped into sections, the "
+        "work tracker many agencies and operations teams run on",
+        "list your boards, see a board's columns and groups, list or "
+        "search its items, read one with its updates, create an item, "
+        "change its status, date or other columns, move it to another "
+        "group, and post an update on it",
+        ("list_boards", "get_board", "list_items", "search_items",
+         "get_item", "create_item", "update_item", "move_item",
+         "comment_on_item"),
+        cannot="delete or archive an item, make a board, a group or a "
+               "column, or search every board at once"),
     App("asana", "Asana",
         "a team's work tracker: projects, tasks with owners and due dates, "
         "sections a task moves through, and seeing what is assigned to you",

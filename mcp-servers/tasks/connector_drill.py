@@ -43,8 +43,11 @@ FROM_RESULT: Dict[str, Tuple[Tuple[str, str], ...]] = {
     "base_id": (("list_my_bases", "id"),),
     "table": (("list_tables", "name"), ("list_tables", "id")),
     "record_id": (("list_records", "id"),),
-    # Trello
-    "board_id": (("list_my_boards", "id"),),
+    # Trello. board_id is monday.com's too, from its list_boards; a
+    # monday item id is not filled: list_items
+    # answers {"cursor", "items"} and the drill reads flat answers only, so
+    # get_item is reported as skipped and -a item_id=... fills it by hand.
+    "board_id": (("list_my_boards", "id"), ("list_boards", "id")),
     "list_id": (("list_board_lists", "id"),),
     "card_id": (("list_cards", "id"),),
     # GitHub. `owner` is the one honest use of whoami's own answer.
