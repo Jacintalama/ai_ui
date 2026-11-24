@@ -145,3 +145,36 @@ def test_no_platform_line_is_left_with_nothing_above_it():
     was left behind with no "it"."""
     b = app_triage.brief(_p())
     assert "Do not write a link to it" not in b
+
+
+# --- final review, 2026-11-24 -------------------------------------------------
+
+def test_a_skill_needing_a_needed_app_draws_one_button():
+    import agent_skills
+    pool = agent_skills.load_all(refresh=True)
+    p = app_triage.plan([("airtable", .97), ("gmail", .96), ("n8n", .95)],
+                        set(), [], pool=pool,
+                        text="save my Gmail attachments into Airtable automatically",
+                        skills=[("find-the-attachment", .95)])
+    assert p["skills"] and "gmail" in p["skills"][0]["missing"]
+    out = app_triage.with_buttons("Here is how.", p)
+    assert out.count("#aiui-connect:gmail") == 1
+
+
+def test_a_timer_job_naming_zapier_has_no_choice():
+    p = _p(picks=(("zapier", .95),), tools=["schedules"],
+           text="every Monday post my sales numbers to Zapier")
+    assert p["choice"] == []
+    assert "automations" not in [x["id"] for x in p["platform"]]
+
+
+def test_no_choice_while_the_assistant_is_making_the_automation():
+    p = _p(tools=["automations"],
+           text="set up an automation that saves my website form into Airtable")
+    assert p["choice"] == []
+
+
+def test_naming_n8n_is_their_pick():
+    p = _p(text="use n8n to save my website form into Airtable automatically")
+    assert p["choice"] == []
+    assert "pick one" not in app_triage.with_buttons("Here is how.", p)

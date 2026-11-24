@@ -554,7 +554,13 @@ def plan(picks, connected, tools, text: str = "", skills=None,
     # even when Jev did not pick it. Not when one of the group is connected:
     # a choice already made is not offered again.
     choice = [i for i in chosen if APPS[i].group == AUTOMATION_GROUP]
-    if any(i in have for i in choice):
+    # No choice when it is already made: one of them connected, or named
+    # ("use n8n to ..." is their pick, as Airtable named is needed). None
+    # on a timer either, which Automations does not do, nor while the
+    # assistant is making the automation itself (review 2026-11-24).
+    if any(i in have or _named(APPS[i], text) for i in choice) \
+            or TIMER_TOOL in (tools or []) \
+            or PLATFORM["automations"].tool in (tools or []):
         choice = []
     if choice:
         choice.append("automations")
@@ -886,7 +892,9 @@ def with_buttons(answer: str, p) -> str:
         for need in s.get("missing") or []:
             href = CONNECT + skill_fit.CONNECT_ID.get(need, need)
             button = "[%s](%s)" % (skill_fit.BUTTON.get(need, "Connect"), href)
-            if href not in low and button not in buttons:
+            # Also not one a needed line or the pick row already carries.
+            if href not in low and not any(
+                    href in b for b in buttons + needed + picks):
                 buttons.append(button)
     # What the platform does itself: how, in the service's words, unless the
     # answer already said it (2026-11-13: left alone, the model suggests

@@ -71,3 +71,10 @@ def test_it_lets_them_choose_before_the_n8n_steps():
     body = _skill()["body"]
     assert "let them choose first" in body
     assert body.index("let them choose first") < body.index("## Steps")
+
+
+def test_the_choice_comes_before_saying_n8n_is_not_connected():
+    """Review 2026-11-24: "say so in your first sentence" came before the
+    choice, so the first sentence could still be "n8n is not connected"."""
+    body = _skill()["body"]
+    assert body.index("let them choose first") < body.index("first sentence")
