@@ -738,13 +738,15 @@ def test_the_brief_forbids_offering_what_io_cannot_do():
 def test_two_buttons_share_one_line_after_the_text():
     """Live: Connect n8n and Connect Zapier stacked one under the other,
     touching, with the second against the toolbar. One line of buttons is
-    one paragraph, so they sit side by side."""
+    one paragraph, so they sit side by side. Since 2026-11-24 the choice
+    is three, the platform's own Automations with them
+    (test_triage_needed_and_pick_one)."""
     p = app_triage.plan([("n8n", 0.97)], set(), [])
     out = app_triage.with_buttons("Here is how I would do it.", p)
     last = out.rstrip().splitlines()[-1]
     assert last == ("[Connect n8n](#aiui-connect:n8n) "
-                    "[Connect Zapier](#aiui-connect:zapier)")
-    assert "Recommended: n8n" in out and out.index("Recommended: Zapier") < out.index(last)
+                    "[Connect Zapier](#aiui-connect:zapier) "
+                    "[Set up in AI Agents](#aiui-open:ai-agents)")
 
 
 def test_the_button_has_room_around_it():

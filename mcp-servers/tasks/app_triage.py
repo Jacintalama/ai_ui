@@ -544,10 +544,22 @@ def plan(picks, connected, tools, text: str = "", skills=None,
         apps.append({"id": a.id, "label": a.label,
                      "connected": a.id in have, "can": a.can,
                      "cannot": a.cannot, "group": a.group, "pros": a.pros,
-                     "score": jev.get(app_id)})
+                     "score": jev.get(app_id), "named": _named(a, text)})
     features = [FEATURES[t] for t in tools or [] if t in FEATURES]
     plat_ids = [i for i, _s in sorted(((str(i), float(s)) for i, s in picks or []
                                        if str(i) in PLATFORM), key=lambda p: -p[1])]
+    # NEEDED, THEN PICK ONE (standup 2026-11-23): the app they named is
+    # needed, and the part that does it automatically is one of n8n, Zapier
+    # or the platform's own Automations, their choice, so Automations joins
+    # even when Jev did not pick it. Not when one of the group is connected:
+    # a choice already made is not offered again.
+    choice = [i for i in chosen if APPS[i].group == AUTOMATION_GROUP]
+    if any(i in have for i in choice):
+        choice = []
+    if choice:
+        choice.append("automations")
+        if "automations" not in plat_ids:
+            plat_ids.append("automations")
     # Publish's line already mentions Vercel, so both picked is Publish
     # alone unless they said Vercel ("put it online" scored Publish 0.95 and
     # Vercel 0.87, 2026-11-13).
@@ -559,7 +571,7 @@ def plan(picks, connected, tools, text: str = "", skills=None,
                  "acting": bool(PLATFORM[i].tool)
                  and PLATFORM[i].tool in (tools or [])} for i in plat_ids]
     out = {"apps": apps, "features": features, "platform": platform,
-           "skills": _skills(skills, pool, have)}
+           "skills": _skills(skills, pool, have), "choice": choice}
     share_deploy(out, out)
     return out
 
