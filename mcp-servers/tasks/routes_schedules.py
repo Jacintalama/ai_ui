@@ -715,6 +715,15 @@ class UpdateScheduleIn(BaseModel):
     # Whether this cron's new outputs count in the red number (migration
     # 073, cron_quiet). Muting also reads what is already unread from it.
     notify: bool | None = None
+    # The Edit button on the Cron Jobs page (2026-11-24) sends these too.
+    # Absent means unchanged, which is all the Discord edit modal sends.
+    agent_id: str | None = None
+    tool_mode: str | None = None
+
+
+#: Said when an edit would leave a schedule with nobody to run it.
+NO_AGENT_ON_EDIT = ("A schedule needs an agent to run it. Pick one of your "
+                    "agents under Run as.")
 
 
 @router.patch("/{schedule_id}")
@@ -730,7 +739,22 @@ async def update_schedule(
     values: dict[str, Any] = {}
     if body.notify is not None:
         values["notify"] = bool(body.notify)
+    # Every check runs before anything is written, so one refused field
+    # stops the whole edit rather than saving the rest of it.
+    _validate_tool_mode(body.tool_mode)
+    if body.tool_mode is not None:
+        values["tool_mode"] = body.tool_mode
+    if body.agent_id is not None:
+        # Create picks a default when none is named; an edit has one
+        # already, so a blank here can only mean "remove it", which would
+        # leave a schedule that fails every time it fires.
+        agent_id = body.agent_id.strip()
+        if not agent_id:
+            raise HTTPException(status_code=400, detail=NO_AGENT_ON_EDIT)
+        values["agent_id"] = agent_id
     if body.name is not None:
+        if not body.name.strip():
+            raise HTTPException(status_code=400, detail="name cannot be blank")
         values["name"] = body.name
     if body.cron_expr is not None:
         from croniter import croniter
@@ -742,6 +766,8 @@ async def update_schedule(
                                 is_admin=_is_admin(x_user_admin))
         values["cron_expr"] = body.cron_expr
     if body.prompt is not None:
+        if not body.prompt.strip():
+            raise HTTPException(status_code=400, detail="prompt cannot be blank")
         values["prompt"] = body.prompt
     if values:
         async with session() as s:
