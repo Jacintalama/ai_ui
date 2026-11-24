@@ -166,6 +166,10 @@ class Schedule(Base):
     # Discord channel/thread id to post each run's result into (set when the
     # schedule is created from Discord). NULL = no delivery (CLI/operator runs).
     delivery_channel_id = Column(Text, nullable=True)
+    # Whether this cron's new outputs count in the red number on Cron Jobs
+    # (migration 073). False = muted: outputs still land in the Cron Outputs
+    # inbox, already read. A run that did not complete counts regardless.
+    notify = Column(Boolean, nullable=False, server_default="true", default=True)
     # Which platform the run result is delivered to (discord|slack).
     # Defaults to 'discord' so existing rows preserve current behavior.
     delivery_platform = Column(Text, nullable=False, server_default="discord")

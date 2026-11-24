@@ -712,6 +712,9 @@ class UpdateScheduleIn(BaseModel):
     name: str | None = None
     cron_expr: str | None = None
     prompt: str | None = None
+    # Whether this cron's new outputs count in the red number (migration
+    # 073, cron_quiet). Muting also reads what is already unread from it.
+    notify: bool | None = None
 
 
 @router.patch("/{schedule_id}")
@@ -723,8 +726,10 @@ async def update_schedule(
     x_user_admin: str = Header(default=""),
 ) -> dict[str, str]:
     is_operator, scoped_email = _resolve_caller(x_cron_secret, x_user_email)
-    await _scoped_schedule(schedule_id, scoped_email)  # 404 if missing / not owner
+    sched = await _scoped_schedule(schedule_id, scoped_email)  # 404 if missing / not owner
     values: dict[str, Any] = {}
+    if body.notify is not None:
+        values["notify"] = bool(body.notify)
     if body.name is not None:
         values["name"] = body.name
     if body.cron_expr is not None:
@@ -743,6 +748,13 @@ async def update_schedule(
             await s.execute(
                 update(Schedule).where(Schedule.id == uuid.UUID(schedule_id)).values(**values)
             )
+            if values.get("notify") is False:
+                # Muting a cron takes what it already has unread off the red
+                # number too, the way muting a chat does. Still in the inbox.
+                from sqlalchemy import text
+                await s.execute(text(mark_all_sql(True)),
+                                {"email": sched.user_email,
+                                 "schedule_id": str(sched.id)})
             await s.commit()
     return {"status": "updated"}
 
@@ -767,4 +779,6 @@ def _serialize(sch: Schedule) -> dict[str, Any]:
         "kind": sch.kind,
         "agent_id": sch.agent_id,
         "tool_mode": sch.tool_mode,
+        # Only False is muted: a row from before migration 073 counts.
+        "notify": getattr(sch, "notify", True) is not False,
     }

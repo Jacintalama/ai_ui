@@ -389,3 +389,15 @@ async def test_a_broken_memory_read_costs_a_schedule_its_memory_not_its_run(
     # The rest of the brief survives the broken read, because each optional
     # part of it is read in its own arm.
     assert "You are Ada" in seen["messages"][0]["content"]
+
+
+async def test_a_schedule_run_may_say_nothing_needs_the_person(monkeypatch):
+    """cron_quiet (2026-11-24): on the schedule surface the brief carries the
+    ask to mark a quiet answer, so it does not ring the red number. In the
+    brief, not after the task: the task stays the last thing read, as is."""
+    import cron_quiet
+    seen = _wire_schedule(monkeypatch, "")
+
+    await agent_runner.run_agent(_Sched())
+    assert seen["messages"][0]["content"].endswith(cron_quiet.ASK)
+    assert seen["messages"][-1]["content"] == "Write the weekly review."
