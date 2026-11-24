@@ -437,6 +437,25 @@ def _monday_label(d):
     return me.get("email") or me.get("name") or ""
 
 
+def _calendly_auth(v):
+    """Calendly, signed as the person, with their personal access token.
+
+    A token rather than OAuth, like Todoist: anybody can make one under
+    Developer, Personal access tokens, on any plan including Free, so this
+    needs no app registration. A token made since Calendly added scopes
+    has only the boxes ticked when it was made (calendly_args.SCOPES).
+    """
+    return VendorAuth(base_url="https://api.calendly.com",
+                      headers={"Authorization": "Bearer "
+                               + _require(v, "token")})
+
+
+def _calendly_label(d):
+    me = (d or {}).get("resource")
+    me = me if isinstance(me, dict) else {}
+    return me.get("email") or me.get("name") or ""
+
+
 def _zapier_auth(v):
     """Zapier has no account API a user can hand us a key for. What they DO
     have is a Catch Hook: a per-Zap URL that is itself the credential, because
@@ -654,6 +673,23 @@ PROVIDERS: Dict[str, Provider] = {
         probe_method="POST",
         probe_body={"query": "query { me { id name email } }"},
         read_label=_monday_label,
+    ),
+    "calendly": Provider(
+        id="calendly",
+        label="Calendly",
+        fields=[Field("token", "Personal access token")],
+        # The scopes are written out here and kept equal to
+        # calendly_args.SCOPES by a test: a new token has NONE until they
+        # are ticked, and users:read is what the connect check reads.
+        where="Calendly: your profile menu, Developer, Personal access "
+              "tokens (calendly.com/app/developer), then Generate new "
+              "token. Tick users:read, "
+              "event_types:read, scheduled_events:read, "
+              "scheduled_events:write and scheduling_links:write, then copy "
+              "it (Calendly shows it once).",
+        build_auth=_calendly_auth,
+        probe_path="/users/me",
+        read_label=_calendly_label,
     ),
     "outlook": Provider(
         id="outlook",

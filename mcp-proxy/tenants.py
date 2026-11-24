@@ -956,6 +956,21 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
                     "them to have connected monday.com under Connections.",
         enabled=True,
     ),
+    "my-calendly": MCPServerConfig(
+        server_id="my-calendly",
+        access_class=AccessClass.PUBLIC,
+        display_name="Calendly (your account)",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_MYTOOLS_URL + "/calendly",
+        auth_type="none",
+        api_key_env=None,
+        description="Calendly acting as the signed-in user's own account: "
+                    "event types, the meetings people booked and who is "
+                    "coming, open times, one-time booking links and booking "
+                    "someone in. Requires them to have connected Calendly "
+                    "under Connections.",
+        enabled=True,
+    ),
     "my-vercel": MCPServerConfig(
         server_id="my-vercel",
         access_class=AccessClass.PUBLIC,

@@ -192,6 +192,22 @@ _APPS = (
          "comment_on_item"),
         cannot="delete or archive an item, make a board, a group or a "
                "column, or search every board at once"),
+    # Other people booking time WITH you through a link. Booking time on
+    # your own calendar is Google Calendar's or Outlook's.
+    App("calendly", "Calendly",
+        "a booking page where other people book a meeting with you: "
+        "scheduling links to send to clients or leads, the meetings they "
+        "booked, and the open slots they can pick",
+        "list your event types, see the meetings people booked and who is "
+        "coming with their answers, find your open times, make a one-time "
+        "booking link for one person, and book someone into one of your "
+        "event types",
+        ("list_event_types", "list_events", "get_event", "list_invitees",
+         "list_available_times", "create_scheduling_link", "book_meeting"),
+        cannot="cancel or reschedule a meeting (each invitee's own cancel "
+               "and reschedule links are shown instead), or make or change "
+               "an event type",
+        says=("calendly",)),
     App("asana", "Asana",
         "a team's work tracker: projects, tasks with owners and due dates, "
         "sections a task moves through, and seeing what is assigned to you",

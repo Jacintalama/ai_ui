@@ -844,6 +844,7 @@
       { id: 'asana', real: true, token: true, name: 'Asana', domain: 'asana.com', cat: 'Productivity' },
       { id: 'linear', real: true, token: true, name: 'Linear', domain: 'linear.app', cat: 'Tools & Automation' },
       { id: 'monday', real: true, token: true, name: 'monday.com', domain: 'monday.com', cat: 'Productivity' },
+      { id: 'calendly', real: true, token: true, name: 'Calendly', domain: 'calendly.com', cat: 'Productivity' },
       { id: 'vercel', real: true, token: true, name: 'Vercel', domain: 'vercel.com', cat: 'Platform' },
       { id: 'stripe', name: 'Stripe', domain: 'stripe.com', cat: 'Platform' }
     ];

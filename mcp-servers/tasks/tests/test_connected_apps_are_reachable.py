@@ -60,6 +60,7 @@ SPOKEN = {
     "asana": "asana",
     "linear": "linear",
     "monday": "monday.com",
+    "calendly": "calendly",
 }
 
 
