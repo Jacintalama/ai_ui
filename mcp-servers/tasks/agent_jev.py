@@ -519,7 +519,7 @@ async def wants_release(email: str, text: str) -> bool | None:
 #: account that no such bridge exists. With the clause naming it, 0.90 to
 #: 0.91; the measurements are in that test.
 MAKES_CLAUSE = ("making things in it: a new table, record, card, task, "
-                "list, page, issue, pull request, branch, contact, post "
+                "item, list, page, issue, pull request, branch, contact, post "
                 "or event. It can also build an n8n workflow and change, "
                 "switch on and off, or delete one, link, connect or set up "
                 "AIUI in the person's n8n so their n8n workflows can use "
@@ -646,7 +646,8 @@ TOOL_NOTES = {
     "server:mcp-proxy": "the apps the person connected and the web: their "
                         "Trello boards, lists and cards, ClickUp tasks, "
                         "Todoist tasks and projects, Asana tasks and "
-                        "projects, Linear issues, "
+                        "projects, Linear issues, monday.com boards and "
+                        "items, "
                         "GitHub repositories, their code, issues and "
                         "pull requests, Jira projects and issues, "
                         "Notion pages, "

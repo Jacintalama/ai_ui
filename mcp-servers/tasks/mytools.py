@@ -861,26 +861,13 @@ def _refusal(r, label: str, creds: Dict[str, str], provider_id: str,
 
 
 def _graphql_refused(r) -> bool:
-    """Whether a 2xx answer is really a GraphQL refusal.
-
-    A property of the body, not a list of vendors: `errors` is a non-empty
-    list AND nothing usable came back, meaning `data` is absent, null, or
-    every root field in it is null. A partial answer, where some data did
-    come back beside an error, is still an answer.
-    """
+    """Whether a 2xx answer is really a GraphQL refusal. The rule is
+    connections.graphql_refused, shared with the connect check."""
     try:
         payload = r.json()
     except Exception:                                       # noqa: BLE001
         return False
-    if not isinstance(payload, dict):
-        return False
-    errors = payload.get("errors")
-    if not (isinstance(errors, list) and errors):
-        return False
-    data = payload.get("data")
-    if data is None:
-        return True
-    return isinstance(data, dict) and all(v is None for v in data.values())
+    return C.graphql_refused(payload)
 
 
 class _VendorRefused(Exception):
@@ -3347,6 +3334,285 @@ LINEAR_TOOLS = [
 ]
 
 
+# --- monday.com --------------------------------------------------------------
+#
+# GraphQL at https://api.monday.com/v2, the person's own token sent bare and
+# the API version pinned (connections.MONDAY_API_VERSION). Like Linear every
+# call is a POST, so every read says writes=False, and every value a model
+# gives travels as a variable, never pasted into the query text.
+#
+# Read off monday's docs 2026-11-24, each a connector that silently fails:
+#
+# - A REFUSAL IS HTTP 200 with {"data": [], "errors": [...]}: the empty list,
+#   not null, which is why connections.graphql_refused counts an empty
+#   `data` as nothing usable.
+# - column_values IS A JSON-ENCODED STRING inside the JSON body, keyed by
+#   column id, not by the title a person sees. get_board says which id is
+#   which; _monday_columns encodes it.
+# - boards(ids:) and items(ids:) ANSWER A LIST even for one id, and an id
+#   nobody can see is an empty list with no error at all.
+# - "Monday" is a weekday. The app is labelled monday.com everywhere so
+#   "every Monday at 9" never reads as naming it.
+
+_MONDAY_ITEM = "id name url group { id title } column_values { id type text }"
+_MONDAY_NOT_FOUND = {"not_found": "monday.com has nothing with that id that "
+                                  "this account can see."}
+
+
+def _monday_query(query: str, **variables) -> Dict[str, Any]:
+    return {"query": query,
+            "variables": {k: v for k, v in variables.items() if v is not None}}
+
+
+def _monday_id(args: Dict[str, Any], name: str, what: str) -> str:
+    """An id monday can read: digits, like 1234567890. Checked here so a
+    name or a title in its place is a sentence, not a GraphQL error."""
+    value = str((args or {}).get(name) or "").strip()
+    if not value:
+        raise ValueError("Say which " + what + " in `" + name + "`.")
+    if not value.isdigit():
+        raise ValueError("A monday.com " + what + " id is a number, like "
+                         "1234567890. Got: " + value)
+    return value
+
+
+def _monday_columns(given: Any, name: str = "") -> Optional[str]:
+    """column_values as monday takes it: a JSON STRING of column id -> value.
+
+    Accepts an object, or a JSON string of one, from the model. `name`
+    renames the item in the same call ("name" is a column to monday).
+    None when there is nothing to send.
+    """
+    values: Dict[str, Any] = {}
+    if isinstance(given, str) and given.strip():
+        try:
+            given = json.loads(given)
+        except ValueError:
+            given = None
+        if not isinstance(given, dict):
+            raise ValueError(
+                "column_values is an object of column id to value, for "
+                "example {\"status\": \"Done\", \"date4\": \"2026-12-01\"}. "
+                "get_board lists the column ids.")
+    if isinstance(given, dict):
+        values.update({str(k): v for k, v in given.items()
+                       if str(k).strip() and v not in (None, "")})
+    elif given not in (None, ""):
+        raise ValueError("column_values is an object of column id to value.")
+    if str(name or "").strip():
+        values["name"] = str(name).strip()
+    return json.dumps(values) if values else None
+
+
+def _monday_dig(*path):
+    """data down `path`. An int step takes that entry of a list, because
+    boards(ids:) and items(ids:) answer lists; an empty list there means
+    nothing with that id is visible, and says so rather than returning the
+    envelope. Any other missing step hands the answer back as it came."""
+    def dig(payload):
+        cur = payload.get("data") if isinstance(payload, dict) else None
+        for step in path:
+            if isinstance(step, int):
+                if isinstance(cur, list) and not cur:
+                    return dict(_MONDAY_NOT_FOUND)
+                if not isinstance(cur, list) or len(cur) <= step:
+                    return payload
+                cur = cur[step]
+                continue
+            if not isinstance(cur, dict) or cur.get(step) is None:
+                return payload
+            cur = cur[step]
+        return cur
+    return dig
+
+
+def _monday_items(a: Dict[str, Any]) -> Dict[str, Any]:
+    """A board's items, a page at a time. The next page is asked for by the
+    cursor alone: monday does not take a board and a cursor together."""
+    cursor = str((a or {}).get("cursor") or "").strip()
+    if cursor:
+        return _monday_query(
+            "query($c: String!, $n: Int!) { next_items_page(cursor: $c, "
+            "limit: $n) { cursor items { %s } } }" % _MONDAY_ITEM,
+            c=cursor, n=MAX_ITEMS)
+    return _monday_query(
+        "query($ids: [ID!], $n: Int!) { boards(ids: $ids) { items_page("
+        "limit: $n) { cursor items { %s } } } }" % _MONDAY_ITEM,
+        ids=[_monday_id(a, "board_id", "board")], n=MAX_ITEMS)
+
+
+def _monday_items_unwrap(payload):
+    if isinstance(payload, dict) and isinstance(payload.get("data"), dict) \
+            and "next_items_page" in payload["data"]:
+        return _monday_dig("next_items_page")(payload)
+    return _monday_dig("boards", 0, "items_page")(payload)
+
+
+def _monday_search(a: Dict[str, Any]) -> Dict[str, Any]:
+    text = str((a or {}).get("text") or "").strip()
+    if not text:
+        raise ValueError("Say what to look for in `text`.")
+    return _monday_query(
+        "query($ids: [ID!], $n: Int!, $qp: ItemsQuery) { boards(ids: $ids) "
+        "{ items_page(limit: $n, query_params: $qp) { cursor items { %s } } "
+        "} }" % _MONDAY_ITEM,
+        ids=[_monday_id(a, "board_id", "board")], n=MAX_ITEMS,
+        qp={"rules": [{"column_id": "name", "compare_value": [text],
+                       "operator": "contains_text"}]})
+
+
+def _monday_create(a: Dict[str, Any]) -> Dict[str, Any]:
+    name = str((a or {}).get("name") or "").strip()
+    if not name:
+        raise ValueError("A monday.com item needs a name.")
+    group = str((a or {}).get("group_id") or "").strip() or None
+    return _monday_query(
+        "mutation($board: ID!, $name: String!, $group: String, $cv: JSON) "
+        "{ create_item(board_id: $board, item_name: $name, group_id: $group, "
+        "column_values: $cv) { id name url } }",
+        board=_monday_id(a, "board_id", "board"), name=name, group=group,
+        cv=_monday_columns((a or {}).get("column_values")))
+
+
+def _monday_update(a: Dict[str, Any]) -> Dict[str, Any]:
+    cv = _monday_columns((a or {}).get("column_values"), (a or {}).get("name"))
+    if not cv:
+        raise ValueError("Nothing to change on that monday.com item. Give "
+                         "column_values (get_board lists the column ids) or "
+                         "a new name.")
+    return _monday_query(
+        "mutation($board: ID!, $item: ID!, $cv: JSON!) { "
+        "change_multiple_column_values(board_id: $board, item_id: $item, "
+        "column_values: $cv) { id name url } }",
+        board=_monday_id(a, "board_id", "board"),
+        item=_monday_id(a, "item_id", "item"), cv=cv)
+
+
+def _monday_move(a: Dict[str, Any]) -> Dict[str, Any]:
+    group = str((a or {}).get("group_id") or "").strip()
+    if not group:
+        raise ValueError("Say which group to move it to in `group_id` "
+                         "(get_board lists them).")
+    return _monday_query(
+        "mutation($item: ID!, $group: String!) { move_item_to_group("
+        "item_id: $item, group_id: $group) { id } }",
+        item=_monday_id(a, "item_id", "item"), group=group)
+
+
+def _monday_comment(a: Dict[str, Any]) -> Dict[str, Any]:
+    body = str((a or {}).get("body") or "").strip()
+    if not body:
+        raise ValueError("Say what to write in `body`.")
+    return _monday_query(
+        "mutation($item: ID!, $body: String!) { create_update(item_id: $item, "
+        "body: $body) { id body } }",
+        item=_monday_id(a, "item_id", "item"), body=body)
+
+
+_MONDAY_BOARD_ARG = ("string", "Board id, a number from list_boards", True)
+_MONDAY_ITEM_ARG = ("string", "Item id, a number from list_items or "
+                              "search_items", True)
+_MONDAY_COLUMNS_ARG = ("object", "Column id -> value, ids from get_board. "
+                                 "Simple values work for text, status (its "
+                                 "label) and date (YYYY-MM-DD): "
+                                 "{\"status\": \"Done\", \"date4\": "
+                                 "\"2026-12-01\"}", False)
+
+MONDAY_TOOLS = [
+    Tool(name="whoami",
+         summary="Show which monday.com account is connected.",
+         method="POST", path="/v2", writes=False,
+         shape=lambda a: _monday_query("query { me { id name email } }"),
+         unwrap=_monday_dig("me")),
+    Tool(name="list_boards",
+         summary="List your monday.com boards, most recently used first, "
+                 "with the id every other tool needs.",
+         method="POST", path="/v2", writes=False,
+         shape=lambda a: _monday_query(
+             "query($n: Int!) { boards(limit: $n, order_by: used_at) "
+             "{ id name board_kind url workspace_id } }", n=MAX_ITEMS),
+         unwrap=_monday_dig("boards")),
+    Tool(name="get_board",
+         summary="Show one monday.com board's columns and groups, with the "
+                 "column ids create_item and update_item need and the group "
+                 "ids move_item needs.",
+         method="POST", path="/v2", writes=False,
+         args={"board_id": _MONDAY_BOARD_ARG},
+         shape=lambda a: _monday_query(
+             "query($ids: [ID!]) { boards(ids: $ids) { id name url "
+             "columns { id title type } groups { id title } } }",
+             ids=[_monday_id(a, "board_id", "board")]),
+         unwrap=_monday_dig("boards", 0)),
+    Tool(name="list_items",
+         summary="List the items on a monday.com board with their group and "
+                 "column values. Pass the cursor it returns to get the next "
+                 "page.",
+         method="POST", path="/v2", writes=False,
+         args={"board_id": _MONDAY_BOARD_ARG,
+               "cursor": ("string", "The cursor from the last page, for the "
+                                    "next one", False)},
+         shape=_monday_items,
+         unwrap=_monday_items_unwrap),
+    Tool(name="search_items",
+         summary="Find items on a monday.com board whose name contains some "
+                 "words.",
+         method="POST", path="/v2", writes=False,
+         args={"board_id": _MONDAY_BOARD_ARG,
+               "text": ("string", "Words in the item's name", True)},
+         shape=_monday_search,
+         unwrap=_monday_dig("boards", 0, "items_page")),
+    Tool(name="get_item",
+         summary="Read one monday.com item: its board, group, every column "
+                 "value and its updates (comments).",
+         method="POST", path="/v2", writes=False,
+         args={"item_id": _MONDAY_ITEM_ARG},
+         shape=lambda a: _monday_query(
+             "query($ids: [ID!]) { items(ids: $ids) { id name url state "
+             "created_at updated_at board { id name } group { id title } "
+             "column_values { id type text } updates { id text_body "
+             "created_at creator { name } } } }",
+             ids=[_monday_id(a, "item_id", "item")]),
+         unwrap=_monday_dig("items", 0)),
+    Tool(name="create_item",
+         summary="Create an item on a monday.com board, as you, optionally "
+                 "in a group and with column values.",
+         method="POST", path="/v2",
+         args={"board_id": _MONDAY_BOARD_ARG,
+               "name": ("string", "The item's name", True),
+               "group_id": ("string", "Group id from get_board; the board's "
+                                      "top group when left out", False),
+               "column_values": _MONDAY_COLUMNS_ARG},
+         shape=_monday_create,
+         unwrap=_monday_dig("create_item")),
+    Tool(name="update_item",
+         summary="Change a monday.com item's column values (status, date, "
+                 "text...) or its name, as you.",
+         method="POST", path="/v2",
+         args={"board_id": _MONDAY_BOARD_ARG,
+               "item_id": _MONDAY_ITEM_ARG,
+               "column_values": _MONDAY_COLUMNS_ARG,
+               "name": ("string", "A new name for the item", False)},
+         shape=_monday_update,
+         unwrap=_monday_dig("change_multiple_column_values")),
+    Tool(name="move_item",
+         summary="Move a monday.com item to another group on the same "
+                 "board.",
+         method="POST", path="/v2",
+         args={"item_id": _MONDAY_ITEM_ARG,
+               "group_id": ("string", "Group id from get_board", True)},
+         shape=_monday_move,
+         unwrap=_monday_dig("move_item_to_group")),
+    Tool(name="comment_on_item",
+         summary="Post an update (a comment) on a monday.com item, written "
+                 "as you.",
+         method="POST", path="/v2",
+         args={"item_id": _MONDAY_ITEM_ARG,
+               "body": ("string", "What to write", True)},
+         shape=_monday_comment,
+         unwrap=_monday_dig("create_update")),
+]
+
+
 # --- Vercel ----------------------------------------------------------------
 
 #: Vercel pages its collections under a key named after the thing.
@@ -3684,6 +3950,7 @@ PROVIDER_TOOLS: Dict[str, List[Tool]] = {
     "todoist": TODOIST_TOOLS,
     "asana": ASANA_TOOLS,
     "linear": LINEAR_TOOLS,
+    "monday": MONDAY_TOOLS,
 }
 
 #: Every tool of every provider, for checks that should hold everywhere.

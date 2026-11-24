@@ -76,6 +76,7 @@ MAKES = {
     "jira": ("issue",),
     "linear": ("issue",),
     "linkedin": ("post",),
+    "monday": ("item",),
     "n8n": ("workflow",),
     "outlook": ("event",),
     "todoist": ("task",),

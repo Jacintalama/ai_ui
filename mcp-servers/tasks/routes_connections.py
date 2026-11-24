@@ -277,6 +277,14 @@ async def _ask_vendor(provider: C.Provider, values: Dict[str, str],
         payload = r.json()
     except Exception:
         payload = {}
+    if C.graphql_refused(payload):
+        # A GraphQL vendor (Linear, monday.com) can refuse with HTTP 200 and
+        # an errors list. Read as a success, a credential that cannot even
+        # say who it belongs to was saved as Connected.
+        logger.warning("connections: %s verify answered 200 with errors",
+                       provider.id)
+        return False, None, (provider.label + " did not accept that "
+                             "credential. Check it and paste it again.")
     return True, C.account_label(provider.id, payload), None
 
 
