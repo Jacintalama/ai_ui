@@ -128,4 +128,4 @@ def test_runs_from_before_the_inbox_read_as_read_and_new_ones_arrive_unread():
     assert "UPDATE" not in code.upper(), "re-run on every start would re-read everything"
     insert = _flat(inspect.getsource(scheduler._record_run))
     assert "status, result, unread)" in insert
-    assert ":result, true)" in insert
+    assert ":result, :unread)" in insert

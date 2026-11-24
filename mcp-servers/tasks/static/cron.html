@@ -353,7 +353,7 @@
        delivery and the run's outcome. The outcome is the only one that
        changes, and it was the hardest of the five to pick out. The other
        four are standing facts, so they recede. */
-    .sched-tz, .sched-agent, .sched-dest, .sched-mode {
+    .sched-tz, .sched-agent, .sched-dest, .sched-mode, .sched-muted {
       opacity: 0.58; font-weight: 400;
     }
     .sched-card:hover .sched-tz, .sched-card:hover .sched-agent,
@@ -586,7 +586,7 @@
     }
     /* Timezone chip, which agent a schedule runs as, and how much that agent
        may do -- same shape, one more small fact on the same summary line. */
-    .sched-tz, .sched-agent, .sched-mode {
+    .sched-tz, .sched-agent, .sched-mode, .sched-muted {
       display: inline-flex; align-items: center; gap: 5px;
       font-size: 12px; color: var(--text-2);
       background: var(--surface-2); border: 1px solid var(--border-2);
@@ -907,7 +907,7 @@
             <div class="error box" id="form-error" hidden></div>
 
             <div class="field">
-              <p class="form-note">Every answer lands in Cron Outputs, read and unread like an email: press &ldquo;View outputs&rdquo; above the list, or &ldquo;View output&rdquo; on a schedule. The newest one is also on its card, under &ldquo;View last result&rdquo;. To have results pushed to you as well, create the schedule from Discord or Slack and it will post there too.</p>
+              <p class="form-note">Every answer lands in Cron Outputs, read and unread like an email: press &ldquo;View outputs&rdquo; above the list, or &ldquo;View output&rdquo; on a schedule. The newest one is also on its card, under &ldquo;View last result&rdquo;. The red number counts only answers that need you: one that says nothing needs you arrives already read, and &ldquo;Mute&rdquo; on a schedule stops its answers counting at all. To have results pushed to you as well, create the schedule from Discord or Slack and it will post there too.</p>
             </div>
 
             <div class="field" style="margin-top: 4px;">
@@ -1695,6 +1695,13 @@
             : '<span class="sched-mode" title="tool access">Read only</span>')
         : "";
 
+      // Muted (migration 073): this cron's outputs still land in Cron
+      // outputs but never ring the red number. Fixed strings, no server text.
+      const muted = s.notify === false;
+      const mutedChip = muted
+        ? '<span class="sched-muted" title="Its outputs do not count in the red number">Muted</span>'
+        : "";
+
       card.innerHTML =
         `<div class="sched-head">
            <div class="sched-id">
@@ -1711,6 +1718,7 @@
            ${agentChip}
            ${modeChip}
            ${destChip}
+           ${mutedChip}
            ${lastRun}
          </div>
          ${runsRow}
@@ -1721,6 +1729,8 @@
            <button class="btn sm primary" type="button" data-act="run">Run now</button>
            <button class="btn sm" type="button" data-act="toggle">${enabled ? "Disable" : "Enable"}</button>
            ${s.last_result_at ? '<button class="btn sm" type="button" data-act="outputs">View output</button>' : ""}
+           <button class="btn sm" type="button" data-act="mute" aria-pressed="${muted ? "true" : "false"}"
+             title="${muted ? "Count this cron's new outputs in the red number again" : "Stop this cron's outputs counting in the red number. They still show in Cron Outputs."}">${muted ? "Unmute" : "Mute"}</button>
            <button class="btn sm quiet-danger" type="button" data-act="delete" title="Delete this schedule">Delete</button>
          </div>`;
 
@@ -1740,6 +1750,7 @@
       delBtn.addEventListener("click", () => deleteSchedule(s, card));
       const outBtn = card.querySelector('[data-act="outputs"]');
       if (outBtn) outBtn.addEventListener("click", () => openOutputs(s.id));
+      card.querySelector('[data-act="mute"]').addEventListener("click", () => muteSchedule(s, card));
       return card;
     }
 
@@ -2001,6 +2012,31 @@ ${s.prompt || ""}`.toLowerCase().includes(needle);
       await loadSchedules();
     }
 
+    // Mute or unmute: whether this cron's new outputs count in the red number.
+    // Muting also reads what it already has unread (the server does that), so
+    // the number drops now; the shell is told so the sidebar drops with it.
+    async function muteSchedule(s, card) {
+      const mute = s.notify !== false;
+      setCardBusy(card, true);
+      try {
+        const r = await fetch(`${SCHED_API}/${encodeURIComponent(s.id)}`, {
+          method: "PATCH", headers: authHeaders(), credentials: "include",
+          body: JSON.stringify({ notify: !mute }),
+        });
+        if (!r.ok) throw new Error(`${mute ? "Mute" : "Unmute"} failed (${r.status})`);
+        showToast(mute
+          ? "Muted. Its outputs still show in Cron Outputs, without the red number."
+          : "Unmuted. New outputs count in the red number again.");
+        if (window.parent !== window) {
+          window.parent.postMessage({ type: "aiui:cron-outputs-changed" }, location.origin);
+        }
+      } catch (err) {
+        showToast(err.message, true);
+        setCardBusy(card, false);
+      }
+      await loadSchedules();
+    }
+
     async function runSchedule(s, card) {
       setCardBusy(card, true);
       try {
@@ -2008,7 +2044,7 @@ ${s.prompt || ""}`.toLowerCase().includes(needle);
           method: "POST", headers: authHeaders(), credentials: "include",
         });
         if (!r.ok) throw new Error(`Run now failed (${r.status})`);
-        showToast("Run triggered. Results go to your linked Discord/Slack.");
+        showToast("Run started. The answer shows in Cron Outputs when it finishes.");
       } catch (err) {
         showToast(err.message, true);
       }

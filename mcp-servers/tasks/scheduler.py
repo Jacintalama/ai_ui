@@ -94,6 +94,7 @@ from sqlalchemy import select, text, update
 from db import session
 from models import Schedule, TaskItem
 from secret_scrub import scrub
+import cron_quiet
 import events_out
 
 
@@ -504,7 +505,10 @@ async def _finalize_run(sched: Schedule) -> None:
     started_at = datetime.now(timezone.utc)
     try:
         status, result, extras = await _run_scheduled_task(sched)
-        await _keep_run(sched, status, result, started_at)
+        # The agent's "nothing here needs you" mark comes out before the
+        # answer is stored, shown or delivered anywhere (cron_quiet).
+        result, quiet = cron_quiet.split(result)
+        await _keep_run(sched, status, result, started_at, quiet=quiet)
         async with session() as s:
             await s.execute(
                 update(Schedule).where(Schedule.id == sched.id).values(
@@ -550,7 +554,8 @@ async def _finalize_run(sched: Schedule) -> None:
 RUN_HISTORY_SHOWN = 7
 
 
-def run_row(sched, status: str, result, started_at, finished_at) -> dict:
+def run_row(sched, status: str, result, started_at, finished_at,
+            quiet: bool = False) -> dict:
     """One finished run, as values. Pure, like `fire_values` below it.
 
     `running` is not a state a history row can be in: the row is written
@@ -564,15 +569,20 @@ def run_row(sched, status: str, result, started_at, finished_at) -> dict:
     """
     if finished_at < started_at:
         finished_at = started_at
+    status = "failed" if str(status) == "running" else str(status)
     return {"schedule_id": str(getattr(sched, "id", "") or ""),
             "user_email": getattr(sched, "user_email", "") or "",
-            "status": "failed" if str(status) == "running" else str(status),
+            "status": status,
             "started_at": started_at,
             "finished_at": finished_at,
-            "result": result_for_storage(result)}
+            "result": result_for_storage(result),
+            # Whether it rings the red number on Cron Jobs (cron_quiet).
+            "unread": cron_quiet.arrives_unread(
+                status, quiet, getattr(sched, "notify", None))}
 
 
-async def _keep_run(sched, status: str, result, started_at) -> None:
+async def _keep_run(sched, status: str, result, started_at,
+                    quiet: bool = False) -> None:
     """Record one finished run, and never let that fail the run.
 
     Same rule as `agent_activity.start_run`, which returns None rather
@@ -582,7 +592,7 @@ async def _keep_run(sched, status: str, result, started_at) -> None:
     """
     try:
         await _record_run(run_row(sched, status, result, started_at,
-                                  datetime.now(timezone.utc)))
+                                  datetime.now(timezone.utc), quiet=quiet))
     except Exception:                                       # noqa: BLE001
         logger.warning("could not record the run of schedule %s",
                        getattr(sched, "id", "?"), exc_info=True)
@@ -592,16 +602,17 @@ async def _record_run(values: dict) -> None:
     """Write one history row. A seam, so the tests above it need no DB."""
     async with session() as s:
         await s.execute(
-            # `unread` is written true on purpose: the column defaults to
-            # false so that runs from before migration 072 read as read, and
-            # every run from now on arrives in the Cron Outputs inbox unread.
+            # `unread` is always written, never left to the column default:
+            # the default is false so that runs from before migration 072
+            # read as read. A new run arrives unread unless it was quiet or
+            # its cron is muted (run_row, cron_quiet.arrives_unread).
             text("INSERT INTO tasks.schedule_run "
                  "(id, schedule_id, user_email, started_at, finished_at, "
                  " status, result, unread) "
                  "VALUES (gen_random_uuid(), CAST(:schedule_id AS UUID), "
                  " :user_email, :started_at, :finished_at, :status, "
-                 " :result, true)"),
-            values)
+                 " :result, :unread)"),
+            {**values, "unread": bool(values.get("unread", True))})
         await s.commit()
 
 
