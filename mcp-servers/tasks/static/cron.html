@@ -540,6 +540,13 @@
       box-shadow: var(--shadow-md);
     }
     .sched-card:hover::before { opacity: 0.9; }
+    /* The card whose schedule is in the form, so it is clear which one
+       Save changes will change. */
+    .sched-card.is-editing { border-color: var(--accent-edge-2); }
+    .sched-card.is-editing::before { opacity: 1; }
+    #form-card.editing { border-color: var(--accent-edge-2); }
+    /* Edit scrolls the form up on a phone; clear the sticky top bar. */
+    #form-card { scroll-margin-top: 84px; }
 
     /* nowrap, so the state badge stays pinned to the top right. With wrapping
        it dropped onto its own line the moment a title ran to two lines, so
@@ -796,10 +803,10 @@
       <div class="col-form">
         <section class="card" id="form-card">
           <div class="card-title">
-            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg id="form-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 5v14M5 12h14"></path>
             </svg>
-            New schedule
+            <span id="form-title">New schedule</span>
           </div>
           <form id="sched-form" autocomplete="off">
             <div class="field">
@@ -912,6 +919,7 @@
 
             <div class="field" style="margin-top: 4px;">
               <button class="btn primary block" type="submit" id="create-btn">Create schedule</button>
+              <button class="btn block" type="button" id="cancel-edit" hidden>Cancel</button>
             </div>
           </form>
         </section>
@@ -1075,10 +1083,15 @@
         items
           .filter((m) => String(m.id || "").startsWith("agent-"))
           .forEach((m) => {
-            const o = document.createElement("option");
+            // Edit may already have added this agent's option, if it was
+            // pressed before this list arrived. Name that one, do not add a
+            // second.
+            const had = Array.from(sel.options).find((o) => o.value === m.id);
+            const o = had || document.createElement("option");
             o.value = m.id;
             o.textContent = m.name || m.id;
-            sel.appendChild(o);
+            delete o.dataset.fromEdit;
+            if (!had) sel.appendChild(o);
             AGENTS_BY_ID[m.id] = m.name || m.id;
           });
         // Only refresh a list that has already loaded for real. Otherwise this
@@ -1108,6 +1121,11 @@
     loadAgentsForRunAs();
 
     const SCHED_API = "/api/tasks/schedules";
+
+    // The schedule whose details are in the form, or null while the form
+    // makes a new one. Edit fills it; Save changes, Cancel and deleting that
+    // schedule empty it.
+    let editing = null;
 
     // View outputs: inside the shell, ask it to open the Cron Outputs pane
     // exactly as the sidebar would; standalone, go to the page itself.
@@ -1194,6 +1212,10 @@
     const cronInput = document.getElementById("cron_expr");
     const promptInput = document.getElementById("prompt");
     const createBtn = document.getElementById("create-btn");
+    const cancelEditBtn = document.getElementById("cancel-edit");
+    const formCard = document.getElementById("form-card");
+    const formTitle = document.getElementById("form-title");
+    const formIcon = document.getElementById("form-icon");
     const formError = document.getElementById("form-error");
     const refreshBtn = document.getElementById("refresh-btn");
     const schedCount = document.getElementById("sched-count");
@@ -1488,9 +1510,9 @@
       rowEveryN.hidden = freq !== "everyn";
       rowAdvanced.hidden = !custom;
       if (timeHint) {
-        timeHint.textContent = freq === "hourly"
+        timeHint.textContent = (freq === "hourly"
           ? "Only the minutes are used: it runs at this minute past every hour."
-          : "When it should run each time.";
+          : "When it should run each time.") + zoneNote();
       }
       if (!custom) cronInput.value = buildCronFromFriendly();
       updateCronPreview();
@@ -1727,6 +1749,8 @@
          ${result}
          <div class="sched-actions">
            <button class="btn sm primary" type="button" data-act="run">Run now</button>
+           <button class="btn sm" type="button" data-act="edit" aria-pressed="false"
+             title="Change its name, time, prompt, agent or tool access">Edit</button>
            <button class="btn sm" type="button" data-act="toggle">${enabled ? "Disable" : "Enable"}</button>
            ${s.last_result_at ? '<button class="btn sm" type="button" data-act="outputs">View output</button>' : ""}
            <button class="btn sm" type="button" data-act="mute" aria-pressed="${muted ? "true" : "false"}"
@@ -1751,6 +1775,10 @@
       const outBtn = card.querySelector('[data-act="outputs"]');
       if (outBtn) outBtn.addEventListener("click", () => openOutputs(s.id));
       card.querySelector('[data-act="mute"]').addEventListener("click", () => muteSchedule(s, card));
+      card.querySelector('[data-act="edit"]').addEventListener("click", () => startEdit(s));
+      // The list redraws after every action, so the card being edited is
+      // marked again here rather than only when Edit was pressed.
+      if (editing && editing.id === s.id) markEditing(card, true);
       return card;
     }
 
@@ -2064,6 +2092,9 @@ ${s.prompt || ""}`.toLowerCase().includes(needle);
           method: "DELETE", headers: authHeaders(), credentials: "include",
         });
         if (!r.ok) throw new Error(`Delete failed (${r.status})`);
+        // Its details must not stay in the form, where Save would PATCH a
+        // schedule that is gone.
+        if (editing && editing.id === s.id) stopEdit();
         showToast("Schedule deleted.");
       } catch (err) {
         showToast(err.message, true);
@@ -2071,6 +2102,185 @@ ${s.prompt || ""}`.toLowerCase().includes(needle);
       }
       await loadSchedules();
     }
+
+    // --- Edit a schedule (2026-11-24) ---
+    // Edit loads a schedule into this same form, Save changes PATCHes it.
+    // Before this, changing a word of a prompt meant deleting the schedule
+    // and making it again, which threw away its runs and its outputs.
+    const ICON_PLUS_PATH = '<path d="M12 5v14M5 12h14"></path>';
+    const ICON_PENCIL_PATH = '<path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path>';
+
+    // A schedule keeps the zone it was made in. When that is not this
+    // browser's, the times in the form are not this person's, so say whose.
+    function zoneNote() {
+      const tz = editing && editing.tz;
+      return tz && tz !== BROWSER_TZ
+        ? " Times are in " + tz + ", this schedule's time zone."
+        : "";
+    }
+
+    function pad2(n) { return String(n).padStart(2, "0"); }
+    function normCron(raw) { return String(raw || "").trim().split(/\s+/).join(" "); }
+
+    // The picker's choice for a cron string, the reverse of
+    // buildCronFromFriendly, or null when the picker has no way to show it.
+    function friendlyFromCron(raw) {
+      const f = normCron(raw).split(" ");
+      if (f.length !== 5) return null;
+      const [mi, ho, dom, mon, dow] = f;
+      const num = (v, lo, hi) => /^\d{1,2}$/.test(v) && +v >= lo && +v <= hi;
+      if (/^\*\/\d{1,2}$/.test(mi) && ho === "*" && dom === "*" && mon === "*" && dow === "*") {
+        return { freq: "everyn", n: +mi.slice(2), h: 9, min: 0 };
+      }
+      if (!num(mi, 0, 59) || mon !== "*") return null;
+      if (ho === "*") {
+        return dom === "*" && dow === "*" ? { freq: "hourly", h: 9, min: +mi } : null;
+      }
+      if (!num(ho, 0, 23)) return null;
+      const t = { h: +ho, min: +mi };
+      if (dom === "*" && dow === "*") return Object.assign(t, { freq: "daily" });
+      if (dom === "*" && dow === "1-5") return Object.assign(t, { freq: "weekday" });
+      if (dom === "*" && dow === "0,6") return Object.assign(t, { freq: "weekend" });
+      if (dom === "*" && num(dow, 0, 6)) return Object.assign(t, { freq: "weekly", dow: +dow });
+      if (dow === "*" && num(dom, 1, 31)) return Object.assign(t, { freq: "monthly", dom: +dom });
+      return null;
+    }
+
+    // Put a schedule's time in the picker. Anything the picker cannot
+    // rebuild EXACTLY opens as Custom with the expression as it is, so
+    // pressing Edit can never change when a schedule runs.
+    function fillTiming(raw) {
+      const want = normCron(raw);
+      const p = friendlyFromCron(want);
+      if (p) {
+        freqSelect.value = p.freq;
+        timeInput.value = pad2(p.h) + ":" + pad2(p.min);
+        if (p.dow !== undefined) dowSelect.value = String(p.dow);
+        if (p.dom !== undefined) domInput.value = String(p.dom);
+        if (p.n !== undefined) everyNInput.value = String(p.n);
+        syncFriendly();
+        if (cronInput.value.trim() === want) return;
+      }
+      freqSelect.value = "custom";
+      cronInput.value = want;
+      syncFriendly();
+    }
+
+    function markEditing(card, on) {
+      card.classList.toggle("is-editing", on);
+      const btn = card.querySelector('[data-act="edit"]');
+      if (btn) btn.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+
+    function setFormMode(on) {
+      formTitle.textContent = on ? "Edit schedule" : "New schedule";
+      formIcon.innerHTML = on ? ICON_PENCIL_PATH : ICON_PLUS_PATH;
+      createBtn.textContent = on ? "Save changes" : "Create schedule";
+      cancelEditBtn.hidden = !on;
+      formCard.classList.toggle("editing", on);
+    }
+
+    function startEdit(s) {
+      editing = s;
+      form.reset();
+      clearFormError();
+      nameInput.value = s.name || "";
+      promptInput.value = s.prompt || "";
+      fillTiming(s.cron_expr);
+      const runAs = document.getElementById("run-as");
+      runAs.querySelectorAll("option[data-from-edit]").forEach((o) => o.remove());
+      const agent = String(s.agent_id || "");
+      // An agent missing from the list (not loaded yet, or deleted since) is
+      // still what this schedule runs as, so it is shown, not swapped out.
+      if (agent && !Array.from(runAs.options).some((o) => o.value === agent)) {
+        const o = document.createElement("option");
+        o.value = agent;
+        o.textContent = AGENTS_BY_ID[agent] || agent;
+        o.dataset.fromEdit = "1";
+        runAs.appendChild(o);
+      }
+      runAs.value = agent;
+      // A video schedule renders a walkthrough and runs no agent.
+      runAs.required = s.kind !== "video";
+      document.getElementById("tool-mode").value = s.tool_mode === "full" ? "full" : "read_only";
+      setFormMode(true);
+      checkToolMismatch();
+      document.querySelectorAll(".sched-card").forEach(
+        (c) => markEditing(c, c.dataset.id === String(s.id)));
+      // On a wide screen the form is pinned beside the list and already in
+      // view; on a phone it sits above the list, so bring it up.
+      const top = formCard.getBoundingClientRect().top;
+      if (top < 0 || top > window.innerHeight - 120) {
+        const calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        formCard.scrollIntoView({ block: "start", behavior: calm ? "auto" : "smooth" });
+      }
+      nameInput.focus({ preventScroll: true });
+    }
+
+    function stopEdit() {
+      editing = null;
+      form.reset();
+      const runAs = document.getElementById("run-as");
+      runAs.querySelectorAll("option[data-from-edit]").forEach((o) => o.remove());
+      runAs.required = true;
+      setFormMode(false);
+      syncFriendly();
+      clearFormError();
+      checkToolMismatch();
+      document.querySelectorAll(".sched-card.is-editing").forEach((c) => markEditing(c, false));
+    }
+
+    async function failureText(r) {
+      const txt = await r.text();
+      try {
+        const d = JSON.parse(txt).detail;
+        if (typeof d === "string" && d) return d;
+      } catch (e) { /* not JSON, show it as it came */ }
+      return txt.slice(0, 300);
+    }
+
+    // Sends only what changed. A time that was not touched is not sent, so
+    // a schedule made before the 15 minute floor stays editable.
+    async function saveEdit(name, cron_expr, prompt) {
+      const s = editing;
+      const body = {};
+      if (name !== String(s.name || "").trim()) body.name = name;
+      if (cron_expr !== normCron(s.cron_expr)) body.cron_expr = cron_expr;
+      if (prompt !== String(s.prompt || "").trim()) body.prompt = prompt;
+      if (s.kind !== "video") {
+        const runAs = document.getElementById("run-as").value || "";
+        if (runAs && runAs !== String(s.agent_id || "")) body.agent_id = runAs;
+        const mode = document.getElementById("tool-mode").value || "read_only";
+        if (mode !== (s.tool_mode === "full" ? "full" : "read_only")) body.tool_mode = mode;
+      }
+      if (!Object.keys(body).length) {
+        stopEdit();
+        showToast("Nothing changed.");
+        return;
+      }
+      createBtn.disabled = true;
+      createBtn.textContent = "Saving…";
+      try {
+        const r = await fetch(`${SCHED_API}/${encodeURIComponent(s.id)}`, {
+          method: "PATCH", headers: authHeaders(), credentials: "include",
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) throw new Error(`Could not save (${r.status}): ${await failureText(r)}`);
+        stopEdit();
+        showToast("Changes saved.");
+      } catch (err) {
+        showFormError(err.message);
+      } finally {
+        createBtn.disabled = false;
+        createBtn.textContent = editing ? "Save changes" : "Create schedule";
+      }
+      await loadSchedules();
+    }
+
+    cancelEditBtn.addEventListener("click", stopEdit);
+    form.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && editing) { e.preventDefault(); stopEdit(); }
+    });
 
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -2085,6 +2295,7 @@ ${s.prompt || ""}`.toLowerCase().includes(needle);
         ? "A cron expression is required."
         : "Please complete the schedule options above.");
       if (!prompt) return showFormError("A prompt is required.");
+      if (editing) return saveEdit(name, cron_expr, prompt);
 
       createBtn.disabled = true;
       const prevText = createBtn.textContent;
