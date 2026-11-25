@@ -251,3 +251,27 @@ def test_editing_another_card_moves_the_edit_to_it(cron):
     assert page.locator("#name").input_value() == "Inbox check"
     assert page.locator(".sched-card.is-editing").count() == 1
     assert "is-editing" in (_card(page, "Inbox check").get_attribute("class") or "")
+
+
+def test_a_new_schedule_may_leave_the_name_empty(cron):
+    """The server names it from the prompt (schedule_names, 2026-11-25)."""
+    page, state = cron
+    assert page.locator("#name-hint").is_visible()
+    page.locator("#prompt").fill("give me a motivational quote")
+    page.locator("#run-as").select_option("agent-inbox-triage-0002")
+    page.locator("#create-btn").click()
+    page.locator(".toast", has_text="Schedule created").wait_for(timeout=4000)
+    assert len(state["posts"]) == 1
+    assert state["posts"][0][1]["name"] == ""
+    assert page.locator("#form-error").is_hidden()
+
+
+def test_an_edit_still_needs_a_name(cron):
+    page, state = cron
+    _edit(page, "Morning brief")
+    assert not page.locator("#name-hint").is_visible()
+    page.locator("#name").fill("")
+    page.locator("#create-btn").click()
+    page.locator("#form-error").wait_for(state="visible", timeout=4000)
+    assert "name is required" in page.locator("#form-error").inner_text()
+    assert state["patches"] == []

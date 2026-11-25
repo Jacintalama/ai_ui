@@ -811,7 +811,8 @@
           <form id="sched-form" autocomplete="off">
             <div class="field">
               <label class="form-label" for="name">Name</label>
-              <input class="form-input" id="name" name="name" placeholder="Weekday morning digest" required>
+              <input class="form-input" id="name" name="name" placeholder="Weekday morning digest">
+              <span class="form-hint" id="name-hint">Optional. Left empty, it is named from the prompt.</span>
             </div>
 
             <div class="field">
@@ -2178,6 +2179,9 @@ ${s.prompt || ""}`.toLowerCase().includes(needle);
       createBtn.textContent = on ? "Save changes" : "Create schedule";
       cancelEditBtn.hidden = !on;
       formCard.classList.toggle("editing", on);
+      // "Optional" is true of a new schedule only; an edit keeps a name.
+      const nameHint = document.getElementById("name-hint");
+      if (nameHint) nameHint.hidden = on;
     }
 
     function startEdit(s) {
@@ -2290,7 +2294,9 @@ ${s.prompt || ""}`.toLowerCase().includes(needle);
       if (freqSelect.value !== "custom") cronInput.value = buildCronFromFriendly();
       const cron_expr = cronInput.value.trim();
       const prompt = promptInput.value.trim();
-      if (!name) return showFormError("A name is required.");
+      // A new schedule may leave it empty: the server names it from the
+      // prompt. An edit keeps the name it has unless one is typed.
+      if (!name && editing) return showFormError("A name is required.");
       if (!cron_expr) return showFormError(freqSelect.value === "custom"
         ? "A cron expression is required."
         : "Please complete the schedule options above.");

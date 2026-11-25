@@ -23,6 +23,7 @@ from sqlalchemy import delete, select, update
 
 from db import session
 from models import Schedule
+import schedule_names
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,10 @@ def _resolve_caller(
 
 class CreateScheduleIn(BaseModel):
     user_email: str | None = None  # ignored for end-user calls
-    name: str
+    # Optional since 2026-11-25: left empty, or only the time and the
+    # prompt pasted together (the Discord and Slack bots), it is made
+    # from the prompt by schedule_names.
+    name: str = ""
     cron_expr: str
     tz: str = "Asia/Manila"
     persona: str = ""
@@ -568,7 +572,7 @@ async def create_schedule(
         s.add(Schedule(
             id=sid,
             user_email=owner,
-            name=body.name,
+            name=schedule_names.name_for(body.name, body.prompt),
             cron_expr=body.cron_expr,
             tz=body.tz,
             persona=body.persona,
@@ -755,7 +759,11 @@ async def update_schedule(
     if body.name is not None:
         if not body.name.strip():
             raise HTTPException(status_code=400, detail="name cannot be blank")
-        values["name"] = body.name
+        # The Discord and Slack edit modals send '<when>: <prompt>' back as
+        # the name; that is tidied the same way as on create.
+        values["name"] = schedule_names.name_for(
+            body.name, body.prompt if body.prompt is not None
+            else getattr(sched, "prompt", ""))
     if body.cron_expr is not None:
         from croniter import croniter
         if not croniter.is_valid(body.cron_expr):

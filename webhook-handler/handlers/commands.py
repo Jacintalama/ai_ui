@@ -3062,12 +3062,27 @@ class CommandRouter:
             schedules = await self._tasks_client.list_schedules(email, platform="discord")
         except TasksAPIError:
             return None
+        from handlers.schedule_format import cron_to_human
+        from handlers.schedule_parse import parse_when
         for s in schedules:
             if str(s.get("id")) == schedule_id:
+                # From the schedule itself, the way Slack's modal does it
+                # (2026-11-25). The name was '<when>: <first 60 characters
+                # of the prompt>', so this prefilled the prompt CUT TO 60
+                # and saving wrote the cut one back; and since the server
+                # names schedules from their prompt, the name holds neither.
                 name = s.get("name") or ""
-                when, sep, what = name.partition(": ")
-                if not sep:
-                    return {"what": name, "when": ""}
+                said, sep, rest = name.partition(": ")
+                prompt = str(s.get("prompt") or "").strip()
+                cron = str(s.get("cron_expr") or "").strip()
+                what = prompt or (rest if sep else name)
+                # The name's own words for the time are kept while they
+                # still say this schedule's time; otherwise the cron's.
+                parsed = parse_when(said) if sep else None
+                if sep and (not cron or (parsed and parsed[0] == cron)):
+                    when = said
+                else:
+                    when = cron_to_human(cron) if cron else ""
                 return {"what": what, "when": when}
         return None
 
