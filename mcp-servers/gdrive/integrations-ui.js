@@ -813,7 +813,7 @@
         '<input id="aiui-conn-search" type="search" name="aiui-app-filter" autocomplete="off" data-1p-ignore="true" data-lpignore="true" placeholder="Search apps..." style="width:100%;margin-top:14px;background:#1f1f1f;border:1px solid #333;border-radius:10px;padding:10px 14px;color:#fff;font-size:14px;outline:none;box-sizing:border-box;" />' +
         '<div id="aiui-conn-tabs" style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;"></div>' +
       '</div>' +
-      '<div id="aiui-conn-grid" style="flex:1;overflow-y:auto;overscroll-behavior:contain;padding:18px 24px 24px 24px;display:grid;align-content:start;grid-template-columns:repeat(auto-fill,minmax(152px,1fr));gap:12px;scrollbar-gutter:stable;"></div>';
+      '<div id="aiui-conn-grid" style="flex:1;overflow-y:auto;overscroll-behavior:contain;padding:18px 24px 24px 24px;display:grid;align-content:start;grid-template-columns:repeat(auto-fill,minmax(152px,1fr));grid-auto-rows:max-content;gap:12px;scrollbar-gutter:stable;"></div>';
 
     // Chat is gone with the cards that filled it. Slack, Discord and Telegram
     // are CHANNELS, places you talk to IO FROM, and they live on the Channels
@@ -901,28 +901,53 @@
     // "Gmail, Calendar, Drive" line) pushed its own icon and name upward and
     // nothing lined up across a row. Reserving the slot costs one empty div and
     // makes every icon, every name and every status share a baseline.
-    var SLOT_ICON = 40;      // iconEl is a fixed 40x40 box
-    var SLOT_NAME = 20;      // 13px type; 18 clipped every descender
-    var SLOT_META = 16;      // 11px type
-    var SLOT_STATUS = 18;
+    //
+    // NO TEXT SLOT MAY SHRINK, and their heights are ratios (2026-11-25).
+    // They were fixed-pixel boxes with overflow:hidden, and the card sat at
+    // its min-height while its content needed more, so flexbox squeezed
+    // exactly the boxes allowed to clip. Measured in Chrome with no zoom:
+    // the account line got 10px of its 14 and lost its lower half on every
+    // connected card, the name 15 of 20, and Google's sub-title ran into its
+    // account. Browser zoom made it worse. Now each line keeps its own
+    // height, the card grows to fit, and a row still lines up because the
+    // grid stretches every card in it and the status is pinned to the
+    // bottom.
+    var SLOT_ICON = 40;        // iconEl is a fixed 40x40 box
+    var SLOT_LINE = 1.4;       // line-height as a ratio, so zoom cannot clip it
+    // The grid's rows are max-content, not auto. This grid scrolls inside
+    // a box of fixed height, and there auto rows are sized to each card's
+    // MINIMUM, because the browser sees no free space to grow them into:
+    // whatever min-height a card had, its text was squeezed to fit it.
+    var SLOT_MIN_HEIGHT = 158; // icon, name, sub-title, account and status
 
     function makeCard(app) {
       var connected = !!connState[app.id];
       var partial = !!connPartial[app.id];
+      var rejected = connected && !!(connMeta[app.id]
+                                     && connMeta[app.id].needs_reconnect);
+
+      // A connected card is tinted as well as outlined, so its state does
+      // not hang on a 1px line: under browser zoom that line picks up colour
+      // fringes, and two green cards read as purple in a screenshot
+      // (2026-11-25, sampled: same green on every card). A credential the
+      // vendor rejected gets amber, matching its "Needs reconnecting".
+      var tone = rejected ? { bg: '#1f1c14', edge: '#7a5f16' }
+               : connected ? { bg: '#17201a', edge: '#2f7d43' }
+               : { bg: '#1b1b1b', edge: '#262626' };
 
       var card = document.createElement('div');
-      card.style.cssText = 'position:relative;background:#1b1b1b;border:'
-        + (connected ? '1px solid #2f7d43' : '1px solid #262626')
-        + ';border-radius:14px;padding:16px 10px 14px;display:flex;'
+      card.style.cssText = 'position:relative;background:' + tone.bg + ';border:1px solid '
+        + tone.edge + ';border-radius:14px;padding:16px 12px 14px;display:flex;'
         + 'flex-direction:column;align-items:center;justify-content:flex-start;'
-        + 'min-height:142px;box-sizing:border-box;transition:background .15s,border-color .15s;'
+        + 'min-height:' + SLOT_MIN_HEIGHT + 'px;box-sizing:border-box;'
+        + 'transition:background .15s,border-color .15s;'
         + 'cursor:' + (app.real ? 'pointer' : 'default') + ';';
 
       card.appendChild(iconEl(app));
 
       var nameEl = document.createElement('div');
       nameEl.style.cssText = 'color:#eee;font-size:13px;font-weight:600;text-align:center;'
-        + 'margin-top:10px;height:' + SLOT_NAME + 'px;line-height:' + SLOT_NAME + 'px;'
+        + 'margin-top:10px;line-height:' + SLOT_LINE + ';flex-shrink:0;'
         + 'max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
       nameEl.textContent = app.name;
       card.appendChild(nameEl);
@@ -932,9 +957,12 @@
       // so its absence does not move the status line.
       var acct = connected && connMeta[app.id] && connMeta[app.id].account_label;
       var metaEl = document.createElement('div');
-      metaEl.style.cssText = 'color:#7f7f7f;font-size:11px;text-align:center;'
-        + 'height:' + SLOT_META + 'px;line-height:' + SLOT_META + 'px;margin-top:2px;'
-        + 'max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      // min-height in em keeps the slot when it is empty, so the name sits
+      // at the same height in every card of a row.
+      metaEl.style.cssText = 'color:#8a8a8a;font-size:11px;text-align:center;'
+        + 'line-height:' + SLOT_LINE + ';min-height:' + SLOT_LINE + 'em;margin-top:2px;'
+        + 'flex-shrink:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;'
+        + 'white-space:nowrap;';
       // NOT the account as a fallback. The block below prints it, so a card
       // with no sub-title showed it twice: "aiuiteams-hub" above
       // "aiuiteams-hub" above "Connected". Google never showed it because
@@ -949,26 +977,26 @@
       // it is the one thing a person checking this screen actually wants.
       // Sits inside the margin-top:auto block below so it stays attached to
       // the status line rather than floating under the name.
-      var acctEl = null;
+      // Always there, empty when nobody is connected, the same as the
+      // sub-title slot above: every card then has one structure and one
+      // height whatever the font, instead of the rows with an account in
+      // them coming out a couple of pixels taller than the rest.
+      var acctEl = document.createElement('div');
+      acctEl.style.cssText = 'margin-top:auto;padding-top:8px;text-align:center;'
+        + 'color:#b0b0b0;font-size:11px;line-height:' + SLOT_LINE + ';'
+        + 'min-height:' + SLOT_LINE + 'em;flex-shrink:0;'
+        + 'max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
       if (connected && acct) {
-        acctEl = document.createElement('div');
-        acctEl.style.cssText = 'margin-top:auto;text-align:center;color:#9a9a9a;'
-          + 'font-size:11px;line-height:14px;max-width:100%;overflow:hidden;'
-          + 'text-overflow:ellipsis;white-space:nowrap;';
         acctEl.textContent = acct;
         acctEl.title = acct;          // the full address on hover when clipped
-        card.appendChild(acctEl);
       }
+      card.appendChild(acctEl);
 
+      // The account line above carries the margin-top:auto, so it and the
+      // status stay together at the bottom on one baseline across the grid.
       var statusEl = document.createElement('div');
-      // margin-top:auto pins it to the bottom, so the status line sits on one
-      // baseline across the whole grid no matter what is above it. With an
-      // account line present that one carries the auto instead, or the two
-      // would be pushed apart.
-      statusEl.style.cssText = (acctEl ? 'padding-top:2px;' : 'margin-top:auto;padding-top:8px;')
-        + 'text-align:center;'
-        + 'height:' + (SLOT_STATUS + 8) + 'px;line-height:' + SLOT_STATUS + 'px;'
-        + 'box-sizing:content-box;';
+      statusEl.style.cssText = 'padding-top:2px;text-align:center;font-size:12px;'
+        + 'line-height:' + SLOT_LINE + ';flex-shrink:0;';
       if (!app.real) {
         statusEl.innerHTML = '<span style="color:#666;font-size:11px;">Coming soon</span>';
       } else if (!connChecked[app.id]) {
@@ -995,12 +1023,14 @@
         card.style.opacity = '0.45';
       } else {
         card.addEventListener('mouseenter', function () {
-          card.style.background = '#242424';
-          if (!connected) card.style.borderColor = '#3a3a3a';
+          card.style.background = connected ? tone.bg : '#242424';
+          card.style.borderColor = connected ? tone.edge : '#3a3a3a';
+          if (connected) card.style.filter = 'brightness(1.15)';
         });
         card.addEventListener('mouseleave', function () {
-          card.style.background = '#1b1b1b';
-          card.style.borderColor = connected ? '#2f7d43' : '#262626';
+          card.style.background = tone.bg;
+          card.style.borderColor = tone.edge;
+          card.style.filter = '';
         });
         card.addEventListener('click', function () {
           if (app.token) {

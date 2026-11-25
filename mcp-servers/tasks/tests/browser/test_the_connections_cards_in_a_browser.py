@@ -264,3 +264,107 @@ def test_nothing_in_this_file_clicked_anything(cards):
     assertions would be about this harness rather than about the real
     panel, and that is worth failing over."""
     assert cards.evaluate("window.__clicked") in (None, )
+
+
+# --- in the dialog's own grid (2026-11-25) --------------------------------
+#
+# The cards above sit in a plain box, which is why nothing caught this:
+# inside the dialog the grid scrolls in a box of fixed height, and there
+# `auto` rows are sized to each card's MINIMUM, so every card sat at its
+# min-height and flexbox squeezed its text. The account line on every
+# connected card lost its lower half ("fix the ui please", with a
+# screenshot). These render the cards in the real grid, its style lifted
+# from the shipped file, in a dialog-sized box that has to scroll.
+
+def _grid_style():
+    import re
+    src = JS.read_text(encoding="utf-8")
+    return re.search(r'id="aiui-conn-grid" style="([^"]+)"', src).group(1)
+
+
+@pytest.fixture
+def dialog(browser):
+    pg = browser.new_page(viewport={"width": 900, "height": 700})
+    pg.set_default_timeout(5000)
+    ids = ("google", "clickup", "trello", "airtable", "github", "n8n",
+           "dropbox", "vercel", "notion", "hubspot", "zapier", "jira",
+           "stripe", "x", "facebook", "linkedin", "outlook", "todoist",
+           "asana", "linear", "monday", "calendly", "figma")
+    labels = {"google": "ralphbenitez32@gmail.com", "clickup": "ralph",
+              "trello": "ralphbenitez1", "airtable": "aiui.teams@gmail.com",
+              "github": "aiuiteams-hub", "n8n": "n8n",
+              "dropbox": "aiui.teams@gmail.com", "vercel": "aiuiteams-8820"}
+    state = {
+        "__state": {k: True for k in labels},
+        "__partial": {},
+        "__checked": {k: True for k in ids},
+        "__meta": {k: {"account_label": v, "needs_reconnect": k == "n8n"}
+                   for k, v in labels.items()},
+    }
+    setup = "\n".join("window.%s = %s;" % (k, json.dumps(v))
+                      for k, v in state.items())
+    pg.set_content(
+        "<!doctype html><html><body style='margin:0;background:#000'>"
+        "<div style='width:735px;max-height:560px;display:flex;"
+        "flex-direction:column;overflow:hidden;background:#151515'>"
+        "<div style='height:120px;flex-shrink:0'></div>"
+        "<div id='aiui-conn-grid' style=\"" + _grid_style() + "\"></div></div>"
+        "<script>" + setup + "\n(function () {\n" + HARNESS + _lift()
+        + "\n var g = document.getElementById('aiui-conn-grid');"
+          " APPS.forEach(function (a) { var c = makeCard(a);"
+          " c.setAttribute('data-app', a.id); g.appendChild(c); });"
+          " window.__done = true; })();</script></body></html>")
+    pg.wait_for_function("() => window.__done")
+    yield pg
+    pg.close()
+
+
+_CLIPPED = """(z) => {
+  document.documentElement.style.zoom = z;
+  const out = [];
+  document.querySelectorAll('[data-app]').forEach(c => {
+    [...c.children].forEach(k => {
+      if (k.scrollHeight > k.clientHeight + 1)
+        out.push(c.dataset.app + ': ' + k.textContent.slice(0, 20));
+    });
+    if (c.lastChild.getBoundingClientRect().bottom
+        > c.getBoundingClientRect().bottom - 2)
+      out.push(c.dataset.app + ': status on the edge');
+  });
+  return out;
+}"""
+
+
+def test_the_grid_actually_scrolls_so_this_is_the_failing_shape(dialog):
+    g = dialog.locator("#aiui-conn-grid")
+    assert g.evaluate("e => e.scrollHeight > e.clientHeight + 50")
+
+
+@pytest.mark.parametrize("zoom", ["1", "0.8", "0.9", "1.25"])
+def test_no_line_on_any_card_is_cut_at_any_zoom(dialog, zoom):
+    assert dialog.evaluate(_CLIPPED, zoom) == []
+
+
+def test_every_account_is_shown_whole(dialog):
+    for app_id, label in (("trello", "ralphbenitez1"),
+                          ("airtable", "aiui.teams@gmail.com"),
+                          ("github", "aiuiteams-hub")):
+        card = dialog.locator('[data-app="%s"]' % app_id)
+        line = card.locator("div", has_text=label).last
+        assert line.evaluate("e => e.scrollHeight <= e.clientHeight + 1"), app_id
+
+
+def test_the_cards_of_a_row_are_one_height(dialog):
+    heights = dialog.evaluate("""() => [...document.querySelectorAll('[data-app]')]
+        .map(c => Math.round(c.getBoundingClientRect().height))""")
+    assert len(set(heights)) == 1, heights
+
+
+def test_connected_is_a_tint_and_a_border_and_a_rejected_one_is_amber(dialog):
+    style = lambda i: dialog.locator('[data-app="%s"]' % i).evaluate(
+        "e => [getComputedStyle(e).backgroundColor, getComputedStyle(e).borderTopColor]")
+    trello, github, notion, n8n = (style(i) for i in ("trello", "github",
+                                                       "notion", "n8n"))
+    assert trello == github, "two connected cards must look the same"
+    assert trello != notion
+    assert n8n != trello and n8n[1] == "rgb(122, 95, 22)"
