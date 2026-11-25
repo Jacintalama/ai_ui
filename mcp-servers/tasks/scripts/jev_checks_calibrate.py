@@ -304,16 +304,23 @@ APP_CASES = [
     ("I have a landing page for my cup shop, I want to make lots of changes, "
      "keep every version and be able to come back to an old one",
      [{"github"}], {"gdrive", "app_builder"}),
+    # Todoist, Asana, Linear and monday.com joined the trackers on
+    # 2026-11-23 and 24 without these cases learning about them, so the
+    # 2026-11-25 run counted them as wrong recommendations for a to-do list
+    # and a task board, which is exactly what they are.
     ("I need something to track my to-dos and calendar", [{"notion", "clickup",
-                                                           "trello"}],
-     {"calendar", "airtable", "outlook", "jira"}),
+                                                           "trello", "todoist",
+                                                           "asana"}],
+     {"calendar", "airtable", "outlook", "jira", "monday", "linear"}),
     ("I need an automation workflow that connects my apps",
      [{"n8n", "zapier"}], {"automations"}),
     ("set up a board for my team's tasks and assign them to people",
-     [{"clickup", "trello"}], {"notion", "airtable", "github", "jira"}),
+     [{"clickup", "trello", "asana", "monday"}],
+     {"notion", "airtable", "github", "jira", "linear", "todoist"}),
     ("keep track of my sales leads and follow up with each customer",
      [{"hubspot", "airtable"}], {"gmail", "notion", "clickup", "trello",
-                                 "outlook", "automations", "ai_agents"}),
+                                 "outlook", "automations", "ai_agents",
+                                 "monday"}),
     ("put a meeting with Ana on my calendar for Friday at 3pm",
      [{"calendar", "outlook"}], {"gmail"}),
     # Calendly (2026-11-24): other people booking time WITH you. The case
@@ -378,7 +385,7 @@ APP_CASES = [
     ("remind me every Monday at 9am to send the team update",
      [{"cron_jobs"}],
      {"calendar", "outlook", "gmail", "clickup", "trello", "notion", "n8n",
-      "zapier"}),
+      "zapier", "todoist"}),
     ("I want an assistant of my own that answers customer questions about "
      "my shop", [{"ai_agents"}],
      {"gmail", "outlook", "hubspot", "automations"}),
