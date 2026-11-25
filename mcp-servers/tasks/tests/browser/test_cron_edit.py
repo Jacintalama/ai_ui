@@ -275,3 +275,49 @@ def test_an_edit_still_needs_a_name(cron):
     page.locator("#form-error").wait_for(state="visible", timeout=4000)
     assert "name is required" in page.locator("#form-error").inner_text()
     assert state["patches"] == []
+
+
+# --- Edit handed over from Cron Outputs (2026-11-25) -------------------------
+
+def _hand_over(page, sid, age_ms=0):
+    page.evaluate("([sid, age]) => localStorage.setItem('aiuiCronEditWant', "
+                  "JSON.stringify({schedule_id: sid, at: Date.now() - age}))",
+                  [sid, age_ms])
+
+
+def test_a_hand_over_opens_that_cron_in_the_form(cron):
+    page, _ = cron
+    _hand_over(page, "bbbb")
+    page.reload()
+    page.wait_for_function(
+        "document.getElementById('form-title').textContent.trim() === 'Edit schedule'",
+        timeout=8000)
+    assert page.locator("#name").input_value() == "Inbox check"
+    assert page.evaluate("localStorage.getItem('aiuiCronEditWant')") is None
+
+
+def test_a_hand_over_reaches_a_page_that_is_already_open(cron):
+    """The shell keeps the Cron Jobs pane alive while hidden."""
+    page, _ = cron
+    other = page.context.new_page()
+    other.goto(page.url.rsplit("/", 1)[0] + "/blank.html")
+    _hand_over(other, "aaaa")
+    page.wait_for_function(
+        "document.getElementById('name').value === 'Morning brief'", timeout=8000)
+    assert page.locator("#form-title").inner_text().strip() == "Edit schedule"
+
+
+def test_a_stale_hand_over_is_ignored(cron):
+    page, _ = cron
+    _hand_over(page, "bbbb", age_ms=10 * 60 * 1000)
+    page.reload()
+    page.locator('[data-act="edit"]').first.wait_for(timeout=8000)
+    assert page.locator("#form-title").inner_text().strip() == "New schedule"
+
+
+def test_a_hand_over_for_a_deleted_cron_says_so(cron):
+    page, _ = cron
+    _hand_over(page, "gone")
+    page.reload()
+    page.locator(".toast", has_text="no longer exists").wait_for(timeout=8000)
+    assert page.locator("#form-title").inner_text().strip() == "New schedule"

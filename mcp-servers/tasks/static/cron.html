@@ -2023,7 +2023,30 @@ ${s.prompt || ""}`.toLowerCase().includes(needle);
       // enable, disable, run and delete, and being thrown back to page 1 each
       // time you touch something on page 2 is maddening.
       renderList();
+      takeEditWanted();
     }
+
+    // From Cron Outputs (2026-11-25): Edit on an answer opens this page
+    // with its cron in the form, handed over through localStorage like View
+    // output going the other way, and honoured only while it is fresh. The
+    // pane stays alive while hidden, so a hand-over can also arrive as a
+    // storage event, which every other page of this origin is sent.
+    const EDIT_WANT_KEY = "aiuiCronEditWant";
+
+    function takeEditWanted() {
+      let want = null;
+      try { want = JSON.parse(localStorage.getItem(EDIT_WANT_KEY) || "null"); }
+      catch (e) { want = null; }
+      if (!want || !want.schedule_id || Date.now() - (want.at || 0) > 120000) return;
+      try { localStorage.removeItem(EDIT_WANT_KEY); } catch (e) { /* read once anyway */ }
+      const s = allSchedules.find((x) => String(x.id) === String(want.schedule_id));
+      if (s) startEdit(s);
+      else showToast("That cron no longer exists, so there is nothing to edit.", true);
+    }
+
+    window.addEventListener("storage", (e) => {
+      if (e.key === EDIT_WANT_KEY && e.newValue) loadSchedules();
+    });
 
     async function toggleSchedule(s, card) {
       const action = s.enabled ? "disable" : "enable";
