@@ -50,8 +50,9 @@
     button, select { font: inherit; color: inherit; }
     button { cursor: pointer; }
 
+    /* Fills the pane edge to edge, like a mail inbox: no empty sides. */
     .page { display: flex; flex-direction: column; height: 100vh;
-            max-width: 1280px; margin: 0 auto; padding: 20px 20px 16px; gap: 12px; }
+            padding: 20px 16px 16px; gap: 12px; }
 
     /* Header: what this is, and the three things you do to all of it. */
     .head { display: flex; flex-wrap: wrap; align-items: center;
@@ -87,7 +88,7 @@
 
     /* The inbox: list on the left, reader on the right, each scrolls alone. */
     .inbox { flex: 1; min-height: 0; display: grid;
-             grid-template-columns: minmax(280px, 380px) 1fr; gap: 12px; }
+             grid-template-columns: minmax(300px, 28%) 1fr; gap: 12px; }
     .pane { background: var(--surface); border: 1px solid var(--border);
             border-radius: var(--radius-lg); min-height: 0; overflow: auto; }
     .list { list-style: none; }
@@ -130,7 +131,7 @@
                           margin-bottom: 4px; }
 
     /* The answer, as markdown made safe: text is escaped before any tag. */
-    .md { color: var(--text-2); max-width: 72ch; overflow-wrap: anywhere; }
+    .md { color: var(--text-2); overflow-wrap: anywhere; }
     .md > * + * { margin-top: 12px; }
     .md h3, .md h4, .md h5, .md h6 { color: var(--text); font-size: 15px; font-weight: 600; }
     .md strong { color: var(--text); }
@@ -258,7 +259,10 @@
         }
         function flushList() {
           if (!list) return;
-          html += "<" + list.tag + ">" + list.items.map(function (i) {
+          // A list that does not start at 1 says so, so "1." then a blank line
+          // then "2." reads 1, 2 and not 1, 1. start is parsed digits only.
+          var open = list.start > 1 ? list.tag + ' start="' + list.start + '"' : list.tag;
+          html += "<" + open + ">" + list.items.map(function (i) {
             return "<li>" + inline(esc(i)) + "</li>";
           }).join("") + "</" + list.tag + ">";
           list = null;
@@ -273,7 +277,7 @@
           if (!line.trim()) { flushPara(); flushList(); return; }
           var h = line.match(/^(#{1,4})\s+(.*)$/);
           var ul = line.match(/^\s*[-*•]\s+(.*)$/);
-          var ol = line.match(/^\s*\d+[.)]\s+(.*)$/);
+          var ol = line.match(/^\s*(\d+)[.)]\s+(.*)$/);
           if (h) {
             flushPara(); flushList();
             var lv = Math.min(6, h[1].length + 2);
@@ -283,8 +287,11 @@
           if (ul || ol) {
             flushPara();
             var tag = ul ? "ul" : "ol";
-            if (!list || list.tag !== tag) { flushList(); list = { tag: tag, items: [] }; }
-            list.items.push((ul || ol)[1]);
+            if (!list || list.tag !== tag) {
+              flushList();
+              list = { tag: tag, items: [], start: ol ? parseInt(ol[1], 10) || 1 : 1 };
+            }
+            list.items.push(ul ? ul[1] : ol[2]);
             return;
           }
           flushList();
