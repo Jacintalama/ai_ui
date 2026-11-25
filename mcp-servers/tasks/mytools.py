@@ -37,6 +37,7 @@ from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import quote as _quote
 import n8n_nodes
 import aiui_link
+import calendly_args
 
 import httpx
 from fastapi import Depends, FastAPI
@@ -412,6 +413,18 @@ def _vendor_said(r, creds: Dict[str, str]) -> str:
         # with no message at all on some refusals.
         if isinstance(found, dict):
             found = found.get("message") or found.get("type") or ""
+        # Calendly's dialect (2026-11-24): the message is only "The
+        # supplied parameters are invalid." and WHICH parameter, and why,
+        # is in `details`. Without it the model has nothing to correct.
+        details = payload.get("details")
+        if isinstance(found, str) and isinstance(details, list):
+            said = "; ".join(
+                (str(d["parameter"]) + ": " if d.get("parameter") else "")
+                + str(d["message"])
+                for d in details[:3]
+                if isinstance(d, dict) and d.get("message"))
+            if said:
+                found = (found.rstrip() + " " if found else "") + said
         if not found:
             # GraphQL's dialect (Linear, 2026-11-23): a LIST of objects,
             # each with its own message.
@@ -759,7 +772,10 @@ PREPARE = {"clickup": _clickup_prepare, "trello": _trello_prepare,
            "linkedin": _linkedin_prepare,
            "outlook": _outlook_prepare,
            "n8n": _n8n_prepare,
-           "github": _github_prepare}
+           "github": _github_prepare,
+           # Calendly (2026-11-24): your user uri, an event's id out of its
+           # uri, an event type by name, and times read in your time zone.
+           "calendly": calendly_args.prepare}
 
 
 def _unreachable(label: str) -> str:
@@ -798,6 +814,25 @@ def _scope_hint(said: str, label: str) -> str:
             "reconnect it from Connections to allow that.")
 
 
+def _required_scopes(r) -> str:
+    """The scopes a 403 says the token lacks, or "".
+
+    Calendly names them in `required_scopes`. Only short, plain scope
+    names are repeated, so nothing else a vendor put there reaches a chat.
+    """
+    try:
+        payload = r.json()
+    except Exception:                                       # noqa: BLE001
+        return ""
+    listed = payload.get("required_scopes") if isinstance(payload, dict) else None
+    if not isinstance(listed, list):
+        return ""
+    names = [str(s) for s in listed[:5]
+             if isinstance(s, str) and 0 < len(s) <= 60
+             and all(c.isalnum() or c in ":._-" for c in s)]
+    return ", ".join(names)
+
+
 def _refusal(r, label: str, creds: Dict[str, str], provider_id: str,
              tool_name: str, writes: bool = False) -> str:
     """The sentence for a vendor's refusal, or "" when it did not refuse.
@@ -828,6 +863,15 @@ def _refusal(r, label: str, creds: Dict[str, str], provider_id: str,
         #
         # Same rule the 400 path already follows: the vendor's own account
         # of the failure is the one thing worth keeping.
+        scopes = _required_scopes(r)
+        if scopes:
+            # A token's scopes are fixed when it is made (Calendly,
+            # 2026-11-24), so reconnecting the same one changes nothing:
+            # the person needs a new token with the box ticked.
+            return (label + " would not allow that: the token you "
+                    "connected does not include " + scopes + ". Make a new "
+                    "token with " + ("that" if "," not in scopes else "those")
+                    + " ticked and paste it under Connections.")
         said = _vendor_said(r, creds)
         if said:
             return (label + " would not allow that." + said
@@ -3933,6 +3977,141 @@ LINKEDIN_TOOLS = [
          keep=("id",)),
 ]
 
+# --- Calendly --------------------------------------------------------------
+#
+# API v2 (https://api.calendly.com), with the person's personal access token.
+# What a model says is turned into what Calendly takes in calendly_args: the
+# person's user uri, an event's id out of its uri, an event type found by
+# name, and times read in their own Calendly time zone. One wrapper on the
+# way back: a single thing is {"resource": ...} and a list is
+# {"collection": [...]}.
+#
+# NO CANCEL, the same rule as the trackers: nothing here destroys anything.
+# list_invitees hands back each invitee's own cancel and reschedule links,
+# which is how a meeting is called off without this platform doing it.
+
+
+def _calendly_resource(payload: Any) -> Any:
+    if isinstance(payload, dict) and isinstance(payload.get("resource"), dict):
+        return payload["resource"]
+    return payload
+
+
+def _calendly_collection(payload: Any) -> Any:
+    if isinstance(payload, dict) and isinstance(payload.get("collection"), list):
+        return payload["collection"]
+    return payload
+
+
+_CAL_EVENT = ("string", "The booking: its uri from list_events", True)
+_CAL_TYPE = ("string", "Which of your event types: its name as Calendly shows "
+                       "it (\"30 Minute Meeting\"), its link, or its uri from "
+                       "list_event_types", True)
+_CAL_WHEN = ("ISO 8601. A time with no offset is in your Calendly time zone")
+
+CALENDLY_TOOLS = [
+    Tool(name="whoami",
+         summary="Show which Calendly account is connected, with its booking "
+                 "page and time zone.",
+         method="GET", path="/users/me",
+         unwrap=_calendly_resource,
+         keep=("name", "email", "scheduling_url", "timezone", "uri")),
+    Tool(name="list_event_types",
+         summary="List your Calendly event types: the kinds of meeting people "
+                 "can book with you, like \"30 Minute Meeting\", each with its "
+                 "booking page link.",
+         method="GET", path="/event_types",
+         query={"user": "user"},
+         query_defaults={"count": calendly_args.PAGE, "sort": "name:asc"},
+         unwrap=_calendly_collection,
+         keep=("name", "slug", "duration", "scheduling_url", "active", "kind",
+               "uri")),
+    Tool(name="list_events",
+         summary="List the meetings people booked with you on Calendly, "
+                 "soonest first. Upcoming ones unless you give a window; "
+                 "earlier ones need min_start_time. Times come back in UTC. "
+                 "If the answer is truncated, narrow the window.",
+         method="GET", path="/scheduled_events",
+         query={"user": "user", "min_start_time": "min_start_time",
+                "max_start_time": "max_start_time", "status": "status",
+                "invitee_email": "invitee_email"},
+         query_defaults={"count": calendly_args.PAGE,
+                         "sort": "start_time:asc", "status": "active"},
+         args={"min_start_time": ("string", "From when. " + _CAL_WHEN
+                                  + ". Default: now", False),
+               "max_start_time": ("string", "Until when. " + _CAL_WHEN, False),
+               "status": ("string", "active (the default) or canceled",
+                          False),
+               "invitee_email": ("string", "Only meetings booked by this "
+                                           "address", False)},
+         unwrap=_calendly_collection,
+         keep=("name", "status", "start_time", "end_time", "location",
+               "invitees_counter", "uri")),
+    Tool(name="get_event",
+         summary="Read one Calendly booking: when, where, and how many are "
+                 "coming.",
+         method="GET", path="/scheduled_events/{event_id}",
+         args={"event": _CAL_EVENT},
+         unwrap=_calendly_resource,
+         keep=("name", "status", "start_time", "end_time", "location",
+               "invitees_counter", "event_type", "uri")),
+    Tool(name="list_invitees",
+         summary="List who booked one Calendly meeting: their names and "
+                 "emails, their answers to your booking questions, and their "
+                 "own links to cancel or reschedule it.",
+         method="GET", path="/scheduled_events/{event_id}/invitees",
+         query_defaults={"count": calendly_args.PAGE},
+         args={"event": _CAL_EVENT},
+         unwrap=_calendly_collection,
+         keep=("name", "email", "status", "timezone", "questions_and_answers",
+               "cancel_url", "reschedule_url", "no_show", "created_at")),
+    Tool(name="list_available_times",
+         summary="List the open times people could book in one of your "
+                 "Calendly event types: the next 7 days unless you give a "
+                 "window. Times come back in UTC.",
+         method="GET", path="/event_type_available_times",
+         query={"event_type": "event_type", "start_time": "start_time",
+                "end_time": "end_time"},
+         args={"event_type": _CAL_TYPE,
+               "start_time": ("string", "From when. " + _CAL_WHEN
+                              + ". Default: now", False),
+               "end_time": ("string", "Until when. Default: 7 days after "
+                                      "start_time", False)},
+         unwrap=_calendly_collection,
+         keep=("start_time", "status", "invitees_remaining",
+               "scheduling_url")),
+    Tool(name="create_scheduling_link",
+         summary="Make a one-time Calendly booking link for one of your event "
+                 "types, to send to one person: it books one meeting and then "
+                 "stops working.",
+         method="POST", path="/scheduling_links",
+         args={"event_type": _CAL_TYPE},
+         shape=calendly_args.scheduling_link_body,
+         unwrap=_calendly_resource,
+         keep=("booking_url", "owner")),
+    Tool(name="book_meeting",
+         summary="Book someone into one of your Calendly event types at an "
+                 "open time (check list_available_times first). Calendly "
+                 "emails them the invitation, the same as if they had booked "
+                 "it themselves.",
+         method="POST", path="/invitees",
+         args={"event_type": _CAL_TYPE,
+               "start_time": ("string", "When it starts. " + _CAL_WHEN,
+                              True),
+               "invitee_email": ("string", "Who it is for: the address the "
+                                           "invitation goes to", True),
+               "invitee_name": ("string", "Their name", True),
+               "invitee_timezone": ("string", "Their time zone, a name like "
+                                              "America/New_York. Default: "
+                                              "yours", False),
+               "guests": ("string", "Up to 10 more email addresses to "
+                                    "invite, separated by commas", False)},
+         shape=calendly_args.booking_body,
+         unwrap=_calendly_resource,
+         keep=("name", "email", "status", "timezone", "event", "cancel_url",
+               "reschedule_url", "uri")),
+]
+
 PROVIDER_TOOLS: Dict[str, List[Tool]] = {
     "github": GITHUB_TOOLS,
     "outlook": OUTLOOK_TOOLS,
@@ -3951,6 +4130,7 @@ PROVIDER_TOOLS: Dict[str, List[Tool]] = {
     "asana": ASANA_TOOLS,
     "linear": LINEAR_TOOLS,
     "monday": MONDAY_TOOLS,
+    "calendly": CALENDLY_TOOLS,
 }
 
 #: Every tool of every provider, for checks that should hold everywhere.

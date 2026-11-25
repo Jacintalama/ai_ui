@@ -77,6 +77,9 @@ FROM_RESULT: Dict[str, Tuple[Tuple[str, str], ...]] = {
     "team_id": (("list_teams", "id"),),
     "issue": (("my_issues", "identifier"), ("team_issues", "identifier")),
     "space_id": (("get_spaces", "id"),),
+    # Calendly names things by uri, and its prepare step cuts the id out.
+    "event": (("list_events", "uri"),),
+    "event_type": (("list_event_types", "uri"),),
 }
 
 

@@ -316,6 +316,12 @@ APP_CASES = [
                                  "outlook", "automations", "ai_agents"}),
     ("put a meeting with Ana on my calendar for Friday at 3pm",
      [{"calendar", "outlook"}], {"gmail"}),
+    # Calendly (2026-11-24): other people booking time WITH you. The case
+    # above is the control: booking your own time must not pick it.
+    ("send my new client a link so they can pick a time to meet me",
+     [{"calendly"}], {"calendar", "outlook", "gmail"}),
+    ("who has booked a call with me through my booking page this week",
+     [{"calendly"}], {"calendar", "outlook"}),
     ("where is the budget spreadsheet I shared last week", [{"gdrive"}],
      {"airtable", "gmail", "dropbox", "outlook"}),
     ("when a new order comes into my shop, add the customer to a list and "
