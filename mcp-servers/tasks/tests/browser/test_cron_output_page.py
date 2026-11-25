@@ -260,3 +260,54 @@ def test_a_failed_load_says_so_and_offers_a_retry(inbox):
     text = page.locator("#list-region").inner_text()
     assert "Could not load your outputs" in text
     assert page.locator("#list-region button").inner_text().strip() == "Try again"
+
+
+# 2026-11-25, with a screenshot of the page in the shell and one of Gmail:
+# "the right and left space... can you fill this all no space should be".
+# The page stopped at 1280px and sat in the middle, and the answer stopped
+# at 72 characters a line, so a wide screen was mostly empty on both sides.
+WIDE = 1720  # the pane's width beside the sidebar on a 1920 screen
+
+
+def test_on_a_wide_screen_the_inbox_fills_the_width(inbox):
+    page, _ = inbox(ROWS, width=WIDE)
+    box = page.locator(".inbox").bounding_box()
+    assert box["x"] <= 16
+    assert WIDE - (box["x"] + box["width"]) <= 16
+
+
+def test_on_a_wide_screen_the_list_grows_too(inbox):
+    page, _ = inbox(ROWS, width=WIDE)
+    assert page.locator(".list-pane").bounding_box()["width"] > 380
+
+
+def test_a_long_answer_uses_the_whole_reader(inbox):
+    long = " ".join(["word"] * 600)
+    page, _ = inbox([_out("r1", "a", "Long", long)], width=WIDE)
+    _rows(page).first.click()
+    body = page.locator("#reader .md").bounding_box()
+    pane = page.locator(".reader-pane").bounding_box()
+    # The reader's own padding is the only space left beside the text.
+    assert body["width"] >= pane["width"] - 2 * 24 - 4
+
+
+# Same screenshot: an inbox check read "1. Important first ... 1. Everything
+# else". The model put a blank line between the items, which makes two lists,
+# and the second one counted from 1 again because the number was dropped.
+def test_a_numbered_list_split_by_a_blank_line_keeps_counting(inbox):
+    answer = "Since 3pm:\n\n1. Important first: none.\n\n2. Everything else:\n\n- one\n- two"
+    page, _ = inbox([_out("r1", "a", "Inbox check (Gmail)", answer)])
+    _rows(page).first.click()
+    lists = page.locator("#reader .md ol")
+    assert lists.count() == 2
+    assert lists.nth(0).get_attribute("start") in (None, "1")
+    assert lists.nth(1).get_attribute("start") == "2"
+
+
+def test_the_start_number_is_only_ever_digits(inbox):
+    answer = "7. seventh\n8. eighth"
+    page, _ = inbox([_out("r1", "a", "Count", answer)])
+    _rows(page).first.click()
+    ol = page.locator("#reader .md ol")
+    assert ol.get_attribute("start") == "7"
+    assert ol.locator("li").count() == 2
