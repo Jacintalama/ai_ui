@@ -38,6 +38,7 @@ from urllib.parse import quote as _quote
 import n8n_nodes
 import aiui_link
 import calendly_args
+import figma_args
 
 import httpx
 from fastapi import Depends, FastAPI
@@ -775,7 +776,9 @@ PREPARE = {"clickup": _clickup_prepare, "trello": _trello_prepare,
            "github": _github_prepare,
            # Calendly (2026-11-24): your user uri, an event's id out of its
            # uri, an event type by name, and times read in your time zone.
-           "calendly": calendly_args.prepare}
+           "calendly": calendly_args.prepare,
+           # Figma (2026-11-25): the file key and frame ids out of a link.
+           "figma": figma_args.prepare}
 
 
 def _unreachable(label: str) -> str:
@@ -812,6 +815,56 @@ def _scope_hint(said: str, label: str) -> str:
         return ""
     return (" If you connected " + label + " before IO could write, "
             "reconnect it from Connections to allow that.")
+
+
+def _wait_words(seconds) -> str:
+    """Retry-After in words, or "" when there is none to give."""
+    try:
+        s = int(float(str(seconds).strip()))
+    except (TypeError, ValueError):
+        return ""
+    if s <= 0:
+        return ""
+    if s < 90:
+        return "a minute"
+    if s < 90 * 60:
+        return "%d minutes" % round(s / 60)
+    if s < 48 * 3600:
+        return "%d hours" % round(s / 3600)
+    return "%d days" % round(s / 86400)
+
+
+def _rate_limited(r, label: str) -> str:
+    """A 429, said as a limit rather than a failure.
+
+    It used to fall through to "returned an error (429)", which reads as
+    broken and invites retrying at once. Figma (2026-11-25) made it worth
+    saying properly: reading a design is capped by seat and plan, a few a
+    MONTH on the free Starter plan or a View seat, so the person needs to
+    hear why and for how long, not to try again.
+    """
+    headers = getattr(r, "headers", None) or {}
+
+    def header(name):
+        try:
+            return headers.get(name) or headers.get(name.lower())
+        except Exception:                                   # noqa: BLE001
+            return None
+
+    out = (label + " is limiting how often it can be asked, so that was "
+           "not done.")
+    wait = _wait_words(header("Retry-After"))
+    if wait:
+        out += " Try again in " + wait + "."
+    tier = str(header("X-Figma-Plan-Tier") or "").lower()
+    kind = str(header("X-Figma-Rate-Limit-Type") or "").lower()
+    if tier == "starter":
+        out += (" Files on Figma's free Starter plan can be read only a few "
+                "times a month through the API.")
+    elif kind == "low":
+        out += (" Figma gives View and Collab seats only a few design reads "
+                "a month; a Full or Dev seat raises that to several a minute.")
+    return out
 
 
 def _required_scopes(r) -> str:
@@ -885,6 +938,8 @@ def _refusal(r, label: str, creds: Dict[str, str], provider_id: str,
         # only "Unprocessable Entity" (2026-11-19).
         return ("GitHub does not let you approve your own pull request. "
                 "Someone else has to review it.")
+    if r.status_code == 429:
+        return _rate_limited(r, label)
     if r.status_code == 404:
         return label + " could not find that." + _vendor_said(r, creds)
     if r.status_code < 400 and _graphql_refused(r):
@@ -4112,6 +4167,90 @@ CALENDLY_TOOLS = [
                "reschedule_url", "uri")),
 ]
 
+# --- Figma -----------------------------------------------------------------
+#
+# REST API v1 (https://api.figma.com), with the person's personal access
+# token in Figma's own header. Every tool starts from a file's LINK: Figma
+# has no way to list somebody's files. figma_args turns the link into the
+# file key and frame ids, and the answers into outlines a model can build
+# from.
+#
+# RATIONED: get_file, get_frame and get_frame_image are Figma's "Tier 1"
+# calls, about 6 a month on a Starter-plan file and about 20 on a View or
+# Collab seat (since 2025-11-17). Their summaries say so, so a model spends
+# them deliberately; get_file_info and the comments are not rationed that
+# way.
+#
+# Nothing here edits the design. Figma's REST API cannot, and add_comment
+# is the only write.
+
+_FIGMA_FILE = ("string", "The Figma file: its link, copied from Figma "
+                         "(Share, Copy link), or its key", True)
+_FIGMA_FRAMES = ("string", "Which frames: links to them (right-click a "
+                           "frame, Copy link to selection) or ids from "
+                           "get_file, separated by commas. Default: the "
+                           "frame in the file link", False)
+_FIGMA_RATIONED = (" Counts against Figma's limit on reading designs, which "
+                   "on a free Starter plan or a View seat is only a few a "
+                   "month, so ask for what you need in one call.")
+
+FIGMA_TOOLS = [
+    Tool(name="whoami",
+         summary="Show which Figma account is connected.",
+         method="GET", path="/v1/me",
+         keep=("id", "handle", "email")),
+    Tool(name="get_file_info",
+         summary="Name, who changed it last and when, and a thumbnail of one "
+                 "Figma file. Cheap: not rationed like reading the design.",
+         method="GET", path="/v1/files/{file_key}/meta",
+         args={"file": _FIGMA_FILE},
+         unwrap=lambda p: p.get("file") if isinstance(p, dict)
+         and isinstance(p.get("file"), dict) else p,
+         keep=("name", "folder_name", "last_touched_at", "last_touched_by",
+               "creator", "thumbnail_url", "url", "editorType")),
+    Tool(name="get_file",
+         summary="The pages of a Figma file and the frames on each, with the "
+                 "frame ids get_frame and get_frame_image take."
+                 + _FIGMA_RATIONED,
+         method="GET", path="/v1/files/{file_key}",
+         query_defaults={"depth": 2},
+         args={"file": _FIGMA_FILE},
+         unwrap=figma_args.file_outline),
+    Tool(name="get_frame",
+         summary="Read one or more frames of a Figma design to build from: "
+                 "every layer with its size, auto-layout (row or column, "
+                 "gap, padding), colours, fonts and text, one line each."
+                 + _FIGMA_RATIONED,
+         method="GET", path="/v1/files/{file_key}/nodes",
+         query={"ids": "ids"},
+         args={"file": _FIGMA_FILE, "frames": _FIGMA_FRAMES},
+         unwrap=figma_args.nodes_outline),
+    Tool(name="get_frame_image",
+         summary="A picture (PNG) of one or more frames of a Figma design, as "
+                 "links that last 30 days." + _FIGMA_RATIONED,
+         method="GET", path="/v1/images/{file_key}",
+         query={"ids": "ids"},
+         query_defaults={"format": "png", "scale": 1},
+         args={"file": _FIGMA_FILE, "frames": _FIGMA_FRAMES},
+         unwrap=figma_args.images),
+    Tool(name="list_comments",
+         summary="The comments on a Figma file: who said what, on which "
+                 "frame, and whether it is resolved.",
+         method="GET", path="/v1/files/{file_key}/comments",
+         query_defaults={"as_md": "true"},
+         args={"file": _FIGMA_FILE},
+         unwrap=figma_args.comments),
+    Tool(name="add_comment",
+         summary="Post a comment on a Figma file, or a reply to one.",
+         method="POST", path="/v1/files/{file_key}/comments",
+         args={"file": _FIGMA_FILE,
+               "message": ("string", "What the comment says", True),
+               "reply_to": ("string", "The id of the comment to reply to, "
+                                      "from list_comments", False)},
+         shape=figma_args.comment_body,
+         keep=("id", "message", "created_at")),
+]
+
 PROVIDER_TOOLS: Dict[str, List[Tool]] = {
     "github": GITHUB_TOOLS,
     "outlook": OUTLOOK_TOOLS,
@@ -4131,6 +4270,7 @@ PROVIDER_TOOLS: Dict[str, List[Tool]] = {
     "linear": LINEAR_TOOLS,
     "monday": MONDAY_TOOLS,
     "calendly": CALENDLY_TOOLS,
+    "figma": FIGMA_TOOLS,
 }
 
 #: Every tool of every provider, for checks that should hold everywhere.

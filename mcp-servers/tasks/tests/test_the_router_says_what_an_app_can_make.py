@@ -72,6 +72,7 @@ MAKES = {
     "asana": ("task",),
     "calendly": ("scheduling link",),
     "clickup": ("task",),
+    "figma": ("comment",),
     "github": ("issue", "pull request", "branch"),
     "hubspot": ("contact",),
     "jira": ("issue",),

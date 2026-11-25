@@ -971,6 +971,21 @@ LOCAL_SERVERS: Dict[str, MCPServerConfig] = {
                     "under Connections.",
         enabled=True,
     ),
+    "my-figma": MCPServerConfig(
+        server_id="my-figma",
+        access_class=AccessClass.PUBLIC,
+        display_name="Figma (your account)",
+        tier=ServerTier.LOCAL,
+        endpoint_url=MCP_MYTOOLS_URL + "/figma",
+        auth_type="none",
+        api_key_env=None,
+        description="Figma acting as the signed-in user's own account: a "
+                    "design file's pages and frames, a frame's layers to "
+                    "build from, pictures of frames, and comments. "
+                    "Requires them to have connected Figma under "
+                    "Connections.",
+        enabled=True,
+    ),
     "my-vercel": MCPServerConfig(
         server_id="my-vercel",
         access_class=AccessClass.PUBLIC,

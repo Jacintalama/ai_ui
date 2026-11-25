@@ -520,7 +520,7 @@ async def wants_release(email: str, text: str) -> bool | None:
 #: 0.91; the measurements are in that test.
 MAKES_CLAUSE = ("making things in it: a new table, record, card, task, "
                 "item, list, page, issue, pull request, branch, contact, post, "
-                "event, booking or scheduling link. It can also build an n8n workflow and change, "
+                "comment, event, booking or scheduling link. It can also build an n8n workflow and change, "
                 "switch on and off, or delete one, link, connect or set up "
                 "AIUI in the person's n8n so their n8n workflows can use "
                 "the apps they connected in AIUI, and start a Zapier zap")
@@ -655,7 +655,8 @@ TOOL_NOTES = {
                         "HubSpot contacts, "
                         "Outlook mail, calendar and contacts, "
                         "Calendly bookings, event types and scheduling "
-                        "links, "
+                        "links, Figma designs, their frames and "
+                        "comments, "
                         "Vercel projects and deployments, "
                         "n8n workflows "
                         "and Zapier zaps, plus web search, flights and the "

@@ -335,6 +335,10 @@ APP_CASES = [
     # The App Builder joined the catalogue 2026-11-17: building one is now
     # a recommendation of the platform's own builder, with a button.
     ("make me a landing page for a bakery", [{"app_builder"}], {"github"}),
+    # Figma (2026-11-25): a design to build FROM. The bakery case above
+    # is the control: building with no design must not pick it.
+    ("turn my Figma design into a working website",
+     [{"figma"}, {"app_builder"}], {"github", "publish"}),
     ("how many days are there until Christmas", [], set()),
     # The platform's own Publish (2026-11-13). Lukas: "it should just
     # recommend the most straightforward one". `deploy_vercel` is the

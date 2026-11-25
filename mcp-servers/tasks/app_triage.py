@@ -208,6 +208,20 @@ _APPS = (
                "and reschedule links are shown instead), or make or change "
                "an event type",
         says=("calendly",)),
+    # A design to build FROM. Building it is the App Builder's.
+    App("figma", "Figma",
+        "a design made in Figma: a website, landing page or app screen "
+        "someone designed and wants built as it looks, its layout, text, "
+        "colours and fonts, and the comments on it",
+        "read a design file's pages and frames, read a frame's layers with "
+        "their sizes, layout, colours, fonts and text, get a picture of a "
+        "frame, read the comments and add one",
+        ("get_file", "get_file_info", "get_frame", "get_frame_image",
+         "list_comments", "add_comment"),
+        cannot="edit the design itself, list your files (paste the file's "
+               "link), or read a design more than a few times a month on "
+               "Figma's free Starter plan or a View seat",
+        says=("figma",)),
     App("asana", "Asana",
         "a team's work tracker: projects, tasks with owners and due dates, "
         "sections a task moves through, and seeing what is assigned to you",
