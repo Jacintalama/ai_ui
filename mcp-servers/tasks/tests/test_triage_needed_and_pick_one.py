@@ -178,3 +178,23 @@ def test_naming_n8n_is_their_pick():
     p = _p(text="use n8n to save my website form into Airtable automatically")
     assert p["choice"] == []
     assert "pick one" not in app_triage.with_buttons("Here is how.", p)
+
+
+# Live 2026-11-24: under an answer that named n8n and Zapier, their limits sat
+# above "You need Airtable", so the first thing under the answer was what n8n
+# cannot do, before the person was told what they need.
+NAMES_BOTH = ("Zapier is quickest, n8n gives you the most control, and "
+              "Automations is built in. Which would you like?")
+
+
+def test_the_needed_line_comes_before_any_limit_of_the_choice():
+    rows = _out(answer=NAMES_BOTH).split("\n\n", 1)[1].splitlines()
+    assert rows[0].startswith("You need Airtable, because you asked for it.")
+
+
+def test_the_limits_of_the_choice_sit_under_the_pick_line_above_its_buttons():
+    rows = _out(answer=NAMES_BOTH).rstrip().splitlines()
+    pick = rows.index("To do it automatically, pick one: n8n, Zapier or Automations.")
+    assert rows[pick + 1].startswith("n8n cannot yet ")
+    assert rows[pick + 2].startswith("Zapier cannot yet ")
+    assert "#aiui-connect:n8n" in rows[-1] and len(rows) == pick + 4

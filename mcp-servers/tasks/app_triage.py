@@ -861,7 +861,10 @@ def with_buttons(answer: str, p) -> str:
     # would do. With a choice in the plan, the app they named gets its own
     # line and button, and the choice gets one line and its own row.
     choice = list((p or {}).get("choice") or [])
-    needed, picks = [], []
+    # The limits of the choice go under the pick line, beside the buttons
+    # they are about. Live 2026-11-24 they sat above "You need Airtable",
+    # so what n8n cannot do came before what the person needs.
+    needed, picks, pick_limits = [], [], []
     for a in apps:
         if a["connected"]:
             continue
@@ -873,7 +876,8 @@ def with_buttons(answer: str, p) -> str:
         said = any(w in low for w in (app.label.lower(),) + app.says)
         if app.id in choice:
             if said and a["cannot"]:
-                lines.append("%s cannot yet %s." % (app.label, a["cannot"]))
+                pick_limits.append("%s cannot yet %s."
+                                   % (app.label, a["cannot"]))
             picks.append(_button(app))
             continue
         if choice and not a.get("group"):
@@ -973,6 +977,7 @@ def with_buttons(answer: str, p) -> str:
         rows = lines + needed + ([" ".join(buttons)] if buttons else [])
         rows.append("To do it automatically, pick one: %s or %s."
                     % (", ".join(labels[:-1]), labels[-1]))
+        rows += pick_limits
         if picks:
             rows.append(" ".join(picks))
         return answer.rstrip() + "\n\n" + "\n".join(rows)
