@@ -456,6 +456,22 @@ def _calendly_label(d):
     return me.get("email") or me.get("name") or ""
 
 
+def _figma_auth(v):
+    """Figma, signed as the person, with their personal access token.
+
+    In Figma's own header, X-Figma-Token: Bearer is for OAuth tokens only.
+    A token, so no app registration: Settings, Security, Personal access
+    tokens, with the scopes in figma_args.SCOPES ticked.
+    """
+    return VendorAuth(base_url="https://api.figma.com",
+                      headers={"X-Figma-Token": _require(v, "token")})
+
+
+def _figma_label(d):
+    d = d if isinstance(d, dict) else {}
+    return d.get("email") or d.get("handle") or ""
+
+
 def _zapier_auth(v):
     """Zapier has no account API a user can hand us a key for. What they DO
     have is a Catch Hook: a per-Zap URL that is itself the credential, because
@@ -690,6 +706,20 @@ PROVIDERS: Dict[str, Provider] = {
         build_auth=_calendly_auth,
         probe_path="/users/me",
         read_label=_calendly_label,
+    ),
+    "figma": Provider(
+        id="figma",
+        label="Figma",
+        fields=[Field("token", "Personal access token", placeholder="figd_...")],
+        # Kept equal to figma_args.SCOPES by a test.
+        where="Figma: your account menu (top left), Settings, Security, "
+              "Personal access tokens, Generate new token. Tick "
+              "current_user:read, file_content:read, file_metadata:read, "
+              "file_comments:read and file_comments:write, then copy it "
+              "(Figma shows it once).",
+        build_auth=_figma_auth,
+        probe_path="/v1/me",
+        read_label=_figma_label,
     ),
     "outlook": Provider(
         id="outlook",

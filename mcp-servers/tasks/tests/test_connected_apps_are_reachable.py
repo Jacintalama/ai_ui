@@ -61,6 +61,7 @@ SPOKEN = {
     "linear": "linear",
     "monday": "monday.com",
     "calendly": "calendly",
+    "figma": "figma",
 }
 
 
