@@ -2072,6 +2072,20 @@ async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
     try:
         if picked is None:
             picked = await _tool_pick(body, text)
+        # The Save as your skill button (2026-11-26) sends skill_offer.ASK,
+        # and write_skill is in the skills tool. Jev's pick on that sentence
+        # is not reliable, and with nothing picked the chat's pin (n8n or
+        # automations, from making the thing) came back without skills, so
+        # the draft was never written. Same shape as a ready-made skill
+        # below: skills on top of whatever was picked, and pinned so the
+        # "yes, save it" that follows still has it.
+        if (skill_offer.is_ask(text) and _assistant_on()
+                and agent_llm.can_run(main_assistant.agent())):
+            picked = list(picked or [])
+            if "skills" not in picked:            # a core tool, everyone's
+                picked.append("skills")
+            await _write_tools_pin(
+                _tools_pin_key(body.chat_id, body.user_email), picked)
         plan = None
         if triage:
             plan = app_triage.plan(triage.get("picks"),
@@ -2603,7 +2617,8 @@ async def _route_chat(body: ChatIn, x_internal_secret: str = "") -> dict:
             # The third, "which apps fit, connected or not", is the triage
             # agent (2026-11-12): independent of both, so asked beside them.
             chosen, picked, triage = await asyncio.gather(
-                (_jev_decision(body, text, agents) if _agents_may_take_unnamed()
+                (_jev_decision(body, text, agents)
+                 if _agents_may_take_unnamed() and not skill_offer.is_ask(text)
                  else _none()),
                 _tool_pick(body, text),
                 _triage_pick(body, text))

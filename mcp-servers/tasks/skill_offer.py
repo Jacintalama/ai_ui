@@ -14,6 +14,12 @@ import agent_activity
 
 LINK = "[Save as your skill](#aiui-say:save-skill)"
 
+#: What the button sends, word for word. integrations-ui.js holds the same
+#: sentence (AIUI_SAY_TEXTS['save-skill'].text); a test reads it from there,
+#: so the two cannot drift. The main chat gives the assistant the skills tool
+#: when the person's last message is this (is_ask).
+ASK = "Write a skill from what you just set up for me, and show it to me before saving."
+
 _WORKFLOW_TOOLS = ("create_workflow", "activate_workflow")
 _AUTOMATION_TOOL = "create_automation"
 _AUTOMATION_MADE = "Made the automation"
@@ -59,6 +65,11 @@ def note(tool: str, status: str, result: str) -> None:
             made.append(tool)
     except Exception:
         pass
+
+
+def is_ask(text) -> bool:
+    """True when `text` is the button's message, give or take whitespace."""
+    return isinstance(text, str) and text.strip() == ASK
 
 
 def without_link(answer: str) -> str:
