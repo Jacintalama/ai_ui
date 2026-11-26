@@ -213,3 +213,64 @@ async def test_one_request_does_not_leak_into_the_next(monkeypatch):
     monkeypatch.setattr(rt, "_chat_turns", quiet)
     out = await rt._chat_inner(_Body("hello"), SECRET)
     assert skill_offer.LINK not in out["rendered_web"]
+
+
+# --- the service owns the link: a copy the model wrote is not a button -----
+
+def test_without_link_removes_a_copy_and_its_blank_lines():
+    L = skill_offer.LINK
+    assert skill_offer.without_link("Done.\n\n" + L) == "Done."
+    assert skill_offer.without_link("Done.\n\n" + L + "\n\nAnything else?") == \
+        "Done.\n\nAnything else?"
+    assert skill_offer.without_link("Press " + L + " to keep it.") == \
+        "Press to keep it."
+    assert skill_offer.without_link(L) == ""
+    assert skill_offer.without_link("No link here.") == "No link here."
+    assert skill_offer.without_link(None) is None
+
+
+def test_a_copied_link_with_nothing_made_is_removed():
+    L = skill_offer.LINK
+    out = rt._reply([{"agent": None, "answer": "Sure.\n\n" + L, "notes": []}])
+    got = rt._with_skill_offer(out, [])
+    assert got["turns"][-1]["answer"] == "Sure."
+    assert L not in got["rendered"] and L not in got["rendered_web"]
+
+
+def test_a_copied_link_with_something_made_ends_with_one_link():
+    L = skill_offer.LINK
+    out = rt._reply([{"agent": None, "answer": L + "\n\nMade it.\n\n" + L,
+                      "notes": []}])
+    got = rt._with_skill_offer(out, ["create_workflow"])
+    answer = got["turns"][-1]["answer"]
+    assert answer.count(L) == 1 and answer.endswith(L)
+    assert got["rendered_web"].count(L) == 1
+
+
+def test_a_held_reply_loses_a_copied_link():
+    L = skill_offer.LINK
+    out = rt._reply([{"agent": None, "answer": "Shall I?\n\n" + L, "notes": [],
+                      "pending": {"calls": [{"id": "1"}], "agent_id": "x"}}])
+    got = rt._with_skill_offer(out, ["create_workflow"])
+    assert L not in got["turns"][-1]["answer"]
+    assert L not in got["rendered_web"]
+
+
+def test_a_copy_in_an_earlier_turn_is_removed_too():
+    L = skill_offer.LINK
+    out = rt._reply([{"agent": {"id": "a1", "name": "Ada"}, "answer": "Hi " + L,
+                      "notes": []},
+                     {"agent": None, "answer": "Made it.", "notes": []}])
+    got = rt._with_skill_offer(out, ["create_workflow"])
+    assert L not in got["turns"][0]["answer"]
+    assert got["rendered"].count(L) == 1
+
+
+async def test_the_main_chat_drops_a_link_the_model_copied(monkeypatch):
+    async def copied(body, secret):
+        return rt._reply([{"agent": None, "notes": [],
+                           "answer": "Hello again.\n\n" + skill_offer.LINK}])
+
+    monkeypatch.setattr(rt, "_chat_turns", copied)
+    out = await rt._chat_inner(_Body("hi"), SECRET)
+    assert skill_offer.LINK not in out["rendered_web"]

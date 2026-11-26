@@ -61,6 +61,31 @@ def note(tool: str, status: str, result: str) -> None:
         pass
 
 
+def without_link(answer: str) -> str:
+    """`answer` with every copy of LINK taken out, and the blank lines
+    around it, the rest of the text left as it was.
+
+    The link is in the chat history after one offer, and a model reading it
+    back can copy it into a reply where nothing was made. The service owns
+    it: the main chat strips the model's copies and adds it only after a
+    real write. Text either side of a copy is joined by a blank line when a
+    line break was there, by a space when it stood inside a sentence.
+    Anything that is not a string comes back as it came.
+    """
+    if not isinstance(answer, str) or LINK not in answer:
+        return answer
+    parts = answer.split(LINK)
+    out = parts[0]
+    for nxt in parts[1:]:
+        left, right = out.rstrip(), nxt.lstrip()
+        if not left or not right:
+            out = left + right
+            continue
+        gap = out[len(left):] + nxt[:len(nxt) - len(right)]
+        out = left + ("\n\n" if "\n" in gap else " ") + right
+    return out
+
+
 def with_link(answer: str) -> str:
     if LINK in (answer or ""):
         return answer

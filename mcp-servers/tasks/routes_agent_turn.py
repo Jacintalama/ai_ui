@@ -2314,28 +2314,35 @@ async def _chat_inner(body: ChatIn, x_internal_secret: str) -> dict:
 
 def _with_skill_offer(out: dict, made: list[str]) -> dict:
     """`out` with skill_offer.LINK under the last turn's answer, when
-    something was made. Unchanged when nothing was, when the last turn is
-    a held question (the call has not run yet, the person is being asked),
-    or when it has no answer. Every key `_reply` does not rebuild is kept,
-    and the caller's dict is not changed. Fails open: any surprise returns
-    `out` as it came."""
-    if not made:
-        return out
+    something was made, and with no other copy of it anywhere.
+
+    The service owns the link. After one offer it is in the chat history,
+    and a model can copy it into a later reply where nothing was made, so
+    every copy a model wrote is taken out of every turn first
+    (skill_offer.without_link), and the link is put back only under the
+    last answer, only when `made` is not empty and that turn is not a held
+    question (the call has not run yet, the person is being asked) and
+    has an answer.
+
+    `out` itself comes back when nothing changes, so a reply with no link
+    and nothing made is untouched. Every key `_reply` does not rebuild is
+    kept, and the caller's dict is not changed. Fails open: any surprise
+    returns `out` as it came."""
     try:
         turns = out.get("turns")
         if not isinstance(turns, list) or not turns:
             return out
-        last = turns[-1]
-        if not isinstance(last, dict) or _held(last):
+        new = [dict(t, answer=skill_offer.without_link(t["answer"]))
+               if isinstance(t, dict) and isinstance(t.get("answer"), str)
+               else t for t in turns]
+        last = new[-1]
+        answer = last.get("answer") if isinstance(last, dict) else None
+        if (made and not _held(last) and isinstance(answer, str)
+                and answer.strip()):
+            new[-1] = dict(last, answer=skill_offer.with_link(answer))
+        if new == turns:            # only answers can differ, so: no change
             return out
-        answer = last.get("answer")
-        if not isinstance(answer, str) or not answer.strip():
-            return out
-        linked = skill_offer.with_link(answer)
-        if linked == answer:
-            return out
-        turns = turns[:-1] + [dict(last, answer=linked)]
-        return {**out, **_reply(turns, out.get("queue"), out.get("marker", ""),
+        return {**out, **_reply(new, out.get("queue"), out.get("marker", ""),
                                 out.get("status", ""))}
     except Exception:                                       # noqa: BLE001
         logger.warning("could not add the Save as your skill link",
