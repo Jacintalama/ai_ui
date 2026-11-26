@@ -1184,6 +1184,40 @@ def _messages_for(sched) -> list[dict]:
     return msgs
 
 
+#: Kept on every scheduled run whatever Jev picks. The connected-apps
+#: gateway hides its tools behind a search, so it costs about 1,000 tokens,
+#: and it is how the web is reached: live 2026-11-26 Jev answered "no tools"
+#: for "the best quote ... and news update today". In the chat a person
+#: would notice the missing news; on a schedule nobody is watching.
+SCHEDULE_KEEPS = frozenset({"server:mcp-proxy"})
+
+
+async def _tools_for_schedule(sched, tools: list) -> list:
+    """The tools a scheduled run is offered: what its own prompt needs.
+
+    Measured 2026-11-26: every run was offered all of the owner's tools, and
+    the ones declared directly cost about 7,200 tokens of descriptions on
+    every round; "give me the best quote" runs used 27,000 to 49,000 input
+    tokens. The same pick the chat makes per message (_auto_tools, with the
+    core every agent keeps), plus SCHEDULE_KEEPS. Every tool when Jev cannot
+    be asked, when the prompt is empty, or with CRON_TOOL_PICK=0, so a run
+    never does worse than before. Never raises.
+    """
+    tools = list(tools or [])
+    prompt = str(getattr(sched, "prompt", "") or "").strip()
+    if not tools or not prompt or os.environ.get("CRON_TOOL_PICK", "1") == "0":
+        return tools
+    try:
+        from routes_agent_turn import _auto_tools
+        picked = await _auto_tools(getattr(sched, "user_email", "") or "",
+                                   prompt, tools)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("cron tool pick failed", exc_info=True)
+        return tools
+    keep = set(picked) | SCHEDULE_KEEPS
+    return [t for t in tools if t in keep]
+
+
 async def run_agent(sched) -> tuple[str, str, dict]:
     """Run one schedule as its agent. Returns (status, result, extras).
 
@@ -1256,6 +1290,7 @@ async def run_agent(sched) -> tuple[str, str, dict]:
             # import scheduler.py uses to reach run_agent.
             from routes_agent_turn import own_agents, tools_for_agent
             tools = await tools_for_agent(sched.user_email, meta)
+            tools = await _tools_for_schedule(sched, tools)
 
             # Mint a long-lived token immediately before the chat call. The token
             # must outlive the WHOLE tool loop, not one call: up to
