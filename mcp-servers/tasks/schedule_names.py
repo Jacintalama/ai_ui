@@ -25,6 +25,11 @@ _POLITE = re.compile(
     r"will you|i want you to|i need you to|i would like you to|"
     r"i'd like you to)\b[\s,:]*", re.I)
 
+#: "You are Ada, the project manager." in front says who runs it, not what
+#: it does. Only a whole first sentence, so a prompt with no full stop after
+#: the role keeps every word.
+_ROLE = re.compile(r"^you are\b[^.!?\n]{0,120}[.!?]\s+", re.I)
+
 #: When it runs. The card says that on its own line.
 _TIMING = re.compile(
     r"^(every|each)\s+(day|morning|evening|night|weekday|weekend|week|month|"
@@ -36,6 +41,21 @@ _TIMING = re.compile(
     r"^(at|by)\s+[\d:]+\s*(am|pm)?\b[\s,:]*|"
     r"^on\s+(mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|"
     r"sundays?|weekdays|weekends)\b[\s,:]*", re.I)
+
+#: When it runs, said at the END: "... every morning", "... at 8:30 pm".
+#: Only time words follow "every"/"each" here, so "summarize every unread
+#: email" keeps its "every". "today" and "tomorrow" stay: in "what is due
+#: today" they are part of what is asked.
+_TIMING_TAIL = re.compile(
+    r"\s+("
+    r"(every|each)\s+(\d+\s+)?(day|morning|evening|night|weekday|weekend|"
+    r"week|month|hour|minute|monday|tuesday|wednesday|thursday|friday|"
+    r"saturday|sunday)s?\b.*"
+    r"|daily|weekly|monthly|hourly|in the (morning|afternoon|evening)"
+    r"|(at|by)\s+\d[\d:]*\s*(am|pm)?"
+    r"|on\s+(mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|"
+    r"sundays?|weekdays|weekends)"
+    r")\s*$", re.I)
 
 #: "give me", "send me" and friends: the name is what is given.
 _ASKING = re.compile(
@@ -52,12 +72,13 @@ _CLAUSE = re.compile(r"\s+(and|then|also|plus)\s+|[,;.!?\n(]")
 #: A name does not end on a word that needs another after it.
 _DANGLING = {"the", "a", "an", "of", "for", "to", "and", "with", "in", "on",
              "at", "my", "your", "our", "from", "by", "or", "that", "this",
-             "about", "into", "is", "are"}
+             "about", "into", "is", "are", "every", "each"}
 
 
 def short_name(prompt: str) -> str:
     """A name of a few words for what `prompt` asks for."""
     text = " ".join(str(prompt or "").split())
+    text = _ROLE.sub("", text)
     for _ in range(4):
         before = text
         text = _POLITE.sub("", text)
@@ -67,6 +88,11 @@ def short_name(prompt: str) -> str:
     text = _ASKING.sub("", text)
     text = _LEAD.sub("", text)
     text = _CLAUSE.split(text, maxsplit=1)[0].strip(" :-")
+    for _ in range(4):
+        before = text
+        text = _TIMING_TAIL.sub("", text).strip(" :-")
+        if text == before:
+            break
     words = text.split()[:MAX_WORDS]
     while words and len(" ".join(words)) > MAX_CHARS:
         words.pop()
