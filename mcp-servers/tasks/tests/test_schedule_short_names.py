@@ -41,6 +41,44 @@ def test_a_prompt_becomes_a_few_words_for_what_it_does(prompt, name):
     assert N.short_name(prompt) == name
 
 
+# Live, 2026-11-26, right after #293 shipped: "please can you give me the
+# best quote for this day every morning" was named "Best quote for this day
+# every". The time came at the END, and only a time at the start was
+# removed, so the six-word cap cut it in half.
+@pytest.mark.parametrize("prompt, name", [
+    ("please can you give me the best quote for this day every morning",
+     "Best quote for this day"),
+    ("read my email every weekday at 9am", "Read my email"),
+    ("summarize my unread mail each friday", "Summarize my unread mail"),
+    ("post the sales numbers daily", "Post the sales numbers"),
+    ("check the server at 8:30 pm", "Check the server"),
+    ("send me the board brief on mondays", "Board brief"),
+    ("remind me to drink water every 2 hours", "Remind me to drink water"),
+    ("check my inbox in the morning", "Check my inbox"),
+    # "every" that is not a time stays: it is part of what is asked.
+    ("summarize every unread email", "Summarize every unread email"),
+    ("list each open pull request", "List each open pull request"),
+])
+def test_a_time_at_the_end_is_dropped_too(prompt, name):
+    assert N.short_name(prompt) == name
+
+
+def test_a_role_sentence_in_front_is_not_the_name():
+    # A live prompt: "You are Ada, ... project manager. Write this week's
+    # review ..." was named "You are Ada".
+    assert N.short_name("You are Ada, the project manager. Write this "
+                        "week's review for the team") == "Write this week's review"
+    assert N.short_name("You are a helpful assistant. give me a motivational "
+                        "quote") == "Motivational quote"
+
+
+def test_a_name_never_ends_on_every_or_each():
+    for prompt in ("give me one quote from a famous person every",
+                   "tell me something new about my business each"):
+        last = N.short_name(prompt).split()[-1].lower()
+        assert last not in ("every", "each"), prompt
+
+
 def test_a_name_is_short():
     long = "summarise every single message in every channel of the workspace"
     out = N.short_name(long)
