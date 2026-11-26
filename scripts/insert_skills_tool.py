@@ -63,7 +63,8 @@ print("tool", "update" if endpoint.endswith("update") else "create", "->", statu
 if status != 200 or not out:
     sys.exit(f"tool upsert failed: {out}")
 
-valves = {"tasks_url": "http://tasks:8210", "timeout_seconds": 20}
+valves = {"tasks_url": "http://tasks:8210", "timeout_seconds": 20,
+          "draft_timeout_seconds": 60}
 status, out = call("/api/v1/tools/id/skills/valves/update", valves)
 print("valves:", status)
 if status != 200:
