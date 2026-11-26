@@ -102,6 +102,45 @@ async def test_get_schedule_for_edit_splits_name():
 
 
 @pytest.mark.asyncio
+async def test_the_edit_modal_holds_the_whole_prompt_not_the_name():
+    """The name held the prompt cut to 60, and saving wrote that back
+    (2026-11-25). The modal now reads the schedule's own prompt."""
+    long = "summarize my unread emails from clients and flag anything "            "that needs a reply from me today"
+    tc = MagicMock(); tc.resolve_link = AsyncMock(return_value=None)
+    tc.list_schedules = AsyncMock(return_value=[
+        {"id": "sid1", "name": "every day at 9:00 AM: " + long[:60],
+         "prompt": long, "cron_expr": "0 9 * * *"}])
+    out = await _router({"100": "a@x.com"}, tc).get_schedule_for_edit("100", "sid1")
+    assert out["what"] == long
+    assert out["when"] == "every day at 9:00 AM"
+
+
+@pytest.mark.asyncio
+async def test_a_short_name_takes_its_time_from_the_cron():
+    """Since names are made from the prompt there is no time in them."""
+    from handlers.schedule_parse import parse_when
+    tc = MagicMock(); tc.resolve_link = AsyncMock(return_value=None)
+    tc.list_schedules = AsyncMock(return_value=[
+        {"id": "sid1", "name": "Best quote for this day",
+         "prompt": "give me the best quote for this day", "cron_expr": "0 19 * * *"}])
+    out = await _router({"100": "a@x.com"}, tc).get_schedule_for_edit("100", "sid1")
+    assert out == {"what": "give me the best quote for this day",
+                   "when": "every day at 7:00 PM"}
+    # And the words read back to the same time when the modal is saved.
+    assert parse_when(out["when"])[0] == "0 19 * * *"
+
+
+@pytest.mark.asyncio
+async def test_a_name_whose_time_is_out_of_date_uses_the_crons():
+    tc = MagicMock(); tc.resolve_link = AsyncMock(return_value=None)
+    tc.list_schedules = AsyncMock(return_value=[
+        {"id": "sid1", "name": "every morning: check mail",
+         "prompt": "check mail", "cron_expr": "30 18 * * *"}])
+    out = await _router({"100": "a@x.com"}, tc).get_schedule_for_edit("100", "sid1")
+    assert out["when"] == "every day at 6:30 PM"
+
+
+@pytest.mark.asyncio
 async def test_get_schedule_for_edit_not_found_returns_none():
     tc = MagicMock(); tc.resolve_link = AsyncMock(return_value=None)
     tc.list_schedules = AsyncMock(return_value=[])
