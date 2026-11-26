@@ -30,6 +30,10 @@ class Tools:
     class Valves(BaseModel):
         tasks_url: str = Field(default="http://tasks:8210")
         timeout_seconds: int = Field(default=20)
+        # Drafting asks a model, which took 9 to 19 s on 2026-11-26, so
+        # 20 s cut a slow one off. Agents run this tool with these
+        # defaults, not the row's valves, so the default is what counts.
+        draft_timeout_seconds: int = Field(default=60)
 
     def __init__(self):
         self.valves = self.Valves()
@@ -40,8 +44,10 @@ class Tools:
                                params=params,
                                headers={"X-User-Email": email})
 
-    async def _post(self, path: str, payload: dict, email: str):
-        async with httpx.AsyncClient(timeout=self.valves.timeout_seconds) as c:
+    async def _post(self, path: str, payload: dict, email: str,
+                    timeout: int | None = None):
+        async with httpx.AsyncClient(
+                timeout=timeout or self.valves.timeout_seconds) as c:
             return await c.post(f"{self.valves.tasks_url}{path}",
                                 json=payload,
                                 headers={"X-User-Email": email})
@@ -160,9 +166,15 @@ class Tools:
         """
         email = (__user__ or {}).get("email", "")
         try:
-            r = await self._post("/agents/skills/draft", {"job": job}, email)
+            r = await self._post("/agents/skills/draft", {"job": job}, email,
+                                 timeout=self.valves.draft_timeout_seconds)
+        except httpx.TimeoutException:
+            return ("The skill writer took too long this time. Nothing was "
+                    "saved. Ask me to try again.")
         except Exception as e:                              # noqa: BLE001
-            return f"Could not write that skill just now: {e}"
+            # An httpx error's message is often empty; its name is not.
+            return ("Could not write that skill just now: "
+                    + (str(e) or type(e).__name__))
         if r.status_code == 422:
             return ((r.json() or {}).get("detail")
                     or "I could not write that one. Try saying the job in a sentence.")
