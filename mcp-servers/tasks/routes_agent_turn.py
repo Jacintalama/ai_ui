@@ -48,6 +48,7 @@ import can_do
 import connection_health
 import main_assistant
 import skill_fit
+import skill_offer
 import agent_skills
 import routes_prefs
 from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS,
@@ -2071,6 +2072,20 @@ async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
     try:
         if picked is None:
             picked = await _tool_pick(body, text)
+        # The Save as your skill button (2026-11-26) sends skill_offer.ASK,
+        # and write_skill is in the skills tool. Jev's pick on that sentence
+        # is not reliable, and with nothing picked the chat's pin (n8n or
+        # automations, from making the thing) came back without skills, so
+        # the draft was never written. Same shape as a ready-made skill
+        # below: skills on top of whatever was picked, and pinned so the
+        # "yes, save it" that follows still has it.
+        if (skill_offer.is_ask(text) and _assistant_on()
+                and agent_llm.can_run(main_assistant.agent())):
+            picked = list(picked or [])
+            if "skills" not in picked:            # a core tool, everyone's
+                picked.append("skills")
+            await _write_tools_pin(
+                _tools_pin_key(body.chat_id, body.user_email), picked)
         plan = None
         if triage:
             plan = app_triage.plan(triage.get("picks"),
@@ -2297,7 +2312,60 @@ async def chat_stream(body: ChatIn,
 
 
 async def _chat_inner(body: ChatIn, x_internal_secret: str) -> dict:
-    """The body of `chat`, so the main chat mark wraps all of it."""
+    """The body of `chat`, so the main chat mark wraps all of it.
+
+    On Auto (route_only) every tool call of the turn is collected, and a
+    turn that really made a workflow or an automation gets the "Save as
+    your skill" link under its answer (skill_offer). The panel and the
+    other surfaces (route_only False) are untouched.
+    """
+    if not getattr(body, "route_only", False):
+        return await _chat_turns(body, x_internal_secret)
+    with skill_offer.collecting() as made:
+        out = await _chat_turns(body, x_internal_secret)
+    return _with_skill_offer(out, made)
+
+
+def _with_skill_offer(out: dict, made: list[str]) -> dict:
+    """`out` with skill_offer.LINK under the last turn's answer, when
+    something was made, and with no other copy of it anywhere.
+
+    The service owns the link. After one offer it is in the chat history,
+    and a model can copy it into a later reply where nothing was made, so
+    every copy a model wrote is taken out of every turn first
+    (skill_offer.without_link), and the link is put back only under the
+    last answer, only when `made` is not empty and that turn is not a held
+    question (the call has not run yet, the person is being asked) and
+    has an answer.
+
+    `out` itself comes back when nothing changes, so a reply with no link
+    and nothing made is untouched. Every key `_reply` does not rebuild is
+    kept, and the caller's dict is not changed. Fails open: any surprise
+    returns `out` as it came."""
+    try:
+        turns = out.get("turns")
+        if not isinstance(turns, list) or not turns:
+            return out
+        new = [dict(t, answer=skill_offer.without_link(t["answer"]))
+               if isinstance(t, dict) and isinstance(t.get("answer"), str)
+               else t for t in turns]
+        last = new[-1]
+        answer = last.get("answer") if isinstance(last, dict) else None
+        if (made and not _held(last) and isinstance(answer, str)
+                and answer.strip()):
+            new[-1] = dict(last, answer=skill_offer.with_link(answer))
+        if new == turns:            # only answers can differ, so: no change
+            return out
+        return {**out, **_reply(new, out.get("queue"), out.get("marker", ""),
+                                out.get("status", ""))}
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not add the Save as your skill link",
+                       exc_info=True)
+        return out
+
+
+async def _chat_turns(body: ChatIn, x_internal_secret: str) -> dict:
+    """Everything `_chat_inner` does, before the skill offer."""
     if not getattr(body, "route_only", False):
         return await _route_chat(body, x_internal_secret)
     key = _pending_key(_pin_key(body.chat_id, body.user_email))
@@ -2549,7 +2617,8 @@ async def _route_chat(body: ChatIn, x_internal_secret: str = "") -> dict:
             # The third, "which apps fit, connected or not", is the triage
             # agent (2026-11-12): independent of both, so asked beside them.
             chosen, picked, triage = await asyncio.gather(
-                (_jev_decision(body, text, agents) if _agents_may_take_unnamed()
+                (_jev_decision(body, text, agents)
+                 if _agents_may_take_unnamed() and not skill_offer.is_ask(text)
                  else _none()),
                 _tool_pick(body, text),
                 _triage_pick(body, text))
