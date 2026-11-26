@@ -48,6 +48,7 @@ import can_do
 import connection_health
 import main_assistant
 import skill_fit
+import skill_offer
 import agent_skills
 import routes_prefs
 from agent_runner import (CHANNEL_HTTP_TIMEOUT_SECONDS,
@@ -2297,7 +2298,53 @@ async def chat_stream(body: ChatIn,
 
 
 async def _chat_inner(body: ChatIn, x_internal_secret: str) -> dict:
-    """The body of `chat`, so the main chat mark wraps all of it."""
+    """The body of `chat`, so the main chat mark wraps all of it.
+
+    On Auto (route_only) every tool call of the turn is collected, and a
+    turn that really made a workflow or an automation gets the "Save as
+    your skill" link under its answer (skill_offer). The panel and the
+    other surfaces (route_only False) are untouched.
+    """
+    if not getattr(body, "route_only", False):
+        return await _chat_turns(body, x_internal_secret)
+    with skill_offer.collecting() as made:
+        out = await _chat_turns(body, x_internal_secret)
+    return _with_skill_offer(out, made)
+
+
+def _with_skill_offer(out: dict, made: list[str]) -> dict:
+    """`out` with skill_offer.LINK under the last turn's answer, when
+    something was made. Unchanged when nothing was, when the last turn is
+    a held question (the call has not run yet, the person is being asked),
+    or when it has no answer. Every key `_reply` does not rebuild is kept,
+    and the caller's dict is not changed. Fails open: any surprise returns
+    `out` as it came."""
+    if not made:
+        return out
+    try:
+        turns = out.get("turns")
+        if not isinstance(turns, list) or not turns:
+            return out
+        last = turns[-1]
+        if not isinstance(last, dict) or _held(last):
+            return out
+        answer = last.get("answer")
+        if not isinstance(answer, str) or not answer.strip():
+            return out
+        linked = skill_offer.with_link(answer)
+        if linked == answer:
+            return out
+        turns = turns[:-1] + [dict(last, answer=linked)]
+        return {**out, **_reply(turns, out.get("queue"), out.get("marker", ""),
+                                out.get("status", ""))}
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not add the Save as your skill link",
+                       exc_info=True)
+        return out
+
+
+async def _chat_turns(body: ChatIn, x_internal_secret: str) -> dict:
+    """Everything `_chat_inner` does, before the skill offer."""
     if not getattr(body, "route_only", False):
         return await _route_chat(body, x_internal_secret)
     key = _pending_key(_pin_key(body.chat_id, body.user_email))

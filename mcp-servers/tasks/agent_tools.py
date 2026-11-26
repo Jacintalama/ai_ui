@@ -16,6 +16,7 @@ import agent_access
 import agent_activity
 import agent_events
 import agent_handoff
+import skill_offer
 from db import session
 
 logger = logging.getLogger(__name__)
@@ -873,7 +874,58 @@ async def _run_native(source: str, method_name: str, params: dict,
     return result if isinstance(result, str) else json.dumps(result)
 
 
+def _name_and_params(tool_call) -> tuple[str, dict]:
+    """The tool name and decoded arguments of a call, with the same shape
+    checks _execute_tool_call_inner makes. ("", {}) for anything malformed.
+    Never raises."""
+    try:
+        if not isinstance(tool_call, dict):
+            return "", {}
+        fn = tool_call.get("function")
+        if not isinstance(fn, dict):
+            return "", {}
+        name = fn.get("name")
+        if not isinstance(name, str):
+            return "", {}
+        raw_args = fn.get("arguments") or "{}"
+        try:
+            params = (json.loads(raw_args) if isinstance(raw_args, str)
+                      else dict(raw_args))
+        except (ValueError, TypeError):
+            params = {}
+        return name.strip(), params if isinstance(params, dict) else {}
+    except Exception:                                       # noqa: BLE001
+        return "", {}
+
+
 async def execute_tool_call(
+    tool_call: dict, user_email: str,
+    allowed_native_tools: list[str] | None = None,
+    agent_id: str | None = None,
+    outcome: "ToolOutcome | None" = None,
+) -> str:
+    """Run one tool call (_execute_tool_call_inner) and report it to
+    skill_offer, so the main chat can offer "Save as your skill" after a
+    workflow or automation was really made.
+
+    The report is by the tool the model actually asked for (the inner name
+    of a `call_tool` proxy call) and with the status the inner set. It is
+    a no-op outside skill_offer.collecting(), and a failure in it can never
+    change or cost the result, which is returned unchanged.
+    """
+    outcome = outcome if outcome is not None else ToolOutcome()
+    result = await _execute_tool_call_inner(
+        tool_call, user_email, allowed_native_tools, agent_id, outcome)
+    try:
+        name, params = _name_and_params(tool_call)
+        skill_offer.note(called_tool_name(name, params), outcome.status, result)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not report the tool call to skill_offer",
+                       exc_info=True)
+    return result
+
+
+async def _execute_tool_call_inner(
     tool_call: dict, user_email: str,
     allowed_native_tools: list[str] | None = None,
     agent_id: str | None = None,
