@@ -1326,7 +1326,15 @@ async def run_agent(sched) -> tuple[str, str, dict]:
             # task is still the last thing the agent reads, word for word.
             if isinstance(brief, dict) and isinstance(brief.get("content"), str):
                 import cron_quiet
-                brief = {**brief, "content": brief["content"] + "\n\n" + cron_quiet.ASK}
+                extra = ""
+                # A job that emails its answer (migration 074): the platform
+                # sends it, so the agent must not try to, or a read-only run
+                # is refused for attempting what was never its job.
+                if getattr(sched, "email_me", False) is True:
+                    import cron_email
+                    extra = "\n\n" + cron_email.BRIEF
+                brief = {**brief, "content": brief["content"] + extra
+                         + "\n\n" + cron_quiet.ASK}
             messages = [brief] + messages
 
             # Keyword arguments on purpose: the tests assert on them by name, and

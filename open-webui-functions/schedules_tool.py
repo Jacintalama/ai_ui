@@ -23,6 +23,7 @@ requirements: httpx
 # to call some OTHER endpoint of the tasks service as this person.
 import os
 import uuid
+from typing import Optional
 
 import httpx
 from pydantic import BaseModel, Field
@@ -137,6 +138,8 @@ class Tools:
         if tz:
             said += " (%s)" % tz
         said += ", currently %s" % state
+        if row.get("email_me") is True:
+            said += ", its answer emailed to you"
         last = row.get("last_run_status")
         if last:
             said += ", last run %s" % str(last)
@@ -199,6 +202,7 @@ class Tools:
         return model_id if model_id.startswith("agent-") else None
 
     async def create_schedule(self, name: str, cron_expr: str, prompt: str,
+                              email_me: bool = False,
                               __user__: dict = {}, __model__: dict = {}) -> str:
         """
         Put something on this person's schedule, so it runs by itself from
@@ -216,6 +220,13 @@ class Tools:
         :param prompt: What should happen when it runs, written as an
             instruction, e.g. "list my unread email and say what needs a
             reply today".
+        :param email_me: True when they asked to be emailed or sent the
+            result ("email me a summary", "send me the report every
+            Friday"). The platform then emails each answer to their own
+            Gmail, so write the prompt as what to produce, never as "send an
+            email". A cron job can only read: on its own it cannot send
+            email to other people, post, or change anything. If they ask
+            for that, tell them so instead of saying it is set up.
         """
         email = self._email(__user__)
         if not email:
@@ -230,7 +241,8 @@ class Tools:
             # silence. A schedule an hour off looks like it worked.
             zone = self.FALLBACK_TZ
         body = {"name": name, "cron_expr": cron_expr, "prompt": prompt,
-                "tz": zone, "agent_id": self._agent_id_from(__model__)}
+                "tz": zone, "agent_id": self._agent_id_from(__model__),
+                "email_me": email_me is True}
 
         ok, data = await self._call("POST", "/schedules", email, body)
         if not ok:
@@ -249,9 +261,74 @@ class Tools:
         elif not detected:
             said += (" I used %s, because I have no timezone recorded for you. "
                      "Tell me your zone if that is wrong." % zone)
+        if email_me is True:
+            said += (" Its answer will be emailed to you after each run, and "
+                     "will also appear on your Cron Jobs page.")
+            return said
         said += (" The result will appear on your Cron Jobs page, since this "
                  "was not made from a chat channel.")
+        # Live 2026-11-26 this tool said "Set up" to "email me a summary" and
+        # the job could never send. Said every time, so the model cannot
+        # promise an action the job will be refused.
+        said += (" It runs read only: it can read the apps they connected, "
+                 "but it cannot send, post or change anything by itself, so "
+                 "say that if they asked it to. To have its answer emailed "
+                 "to them, call update_schedule with email_me true.")
         return said
+
+    async def update_schedule(self, schedule_id: str,
+                              name: Optional[str] = None,
+                              cron_expr: Optional[str] = None,
+                              prompt: Optional[str] = None,
+                              email_me: Optional[bool] = None,
+                              __user__: dict = {}) -> str:
+        """
+        Change one of this person's schedules: its name, when it runs, what
+        it does, or whether its answer is emailed to them. Only what you
+        give changes; leave the rest out.
+
+        Call list_my_schedules first if you do not already have the id.
+
+        :param schedule_id: The schedule's id, from list_my_schedules.
+        :param name: A new name, or leave out.
+        :param cron_expr: A new five-field cron, e.g. "0 17 * * 5" for five
+            on Fridays, or leave out.
+        :param prompt: What it should do from now on, written as an
+            instruction, or leave out.
+        :param email_me: True to email each answer to their own Gmail, false
+            to stop, or leave out.
+        """
+        email = self._email(__user__)
+        if not email:
+            return "I could not tell whose schedule that is, so I left it alone."
+        path = self._schedule_path(schedule_id)
+        if not path:
+            return ("That is not one of your schedule ids, so I did not touch "
+                    "anything. Call list_my_schedules to see the real ones.")
+        body = {}
+        for key, value in (("name", name), ("cron_expr", cron_expr),
+                           ("prompt", prompt)):
+            if isinstance(value, str) and value.strip():
+                body[key] = value
+        if isinstance(email_me, bool):
+            body["email_me"] = email_me
+        if not body:
+            return "Nothing to change was given, so I left it as it is."
+        ok, data = await self._call("PATCH", path, email, body)
+        if not ok:
+            return "I did not change that schedule: " + data
+        said = []
+        if "name" in body:
+            said.append('is named "%s"' % body["name"])
+        if "cron_expr" in body:
+            said.append("runs on %s" % body["cron_expr"])
+        if "prompt" in body:
+            said.append("does what it was just told")
+        if body.get("email_me") is True:
+            said.append("has its answer emailed to you after each run")
+        elif body.get("email_me") is False:
+            said.append("is no longer emailed")
+        return "Done. From now on it " + ", ".join(said) + "."
 
     async def enable_schedule(self, schedule_id: str,
                               __user__: dict = {}) -> str:
