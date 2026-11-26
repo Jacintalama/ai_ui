@@ -3432,6 +3432,51 @@
     btn.addEventListener('click', function () { aiuiOpenPlace(place); });
   }
 
+  // ===== The assistant's say links =====
+  // [Save as your skill](#aiui-say:save-skill) goes under a reply after a
+  // workflow or automation was really made (2026-11-26). The button types one
+  // fixed message into the composer and sends it. The page sends only texts
+  // from this list, never anything read out of the link.
+  var AIUI_SAY_MARKER = '#aiui-say:';
+  var AIUI_SAY_TEXTS = {
+    'save-skill': 'Write a skill from what you just set up for me, '
+      + 'and show it to me before saving.'
+  };
+
+  function wireAiuiSayLink(anchor) {
+    if (!anchor || anchor.getAttribute('data-aiui-wired')) return;
+    var href = anchor.getAttribute('href') || '';
+    var i = href.indexOf(AIUI_SAY_MARKER);
+    if (i === -1) return;
+    var id = href.slice(i + AIUI_SAY_MARKER.length).trim();
+    if (!Object.prototype.hasOwnProperty.call(AIUI_SAY_TEXTS, id)) return;
+    anchor.setAttribute('data-aiui-wired', '1');
+
+    var container = document.createElement('span');
+    container.className = 'aiui-say-inline';
+    container.style.cssText = 'display:inline-block;margin:10px 8px 8px 0;'
+      + 'vertical-align:middle;';
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = anchor.textContent || 'Send';
+    btn.style.cssText = 'padding:8px 16px;background:#4CAF50;color:#fff;border:none;'
+      + 'border-radius:8px;font-size:13.5px;font-weight:600;cursor:pointer;';
+    container.appendChild(btn);
+    if (anchor.parentNode) anchor.parentNode.replaceChild(container, anchor);
+    btn.addEventListener('click', function () {
+      if (btn.disabled) return;
+      btn.disabled = true;
+      aiuiSendToChat(AIUI_SAY_TEXTS[id], function (sent) {
+        if (sent) {
+          btn.textContent = '✓ Asked';
+        } else {
+          btn.textContent = 'Send or clear your message first, then press again';
+          btn.disabled = false;
+        }
+      });
+    });
+  }
+
   function wireAiuiConnectLinks() {
     var pending = false;
     function scan() {
@@ -3440,6 +3485,8 @@
       for (var i = 0; i < anchors.length; i++) wireAiuiConnectLink(anchors[i]);
       var opens = document.querySelectorAll('a[href*="' + AIUI_OPEN_MARKER + '"]');
       for (var j = 0; j < opens.length; j++) wireAiuiOpenLink(opens[j]);
+      var says = document.querySelectorAll('a[href*="' + AIUI_SAY_MARKER + '"]');
+      for (var k = 0; k < says.length; k++) wireAiuiSayLink(says[k]);
     }
     var obs = new MutationObserver(function () {
       if (pending) return;
