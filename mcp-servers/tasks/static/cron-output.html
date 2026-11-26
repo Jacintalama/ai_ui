@@ -122,6 +122,8 @@
                   gap: 12px; flex-wrap: wrap; border-bottom: 1px solid var(--border);
                   padding-bottom: 12px; margin-bottom: 16px; }
     .reader h2 { font-size: 18px; font-weight: 600; overflow-wrap: anywhere; text-wrap: balance; }
+    /* Run now, Edit and Mark as read, together at the reader's top right. */
+    .reader-actions { display: flex; gap: 8px; flex-wrap: wrap; }
     .reader-meta { display: flex; align-items: center; gap: 8px; color: var(--muted);
                    font-size: 13px; margin-top: 4px; }
     .back { display: none; margin-bottom: 12px; }
@@ -204,6 +206,8 @@
       "use strict";
       var API = "/api/tasks/schedules/outputs";
       var WANT_KEY = "aiuiCronOutputWant";
+      //: How often a started run is checked for its answer, 20 times at most.
+      var WATCH_EVERY_MS = window.__aiuiWatchMs || 15000;
       var inbox = document.getElementById("inbox");
       var listRegion = document.getElementById("list-region");
       var reader = document.getElementById("reader");
@@ -490,7 +494,22 @@
         toggle.type = "button";
         toggle.setAttribute("data-toggle-read", "");
         toggle.addEventListener("click", function () { setRead(o, o.unread); });
-        top.appendChild(toggle);
+        // What you usually want next, from the answer you are reading
+        // (2026-11-25): run it again, or change what it asks.
+        var actions = el("div", "reader-actions");
+        var run = el("button", "btn", "Run now");
+        run.type = "button";
+        run.setAttribute("data-run", "");
+        run.addEventListener("click", function () { runAgain(o, run); });
+        var edit = el("button", "btn", "Edit");
+        edit.type = "button";
+        edit.setAttribute("data-edit", "");
+        edit.title = "Change its name, time, prompt, agent or tool access";
+        edit.addEventListener("click", function () { editSchedule(o); });
+        actions.appendChild(run);
+        actions.appendChild(edit);
+        actions.appendChild(toggle);
+        top.appendChild(actions);
         wrap.appendChild(top);
         var body = el("div", "md");
         var text = String(o.result || "").trim();
@@ -498,6 +517,65 @@
         else body.appendChild(el("p", "empty", "This run left no answer."));
         wrap.appendChild(body);
         reader.appendChild(wrap);
+      }
+
+      // ---- run again / edit ------------------------------------------------
+      // Run now starts the cron that made this answer and watches for the
+      // new one, so it appears without a refresh. Edit opens Cron Jobs with
+      // that cron in the form, handed over through localStorage the way
+      // View output comes the other way.
+      var EDIT_KEY = "aiuiCronEditWant";
+      var watching = null;
+
+      function watchFor(sid) {
+        var known = all.filter(function (o) { return o.schedule_id === sid; })
+          .map(function (o) { return o.id; });
+        var tries = 0;
+        if (watching) clearInterval(watching);
+        watching = setInterval(function () {
+          tries++;
+          load(function () {
+            var fresh = all.find(function (o) {
+              return o.schedule_id === sid && known.indexOf(o.id) === -1;
+            });
+            if (fresh || tries >= 20) {
+              clearInterval(watching);
+              watching = null;
+              if (fresh) {
+                say("The new answer is in: " + (fresh.name || "Untitled") + ".");
+                tellShell();
+              }
+            }
+          });
+        }, WATCH_EVERY_MS);
+      }
+
+      function runAgain(o, btn) {
+        btn.disabled = true;
+        fetch("/api/tasks/schedules/" + encodeURIComponent(o.schedule_id) + "/run-now", {
+          method: "POST", credentials: "include", headers: authHeaders(true),
+        }).then(function (r) {
+          if (r.status === 404) throw new Error("gone");
+          if (!r.ok) throw new Error(String(r.status));
+          say("Run started. Its answer will appear at the top of the list when it finishes.");
+          watchFor(o.schedule_id);
+        }).catch(function (e) {
+          say(e && e.message === "gone"
+            ? "That cron no longer exists, so it cannot run again."
+            : "The run did not start. Try again in a minute.");
+        }).then(function () { btn.disabled = false; });
+      }
+
+      function editSchedule(o) {
+        try {
+          localStorage.setItem(EDIT_KEY, JSON.stringify(
+            { schedule_id: String(o.schedule_id), at: Date.now() }));
+        } catch (e) { /* Cron Jobs still opens, without the form filled */ }
+        if (window.parent !== window) {
+          window.parent.postMessage({ type: "aiui:open-pane", path: "/cronjobs" }, location.origin);
+        } else {
+          location.href = "/tasks/static/cron.html";
+        }
       }
 
       function open(id) {
@@ -552,8 +630,8 @@
         open(newest.id);
       }
 
-      function load() {
-        say("");
+      function load(after) {
+        if (!after) say("");
         fetch(API + "?limit=50", { credentials: "include", headers: authHeaders(false) })
           .then(function (r) {
             var ct = (r.headers.get("content-type") || "");
@@ -567,6 +645,7 @@
             drawList();
             drawReader();
             takeWanted();
+            if (after) after();
           })
           .catch(function () {
             listRegion.textContent = "";
