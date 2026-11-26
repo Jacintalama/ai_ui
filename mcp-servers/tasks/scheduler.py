@@ -94,6 +94,7 @@ from sqlalchemy import select, text, update
 from db import session
 from models import Schedule, TaskItem
 from secret_scrub import scrub
+import cron_email
 import cron_quiet
 import events_out
 
@@ -492,6 +493,25 @@ def result_for_storage(result) -> str | None:
     return text
 
 
+async def _email_answer(sched, status: str, result):
+    """`result`, with a line added when its email could not go.
+
+    Its own arm: cron_email.send promises never to raise, and this makes a
+    bug in it cost the email rather than the run, which nobody is watching.
+    """
+    try:
+        problem = await cron_email.send(
+            getattr(sched, "user_email", "") or "",
+            getattr(sched, "name", "") or "", status, result or "")
+    except Exception:                                       # noqa: BLE001
+        logger.warning("emailing schedule %s failed", getattr(sched, "id", "?"),
+                       exc_info=True)
+        problem = cron_email.COULD_NOT
+    if not problem:
+        return result
+    return ((result or "").rstrip() + "\n\n" + problem).strip()
+
+
 async def _finalize_run(sched: Schedule) -> None:
     """Background coroutine: run, record last_run_status, deliver to Discord.
 
@@ -508,6 +528,10 @@ async def _finalize_run(sched: Schedule) -> None:
         # The agent's "nothing here needs you" mark comes out before the
         # answer is stored, shown or delivered anywhere (cron_quiet).
         result, quiet = cron_quiet.split(result)
+        # Emailed before it is kept, so an email that could not go is said on
+        # the output the person will open (cron_email, migration 074).
+        if getattr(sched, "email_me", False) is True:
+            result = await _email_answer(sched, status, result)
         await _keep_run(sched, status, result, started_at, quiet=quiet)
         async with session() as s:
             await s.execute(

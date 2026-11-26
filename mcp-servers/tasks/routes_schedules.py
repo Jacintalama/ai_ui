@@ -23,6 +23,7 @@ from sqlalchemy import delete, select, update
 
 from db import session
 from models import Schedule
+import cron_email
 import schedule_names
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,9 @@ class CreateScheduleIn(BaseModel):
     agent_id: str | None = None
     tool_mode: str | None = None
     video_config: dict | None = None
+    # Email each run's answer to the owner's own Gmail (migration 074,
+    # cron_email). Refused at create when Gmail is not connected.
+    email_me: bool = False
 
 
 async def _agents_for_owner(email: str):
@@ -554,6 +558,12 @@ async def create_schedule(
                             is_admin=is_admin)
     if not is_operator and not is_admin:
         await _enforce_count_cap(owner)
+    if body.email_me:
+        # Before anything is written: a job promising an email that can
+        # never go is the failure this switch exists to end.
+        problem = await cron_email.gmail_problem(owner)
+        if problem:
+            raise HTTPException(status_code=400, detail=problem)
 
     # Every schedule that runs an agent gets one now, named by the client or
     # chosen here. A video schedule renders a walkthrough and never reaches
@@ -588,13 +598,14 @@ async def create_schedule(
             agent_id=agent_id or None,
             # None means read_only, the safe default for an unattended run.
             tool_mode=body.tool_mode,
+            email_me=bool(body.email_me),
         ))
         await s.commit()
     # The agent comes back so a caller that could not name one can still say
     # who will run it. A bot that leaves the person to find out at 7pm is how
     # two of these ran for months doing the wrong thing unnoticed.
     return {"id": str(sid), "agent_id": agent_id or None,
-            "agent_name": agent_name}
+            "agent_name": agent_name, "email_me": bool(body.email_me)}
 
 
 async def _scoped_schedule(
@@ -723,6 +734,8 @@ class UpdateScheduleIn(BaseModel):
     # Absent means unchanged, which is all the Discord edit modal sends.
     agent_id: str | None = None
     tool_mode: str | None = None
+    # Email each run's answer (migration 074). Turning it on checks Gmail.
+    email_me: bool | None = None
 
 
 #: Said when an edit would leave a schedule with nobody to run it.
@@ -777,6 +790,12 @@ async def update_schedule(
         if not body.prompt.strip():
             raise HTTPException(status_code=400, detail="prompt cannot be blank")
         values["prompt"] = body.prompt
+    if body.email_me is not None:
+        if body.email_me:
+            problem = await cron_email.gmail_problem(sched.user_email)
+            if problem:
+                raise HTTPException(status_code=400, detail=problem)
+        values["email_me"] = bool(body.email_me)
     if values:
         async with session() as s:
             await s.execute(
@@ -815,4 +834,6 @@ def _serialize(sch: Schedule) -> dict[str, Any]:
         "tool_mode": sch.tool_mode,
         # Only False is muted: a row from before migration 073 counts.
         "notify": getattr(sch, "notify", True) is not False,
+        # Only True emails: a row from before migration 074 does not.
+        "email_me": getattr(sch, "email_me", False) is True,
     }

@@ -170,6 +170,10 @@ class Schedule(Base):
     # (migration 073). False = muted: outputs still land in the Cron Outputs
     # inbox, already read. A run that did not complete counts regardless.
     notify = Column(Boolean, nullable=False, server_default="true", default=True)
+    # Whether each finished run's answer is emailed to the owner's own
+    # connected Gmail (migration 074, cron_email). Delivery by the platform,
+    # so the agent stays read only.
+    email_me = Column(Boolean, nullable=False, server_default="false", default=False)
     # Which platform the run result is delivered to (discord|slack).
     # Defaults to 'discord' so existing rows preserve current behavior.
     delivery_platform = Column(Text, nullable=False, server_default="discord")

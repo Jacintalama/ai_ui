@@ -256,6 +256,9 @@
     .form-input.mono { font-family: var(--font-mono); letter-spacing: 0.02em; }
     .form-textarea { resize: vertical; min-height: 92px; font-family: var(--font-ui); }
     .form-hint { font-size: 11px; color: var(--muted); }
+    .check-row { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+    .check-row input { width: 16px; height: 16px; margin: 0;
+                       accent-color: var(--accent); cursor: pointer; }
     .form-hint code {
       font-family: var(--font-mono); font-size: 10.5px;
       background: var(--surface-2); border: 1px solid var(--border-2);
@@ -353,7 +356,8 @@
        delivery and the run's outcome. The outcome is the only one that
        changes, and it was the hardest of the five to pick out. The other
        four are standing facts, so they recede. */
-    .sched-tz, .sched-agent, .sched-dest, .sched-mode, .sched-muted {
+    .sched-tz, .sched-agent, .sched-dest, .sched-mode, .sched-muted,
+    .sched-emailed {
       opacity: 0.58; font-weight: 400;
     }
     .sched-card:hover .sched-tz, .sched-card:hover .sched-agent,
@@ -593,7 +597,7 @@
     }
     /* Timezone chip, which agent a schedule runs as, and how much that agent
        may do -- same shape, one more small fact on the same summary line. */
-    .sched-tz, .sched-agent, .sched-mode, .sched-muted {
+    .sched-tz, .sched-agent, .sched-mode, .sched-muted, .sched-emailed {
       display: inline-flex; align-items: center; gap: 5px;
       font-size: 12px; color: var(--text-2);
       background: var(--surface-2); border: 1px solid var(--border-2);
@@ -912,10 +916,20 @@
               <div class="mismatch-note" id="tool-mismatch" hidden></div>
             </div>
 
+            <div class="field">
+              <label class="check-row form-label" for="email-me">
+                <input type="checkbox" id="email-me" name="email-me">
+                Email me the answer
+              </label>
+              <span class="form-hint">After each run the answer is emailed
+                to you, from and to your own connected Gmail. The platform
+                sends it, so the agent needs no more than Read only.</span>
+            </div>
+
             <div class="error box" id="form-error" hidden></div>
 
             <div class="field">
-              <p class="form-note">Every answer lands in Cron Outputs, read and unread like an email: press &ldquo;View outputs&rdquo; above the list, or &ldquo;View output&rdquo; on a schedule. The newest one is also on its card, under &ldquo;View last result&rdquo;. The red number counts only answers that need you: one that says nothing needs you arrives already read, and &ldquo;Mute&rdquo; on a schedule stops its answers counting at all. To have results pushed to you as well, create the schedule from Discord or Slack and it will post there too.</p>
+              <p class="form-note">Every answer lands in Cron Outputs, read and unread like an email: press &ldquo;View outputs&rdquo; above the list, or &ldquo;View output&rdquo; on a schedule. The newest one is also on its card, under &ldquo;View last result&rdquo;. The red number counts only answers that need you: one that says nothing needs you arrives already read, and &ldquo;Mute&rdquo; on a schedule stops its answers counting at all. To have results sent to you as well, tick &ldquo;Email me the answer&rdquo;, or create the schedule from Discord or Slack and it will post there too.</p>
             </div>
 
             <div class="field" style="margin-top: 4px;">
@@ -1047,6 +1061,10 @@
     // runs as (renderCard below). Cards can render before this fetch settles,
     // so once it does, ask the list to redraw with names now that they exist.
     const AGENTS_BY_ID = {};
+    //: Each agent's own access level ("read", "ask", "all", or absent), read
+    //: off the same list. A schedule never widens it (agent_access), so the
+    //: warning under Tool access needs it to say why a job will not act.
+    const AGENT_ACCESS = {};
 
     // loadAgentsForRunAs() and loadSchedules() are two independent fetches to
     // two different backends, started in the same pass with no ordering
@@ -1094,7 +1112,9 @@
             delete o.dataset.fromEdit;
             if (!had) sel.appendChild(o);
             AGENTS_BY_ID[m.id] = m.name || m.id;
+            AGENT_ACCESS[m.id] = String(((m.meta || {}).access) || "");
           });
+        checkToolMismatch();
         // Only refresh a list that has already loaded for real. Otherwise this
         // can win the race against loadSchedules() and flip the loading
         // skeleton to the empty state while the real fetch is still in flight.
@@ -1200,7 +1220,7 @@
 
     // Checked as they type and as they choose, not on submit: the point is
     // to be told before the schedule exists, not after it has run wrong.
-    for (const id of ["prompt", "tool-mode"]) {
+    for (const id of ["prompt", "tool-mode", "run-as", "email-me"]) {
       const el = document.getElementById(id);
       if (el) {
         el.addEventListener("input", checkToolMismatch);
@@ -1693,7 +1713,10 @@
         else if (destPlat === "slack") { destClass = "slack"; destGlyph = ICON_SLACK; destText = "Delivered to Slack"; }
         else { destClass = ""; destGlyph = ICON_REPEAT; destText = "Delivered to " + (destPlat ? destPlat.charAt(0).toUpperCase() + destPlat.slice(1) : "a linked channel"); }
       }
-      const destChip = `<span class="sched-dest ${destClass}" title="delivery destination">${destGlyph}<span class="dest-text"></span></span>`;
+      // Emailed and not linked to a chat: the emailed chip IS its delivery,
+      // so "No delivery" beside it would contradict it.
+      const destChip = (!hasDest && s.email_me === true) ? ""
+        : `<span class="sched-dest ${destClass}" title="delivery destination">${destGlyph}<span class="dest-text"></span></span>`;
 
       // Which agent this schedule runs as (addendum to the Run as field):
       // nothing at all when agent_id is null, which is every schedule that
@@ -1724,6 +1747,10 @@
       const mutedChip = muted
         ? '<span class="sched-muted" title="Its outputs do not count in the red number">Muted</span>'
         : "";
+      // Emailed (migration 074): each answer also goes to the owner's Gmail.
+      const emailedChip = s.email_me === true
+        ? '<span class="sched-emailed" title="Each answer is emailed to you">Emailed to you</span>'
+        : "";
 
       card.innerHTML =
         `<div class="sched-head">
@@ -1742,6 +1769,7 @@
            ${modeChip}
            ${destChip}
            ${mutedChip}
+           ${emailedChip}
            ${lastRun}
          </div>
          ${runsRow}
@@ -1763,7 +1791,7 @@
       // never inject markup (no XSS even for an odd / unparseable expression).
       card.querySelector(".human-text").textContent = scheduleText;
       // Destination label rendered via textContent (platform value is escaped).
-      card.querySelector(".dest-text").textContent = destText;
+      if (destChip) card.querySelector(".dest-text").textContent = destText;
       // Agent name/id rendered via textContent -- both come from server data.
       if (agentChip) card.querySelector(".agent-text").textContent = agentName;
 
@@ -1983,19 +2011,46 @@ ${s.prompt || ""}`.toLowerCase().includes(needle);
       return ACTING_WORDS.some((w) => t.includes(w));
     }
 
+    //: "email me" and friends: the person wants the answer sent to them,
+    //: which the Email me box does with no access at all (cron_email).
+    const TO_ME = /\b(e-?mail|mail|send)\s+(it\s+)?(to\s+)?me\b|\bto my (e-?mail|inbox)\b/gi;
+
     function checkToolMismatch() {
       const note = document.getElementById("tool-mismatch");
       const mode = document.getElementById("tool-mode");
       const prompt = document.getElementById("prompt");
       if (!note || !mode || !prompt) return;
-      const wrong = mode.value === "read_only" && asksToAct(prompt.value);
-      note.hidden = !wrong;
-      if (wrong) {
-        note.textContent =
-          "This asks the agent to do something, and Read only will not let " +
-          "it. It will work out what to do, not do it, and still report " +
+      const box = document.getElementById("email-me");
+      const emailed = !!(box && box.checked);
+      const text = String(prompt.value || "");
+      const toMe = new RegExp(TO_ME.source, "i").test(text);
+      // With the box ticked, "email me" is handled; only other actions count.
+      const rest = emailed ? text.replace(TO_ME, " ") : text;
+      const agentId = (document.getElementById("run-as") || {}).value || "";
+      const level = AGENT_ACCESS[agentId] || "";
+      const who = AGENTS_BY_ID[agentId] || "This agent";
+      let say = "";
+      if (toMe && !emailed) {
+        // Measured 2026-11-26: the one cron that failed every morning was
+        // asked to email its summary. Full access was the wrong advice: it
+        // is not enough unless the agent itself may act on its own.
+        say = "To get this by email, tick Email me the answer below. The " +
+          "answer is sent to your own Gmail, and the agent needs no more " +
+          "than Read only.";
+      } else if (asksToAct(rest) && mode.value === "read_only") {
+        say = "This asks the agent to do something, and Read only will not " +
+          "let it. It will work out what to do, not do it, and still report " +
           "that the run finished. Choose Full access if you want it to act.";
+      } else if (asksToAct(rest) && (level === "ask" || level === "read")) {
+        // A schedule never widens its agent: on Ask nobody is there to ask
+        // at 7am, and Read only is read only (agent_access.effective_mode).
+        say = who + " is set to " + (level === "ask" ? "Ask" : "Read only") +
+          " on AI Agents, and a scheduled run has nobody to ask, so it " +
+          "will not act even with Full access here. Set " + who + " to " +
+          "act on its own on AI Agents if you want it to.";
       }
+      note.hidden = !say;
+      note.textContent = say;
     }
 
     async function loadSchedules() {
@@ -2230,6 +2285,7 @@ ${s.prompt || ""}`.toLowerCase().includes(needle);
       // A video schedule renders a walkthrough and runs no agent.
       runAs.required = s.kind !== "video";
       document.getElementById("tool-mode").value = s.tool_mode === "full" ? "full" : "read_only";
+      document.getElementById("email-me").checked = s.email_me === true;
       setFormMode(true);
       checkToolMismatch();
       document.querySelectorAll(".sched-card").forEach(
@@ -2280,6 +2336,8 @@ ${s.prompt || ""}`.toLowerCase().includes(needle);
         const mode = document.getElementById("tool-mode").value || "read_only";
         if (mode !== (s.tool_mode === "full" ? "full" : "read_only")) body.tool_mode = mode;
       }
+      const emailMe = !!document.getElementById("email-me").checked;
+      if (emailMe !== (s.email_me === true)) body.email_me = emailMe;
       if (!Object.keys(body).length) {
         stopEdit();
         showToast("Nothing changed.");
@@ -2341,6 +2399,7 @@ ${s.prompt || ""}`.toLowerCase().includes(needle);
       // as read only anyway.
       const toolMode = (document.getElementById("tool-mode") || {}).value || "";
       if (runAs && toolMode) body.tool_mode = toolMode;
+      body.email_me = !!(document.getElementById("email-me") || {}).checked;
 
       try {
         const r = await fetch(SCHED_API, {
@@ -2348,8 +2407,8 @@ ${s.prompt || ""}`.toLowerCase().includes(needle);
           body: JSON.stringify(body),
         });
         if (r.status !== 201) {
-          const txt = await r.text();
-          throw new Error(`Create failed (${r.status}): ${txt.slice(0, 300)}`);
+          // The server's own sentence ("connect Gmail first"), not its JSON.
+          throw new Error(`Create failed (${r.status}): ${await failureText(r)}`);
         }
         form.reset();
         syncFriendly();
