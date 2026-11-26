@@ -14,7 +14,7 @@
 
 - Link text exactly: `[Save as your skill](#aiui-say:save-skill)`
 - Message sent on click exactly: `Write a skill from what you just set up for me, and show it to me before saving.`
-- Button after sending reads `✓ Asked` and is disabled; if the box was not empty it reads `Send or clear your message first, then press again`.
+- Button after sending reads `✓ Asked` and is disabled; if the box was not empty it reads `Wait for the reply to finish or clear your message, then press again`.
 - Main chat on Auto only (`route_only`). Fails open everywhere: any error leaves the reply as it was.
 - Never added to a reply that is waiting for a yes (`_held(turn)`), never twice.
 - The page sends only texts from its own list (`AIUI_SAY_TEXTS`); unknown ids stay plain links.
@@ -166,7 +166,7 @@ async def test_the_panel_gets_no_offer(monkeypatch):
 
 - [ ] **Step 1: Write the failing browser test** (pattern of `test_publish_button_opens_app_builder.py`: cut the section from `"  // ===== The assistant's say links ====="` to `"  function wireAiuiConnectLinks()"`, define a stub `function aiuiSendToChat(t, done) { window.__sent.push(t); done(window.__ok); }` before it):
   - `test_the_link_becomes_a_button_that_sends_the_fixed_text`: button text `Save as your skill`; click → `__sent == [EXACT_MESSAGE]`; button text `✓ Asked`, disabled.
-  - `test_a_full_message_box_is_not_overwritten`: `__ok = false` → button text `Send or clear your message first, then press again`, still enabled.
+  - `test_a_full_message_box_is_not_overwritten`: `__ok = false` → button text `Wait for the reply to finish or clear your message, then press again`, still enabled.
   - `test_an_id_not_on_the_list_stays_a_plain_link`: `#aiui-say:other`, `#aiui-say:`, `#aiui-say:__proto__`, `#aiui-say:toString` → no `.aiui-say-inline`, one `<a>`.
   - The existing `test_publish_button_opens_app_builder.py` must still pass (its section now includes the new one; it only references functions at click time).
 

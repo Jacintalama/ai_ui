@@ -60,7 +60,15 @@ saved.
    own list. `save-skill` sends "Write a skill from what you just set up for
    me, and show it to me before saving." through `aiuiSendToChat` (only into
    an empty message box, as Connect-then-carry-on does). After it sends, the
-   button reads "✓ Asked" and is disabled.
+   button reads "✓ Asked" and is disabled. The label is the list's, never
+   the link's text. Only the button under the latest reply sends (checked
+   when drawn and again at the click); an older one reads "Only works on the
+   latest reply" and is disabled. A send that did not happen reads "Wait for
+   the reply to finish or clear your message, then press again".
+4. The message is `skill_offer.ASK` in the service (a test reads the page's
+   copy and compares). When the last message is exactly that, the assistant
+   runs with the `skills` tool added to whatever was picked, pinned for the
+   "yes" that follows, even when Jev picks nothing.
 
 ## Checks
 
