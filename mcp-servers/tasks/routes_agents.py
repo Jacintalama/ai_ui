@@ -1292,6 +1292,39 @@ def _proposal_key(email: str, name: str, instructions: str,
 #: can differ between the two; the person approved what they were shown.
 _PROPOSAL_SKILLS: dict = {}
 
+#: Jev's skill ranking for a brief, by the brief WITHOUT its skills, with
+#: when (2026-11-27). The model rarely copies the confirm code into its
+#: reply, so on "yes" it asks for the preview again and confirms with the
+#: code that comes back. Asking Jev afresh for that repeat changed the
+#: skills live (none, then two), so the code changed and the person was
+#: asked again, in a loop, and nothing was made. A repeat preview of the
+#: same brief is the same proposal. The RANKING is kept, not the result,
+#: so an app connected in between still changes what is offered.
+_BRIEF_SKILLS: dict = {}
+
+
+def _brief_key(email: str, name: str, instructions: str,
+               role: str, access: str) -> str:
+    raw = "\x1f".join([email, name, instructions, role or "", access])
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _brief_ranking(key: str) -> list | None:
+    """Jev's ranking for this brief, while still live; None if not held."""
+    held = _BRIEF_SKILLS.get(key)
+    if not held or time.time() - held[1] > PROPOSAL_TTL_SECONDS:
+        return None
+    return list(held[0])
+
+
+def _remember_brief(key: str, ranked: list | None) -> None:
+    now = time.time()
+    for old, (_, when) in list(_BRIEF_SKILLS.items()):
+        if now - when > PROPOSAL_TTL_SECONDS:
+            _BRIEF_SKILLS.pop(old, None)
+    if ranked is not None:
+        _BRIEF_SKILLS[key] = (list(ranked), now)
+
 
 def _remember_proposal(code: str, skills: list | None = None) -> None:
     now = time.time()
@@ -1484,15 +1517,26 @@ async def make_agent(body: MakeAgentIn, user: CurrentUser = Depends(current_user
     pool = await _skill_pool(user.email)
     asked, ranked = body.skills, None
     confirming = (body.confirm or "").strip()
+    brief = _brief_key(user.email, name, instructions, role or "", access)
     if asked is None and confirming in _PROPOSAL_SKILLS and _proposal_is_live(confirming):
         asked = list(_PROPOSAL_SKILLS[confirming])
     elif asked is None:
-        ranked = await agent_skills.pick_for(
-            user.email, " ".join([role or "", instructions]), pool)
+        # The same brief previewed again keeps the skills it was shown
+        # (_BRIEF_SKILLS); only a new brief asks Jev.
+        ranked = _brief_ranking(brief)
+        if ranked is None:
+            ranked = await agent_skills.pick_for(
+                user.email, " ".join([role or "", instructions]), pool)
+            _remember_brief(brief, ranked)
     skills, unknown, suggested, gaps = _skills_for(asked, role or "", instructions,
                                                    connected, pool, ranked=ranked)
     code = _proposal_key(user.email, name, instructions, role or "", access, skills)
     if confirming != code:
+        if confirming:
+            # Names only, never the brief: a code that does not match is
+            # how the 2026-11-27 loop looked from the outside.
+            logger.info("agent confirm did not match for %s (code %s, live %s)",
+                        user.email, confirming, _proposal_is_live(confirming))
         _remember_proposal(code, skills)
         return {"created": False, "confirm": code, "name": name, "role": role,
                 "access": access, "instructions": instructions, "skills": skills,
@@ -1506,6 +1550,7 @@ async def make_agent(body: MakeAgentIn, user: CurrentUser = Depends(current_user
             "again and I will write it out fresh."))
     _PROPOSALS.pop(code, None)
     _PROPOSAL_SKILLS.pop(code, None)
+    _BRIEF_SKILLS.pop(brief, None)
 
     user_id = await _owui_user_id_for(user.email)
     if not user_id:
