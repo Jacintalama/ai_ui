@@ -856,6 +856,11 @@ services:
       - META_TOOLS_MODE=${META_TOOLS_MODE:-true}
       # Skip cache refresh on startup (faster boot)
       - SKIP_CACHE_REFRESH=${SKIP_CACHE_REFRESH:-false}
+      # A person's own MCP servers (own_tools.py): the proxy asks tasks for
+      # a caller's own tools with the internal secret. OWN_MCP=0 turns it off.
+      - INTERNAL_CALLBACK_SECRET=${INTERNAL_CALLBACK_SECRET:-}
+      - TASKS_URL=http://tasks:8210
+      - OWN_MCP=${OWN_MCP:-1}
     depends_on:
       postgres:
         condition: service_healthy

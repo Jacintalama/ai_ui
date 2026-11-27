@@ -69,6 +69,7 @@ from tool_embeddings import (
 from access import (may_use_server, require_identified,
                     servers_for_caller)
 from mcp_http_client import get_mcp_client, MCPStreamableClient
+import own_tools
 from tool_listing import by_server
 from admin_api import admin_router
 
@@ -885,9 +886,17 @@ async def meta_search_tools(body: SearchToolsRequest, request: Request):
     # is refused here rather than filtered later: "unknown" must never widen
     # into "unfiltered".
     require_identified(user_email)
+    # The caller's own MCP servers (own_tools.py), {} for everyone without
+    # one, when tasks cannot be asked, or with OWN_MCP=0.
+    own = await own_tools.for_caller(user_email) if own_tools.enabled() else {}
     allowed_servers = servers_for_caller(
         user_email, await get_user_tenants_async(user_email, entra_groups))
     if not allowed_servers:
+        if own:
+            # Before the early return, or a person with only their own
+            # servers would find nothing.
+            ranked = own_tools.rank(body.query, own, body.limit)
+            return {"query": body.query, "count": len(ranked), "results": ranked}
         return {"query": body.query, "count": 0, "results": [],
                 "message": "No server access configured for this user"}
 
@@ -896,6 +905,9 @@ async def meta_search_tools(body: SearchToolsRequest, request: Request):
         results = await search_tools_by_query(
             pool, body.query, sorted(allowed_servers), body.limit
         )
+        if own:
+            results = own_tools.merge(
+                results, own_tools.rank(body.query, own, body.limit), body.limit)
         print(f"  Found {len(results)} matching tools")
         return {
             "query": body.query,
@@ -921,6 +933,9 @@ async def meta_search_tools(body: SearchToolsRequest, request: Request):
                     "relevance_score": 0.8 if name_match else 0.5
                 })
         matches.sort(key=lambda x: x["relevance_score"], reverse=True)
+        if own:
+            matches = own_tools.merge(
+                matches, own_tools.rank(body.query, own, body.limit), body.limit)
         return {
             "query": body.query,
             "count": len(matches[:body.limit]),
@@ -953,8 +968,18 @@ async def meta_describe_tools(body: DescribeToolsRequest, request: Request):
     allowed_servers = servers_for_caller(
         user_email, await get_user_tenants_async(user_email, entra_groups))
 
+    # Only asked when an own tool is named: describe is on every turn's hint.
+    own = (await own_tools.for_caller(user_email)
+           if own_tools.enabled()
+           and any(own_tools.is_own(n) for n in body.tool_names) else {})
+
     descriptions = []
     for tool_name in body.tool_names:
+        if own_tools.enabled() and own_tools.is_own(tool_name):
+            # From this caller's own tools only, never TOOLS_CACHE: someone
+            # else's own tool reads exactly like a tool that does not exist.
+            descriptions.append(own_tools.describe(tool_name, own))
+            continue
         tool_info = TOOLS_CACHE.get(tool_name)
         if not tool_info:
             descriptions.append({
@@ -1011,6 +1036,13 @@ async def meta_call_tool(body: CallToolRequest, request: Request):
     # Refused before the cache is even consulted, so an unidentified caller
     # cannot tell an existing tool from a missing one by the status code.
     require_identified(user_email)
+
+    # A caller's own MCP tool, before TOOLS_CACHE (whose entries need an
+    # original_path an own tool does not have). Not theirs: the same 404 as
+    # a missing tool.
+    if own_tools.enabled() and own_tools.is_own(body.tool_name):
+        return await own_tools.run(request, user_email, body.tool_name,
+                                   body.arguments)
 
     # Look up tool in cache
     tool_info = TOOLS_CACHE.get(body.tool_name)
