@@ -170,11 +170,9 @@
 
     .container {
       width: 100%;
-      max-width: 1640px;
-      margin: 0 auto;
-      /* clamp keeps a comfortable gutter on a laptop and stops the content
-         touching the edges on a wide monitor, without a hard pixel cap. */
-      padding: 30px clamp(20px, 3vw, 48px) 72px;
+      /* Full width with the same 16px gutter as Cron Outputs: a cap left
+         wide empty bands either side on a big or zoomed-out screen. */
+      padding: 20px 16px 72px;
     }
 
     /* Page header */

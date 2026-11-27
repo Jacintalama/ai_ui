@@ -122,6 +122,13 @@ def test_a_wide_screen_is_not_mostly_empty(browser, server):
     assert m["container"] >= 1500, m
 
 
+def test_a_very_wide_or_zoomed_out_screen_has_no_empty_bands(browser, server):
+    """A 1640px cap left wide empty bands either side when zoomed out. The
+    page now runs edge to edge with a 16px gutter, like Cron Outputs."""
+    m = measure(browser, server, 2560)
+    assert m["gutter"] <= 20, m
+
+
 def test_schedules_sit_side_by_side_when_there_is_room(browser, server):
     """The point of the extra width. One tall column meant scrolling past
     three schedules to reach the fourth."""
