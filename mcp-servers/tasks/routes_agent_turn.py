@@ -2142,9 +2142,10 @@ async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
         # steps were gone and the answer said "webhook". Only inside a turn
         # that runs anyway (tools in play) and only when no skill was picked
         # for this message, which then wins.
-        if picked and not (plan and plan.get("skills")):
+        chat_id = getattr(body, "chat_id", "") or ""
+        if picked and chat_id and not (plan and plan.get("skills")):
             carried = app_triage.carried_skill(
-                await _read_skill_pin(_skill_pin_key(body.chat_id,
+                await _read_skill_pin(_skill_pin_key(chat_id,
                                                      body.user_email)),
                 (triage or {}).get("pool") or agent_skills.load_all())
             if carried:
@@ -2186,9 +2187,9 @@ async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
                 picked.append("skills")
             have = await _every_tool_for(body.user_email)
             best = next((s for s in plan["skills"] if s.get("body")), None)
-            if best:
+            if best and chat_id:
                 await _write_skill_pin(
-                    _skill_pin_key(body.chat_id, body.user_email), best["name"])
+                    _skill_pin_key(chat_id, body.user_email), best["name"])
             for s in plan["skills"]:
                 wanted = ((triage or {}).get("pool") or agent_skills.load_all()
                           ).get(s["name"], {})
