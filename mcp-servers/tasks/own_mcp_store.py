@@ -20,8 +20,12 @@ _COLUMNS = "id::text AS id, slug, label, host, tools, check_ok, fails, checked_a
 
 
 async def _connect():
+    if not DATABASE_URL:
+        # Fail at once rather than wait on a default local Postgres: the
+        # tool pick reads this on every message and must never stall on it.
+        raise RuntimeError("DATABASE_URL is not set")
     import asyncpg
-    return await asyncpg.connect(DATABASE_URL)
+    return await asyncpg.connect(DATABASE_URL, timeout=3)
 
 
 def _row(record: Any) -> dict:

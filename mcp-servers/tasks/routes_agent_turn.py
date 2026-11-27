@@ -39,6 +39,8 @@ import agent_escalation
 import agent_graph
 import agent_handoff
 import agent_jev
+import own_mcp
+import own_mcp_store
 import agent_llm
 import agent_memory
 import agent_progress
@@ -313,6 +315,42 @@ PICK_TTL_SECONDS = 120.0
 _PICKS: dict[tuple, tuple[float, list[str] | None]] = {}
 
 
+#: The connected-apps gateway: the tool group own MCP tools are reached by.
+GATEWAY_TOOL = "server:mcp-proxy"
+OWN_NOTES_SECONDS = 60.0
+OWN_NOTES_PEOPLE = 500
+#: email -> (when read, the note or None)
+_OWN_NOTES: dict = {}
+
+
+async def _own_notes(email: str, tools: list[str]) -> dict | None:
+    """The gateway's note for a person with their own MCP servers: the usual
+    note plus a line naming their servers and tools (own_mcp.jev_note).
+    None for everybody else, so their question to Jev is unchanged byte for
+    byte. Never raises: a store failure means the usual note."""
+    if GATEWAY_TOOL not in (tools or []):
+        return None
+    now = time.monotonic()
+    held = _OWN_NOTES.get(email)
+    if held is not None and now - held[0] < OWN_NOTES_SECONDS:
+        return held[1]
+    try:
+        rows = await own_mcp_store.list_for(email)
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not read own MCP servers for the tool pick",
+                       exc_info=True)
+        rows = []
+    extra = own_mcp.jev_note(rows)
+    notes = ({GATEWAY_TOOL: agent_jev.TOOL_NOTES[GATEWAY_TOOL] + extra}
+             if extra else None)
+    # Asked on every message, so held for a minute: a server added or
+    # removed reaches Jev within that.
+    _OWN_NOTES[email] = (now, notes)
+    while len(_OWN_NOTES) > OWN_NOTES_PEOPLE:
+        _OWN_NOTES.pop(next(iter(_OWN_NOTES)))
+    return notes
+
+
 async def _auto_tools(user_email: str, text: str,
                       tools: list[str]) -> list[str]:
     """The tools an agent gets for this message: what Jev is sure it needs,
@@ -329,7 +367,12 @@ async def _auto_tools(user_email: str, text: str,
         picked = hit[1]
     else:
         try:
-            picked = await agent_jev.pick_tools(user_email, text, tools)
+            notes = await _own_notes(user_email, tools)
+            # Only handed over when there is one, so the call is exactly
+            # what it was for everyone without their own servers.
+            picked = await (agent_jev.pick_tools(user_email, text, tools,
+                                                 notes=notes) if notes
+                            else agent_jev.pick_tools(user_email, text, tools))
         except Exception:                                   # noqa: BLE001
             logger.warning("tool pick failed", exc_info=True)
             picked = None
@@ -1820,8 +1863,11 @@ async def _tool_pick(body: ChatIn, text: str) -> list[str] | None:
         tools = await _every_tool_for(body.user_email)
         if not tools:
             return None
-        picked = await agent_jev.pick_tools(body.user_email, text, tools,
-                                            context)
+        notes = await _own_notes(body.user_email, tools)
+        picked = await (agent_jev.pick_tools(body.user_email, text, tools,
+                                             context, notes=notes) if notes
+                        else agent_jev.pick_tools(body.user_email, text, tools,
+                                                  context))
         pin_key = _tools_pin_key(body.chat_id, body.user_email)
         if picked:
             # Working on something: remember what with, so the next message

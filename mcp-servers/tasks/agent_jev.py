@@ -689,7 +689,8 @@ CONTEXT_CHARS = 900
 
 
 def tools_request(text: str, tools: list[str],
-                  context: str = "") -> tuple[str, dict]:
+                  context: str = "",
+                  notes: dict | None = None) -> tuple[str, dict]:
     """One Noul per tool, ids t0, t1, ... in the order given.
 
     `context` is what was said just before, and it exists because without it
@@ -713,7 +714,11 @@ def tools_request(text: str, tools: list[str],
     """
     questions = {}
     for i, tool in enumerate(tools):
-        note = TOOL_NOTES.get(tool) or f"the tool called {tool}"
+        # `notes` overrides a tool's note for this one person: the gateway's
+        # note grows a line naming their own MCP servers (own_mcp.jev_note).
+        # Nobody else is ever handed one, so their question is unchanged.
+        note = ((notes or {}).get(tool) or TOOL_NOTES.get(tool)
+                or f"the tool called {tool}")
         questions[f"t{i}"] = {
             "type": "noul",
             "instructions": f"To answer or do what the message asks, is a "
@@ -734,7 +739,8 @@ def tools_request(text: str, tools: list[str],
 
 
 async def pick_tools(email: str, text: str, tools: list[str],
-                     context: str = "") -> list[str] | None:
+                     context: str = "",
+                     notes: dict | None = None) -> list[str] | None:
     """The tools Jev is sure this message needs, in the order given: [] when
     it needs none, None when Jev could not be asked or answered unreadably
     (the caller then offers every tool, as before). Never raises.
@@ -747,7 +753,7 @@ async def pick_tools(email: str, text: str, tools: list[str],
     tools = [t for t in tools or [] if isinstance(t, str) and t]
     if not tools:
         return []
-    state, questions = tools_request(text, tools, context)
+    state, questions = tools_request(text, tools, context, notes)
     least = cut(PURPOSE_TOOLS)
 
     def picked(answers: dict) -> list[str]:
