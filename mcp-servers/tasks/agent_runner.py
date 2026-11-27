@@ -1047,7 +1047,7 @@ async def _chat(token: str, model: str, messages: list[dict],
                     # (2026-11-06).
                     result = await execute_tool_call(call, user_email, tool_ids,
                                                      model, outcome=outcome)
-                elif is_write_call(name, probe) and not write_allowed:
+                elif is_write_call(name, probe, email=user_email) and not write_allowed:
                     # A standing rule answers the usual question before it
                     # is asked (agent_approvals, 2026-10-28): "allow sends
                     # to our own domain", "never delete". Read once per

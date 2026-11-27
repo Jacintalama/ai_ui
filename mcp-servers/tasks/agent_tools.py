@@ -17,6 +17,7 @@ import agent_activity
 import agent_events
 import agent_handoff
 import agent_made
+import own_mcp
 import skill_offer
 from db import session
 
@@ -278,7 +279,8 @@ METHODS_NO_AGENT_MAY_CALL = frozenset({"ask_agents"})
 METHODS_THAT_ASK_FOR_THEMSELVES = frozenset({"create_agent"})
 
 
-def is_write_call(method_name: str, params: dict | None = None) -> bool:
+def is_write_call(method_name: str, params: dict | None = None,
+                  email: str | None = None) -> bool:
     """True when THIS call could change something, arguments included.
 
     is_write_tool judges a name. That is enough for every native tool, where
@@ -300,6 +302,11 @@ def is_write_call(method_name: str, params: dict | None = None) -> bool:
         # See the note on the set above: being held as well asks the same
         # person the same question twice and loses the answer in between.
         return False
+    if isinstance(method_name, str) and method_name.startswith(own_mcp.PREFIX):
+        # A person's own MCP tool called by its bare name rather than inside
+        # call_tool. It reaches the proxy the same way, with the secret, so
+        # it is judged the same way: by this person's server, never the name.
+        return not own_mcp.read_only(email or "", method_name)
     if method_name != "call_tool":
         return is_write_tool(method_name)
     inner = (params or {}).get("tool_name")
@@ -308,6 +315,13 @@ def is_write_call(method_name: str, params: dict | None = None) -> bool:
     inner = inner.strip()
     if inner == "call_tool":
         return True
+    if inner.startswith(own_mcp.PREFIX):
+        # A person's own MCP tool (own_mcp.py). Its name says nothing we can
+        # trust across people: two servers can mark the same name
+        # differently. So it is a read only when THIS person's server marked
+        # it one at the last listing, and the name is not a write either.
+        # Not known, or no person to ask about: a write.
+        return not own_mcp.read_only(email or "", inner)
     return is_write_tool(inner)
 
 
@@ -410,7 +424,7 @@ async def tools_for_message(user_email: str, text: str,
         response = await _post_json(
             _proxy_url() + "/meta/search_tools",
             json={"query": text[:400], "limit": limit},
-            headers={"X-User-Email": user_email},
+            headers=_proxy_headers(user_email),
             timeout=HINT_TIMEOUT_SECONDS)
         if response.status_code >= 400:
             return ""
@@ -423,7 +437,7 @@ async def tools_for_message(user_email: str, text: str,
             second = await _post_json(
                 _proxy_url() + "/meta/describe_tools",
                 json={"tool_names": names[:limit]},
-                headers={"X-User-Email": user_email},
+                headers=_proxy_headers(user_email),
                 timeout=HINT_TIMEOUT_SECONDS)
             if second.status_code < 400:
                 described = (second.json() or {}).get("tools") or []
@@ -729,6 +743,21 @@ async def run_handoff(caller_id: str, user_email: str, target_name: str,
 
 def _proxy_url() -> str:
     return os.environ.get("MCP_PROXY_URL", "http://mcp-proxy:8000").rstrip("/")
+
+
+def _proxy_headers(user_email: str) -> dict:
+    """Who is asking, and that it is this loop asking.
+
+    mcp-proxy runs a person's own MCP tool that can change something only
+    for a caller that holds writes for approval first, which this loop does
+    and a model calling the proxy straight from Open WebUI cannot. The
+    internal secret is how the proxy tells the two apart.
+    """
+    headers = {"X-User-Email": user_email}
+    secret = os.environ.get("INTERNAL_CALLBACK_SECRET", "")
+    if secret:
+        headers["X-Internal-Secret"] = secret
+    return headers
 
 
 async def _post_json(url, json=None, headers=None, timeout=None):
@@ -1099,13 +1128,13 @@ async def _execute_tool_call_inner(
             response = await _post_json(
                 _proxy_url() + "/meta/" + name,
                 json=params,
-                headers={"X-User-Email": user_email},
+                headers=_proxy_headers(user_email),
                 timeout=TOOL_TIMEOUT_SECONDS)
         else:
             response = await _post_json(
                 _proxy_url() + "/meta/call_tool",
                 json={"tool_name": name, "arguments": params},
-                headers={"X-User-Email": user_email},
+                headers=_proxy_headers(user_email),
                 timeout=TOOL_TIMEOUT_SECONDS)
         # Which tool to name from here on. Every proxy tool arrives wrapped
         # in call_tool, so `name` is the runner and says nothing the model

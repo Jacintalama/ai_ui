@@ -1534,6 +1534,236 @@
       if (first) first.focus();
     }
 
+    // ---- your own MCP server (2026-11-27) ------------------------------
+    // A person pastes the address of an MCP server they run, or one a vendor
+    // hosts, and an optional token. tasks checks it (https only, a public
+    // address, a real MCP answer), stores address and token encrypted, and
+    // its tools work for that person only, in the chat, agents and cron.
+    // A card shows the HOST only: some vendors put the key in the address.
+    // Everything the server or the person typed goes in by textContent.
+    var ownServers = [];
+
+    function ownMcpLoad() {
+      return fetch('/api/tasks/own-mcp/servers', { headers: authHeaders() })
+        .then(function (r) { return r.ok ? r.json() : { servers: [] }; })
+        .then(function (d) { ownServers = (d && d.servers) || []; renderGrid(); })
+        .catch(function () { ownServers = []; });
+    }
+
+    function ownMcpAddCard() {
+      var card = document.createElement('button');
+      card.type = 'button';
+      card.style.cssText = 'background:#1b1b1b;border:1px dashed #3a3a3a;border-radius:14px;'
+        + 'padding:16px 12px 14px;display:flex;flex-direction:column;align-items:center;'
+        + 'justify-content:center;min-height:' + SLOT_MIN_HEIGHT + 'px;box-sizing:border-box;'
+        + 'cursor:pointer;color:#ddd;font:inherit;';
+      var plus = document.createElement('div');
+      plus.style.cssText = 'font-size:26px;line-height:1;color:#9a9a9a;';
+      plus.textContent = '+';
+      var name = document.createElement('div');
+      name.style.cssText = 'font-size:13px;font-weight:600;margin-top:10px;text-align:center;';
+      name.textContent = 'Add your own MCP server';
+      var sub = document.createElement('div');
+      sub.style.cssText = 'font-size:11px;color:#8a8a8a;margin-top:4px;text-align:center;';
+      sub.textContent = 'Its tools work for you only';
+      card.appendChild(plus); card.appendChild(name); card.appendChild(sub);
+      card.addEventListener('click', function () { openOwnMcpPanel(); });
+      return card;
+    }
+
+    function ownMcpCard(s) {
+      var down = s.check_ok === false;
+      var card = document.createElement('div');
+      card.style.cssText = 'background:' + (down ? '#1f1c14' : '#17201a') + ';border:1px solid '
+        + (down ? '#7a5f16' : '#2f7d43') + ';border-radius:14px;padding:14px 12px;'
+        + 'display:flex;flex-direction:column;gap:4px;min-height:' + SLOT_MIN_HEIGHT + 'px;'
+        + 'box-sizing:border-box;color:#ddd;';
+      function line(text, css) {
+        var el = document.createElement('div');
+        el.style.cssText = css + 'max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+        el.textContent = text;
+        el.title = text;
+        card.appendChild(el);
+        return el;
+      }
+      line(s.label || 'MCP server', 'font-size:13px;font-weight:600;color:#eee;');
+      line(s.host || '', 'font-size:11px;color:#8a8a8a;');
+      var n = s.tool_count || 0;
+      line(n + (n === 1 ? ' tool' : ' tools')
+           + (s.read_only_count ? ', ' + s.read_only_count + ' only read' : ''),
+           'font-size:11px;color:#b0b0b0;');
+      if (s.tools && s.tools.length) {
+        line(s.tools.join(', '), 'font-size:11px;color:#7a7a7a;');
+      }
+      if (down) {
+        var when = s.checked_at ? new Date(s.checked_at) : null;
+        line('Not answering since ' + (when && !isNaN(when) ? when.toLocaleString() : 'the last check'),
+             'font-size:11px;color:#d9a520;');
+      }
+      var row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:6px;margin-top:auto;padding-top:8px;';
+      function btn(text, onClick) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = text;
+        b.style.cssText = 'flex:1;background:#242424;border:1px solid #333;border-radius:8px;'
+          + 'color:#ddd;font-size:11px;padding:5px 4px;cursor:pointer;';
+        b.addEventListener('click', onClick);
+        row.appendChild(b);
+        return b;
+      }
+      btn('Refresh tools', function (e) {
+        var b = e.currentTarget; b.disabled = true; b.textContent = 'Checking...';
+        fetch('/api/tasks/own-mcp/servers/' + encodeURIComponent(s.id) + '/refresh',
+              { method: 'POST', headers: authHeaders() })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (d && d.id) {
+              ownServers = ownServers.map(function (x) { return x.id === d.id ? d : x; });
+            }
+            renderGrid();
+          })
+          .catch(function () { renderGrid(); });
+      });
+      btn('Remove', function () {
+        askConfirm({
+          title: 'Remove ' + (s.label || 'this server') + '?',
+          body: 'Its tools stop working for you everywhere. You can add it again later.',
+          confirmText: 'Remove',
+          onConfirm: function () {
+            fetch('/api/tasks/own-mcp/servers/' + encodeURIComponent(s.id),
+                  { method: 'DELETE', headers: authHeaders() })
+              .then(function () {
+                ownServers = ownServers.filter(function (x) { return x.id !== s.id; });
+                renderGrid();
+              })
+              .catch(function () {});
+          }
+        });
+      });
+      card.appendChild(row);
+      return card;
+    }
+
+    function openOwnMcpPanel() {
+      var wrap = document.createElement('div');
+      wrap.id = 'aiui-own-mcp-panel';
+      wrap.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;'
+        + 'background:rgba(0,0,0,0.6);z-index:10001;display:flex;align-items:center;justify-content:center;';
+      var box = document.createElement('div');
+      box.style.cssText = 'background:#151515;border:1px solid #2a2a2a;border-radius:14px;'
+        + 'padding:20px;width:min(440px,92vw);box-sizing:border-box;color:#ddd;';
+      var head = document.createElement('h3');
+      head.style.cssText = 'margin:0 0 6px 0;font-size:16px;color:#fff;';
+      head.textContent = 'Add your own MCP server';
+      var intro = document.createElement('p');
+      intro.style.cssText = 'margin:0 0 14px 0;font-size:12px;color:#8a8a8a;line-height:1.5;';
+      intro.textContent = 'Paste the address of an MCP server (Streamable HTTP, https only). '
+        + 'Its tools work for you only. A tool that can change something asks you first.';
+      box.appendChild(head); box.appendChild(intro);
+      var inputs = {};
+      [['label', 'Name', 'text', 'Acme billing'],
+       ['url', 'Address', 'url', 'https://mcp.example.com/mcp'],
+       ['token', 'Token (optional)', 'password', 'Sent as a Bearer token']].forEach(function (f) {
+        var lab = document.createElement('label');
+        lab.style.cssText = 'display:block;font-size:12px;color:#aaa;margin:8px 0 4px;';
+        lab.textContent = f[1];
+        lab.htmlFor = 'aiui-own-mcp-' + f[0];
+        var inp = document.createElement('input');
+        inp.id = 'aiui-own-mcp-' + f[0];
+        inp.type = f[2];
+        inp.placeholder = f[3];
+        inp.autocomplete = 'off';
+        if (f[0] === 'label') inp.maxLength = 40;
+        inp.style.cssText = 'width:100%;box-sizing:border-box;background:#1f1f1f;border:1px solid #333;'
+          + 'border-radius:8px;padding:9px 12px;color:#fff;font-size:13px;';
+        box.appendChild(lab); box.appendChild(inp);
+        inputs[f[0]] = inp;
+      });
+      var result = document.createElement('div');
+      result.id = 'aiui-own-mcp-result';
+      result.setAttribute('aria-live', 'polite');
+      result.style.cssText = 'font-size:12px;line-height:1.5;margin-top:12px;min-height:18px;color:#bbb;';
+      box.appendChild(result);
+      var row = document.createElement('div');
+      row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:14px;';
+      function button(id, text, primary) {
+        var b = document.createElement('button');
+        b.type = 'button'; b.id = id; b.textContent = text;
+        b.style.cssText = 'border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;'
+          + (primary ? 'background:#fff;color:#111;border:1px solid #fff;'
+                     : 'background:transparent;color:#ddd;border:1px solid #444;');
+        row.appendChild(b);
+        return b;
+      }
+      var cancel = button('aiui-own-mcp-cancel', 'Cancel', false);
+      var test = button('aiui-own-mcp-test', 'Test', false);
+      var save = button('aiui-own-mcp-save', 'Save', true);
+      box.appendChild(row);
+      wrap.appendChild(box);
+      function body() {
+        return JSON.stringify({ label: inputs.label.value.trim(),
+                                url: inputs.url.value.trim(),
+                                token: inputs.token.value.trim() });
+      }
+      function say(text, bad) {
+        result.style.color = bad ? '#e0a040' : '#bbb';
+        result.textContent = text;
+      }
+      function busy(on) { test.disabled = on; save.disabled = on; }
+      function close() { wrap.remove(); }
+      cancel.addEventListener('click', close);
+      wrap.addEventListener('click', function (e) { if (e.target === wrap) close(); });
+      wrap.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+      test.addEventListener('click', function () {
+        busy(true); say('Checking your server...');
+        fetch('/api/tasks/own-mcp/servers/test', { method: 'POST', headers: authHeaders(), body: body() })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            busy(false);
+            if (!d || !d.ok) { say((d && d.problem) || 'That server could not be checked.', true); return; }
+            var tools = d.tools || [];
+            var reads = tools.filter(function (t) { return t.read_only; }).length;
+            result.textContent = '';
+            result.style.color = '#bbb';
+            var top = document.createElement('div');
+            top.textContent = tools.length + ' tools, ' + reads + ' only reads. The rest ask you first.';
+            result.appendChild(top);
+            tools.forEach(function (t) {
+              var li = document.createElement('div');
+              li.style.cssText = 'color:#8a8a8a;';
+              li.textContent = t.name + (t.read_only ? ' (only reads)' : '');
+              result.appendChild(li);
+            });
+            (d.not_used || []).forEach(function (n) {
+              var li = document.createElement('div');
+              li.style.cssText = 'color:#7a6a40;';
+              li.textContent = n;
+              result.appendChild(li);
+            });
+          })
+          .catch(function () { busy(false); say('That server could not be checked. Try again.', true); });
+      });
+      save.addEventListener('click', function () {
+        busy(true); say('Checking and saving...');
+        fetch('/api/tasks/own-mcp/servers', { method: 'POST', headers: authHeaders(), body: body() })
+          .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+          .then(function (x) {
+            busy(false);
+            if (!x.ok) {
+              var why = x.d && x.d.detail;
+              say(typeof why === 'string' ? why : 'That server could not be saved.', true);
+              return;
+            }
+            close();
+            ownMcpLoad();
+          })
+          .catch(function () { busy(false); say('That server could not be saved. Try again.', true); });
+      });
+      document.body.appendChild(wrap);
+      inputs.label.focus();
+    }
+
     function renderGrid() {
       var grid = modal.querySelector('#aiui-conn-grid');
       grid.innerHTML = '';
@@ -1543,6 +1773,15 @@
         if (term && a.name.toLowerCase().indexOf(term) === -1) return false;
         return true;
       }).forEach(function (a) { grid.appendChild(makeCard(a)); });
+      // A person's own MCP servers, then the card to add one, always last.
+      if (activeCat === 'All' || activeCat === 'Tools & Automation') {
+        ownServers.filter(function (s) {
+          return !term || String(s.label || '').toLowerCase().indexOf(term) !== -1;
+        }).forEach(function (s) { grid.appendChild(ownMcpCard(s)); });
+        if (!term || 'add your own mcp server'.indexOf(term) !== -1) {
+          grid.appendChild(ownMcpAddCard());
+        }
+      }
     }
 
     var tabsWrap = modal.querySelector('#aiui-conn-tabs');
@@ -1566,6 +1805,7 @@
     });
 
     renderGrid();
+    ownMcpLoad();
 
     // Token providers: one call describes them all and says which are linked.
     fetch('/api/tasks/connections', { headers: authHeaders() })

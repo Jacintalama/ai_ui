@@ -201,6 +201,81 @@ async def sweep_once(now: Optional[datetime] = None) -> Dict[str, int]:
                            provider, type(err).__name__)
     if tally["asked"] or tally["failed"]:
         logger.info("connection sweep: %s", tally)
+    try:
+        await sweep_own(now=now)
+    except Exception as err:                                # noqa: BLE001
+        logger.warning("connection sweep: own servers failed (%s)",
+                       type(err).__name__)
+    return tally
+
+
+# --- a person's own MCP servers (own_mcp.py) ------------------------------
+
+def own_due(rows: Sequence[Dict], now: Optional[datetime] = None,
+            interval_hours: int = INTERVAL_HOURS,
+            cap: int = MAX_PER_TICK) -> List[Dict]:
+    """Own servers not checked within the interval, longest first."""
+    at = now or datetime.now(timezone.utc)
+    cutoff = at - timedelta(hours=interval_hours)
+    ready = []
+    for r in rows or ():
+        last = _as_aware((r or {}).get("checked_at"))
+        if not (r or {}).get("email") or (last is not None and last > cutoff):
+            continue
+        ready.append((last is not None, last or at, r))
+    ready.sort(key=lambda x: (x[0], x[1]))
+    return [r for _k, _a, r in ready[:max(0, int(cap))]]
+
+
+async def sweep_own(now: Optional[datetime] = None) -> Dict[str, int]:
+    """Re-list each due own server. A good listing refreshes its tools; a
+    failed one, or one with no usable tools, counts a failed check and
+    keeps the tools it had. Never raises."""
+    import own_mcp
+    import own_mcp_client
+    import own_mcp_store
+    tally = {"due": 0, "asked": 0, "failed": 0}
+    try:
+        rows = own_due(await own_mcp_store.all_rows(), now=now)
+    except Exception as err:                                # noqa: BLE001
+        logger.warning("connection sweep: could not read own servers (%s)",
+                       type(err).__name__)
+        return tally
+    tally["due"] = len(rows)
+    for r in rows:
+        email, sid = r["email"], r["id"]
+        try:
+            secrets = await own_mcp_store.secrets_of(email, sid)
+            if not secrets:
+                continue
+            try:
+                listed = await own_mcp_client.list_tools(
+                    secrets["url"], secrets["token"], label=r["label"],
+                    key=(email, sid))
+            except own_mcp_client.Refused:
+                await own_mcp_store.record_check(email, sid, False)
+                tally["asked"] += 1
+                continue
+            used, _ = own_mcp.snapshot(r["slug"], listed)
+            if used:
+                await own_mcp_store.set_tools(email, sid, used)
+                # What counts as a read may have changed; the agent loop
+                # asks this memory before holding a call for approval.
+                try:
+                    rows_now = await own_mcp_store.list_for(email)
+                    own_mcp.remember(email, [t for x in rows_now
+                                             for t in x.get("tools") or []])
+                except Exception:                           # noqa: BLE001
+                    # Fail closed: nothing remembered means every one of
+                    # this person's own tools asks first until next listed.
+                    own_mcp.remember(email, [])
+            else:
+                await own_mcp_store.record_check(email, sid, False)
+            tally["asked"] += 1
+        except Exception as err:                            # noqa: BLE001
+            tally["failed"] += 1
+            logger.warning("connection sweep: own server %s could not be "
+                           "checked (%s)", sid, type(err).__name__)
     return tally
 
 

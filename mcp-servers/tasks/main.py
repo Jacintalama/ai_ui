@@ -40,6 +40,7 @@ from routes_state import router as state_router
 from routes_prefs import router as prefs_router
 from routes_connections import router as connections_router
 from routes_connections import public_router as connect_public_router
+from routes_own_mcp import router as own_mcp_router
 from routes_supabase import router as supabase_router
 from routes_supabase_oauth import router as supabase_oauth_router
 from routes_tasks import router as tasks_router
@@ -221,6 +222,8 @@ app.include_router(prefs_router, prefix="/api/tasks")  # public: /api/tasks/pref
 app.include_router(connections_router)  # /connections — per-user third-party creds
 app.include_router(connections_router, prefix="/api/tasks")  # public: /api/tasks/connections/*
 app.include_router(connect_public_router)  # public: /connect/<app>/callback
+app.include_router(own_mcp_router)  # /own-mcp/tools and /own-mcp/call: mcp-proxy only (X-Internal-Secret)
+app.include_router(own_mcp_router, prefix="/api/tasks")  # public: /api/tasks/own-mcp/servers (a person's own MCP servers)
 
 # Per-user tool servers, one sub-app per provider, each serving its own
 # openapi.json so mcp-proxy can discover it. Internal only: it is never routed
