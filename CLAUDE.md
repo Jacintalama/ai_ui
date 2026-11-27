@@ -249,6 +249,40 @@ Migration 063 enforces that with a `CHECK` on `gmail_tokens`, `gdrive_tokens`
 and `calendar_tokens`, and `mcp-servers/gmail/account_identity.py` resolves an
 id to its address at the boundary.
 
+### Your own MCP server (2026-11-27)
+A person adds an MCP server they run (or a vendor hosts) in Connections:
+name, https address, optional bearer token. Its tools become
+`own-<slug>_<tool>` for THAT person only, in the main chat, agents, cron and
+Discord. Design `docs/superpowers/specs/2026-11-26-own-mcp-servers-design.md`.
+
+- **tasks owns it**: `own_mcp.py` (pure rules), `own_mcp_client.py`
+  (Streamable HTTP, sessions per (email, server), 2 MB and one-deadline
+  caps), `own_mcp_store.py` (`tasks.own_mcp_servers`, migration 075, address
+  AND token encrypted together, the card shows the host only),
+  `routes_own_mcp.py` under `/own-mcp`, NOT `/connections` (whose
+  `/{provider_id}` routes would swallow it).
+- **mcp-proxy adds them per caller** (`own_tools.py`) on the three `/meta/*`
+  routes, after `require_identified`, and NEVER into `TOOLS_CACHE`. Someone
+  else's own tool reads exactly like a missing one. It asks tasks
+  `/own-mcp/tools` and `/own-mcp/call`, which need `X-Internal-Secret`;
+  that is why mcp-proxy has `INTERNAL_CALLBACK_SECRET` in compose.
+  `OWN_MCP=0` turns it off.
+- **Asks first**: a read only when the server says `readOnlyHint` AND the
+  name is not a write (`agent_tools.is_write_call`, bare name or inside
+  `call_tool`, judged by `own_mcp.read_only(email, name)`, unknown = write).
+  The tasks loop sends the secret on its `/meta/*` calls; a model calling
+  the proxy straight from Open WebUI cannot ask, so it gets "Switch to Auto
+  (Free)" for anything but a read.
+- **Addresses**: https only, `host_guard.problem` before every request, no
+  redirects. Server error text has the token, address, path and host removed.
+- **Jev** sees "and their own servers: X (tools...)" in the gateway note for
+  people with servers only (`routes_agent_turn._own_notes`, 60 s cache).
+  Measured live: needing it 0.84 to 0.94 with the note, 0.36 to 0.60 without,
+  at the 0.75 cut; everything else unchanged.
+- The main chat follows the person's account approval setting, so on "Full
+  access" an own write runs there without asking. That is the setting, not a
+  gap; an agent on Ask asks.
+
 ### The main chat (2026-10-26)
 Everyone lands on **Auto (Free)** (`auto_router_pipe.py`, id `auto_router.auto`,
 set as `DEFAULT_MODELS` in compose; an admin's later choice in Admin Settings →
