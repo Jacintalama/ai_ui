@@ -3672,6 +3672,75 @@
     btn.addEventListener('click', function () { aiuiOpenPlace(place); });
   }
 
+  // ===== The assistant's say links =====
+  // [Save as your skill](#aiui-say:save-skill) goes under a reply after a
+  // workflow or automation was really made (2026-11-26). The button types one
+  // fixed message into the composer and sends it. The page sends only texts
+  // from this list, under the label on this list, never anything read out of
+  // the link. The text is skill_offer.ASK in the tasks service, word for word:
+  // that is what gives the turn the skills tool (a test compares the two).
+  var AIUI_SAY_MARKER = '#aiui-say:';
+  var AIUI_SAY_TEXTS = {
+    'save-skill': { label: 'Save as your skill', text: 'Write a skill from what you just set up for me, and show it to me before saving.' }
+  };
+  var AIUI_SAY_STALE = 'Only works on the latest reply';
+  // done(false) is a full box, or Send never came because a reply is still
+  // running (it shows Stop), so the words cover both.
+  var AIUI_SAY_RETRY = 'Wait for the reply to finish or clear your message, then press again';
+
+  // "What you just set up" is only true under the latest reply. After a
+  // reload, or when Open WebUI draws the messages again, every older reply's
+  // link comes back too, and pressing one would draft the wrong thing.
+  function aiuiSayOnLatest(el) {
+    var mine = aiuiMessageOf(el);
+    return !!mine && mine === aiuiLastReply();
+  }
+
+  function aiuiSayStale(btn) {
+    btn.textContent = AIUI_SAY_STALE;
+    btn.disabled = true;
+    btn.style.background = '#9ca3af';
+    btn.style.cursor = 'default';
+  }
+
+  function wireAiuiSayLink(anchor) {
+    if (!anchor || anchor.getAttribute('data-aiui-wired')) return;
+    var href = anchor.getAttribute('href') || '';
+    var i = href.indexOf(AIUI_SAY_MARKER);
+    if (i === -1) return;
+    var id = href.slice(i + AIUI_SAY_MARKER.length).trim();
+    if (!Object.prototype.hasOwnProperty.call(AIUI_SAY_TEXTS, id)) return;
+    var say = AIUI_SAY_TEXTS[id];
+    anchor.setAttribute('data-aiui-wired', '1');
+
+    var container = document.createElement('span');
+    container.className = 'aiui-say-inline';
+    container.style.cssText = 'display:inline-block;margin:10px 8px 8px 0;'
+      + 'vertical-align:middle;';
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = say.label;
+    btn.style.cssText = 'padding:8px 16px;background:#4CAF50;color:#fff;border:none;'
+      + 'border-radius:8px;font-size:13.5px;font-weight:600;cursor:pointer;';
+    container.appendChild(btn);
+    if (anchor.parentNode) anchor.parentNode.replaceChild(container, anchor);
+    if (!aiuiSayOnLatest(container)) aiuiSayStale(btn);
+    btn.addEventListener('click', function () {
+      if (btn.disabled) return;
+      // Checked again now: a newer reply may have arrived since it was drawn.
+      if (!aiuiSayOnLatest(container)) { aiuiSayStale(btn); return; }
+      btn.disabled = true;
+      aiuiSendToChat(say.text, function (sent) {
+        if (sent) {
+          btn.textContent = '✓ Asked';
+        } else {
+          btn.textContent = AIUI_SAY_RETRY;
+          btn.disabled = false;
+        }
+      });
+    });
+  }
+
   function wireAiuiConnectLinks() {
     var pending = false;
     function scan() {
@@ -3680,6 +3749,8 @@
       for (var i = 0; i < anchors.length; i++) wireAiuiConnectLink(anchors[i]);
       var opens = document.querySelectorAll('a[href*="' + AIUI_OPEN_MARKER + '"]');
       for (var j = 0; j < opens.length; j++) wireAiuiOpenLink(opens[j]);
+      var says = document.querySelectorAll('a[href*="' + AIUI_SAY_MARKER + '"]');
+      for (var k = 0; k < says.length; k++) wireAiuiSayLink(says[k]);
     }
     var obs = new MutationObserver(function () {
       if (pending) return;

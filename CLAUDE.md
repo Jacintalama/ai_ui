@@ -424,6 +424,14 @@ Connect buttons under the answer. Two rules worth knowing:
 `docs/plans/2026-11-12-triage-agent-design.md`,
 `docs/plans/2026-11-13-triage-sees-more-design.md`.
 
+**Save as your skill (2026-11-26).** A turn that made something (n8n
+`create_workflow`/`activate_workflow` with `"ok": true`, `create_automation`
+"Made the automation"; `skill_offer.counts`) gets the link under its last
+reply; the service adds it and strips any copy a model wrote. Only the latest
+reply's button sends. The click sends `skill_offer.ASK`, which forces the
+`skills` tool; nothing is saved until the person says yes to the draft. Gap:
+on the free-model path the pipe streams itself, so a copied link stays.
+
 ### Automation: run an agent from outside (2026-10-27)
 `POST /api/tasks/agents/run` with `Authorization: Bearer iok_...` runs one of
 the key owner's agents on a message and returns the answer
