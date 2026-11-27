@@ -37,7 +37,11 @@ PREFIX = "own-"
 CACHE_SECONDS = 60.0
 MAX_CALLERS = 200
 MAX_VECTORS = 2000
-LIST_TIMEOUT = 3.0
+#: Short: this runs on every search, for people with no own servers too.
+LIST_TIMEOUT = 1.5
+#: How long a failed lookup is remembered, so a slow tasks costs one wait
+#: a minute rather than one on every search.
+FAILED_SECONDS = 30.0
 #: The tasks side gives a call 20 s; this leaves room for it to answer.
 CALL_TIMEOUT = 30.0
 
@@ -83,6 +87,17 @@ def _keep(email: str, tools: Dict[str, dict]) -> None:
         _CACHE.popitem(last=False)
 
 
+_FAILED: "OrderedDict[str, float]" = OrderedDict()
+
+
+def _failed(email: str) -> Dict[str, dict]:
+    _FAILED[email] = time.monotonic()
+    _FAILED.move_to_end(email)
+    while len(_FAILED) > MAX_CALLERS:
+        _FAILED.popitem(last=False)
+    return {}
+
+
 async def for_caller(email: str) -> Dict[str, dict]:
     """This caller's own tools by name, {} on any failure or when off.
 
@@ -95,6 +110,9 @@ async def for_caller(email: str) -> Dict[str, dict]:
     held = _CACHE.get(email)
     if held and time.monotonic() - held[0] < CACHE_SECONDS:
         return held[1]
+    failed = _FAILED.get(email)
+    if failed and time.monotonic() - failed < FAILED_SECONDS:
+        return {}
     try:
         async with httpx.AsyncClient(timeout=LIST_TIMEOUT) as http:
             r = await http.get(tasks_url() + "/own-mcp/tools",
@@ -102,11 +120,11 @@ async def for_caller(email: str) -> Dict[str, dict]:
                                         "X-User-Email": email})
         if r.status_code != 200:
             print(f"  [own-tools] tasks answered {r.status_code}")
-            return {}
+            return _failed(email)
         listed = (r.json() or {}).get("tools") or []
     except Exception as e:                                  # noqa: BLE001
         print(f"  [own-tools] could not ask tasks: {type(e).__name__}")
-        return {}
+        return _failed(email)
     tools = {t["name"]: t for t in listed
              if isinstance(t, dict) and is_own(t.get("name"))}
     _keep(email, tools)
@@ -187,6 +205,16 @@ def rank(query: str, tools: Dict[str, dict], limit: int) -> List[dict]:
     return [_result(e, s) for s, e in scored[:limit]]
 
 
+def safe_rank(query: str, tools: Dict[str, dict], limit: int) -> List[dict]:
+    """rank, or [] when it fails: an own tool must never cost a person the
+    search for every built tool."""
+    try:
+        return rank(query, tools, limit)
+    except Exception as e:                                  # noqa: BLE001
+        print(f"  [own-tools] ranking failed: {type(e).__name__}")
+        return []
+
+
 def merge(built: List[dict], own: List[dict], limit: int) -> List[dict]:
     """Built and own results by score, stable, cut at limit."""
     both = list(built or []) + list(own or [])
@@ -209,17 +237,27 @@ def describe(name: str, tools: Dict[str, dict]) -> dict:
 
 async def call(email: str, name: str, arguments: Dict[str, Any]) -> dict:
     """Forward one call to tasks. A 404 there is a 404 here."""
-    async with httpx.AsyncClient(timeout=CALL_TIMEOUT) as http:
-        r = await http.post(tasks_url() + "/own-mcp/call",
-                            json={"tool_name": name, "arguments": arguments or {}},
-                            headers={"X-Internal-Secret": _secret(),
-                                     "X-User-Email": email})
+    unsure = {"result": "I did not hear back about that in time, so it may "
+                        "have run. Check in your server before trying again.",
+              "failed": True}
+    try:
+        async with httpx.AsyncClient(timeout=CALL_TIMEOUT) as http:
+            r = await http.post(tasks_url() + "/own-mcp/call",
+                                json={"tool_name": name, "arguments": arguments or {}},
+                                headers={"X-Internal-Secret": _secret(),
+                                         "X-User-Email": email})
+    except httpx.HTTPError as e:
+        print(f"  [own-tools] call did not complete: {type(e).__name__}")
+        return unsure
     if r.status_code == 404:
         raise HTTPException(status_code=404, detail=f"Tool '{name}' not found")
     if r.status_code != 200:
-        return {"result": "Your own server could not be reached just now. "
-                          "Try again in a minute.", "failed": True}
-    return r.json()
+        return unsure
+    try:
+        answer = r.json()
+    except ValueError:
+        return unsure
+    return answer if isinstance(answer, dict) else unsure
 
 
 async def run(request, email: str, name: str, arguments: Dict[str, Any]) -> dict:

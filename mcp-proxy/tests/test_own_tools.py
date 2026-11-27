@@ -284,7 +284,7 @@ def test_the_switch_restores_todays_answers(proxy, monkeypatch):
 async def test_tasks_down_means_no_own_tools_and_no_error(monkeypatch):
     monkeypatch.setenv("INTERNAL_CALLBACK_SECRET", SECRET)
     monkeypatch.delenv("OWN_MCP", raising=False)
-    own_tools._CACHE.clear()
+    own_tools._CACHE.clear(); own_tools._FAILED.clear()
     respx.get(own_tools.tasks_url() + "/own-mcp/tools").mock(
         side_effect=httpx.ConnectTimeout("down"))
     assert await own_tools.for_caller(A) == {}
@@ -294,7 +294,7 @@ async def test_tasks_down_means_no_own_tools_and_no_error(monkeypatch):
 async def test_for_caller_sends_the_secret_and_caches_60_seconds(monkeypatch):
     monkeypatch.setenv("INTERNAL_CALLBACK_SECRET", SECRET)
     monkeypatch.delenv("OWN_MCP", raising=False)
-    own_tools._CACHE.clear()
+    own_tools._CACHE.clear(); own_tools._FAILED.clear()
     route = respx.get(own_tools.tasks_url() + "/own-mcp/tools").mock(
         return_value=httpx.Response(200, json={"tools": list(A_TOOLS.values())}))
     got = await own_tools.for_caller(A)
@@ -308,14 +308,14 @@ async def test_for_caller_sends_the_secret_and_caches_60_seconds(monkeypatch):
 @respx.mock
 async def test_without_a_secret_configured_tasks_is_not_asked(monkeypatch):
     monkeypatch.delenv("INTERNAL_CALLBACK_SECRET", raising=False)
-    own_tools._CACHE.clear()
+    own_tools._CACHE.clear(); own_tools._FAILED.clear()
     route = respx.get(own_tools.tasks_url() + "/own-mcp/tools")
     assert await own_tools.for_caller(A) == {}
     assert route.call_count == 0
 
 
 def test_the_email_cache_is_bounded():
-    own_tools._CACHE.clear()
+    own_tools._CACHE.clear(); own_tools._FAILED.clear()
     for i in range(own_tools.MAX_CALLERS + 20):
         own_tools._keep(f"p{i}@x.com", {})
     assert len(own_tools._CACHE) == own_tools.MAX_CALLERS
@@ -341,3 +341,60 @@ async def test_a_404_from_tasks_is_a_404_here(monkeypatch):
     with pytest.raises(main.HTTPException) as e:
         await own_tools.call(A, "own-acme_gone", {})
     assert e.value.status_code == 404
+
+
+# --- the final review, 2026-11-27 ------------------------------------------
+
+@respx.mock
+async def test_a_failed_lookup_is_remembered_so_search_does_not_wait_each_time(monkeypatch):
+    monkeypatch.setenv("INTERNAL_CALLBACK_SECRET", SECRET)
+    monkeypatch.delenv("OWN_MCP", raising=False)
+    own_tools._CACHE.clear(); own_tools._FAILED.clear()
+    route = respx.get(own_tools.tasks_url() + "/own-mcp/tools").mock(
+        side_effect=httpx.ConnectTimeout("down"))
+    assert await own_tools.for_caller(A) == {}
+    assert await own_tools.for_caller(A) == {}
+    assert route.call_count == 1
+    assert own_tools.LIST_TIMEOUT <= 1.5
+
+
+@respx.mock
+async def test_a_call_that_times_out_says_it_may_have_run(monkeypatch):
+    monkeypatch.setenv("INTERNAL_CALLBACK_SECRET", SECRET)
+    respx.post(own_tools.tasks_url() + "/own-mcp/call").mock(
+        side_effect=httpx.ReadTimeout("slow"))
+    out = await own_tools.call(A, "own-acme_create_invoice", {})
+    assert out["failed"] is True and "may have" in out["result"]
+
+
+@respx.mock
+async def test_an_unreadable_answer_from_tasks_is_a_sentence(monkeypatch):
+    monkeypatch.setenv("INTERNAL_CALLBACK_SECRET", SECRET)
+    respx.post(own_tools.tasks_url() + "/own-mcp/call").mock(
+        return_value=httpx.Response(200, text="not json"))
+    out = await own_tools.call(A, "own-acme_list_customers", {})
+    assert out["failed"] is True
+
+
+def test_the_proxy_waits_longer_than_tasks_does():
+    import importlib.util
+    import pathlib
+    spec = importlib.util.spec_from_file_location(
+        "own_mcp_client_for_test",
+        pathlib.Path(__file__).resolve().parents[2] / "mcp-servers" / "tasks" / "own_mcp_client.py")
+    src = spec.origin and open(spec.origin, encoding="utf-8").read()
+    assert "CALL_TIMEOUT = 20.0" in src
+    assert own_tools.CALL_TIMEOUT >= 25
+
+
+def test_a_ranking_error_never_breaks_search(proxy, monkeypatch):
+    c, seen = proxy
+
+    def boom(*a, **k):
+        raise RuntimeError("embedding failed")
+    monkeypatch.setattr(own_tools, "rank", boom)
+    r = _search(c, A)
+    assert r.status_code == 200
+    assert [x["tool_name"] for x in r.json()["results"]] == ["github_list_repos"]
+    seen["tenants"] = []
+    assert _search(c, A).status_code == 200

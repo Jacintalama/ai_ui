@@ -23,6 +23,7 @@ Design: docs/superpowers/specs/2026-11-26-own-mcp-servers-design.md, section 6.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -44,6 +45,9 @@ MAX_SESSIONS = 500
 RESULT_CHARS = 20000
 SAID_CHARS = 160
 PROTOCOL = "2025-03-26"
+#: The most a server may send in one answer. Read as a stream and refused
+#: past this, so a server cannot fill the box's memory.
+MAX_BYTES = 2 * 1024 * 1024
 
 #: (email, server id) -> (session id, when it was made)
 _SESSIONS: "OrderedDict[tuple[str, str], tuple[str, float]]" = OrderedDict()
@@ -160,24 +164,44 @@ def _headers(token: str, session_id: str | None) -> dict:
     return headers
 
 
+class _Reply:
+    """What a POST came back with, read in full and within MAX_BYTES."""
+
+    def __init__(self, status_code: int, headers, body: bytes):
+        self.status_code = status_code
+        self.headers = headers
+        self.text = body.decode("utf-8", errors="replace")
+
+
 async def _post(http: httpx.AsyncClient, url: str, token: str,
                 session_id: str | None, payload: dict, label: str,
-                timeout: float) -> httpx.Response:
+                timeout: float) -> _Reply:
     """One POST, with every way it can fail turned into a sentence."""
     await _check(url)
     try:
-        response = await http.post(url, json=payload,
-                                   headers=_headers(token, session_id))
+        async with http.stream("POST", url, json=payload,
+                               headers=_headers(token, session_id)) as response:
+            if response.is_redirect:
+                raise Refused(f"Your {label} server tried to send us somewhere "
+                              f"else, so I did not follow it.")
+            chunks, size = [], 0
+            async for chunk in response.aiter_bytes():
+                size += len(chunk)
+                if size > MAX_BYTES:
+                    raise Refused(f"Your {label} server sent too much back "
+                                  f"(over 2 MB), so I stopped reading.")
+                chunks.append(chunk)
+            return _Reply(response.status_code, response.headers, b"".join(chunks))
+    except Refused:
+        raise
     except httpx.TimeoutException:
         raise Refused(f"Your {label} server did not answer in "
                       f"{int(timeout)} seconds.") from None
-    except httpx.HTTPError:
+    except (httpx.HTTPError, httpx.InvalidURL, ValueError):
+        # InvalidURL and ValueError are not HTTPError: a port that is not a
+        # number, or a header value the server sent that cannot be sent back.
         raise Refused(f"Your {label} server could not be reached. "
                       f"Check it is running and try again.") from None
-    if response.is_redirect:
-        raise Refused(f"Your {label} server tried to send us somewhere else, "
-                      f"so I did not follow it.")
-    return response
 
 
 async def _initialize(http, url, token, label, timeout) -> str:
@@ -208,6 +232,21 @@ async def _initialize(http, url, token, label, timeout) -> str:
 async def _request(url: str, token: str, method: str, params: dict | None,
                    label: str, key: tuple[str, str] | None,
                    timeout: float) -> dict:
+    """The whole exchange, initialize and retry included, within ONE
+    deadline: a stream that sends a byte every few seconds never trips a
+    per-read timeout, and would hold the sweep forever."""
+    try:
+        return await asyncio.wait_for(
+            _exchange(url, token, method, params, label, key, timeout),
+            timeout=timeout)
+    except asyncio.TimeoutError:
+        raise Refused(f"Your {label} server did not answer in "
+                      f"{int(timeout)} seconds.") from None
+
+
+async def _exchange(url: str, token: str, method: str, params: dict | None,
+                    label: str, key: tuple[str, str] | None,
+                    timeout: float) -> dict:
     """A JSON-RPC request on a session, re-initialized once if the server
     says the session is gone. Returns the ``result``."""
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as http:
@@ -222,7 +261,12 @@ async def _request(url: str, token: str, method: str, params: dict | None,
                 payload["params"] = params
             response = await _post(http, url, token, session_id or None,
                                    payload, label, timeout)
-            if response.status_code in (401, 404, 409) and attempt == 1:
+            # A session the server forgot. A tools/call is only repeated
+            # after a 404, the one answer that says the session is gone: a
+            # 409 or 401 from a tool may mean it ran, and running a write
+            # twice is worse than reporting it once.
+            again = (404,) if method == "tools/call" else (401, 404, 409)
+            if response.status_code in again and attempt == 1:
                 # The session is gone (or never took): drop it and make a
                 # new one. With no key nothing is cached, so the next round
                 # initializes anyway.

@@ -33,6 +33,7 @@ def world(monkeypatch):
     seen = {"set": [], "checks": [], "listed": []}
     rows = [_row("s1"), _row("s2", email="b@x.com"), _row("s3", checked=FRESH)]
     monkeypatch.setattr(own_mcp_store, "all_rows", AsyncMock(return_value=rows))
+    monkeypatch.setattr(own_mcp_store, "list_for", AsyncMock(return_value=[]))
     monkeypatch.setattr(own_mcp_store, "secrets_of", AsyncMock(
         return_value={"url": "https://mcp.example.com/mcp", "token": "t"}))
 
@@ -102,3 +103,14 @@ async def test_the_sweep_tick_includes_own_servers(world, monkeypatch):
 def test_at_most_a_tick_s_worth_is_asked():
     rows = [_row(f"s{i}") for i in range(S.MAX_PER_TICK + 10)]
     assert len(S.own_due(rows, now=NOW)) == S.MAX_PER_TICK
+
+
+async def test_a_tool_that_became_a_write_is_no_longer_remembered_as_a_read(world, monkeypatch):
+    import own_mcp
+    own_mcp.remember("a@x.com", [{"name": "own-acme_list_items", "read_only": True}])
+    world["answer"] = {"s1": {"tools": [{"name": "list_items"}]}}   # hint gone
+    fresh = [{"id": "s1", "slug": "acme", "label": "Acme",
+              "tools": [{"name": "own-acme_list_items", "tool": "list_items", "read_only": False}]}]
+    monkeypatch.setattr(own_mcp_store, "list_for", AsyncMock(return_value=fresh))
+    await S.sweep_own(now=NOW)
+    assert own_mcp.read_only("a@x.com", "own-acme_list_items") is False

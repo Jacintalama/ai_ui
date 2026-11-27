@@ -239,3 +239,51 @@ def test_the_session_cache_is_bounded():
     for i in range(client.MAX_SESSIONS + 50):
         client._remember_session((f"p{i}@x.com", "s"), f"id{i}")
     assert len(client._SESSIONS) == client.MAX_SESSIONS
+
+
+# --- the final review, 2026-11-27 ------------------------------------------
+
+@respx.mock
+async def test_a_huge_answer_is_refused_not_held_in_memory():
+    respx.post(URL).mock(return_value=httpx.Response(
+        200, content=b"x" * (client.MAX_BYTES + 10),
+        headers={"content-type": "application/json"}))
+    with pytest.raises(client.Refused) as e:
+        await client.list_tools(URL, TOKEN, label="Acme")
+    assert "too much" in str(e.value)
+
+
+@respx.mock
+async def test_a_server_that_never_finishes_meets_one_deadline(monkeypatch):
+    import asyncio
+    monkeypatch.setattr(client, "CALL_TIMEOUT", 0.3)
+
+    async def slow(request):
+        await asyncio.sleep(2)
+        return httpx.Response(200)
+    respx.post(URL).mock(side_effect=slow)
+    with pytest.raises(client.Refused) as e:
+        await client.call(KEY, URL, TOKEN, "t", {}, "Acme", timeout=0.3)
+    assert "did not answer" in str(e.value)
+
+
+@respx.mock
+async def test_a_tool_call_is_never_sent_twice_after_a_409():
+    answer, calls = _server()
+    state = {"calls": 0}
+
+    def conflict(request):
+        msg = json.loads(request.content)
+        if msg.get("method") == "tools/call":
+            state["calls"] += 1
+            return httpx.Response(409, text="invoice already exists")
+        return answer(request)
+    respx.post(URL).mock(side_effect=conflict)
+    with pytest.raises(client.Refused) as e:
+        await client.call(KEY, URL, TOKEN, "create_invoice", {}, "Acme")
+    assert state["calls"] == 1 and "already exists" in str(e.value)
+
+
+async def test_an_address_httpx_cannot_read_is_a_sentence():
+    with pytest.raises(client.Refused):
+        await client.list_tools("https://mcp.example.com:abc/mcp", TOKEN, label="Acme")

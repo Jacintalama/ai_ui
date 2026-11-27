@@ -895,7 +895,7 @@ async def meta_search_tools(body: SearchToolsRequest, request: Request):
         if own:
             # Before the early return, or a person with only their own
             # servers would find nothing.
-            ranked = own_tools.rank(body.query, own, body.limit)
+            ranked = own_tools.safe_rank(body.query, own, body.limit)
             return {"query": body.query, "count": len(ranked), "results": ranked}
         return {"query": body.query, "count": 0, "results": [],
                 "message": "No server access configured for this user"}
@@ -907,7 +907,7 @@ async def meta_search_tools(body: SearchToolsRequest, request: Request):
         )
         if own:
             results = own_tools.merge(
-                results, own_tools.rank(body.query, own, body.limit), body.limit)
+                results, own_tools.safe_rank(body.query, own, body.limit), body.limit)
         print(f"  Found {len(results)} matching tools")
         return {
             "query": body.query,
@@ -935,7 +935,7 @@ async def meta_search_tools(body: SearchToolsRequest, request: Request):
         matches.sort(key=lambda x: x["relevance_score"], reverse=True)
         if own:
             matches = own_tools.merge(
-                matches, own_tools.rank(body.query, own, body.limit), body.limit)
+                matches, own_tools.safe_rank(body.query, own, body.limit), body.limit)
         return {
             "query": body.query,
             "count": len(matches[:body.limit]),

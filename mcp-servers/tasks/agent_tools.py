@@ -300,6 +300,11 @@ def is_write_call(method_name: str, params: dict | None = None,
         # See the note on the set above: being held as well asks the same
         # person the same question twice and loses the answer in between.
         return False
+    if isinstance(method_name, str) and method_name.startswith(own_mcp.PREFIX):
+        # A person's own MCP tool called by its bare name rather than inside
+        # call_tool. It reaches the proxy the same way, with the secret, so
+        # it is judged the same way: by this person's server, never the name.
+        return not own_mcp.read_only(email or "", method_name)
     if method_name != "call_tool":
         return is_write_tool(method_name)
     inner = (params or {}).get("tool_name")

@@ -259,6 +259,16 @@ async def sweep_own(now: Optional[datetime] = None) -> Dict[str, int]:
             used, _ = own_mcp.snapshot(r["slug"], listed)
             if used:
                 await own_mcp_store.set_tools(email, sid, used)
+                # What counts as a read may have changed; the agent loop
+                # asks this memory before holding a call for approval.
+                try:
+                    rows_now = await own_mcp_store.list_for(email)
+                    own_mcp.remember(email, [t for x in rows_now
+                                             for t in x.get("tools") or []])
+                except Exception:                           # noqa: BLE001
+                    # Fail closed: nothing remembered means every one of
+                    # this person's own tools asks first until next listed.
+                    own_mcp.remember(email, [])
             else:
                 await own_mcp_store.record_check(email, sid, False)
             tally["asked"] += 1

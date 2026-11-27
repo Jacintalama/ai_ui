@@ -84,3 +84,16 @@ def test_every_meta_post_uses_the_helper():
     src = inspect.getsource(agent_tools)
     assert src.count('headers={"X-User-Email": user_email}') == 0
     assert src.count("headers=_proxy_headers(user_email)") == 4
+
+
+# --- the final review, 2026-11-27 ------------------------------------------
+
+def test_a_bare_own_tool_name_is_judged_the_same_way():
+    """The model can call own-x_y directly, not wrapped in call_tool, and it
+    reaches the proxy with the secret all the same."""
+    own_mcp.remember("c@x.com", [])
+    for name in ("own-db_query_database", "own-acme_fetch_and_charge",
+                 "own-acme_get_or_run_report"):
+        assert is_write_call(name, None, email="c@x.com") is True, name
+    assert is_write_call("own-acme_list_customers", None, email=A) is False
+    assert is_write_call("own-acme_list_customers", None) is True
