@@ -50,6 +50,7 @@ import can_do
 import connection_health
 import main_assistant
 import skill_fit
+import agent_made
 import skill_offer
 import agent_skills
 import routes_prefs
@@ -1796,6 +1797,50 @@ async def _write_tools_pin(key: str, tools: list) -> None:
         logger.warning("could not write the tool pin", exc_info=True)
 
 
+def _skill_pin_key(chat_id: str, user_email: str) -> str:
+    """Which ready-made skill this chat is following, per person
+    (2026-11-27). Its own row beside the tool pin, same life."""
+    return "agentskill:web:%s:%s" % (user_email, chat_id)
+
+
+async def _read_skill_pin(key: str) -> str:
+    """The skill this chat was following a moment ago, or "". Never raises."""
+    try:
+        async with session() as s:
+            row = (await s.execute(
+                select(BotState).where(BotState.state_key == key)
+            )).scalar_one_or_none()
+        if row is None or (row.expires_at is not None
+                           and row.expires_at < datetime.now(timezone.utc)):
+            return ""
+        value = row.value if isinstance(row.value, dict) else {}
+        name = value.get("skill")
+        return name if isinstance(name, str) else ""
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not read the skill pin", exc_info=True)
+        return ""
+
+
+async def _write_skill_pin(key: str, name: str) -> None:
+    """Remember the skill this chat is following. Never raises."""
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(seconds=PIN_TTL_SECONDS)
+    value = {"skill": str(name or "")}
+    try:
+        async with session() as s:
+            row = (await s.execute(
+                select(BotState).where(BotState.state_key == key)
+            )).scalar_one_or_none()
+            if row:
+                row.value, row.updated_at, row.expires_at = value, now, expires
+            else:
+                s.add(BotState(state_key=key, value=value, updated_at=now,
+                               expires_at=expires))
+            await s.commit()
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not write the skill pin", exc_info=True)
+
+
 def recent_exchange(messages, turns: int = CONTEXT_TURNS) -> str:
     """What was said just before the latest message, as plain lines.
 
@@ -2138,6 +2183,19 @@ async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
                                    triage.get("connected"), picked or [],
                                    text=text, skills=triage.get("skills"),
                                    pool=triage.get("pool"))
+        # The skill this chat was following carries on (2026-11-27): "use
+        # n8n" after a build-a-workflow answer scored under the cut, the
+        # steps were gone and the answer said "webhook". Only inside a turn
+        # that runs anyway (tools in play) and only when no skill was picked
+        # for this message, which then wins.
+        chat_id = getattr(body, "chat_id", "") or ""
+        if picked and chat_id and not (plan and plan.get("skills")):
+            carried = app_triage.carried_skill(
+                await _read_skill_pin(_skill_pin_key(chat_id,
+                                                     body.user_email)),
+                (triage or {}).get("pool") or agent_skills.load_all())
+            if carried:
+                plan = dict(plan or {}, skills=[carried])
         # Only a recommendation to make changes anything: with every fitting
         # app already connected, the tool path is exactly what it was.
         if not app_triage.needs_assistant(plan):
@@ -2174,8 +2232,13 @@ async def _assistant_reply(body: ChatIn, text: str, agents: list[dict],
             if "skills" not in picked:            # a core tool, everyone's
                 picked.append("skills")
             have = await _every_tool_for(body.user_email)
+            best = next((s for s in plan["skills"] if s.get("body")), None)
+            if best and chat_id:
+                await _write_skill_pin(
+                    _skill_pin_key(chat_id, body.user_email), best["name"])
             for s in plan["skills"]:
-                wanted = (triage or {}).get("pool", {}).get(s["name"], {})
+                wanted = ((triage or {}).get("pool") or agent_skills.load_all()
+                          ).get(s["name"], {})
                 for tool in list(wanted.get("tools") or []):
                     if tool in have and tool not in picked:
                         picked.append(tool)
@@ -2367,9 +2430,33 @@ async def _chat_inner(body: ChatIn, x_internal_secret: str) -> dict:
     """
     if not getattr(body, "route_only", False):
         return await _chat_turns(body, x_internal_secret)
-    with skill_offer.collecting() as made:
+    with skill_offer.collecting() as made, agent_made.collecting() as agents:
         out = await _chat_turns(body, x_internal_secret)
-    return _with_skill_offer(out, made)
+    return _with_skill_offer(_with_true_agent_claims(out, agents), made)
+
+
+def _with_true_agent_claims(out: dict, seen: list) -> dict:
+    """`out` with an answer that says an agent was made, when this turn's
+    create_agent calls only previewed one, replaced by the service's own
+    preview (agent_made.checked, 2026-11-27: "Wren is created" after five
+    previews and nothing made). Fails open: `out` as it came."""
+    try:
+        turns = out.get("turns")
+        if not seen or not isinstance(turns, list) or not turns:
+            return out
+        new = [dict(t, answer=agent_made.checked(t["answer"], seen))
+               if isinstance(t, dict) and isinstance(t.get("answer"), str)
+               else t for t in turns]
+        if new == turns:
+            return out
+        logger.info("an answer said an agent was made when none was; "
+                    "the preview is shown instead")
+        return {**out, **_reply(new, out.get("queue"), out.get("marker", ""),
+                                out.get("status", ""))}
+    except Exception:                                       # noqa: BLE001
+        logger.warning("could not check the answer's agent claim",
+                       exc_info=True)
+        return out
 
 
 def _with_skill_offer(out: dict, made: list[str]) -> dict:
