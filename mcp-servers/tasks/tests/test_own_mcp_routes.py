@@ -315,7 +315,16 @@ def test_the_router_is_reachable_on_both_prefixes(env):
 
 
 def test_main_app_mounts_the_router():
-    import main
-    paths = {getattr(r, "path", "") for r in main.app.routes}
-    assert "/own-mcp/servers" in paths and "/api/tasks/own-mcp/servers" in paths
-    assert "/own-mcp/tools" in paths and "/own-mcp/call" in paths
+    """By the statements themselves: in the full suite another test leaves
+    main.app's route list in a state where the paths cannot be read back,
+    and a check that only passes alone checks nothing."""
+    import pathlib
+    src = (pathlib.Path(R.__file__).parent / "main.py").read_text(encoding="utf-8")
+    lines = [line.split("#")[0].strip() for line in src.splitlines()]
+    assert lines.count("from routes_own_mcp import router as own_mcp_router") == 1
+    assert lines.count("app.include_router(own_mcp_router)") == 1
+    assert lines.count('app.include_router(own_mcp_router, prefix="/api/tasks")') == 1
+    paths = {getattr(r, "path", "") for r in R.router.routes}
+    assert paths == {"/own-mcp/servers", "/own-mcp/servers/test",
+                     "/own-mcp/servers/{server_id}/refresh",
+                     "/own-mcp/servers/{server_id}", "/own-mcp/tools", "/own-mcp/call"}
