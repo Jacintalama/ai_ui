@@ -678,6 +678,30 @@ def _skills(skills, pool, have) -> list:
     return out
 
 
+def carried_skill(name, pool) -> dict | None:
+    """The skill this chat was following, as a plan entry marked `carried`,
+    with its steps; None when it is not in the pool or has no steps.
+
+    Live 2026-11-27: build-a-workflow was picked for "automate my contact
+    form" and its steps went in front of the assistant, but "use n8n", the
+    message the skill says to start following it on, scored under the cut,
+    and the answer said "webhook". Its apps were said on the turn it was
+    picked, so `missing` is left empty rather than said again.
+    """
+    skill = (pool or {}).get(str(name or ""))
+    if not isinstance(skill, dict):
+        return None
+    body = str(skill.get("body") or "").strip()
+    if not body:
+        return None
+    import agent_skills
+    return {"name": str(name),
+            "description": " ".join(
+                str(skill.get("description") or "").split())[:240],
+            "missing": [], "body": body[:agent_skills.MAX_SKILL_CHARS],
+            "carried": True}
+
+
 def _skill_app_label(need: str) -> str:
     import skill_fit
     return skill_fit.LABELS.get(need, need)
@@ -739,7 +763,12 @@ def brief(p) -> str:
             "cannot be done because one of them is not connected."
             % ", ".join(labels))
     best = next((s for s in skills if s.get("body")), None)
-    if best:
+    if best and best.get("carried"):
+        lines.append("You were following the ready-made skill %s earlier in "
+                     "this chat. If this message carries on with that job, "
+                     "keep following its steps, between the lines:\n---\n%s"
+                     "\n---" % (best["name"], best["body"]))
+    elif best:
         lines.append("Follow the ready-made skill %s for this message. Its "
                      "steps, between the lines:\n---\n%s\n---"
                      % (best["name"], best["body"]))

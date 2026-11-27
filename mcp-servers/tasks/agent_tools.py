@@ -16,6 +16,7 @@ import agent_access
 import agent_activity
 import agent_events
 import agent_handoff
+import agent_made
 import skill_offer
 from db import session
 
@@ -918,7 +919,10 @@ async def execute_tool_call(
         tool_call, user_email, allowed_native_tools, agent_id, outcome)
     try:
         name, params = _name_and_params(tool_call)
-        skill_offer.note(called_tool_name(name, params), outcome.status, result)
+        called = called_tool_name(name, params)
+        skill_offer.note(called, outcome.status, result)
+        # And whether an agent was really made (agent_made, 2026-11-27).
+        agent_made.note(called, outcome.status, result)
     except Exception:                                       # noqa: BLE001
         logger.warning("could not report the tool call to skill_offer",
                        exc_info=True)
