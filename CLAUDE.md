@@ -191,6 +191,10 @@ Workspace → Tools in the Open WebUI admin, not by deploy. `agent_builder_tool.
 (2026-10-22) lets any chat model create agents for the signed-in person
 through `/agents/make` and `/agents/roster`; it sends only `X-User-Email`, like
 `schedules_tool.py`, and the service scopes every call to that email.
+On "yes" the model usually asks for the preview again and confirms with the
+new code, so a repeat preview of the same brief must be the same proposal:
+`routes_agents._BRIEF_SKILLS` keeps Jev's skill ranking for ten minutes
+(2026-11-27; asking afresh changed the skills and looped previews forever).
 
 **A pipe runs from its `public.function` row, and the file beside it on the
 server goes stale without a word.** Measured 2026-10-29: the live
